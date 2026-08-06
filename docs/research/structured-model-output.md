@@ -6,6 +6,37 @@ Researched 2026-08-06 against `@anthropic-ai/sdk` `0.115.0` (main), `zod` peer r
 
 ---
 
+> ## ⚠️ Corrections from execution — [#3](https://github.com/smukhyala/propositum/issues/3), 2026-08-06
+>
+> This document was written against the SDK's `main`. The version this repo actually installs is
+> **`0.71.2`**. Everything below was then executed rather than read. Two corrections and one
+> confirmation:
+>
+> **1. The API names in this document are wrong.** Use:
+>
+> | This document says | Actually |
+> |---|---|
+> | `zodOutputFormat` | **`betaZodOutputFormat`** from `@anthropic-ai/sdk/helpers/beta/zod` |
+> | `client.messages.parse()` | **`client.beta.messages.parse()`** |
+> | `output_config.format` | **`output_format`** |
+>
+> All of it sits under the **beta** namespace.
+>
+> **2. The derived-from-source claims are CONFIRMED.** `enum`, `const`, `default`, `minLength`,
+> `maxLength` and `pattern` are all dropped and folded into `description` as prose. `z.record()`
+> collapses to `properties:{}` with `additionalProperties:false`, so the empty object is the only
+> legal value.
+>
+> **3. So the central thesis holds and is no longer conditional:** the grammar enforces **shape
+> only**, Zod enforces the rest client-side, and the gap between them is where repair belongs.
+> Discriminated unions on a literal discriminator are not grammar-safe. `z.record()` is banned
+> from model-facing schemas.
+>
+> Locked in by `tests/schema-transformation.test.ts`, which fails if an SDK or Zod upgrade changes
+> any of it.
+
+---
+
 ## The question
 
 Six model boundaries in Propositum need to turn a prompt into a **typed domain object** that deterministic code can then authorize:
