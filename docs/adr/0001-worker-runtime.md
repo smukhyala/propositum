@@ -103,8 +103,8 @@ Transactions are for individual ledger writes and the claim, never for the run.
 **The deadline is derived, never stored.** `contract.acceptedAt + timeLimitMinutes`, an immutable
 pair, so a crash-restart loop cannot silently reset the budget by recomputing it.
 
-**Budget is time only.** Measured at 7.8 s and $0.0090 per model call, a 30-minute run costs about
-$2 — latency binds long before cost does.
+**Budget is time only.** Measured on a real boundary at 15.1 s and $0.0325 per call ([ADR-0005](./0005-model-boundary.md)),
+a 30-minute run buys ~120 sequential calls for roughly a dollar — latency binds long before cost does.
 
 ### The limit this does not fix
 

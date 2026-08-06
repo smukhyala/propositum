@@ -104,7 +104,7 @@ Everything the founding brief excludes, unchanged. Plus, decided during charting
 | Excluded | Why | Where |
 |---|---|---|
 | **"Keep going" and "Redirect"** | Would force replanning against a `Document` that moved between shifts. Ship it unsolved and the second `Shift` re-proposes work the first already did — on the demo path. | [#2](https://github.com/smukhyala/propositum/issues/2) |
-| **A cost dial** | Measured at $0.0090 and 7.8 s per call: a 30-minute budget is ~$2. Latency binds; cost never does. Budget is time only. | [#3](https://github.com/smukhyala/propositum/issues/3) |
+| **A cost dial** | Measured on a real boundary at $0.0325 and 15.1 s per call: a 30-minute budget buys ~120 sequential calls, about a dollar. Latency binds; cost never does. Budget is time only. | [#3](https://github.com/smukhyala/propositum/issues/3), [#14](https://github.com/smukhyala/propositum/issues/14) |
 | **Cross-session continuity** | The objective does not survive a `WorkSession`. A second session starts cold. | [#2](https://github.com/smukhyala/propositum/issues/2) |
 | **Multi-project, auth, billing, collaboration, Tauri, rich text, vector search, a second provider** | None is needed to test intention-preserving continuation. | brief |
 
@@ -203,7 +203,8 @@ Recorded so they can be checked rather than absorbed.
 4. **A reviewer `AgentRun` adds value.** Currently doubtful — scope adherence is scored from
    deterministic fields, so `ReviewFinding` has no effect and the reviewer is close to decorative.
    The brief mandates it. Slice 0 ships it and measures whether it earns its place.
-5. **7.8 s per model call is tolerable** inside a run nobody is watching. Untested against a full
+5. **15.1 s per model call is tolerable** inside a run nobody is watching — measured on the real
+   session-reading boundary, roughly double the toy-call figure first recorded. Untested against a full
    worker loop.
 
 ---
