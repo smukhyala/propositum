@@ -1,0 +1,25 @@
+node_modules/
+.next/
+out/
+dist/
+build/
+
+# Secrets — never commit
+.env
+.env.local
+.env.*.local
+
+# Local database
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+prisma/*.db*
+
+# Test / build output
+coverage/
+*.tsbuildinfo
+.vitest/
+
+# OS
+.DS_Store
