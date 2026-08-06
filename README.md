@@ -96,8 +96,8 @@ These are properties of the design, not a to-do list.
 - **No cross-session continuity.** A second session starts cold.
 - **n=1.** One person authors the references and scores the results. Every reported number carries
   that caveat.
-- **Budget is time, not money.** Measured at ~$0.009 and ~7.8 s per model call, a 30-minute budget
-  is about $2 — latency binds long before cost does.
+- **Budget is time, not money.** Measured on a real boundary at ~$0.033 and ~15 s per model call, a
+  30-minute budget buys roughly 120 calls for about a dollar — latency binds long before cost does.
 - **Injection can change what the worker attempts, never what it can touch.** But it also reaches
   the session reading, so your review of the agreement is load-bearing rather than a formality.
 
