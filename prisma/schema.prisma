@@ -1,27 +1,26 @@
 // Propositum — local-first SQLite schema.
 //
-// DELIBERATELY MINIMAL. This file holds only what is needed to prove the
-// runtime stands up. The real schema is owned by issue #12 (artifact,
-// versioning and ledger model) and must not be written here ahead of it.
+// Vocabulary is CONTEXT.md. Every model here is a term defined there; nothing
+// here invents a name. Terms marked "computed view" in CONTEXT.md deliberately
+// have NO table — EnforcedPolicy, Shift, ExecutionPlan, ActionStatus.
 //
-// Two findings from docs/research/append-only-persistence.md bind whoever
-// writes that schema, and are recorded here so they are not rediscovered:
+// ── Two things Prisma's SQLite provider cannot express ────────────────────
 //
-//   1. Prisma's SQLite migrations DROP TRIGGERS on any table rebuild —
-//      dropped column, changed column, added required column, PK or FK
-//      change. Exit code 0, no warning. Append-only enforcement therefore
-//      has to be reinstalled AND VERIFIED at every app startup, after
-//      `migrate deploy`. It is a runtime invariant, not a migration artifact.
+// 1. NO ENUMS. Prisma enums are Postgres/MySQL only. Every closed set below is
+//    a String, and the authoritative definition is the Zod schema in
+//    src/domain. The comment on each field lists the members; the comment is
+//    documentation, the Zod schema is the constraint.
 //
-//   2. Append-only needs THREE triggers per table, not two. `INSERT OR
-//      REPLACE` walks straight through a no-UPDATE + no-DELETE pair because
-//      `PRAGMA recursive_triggers` defaults OFF, so the delete trigger never
-//      fires. The third is a no-replace BEFORE INSERT guard.
+// 2. NO TRIGGERS. Append-only is enforced by triggers in prisma/triggers.sql,
+//    installed and VERIFIED at every startup by src/persistence/append-only.ts.
+//    This is not belt-and-braces — Prisma's SQLite migrations DROP TRIGGERS on
+//    any table rebuild (dropped column, changed column, added required column,
+//    PK or FK change) with exit code 0 and no warning. The guard is a runtime
+//    invariant, not a migration artifact. See ADR-0003.
 //
-// Unverified and carried to this ticket: whether Prisma emits `BEGIN
-// IMMEDIATE` or a deferred `BEGIN` for `$transaction`. A deferred read-then-
-// write on the run-claim path fails with SQLITE_BUSY_SNAPSHOT, which the busy
-// timeout does not retry.
+// Verified for the run-claim path: Prisma 6.19.3 emits BEGIN IMMEDIATE for both
+// interactive and batch $transaction, so no raw SQL is needed. Locked in by
+// tests/prisma-transaction-mode.test.ts.
 
 generator client {
   provider = "prisma-client-js"
@@ -33,17 +32,528 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-/// The single durable workspace the user creates explicitly. Owns every
-/// ApprovedSource, Document and WorkSession.
-///
-/// Holds no objective, no status and no free-text description — per
-/// CONTEXT.md, a description that inference reads is a project goal in
-/// disguise, and it would silently pre-answer whether the human declares
-/// what they are working on.
+// ═══════════════════════════════════════════════════════════ 1. Observation
+
+/// The single durable workspace. Owns every ApprovedSource, Document and
+/// WorkSession. Holds no objective, no status and no description — a
+/// description that inference reads is a project goal in disguise.
 model Project {
   id        String   @id @default(cuid())
   name      String
   createdAt DateTime @default(now())
 
+  sources   ApprovedSource[]
+  sessions  WorkSession[]
+  documents Document[]
+
   @@map("project")
+}
+
+/// One explicitly started and explicitly ended stretch of desk time. A sitting,
+/// not a single intention. Survives handoffs, idle, lid close, sleep, service
+/// worker death and permission revocation — only a human act ends it.
+model WorkSession {
+  id        String    @id @default(cuid())
+  projectId String
+  /// SessionPhase: observing | away | ended
+  phase     String    @default("observing")
+  startedAt DateTime  @default(now())
+  endedAt   DateTime?
+
+  project   Project            @relation(fields: [projectId], references: [id])
+  events    ObservationEvent[]
+  readings  SessionReading[]
+  contracts HandoffContract[]
+
+  @@index([projectId])
+  @@map("work_session")
+}
+
+/// An origin pattern the human approved for this Project, mirroring a Chrome
+/// host-permission grant. Approval scopes where Propositum may LOOK; it confers
+/// no trust on what is found there.
+model ApprovedSource {
+  id              String   @id @default(cuid())
+  projectId       String
+  originPattern   String
+  label           String
+  /// granted | revoked
+  grantState      String   @default("granted")
+  grantCheckedAt  DateTime @default(now())
+
+  project Project            @relation(fields: [projectId], references: [id])
+  events  ObservationEvent[]
+
+  @@unique([projectId, originPattern])
+  @@map("approved_source")
+}
+
+/// APPEND-ONLY. One deterministic, timestamped record of a single thing that
+/// happened. Written by the single ledger writer, NEVER minted by a model — if
+/// a model emitted events, an inference would cite the event and the event
+/// would BE the inference, making H1 unmeasurable.
+model ObservationEvent {
+  id               String   @id @default(cuid())
+  sessionId        String
+  /// Ledger-assigned, gapless by construction. The ordering key.
+  seq              Int
+  /// Adapter-assigned. A skip or regression is a GAP SIGNAL, never an ordering key.
+  sourceSeq        Int?
+  observedAt       DateTime
+  /// Source-supplied, so a 40-minute fixture replays in 400ms. Never Date.now().
+  elapsedMs        Int
+  /// ObservationKind: visited | queried | excerpted | engaged | returnedTo |
+  /// switchedAway | documentEdited | note | sourceApproved | captureGap
+  kind             String
+  approvedSourceId String?
+  documentId       String?
+  /// Values Chrome or Propositum itself asserted. Safe to reason over.
+  attested         Json
+  /// UntrustedContent — anything a page could have authored. NOTHING here may
+  /// influence a policy decision, be treated as an instruction, or enter a
+  /// prompt without datamarking. Carried structurally, not by a per-field flag.
+  untrusted        Json?
+
+  session WorkSession     @relation(fields: [sessionId], references: [id])
+  source  ApprovedSource? @relation(fields: [approvedSourceId], references: [id])
+
+  @@unique([sessionId, seq])
+  @@index([sessionId, kind])
+  @@map("observation_event")
+}
+
+// ═══════════════════════════════════════════════════════════ 2. Inference
+
+/// A structured interpretation of a WorkSession. Named "Reading" rather than
+/// "State" so it never collides with SessionPhase in the authorization path.
+model SessionReading {
+  id         String   @id @default(cuid())
+  sessionId  String
+  createdAt  DateTime @default(now())
+  /// Highest ObservationEvent.seq this reading saw. Makes the reading
+  /// reproducible and tells the eval exactly what input produced it.
+  throughSeq Int
+  /// Set only on references authored for the eval harness, before any model
+  /// output exists. A reference is never edited after a run.
+  isReference Boolean @default(false)
+
+  session   WorkSession       @relation(fields: [sessionId], references: [id])
+  claims    SessionClaim[]
+  contracts HandoffContract[]
+
+  @@index([sessionId])
+  @@map("session_reading")
+}
+
+/// One assertion within a reading. Flat object with a `kind` string, NOT a
+/// discriminated union — `const` is verified not to survive schema
+/// transformation (#3), so a bad discriminator would make the whole union
+/// unresolvable, whereas a flat shape fails on one named field.
+model SessionClaim {
+  id        String @id @default(cuid())
+  readingId String
+  /// objective | completed | openThread | constraint | nextAction | uncertainty
+  kind      String
+  text      String
+  /// Per claim, never per reading. Revision-level authorship would launder
+  /// every unedited inferred claim into a human assertion the moment the human
+  /// fixes one word — and make handoff correction rate uncomputable.
+  /// inferred | human | edited
+  origin    String @default("inferred")
+  /// ObjectiveConfidence, on the objective claim only: high | medium | low.
+  /// Never a number, never compared against a tunable threshold, and NOT a
+  /// control-flow input — Take Over gates on an objective existing and having
+  /// been seen, not on the band.
+  confidence String?
+  ordinal    Int
+
+  reading  SessionReading @relation(fields: [readingId], references: [id])
+  evidence Evidence[]
+
+  @@index([readingId, kind])
+  @@map("session_claim")
+}
+
+/// The link from one claim to one ObservationEvent, plus an optional verified
+/// quote. A claim whose every cited id fails to resolve FAILS VALIDATION — an
+/// inference with no provenance violates a binding constraint.
+model Evidence {
+  id      String  @id @default(cuid())
+  claimId String
+  eventId String
+  /// Kept only if it matches a canonical normalised form of the cited event's
+  /// stored text. Raw substring matching would discard nearly every quote,
+  /// because the injection defence guarantees the model never saw the raw
+  /// string. Discarded quotes are COUNTED — fabricated support is an H1 datum.
+  quote   String?
+
+  claim SessionClaim @relation(fields: [claimId], references: [id])
+
+  @@index([claimId])
+  @@map("evidence")
+}
+
+// ═══════════════════════════════════════════════════════════ 3. Handoff
+
+/// The persisted, human-ratified agreement governing exactly one autonomous
+/// continuation. No AgentRun may start from an unaccepted contract, and NOTHING
+/// in the controls can switch off human ratification.
+model HandoffContract {
+  id        String    @id @default(cuid())
+  sessionId String
+  readingId String
+  /// draft | accepted — two values only. Supersession would be derived from a
+  /// successor's supersedesId, so the immutability trigger has a single job.
+  status    String    @default("draft")
+  /// The shift start AND the origin of the deadline, so a crash-restart cannot
+  /// silently reset the budget. Deadline is DERIVED, never stored.
+  acceptedAt DateTime?
+
+  /// StatedIntent — human-ratified but still PROSE, because spans of it
+  /// originate in page-derived text. compilePolicy's parameter types are
+  /// constructed so they cannot receive this.
+  objective        String
+  definitionOfDone String
+  /// Deliberately unenforceable, labelled as such in the UI. Human-typed only —
+  /// an inferred `constraint` claim NEVER pre-populates it.
+  guidance         Json
+
+  /// ContractScope — deny by default, no denylist. A second mechanism would
+  /// create a precedence question with no principled answer.
+  approvedSourceIds  Json
+  /// ActionKind[]: read-approved-source | read-document | draft-section
+  allowedActionKinds Json
+  baseVersionId      String
+
+  /// AutonomyControls. Absent from every model-facing schema; defaults are
+  /// static product constants, never model-proposed.
+  /// follow-closely | use-judgment
+  initiative       String
+  /// current-step-only | remaining-plan
+  progress         String
+  /// suggestions-only | draft-changes — a REAL permission: suggestions-only
+  /// removes draft-section from allowedActionKinds.
+  output           String
+  /// stop-when-uncertain | stop-only-when-blocked
+  interruption     String
+  /// Time only. Never a cost ceiling — measured at ~$0.009 and ~7.8s per call,
+  /// a 30-minute budget is about $2, so latency binds and cost never does.
+  timeLimitMinutes Int
+
+  session     WorkSession     @relation(fields: [sessionId], references: [id])
+  reading     SessionReading  @relation(fields: [readingId], references: [id])
+  baseVersion DocumentVersion @relation(fields: [baseVersionId], references: [id])
+  runs        AgentRun[]
+  changesets  Changeset[]
+  report      ShiftReport?
+
+  @@index([sessionId])
+  @@map("handoff_contract")
+}
+
+// ═══════════════════════════════════════════════════════════ 4. Execution
+
+/// One ephemeral worker-or-reviewer execution. Queue entry and domain record in
+/// ONE row — two stores for one truth is how a UI comes to show something the
+/// gate cannot enforce.
+///
+/// MUTABLE BY DESIGN. The ledger is append-only; this row is not. It is the
+/// claim target, and a claim is by definition a mutation.
+model AgentRun {
+  id         String   @id @default(cuid())
+  contractId String
+  /// worker | reviewer
+  role       String
+  /// pending | claimed | running | succeeded | failed | interrupted
+  status     String   @default("pending")
+  /// lease-expired | budget-exhausted | stop-condition | cancelled | error
+  terminalReason String?
+  createdAt  DateTime @default(now())
+  startedAt  DateTime?
+  endedAt    DateTime?
+  /// Renewed by the worker. A startup sweep marks expired leases `interrupted`
+  /// — Node never kills its children, so orphans are the default, not the edge.
+  leaseUntil DateTime?
+  /// Monotonic high-water mark, so PlanSteps stay immutable.
+  progressStep Int @default(0)
+
+  contract HandoffContract   @relation(fields: [contractId], references: [id])
+  steps    PlanStep[]
+  intents  ActionIntent[]
+  calls    ModelCallRecord[]
+  findings ReviewFinding[]
+
+  @@index([status, createdAt])
+  @@index([contractId])
+  @@map("agent_run")
+}
+
+/// One step of the ExecutionPlan. The plan itself is a COMPUTED VIEW — an
+/// ordered list, not a bounded graph. A graph implies dependencies and
+/// parallelism one worker and one reviewer cannot use.
+model PlanStep {
+  id      String @id @default(cuid())
+  runId   String
+  ordinal Int
+  intent  String
+
+  run     AgentRun       @relation(fields: [runId], references: [id])
+  intents ActionIntent[]
+
+  @@unique([runId, ordinal])
+  @@map("plan_step")
+}
+
+/// APPEND-ONLY. One row per gate evaluation, written and COMMITTED BEFORE any
+/// effect. A run that dies mid-action must still show what it was attempting —
+/// that is exactly when the audit story matters most.
+///
+/// A REFUSAL is an ActionIntent with authorized=false and no ActionOutcome. It
+/// is evidence about H3, so it must be queryable.
+model ActionIntent {
+  id         String   @id @default(cuid())
+  runId      String
+  stepId     String?
+  seq        Int
+  /// ActionKind: read-approved-source | read-document | draft-section
+  kind       String
+  /// Why the worker proposed this. Exists BEFORE the action runs.
+  reason     String
+  params     Json
+  authorized Boolean
+  /// Set only when authorized=false. Deterministic rule id, never prose:
+  /// e.g. source_not_approved, action_kind_not_allowed, budget_exhausted,
+  /// unknown_action_kind.
+  refusedRule String?
+  createdAt  DateTime @default(now())
+
+  run     AgentRun       @relation(fields: [runId], references: [id])
+  step    PlanStep?      @relation(fields: [stepId], references: [id])
+  outcome ActionOutcome?
+
+  @@unique([runId, seq])
+  @@index([runId, authorized])
+  @@map("action_intent")
+}
+
+/// APPEND-ONLY. Written after the action completes. Separate from ActionIntent
+/// because the reason precedes the action and the result follows it — one row
+/// holding both would force an UPDATE, which append-only forbids. This split
+/// resolves a contradiction in the founding brief's own ActionRecord definition.
+model ActionOutcome {
+  id        String   @id @default(cuid())
+  intentId  String   @unique
+  /// succeeded | failed
+  result    String
+  /// within_scope | out_of_scope | unverified. `unverified` covers both
+  /// "nothing happened" and "we cannot tell" — and under the sleep constraint
+  /// it is the ROUTINE value, not the exception.
+  scopeVerdict String
+  detail    String?
+  /// For draft-section actions only.
+  draftText String?
+  createdAt DateTime @default(now())
+
+  intent ActionIntent @relation(fields: [intentId], references: [id])
+
+  @@map("action_outcome")
+}
+
+/// APPEND-ONLY. Every model call, for traceability and cost. Distinct from
+/// ActionIntent: a model call is not an action the person authorized, and the
+/// ledger they READ must not list them.
+model ModelCallRecord {
+  id           String   @id @default(cuid())
+  runId        String?
+  /// session-reading | handoff | plan | worker-action | review | shift-report
+  boundary     String
+  model        String
+  promptVersion String
+  inputTokens  Int
+  outputTokens Int
+  latencyMs    Int
+  /// end_turn | max_tokens | refusal | stop_sequence
+  stopReason   String?
+  /// none | schema-mismatch | truncation | refusal | transport
+  failureKind  String?
+  repairTurns  Int      @default(0)
+  createdAt    DateTime @default(now())
+
+  run AgentRun? @relation(fields: [runId], references: [id])
+
+  @@index([runId])
+  @@map("model_call_record")
+}
+
+// ══════════════════════════════════════════════ 5. Documents and review
+
+/// A Markdown document. Not "Artifact" — slice 0 has exactly one content type,
+/// and a supertype with one subtype is speculative generality.
+model Document {
+  id        String   @id @default(cuid())
+  projectId String
+  title     String
+  createdAt DateTime @default(now())
+
+  project  Project           @relation(fields: [projectId], references: [id])
+  versions DocumentVersion[]
+
+  @@index([projectId])
+  @@map("document")
+}
+
+/// INSERT-ONLY. A full content snapshot, normalised to one sentence per line.
+///
+/// Snapshots rather than diffs: a local single-user Markdown document is small,
+/// and an immutable base that can be read without replaying a chain is worth
+/// far more than the bytes.
+model DocumentVersion {
+  id         String   @id @default(cuid())
+  documentId String
+  ordinal    Int
+  /// sha256 of `content`. Gates refuse-on-drift — the human is never locked out
+  /// of their own document, so the base CAN move under a live Shift, and this
+  /// is how review detects it.
+  contentHash String
+  content    String
+  /// human | accepted-changeset. Null run means the human wrote it directly.
+  origin     String
+  createdAt  DateTime @default(now())
+
+  document   Document          @relation(fields: [documentId], references: [id])
+  contracts  HandoffContract[]
+  changesets Changeset[]
+
+  @@unique([documentId, ordinal])
+  @@map("document_version")
+}
+
+/// INSERT-ONLY. The set of changes one Shift proposes against an immutable base.
+///
+/// The worker returns PROSE, not patches; deterministic code diffs it against
+/// the base to produce these. The model never asserts what changed — only what
+/// the text should say. That is "models propose, deterministic code authorizes"
+/// applied to document editing.
+model Changeset {
+  id            String   @id @default(cuid())
+  contractId    String
+  baseVersionId String
+  /// Re-checked at review time. If the base moved, the whole changeset is
+  /// refused rather than merged — the human's own edit always wins.
+  baseHash      String
+  createdAt     DateTime @default(now())
+
+  contract HandoffContract  @relation(fields: [contractId], references: [id])
+  base     DocumentVersion  @relation(fields: [baseVersionId], references: [id])
+  changes  ProposedChange[]
+
+  @@index([contractId])
+  @@map("changeset")
+}
+
+/// One proposed change, addressed by character offsets into the BASE version.
+///
+/// Offsets are safe because review produces DECISIONS, NEVER DOCUMENTS:
+/// materialise(base, changes, decisions) is a pure right-to-left fold, so
+/// accepting one change never shifts another. Heading-path addressing was
+/// rejected — it cannot distinguish two changes inside one section, and
+/// renaming a heading is a likely edit, so the anchor breaks precisely when the
+/// worker does its job well.
+model ProposedChange {
+  id          String @id @default(cuid())
+  changesetId String
+  /// Character offsets into base content.
+  startOffset Int
+  endOffset   Int
+  /// W3C-style quote anchor, verified against the base before rendering.
+  prefix      String
+  exact       String
+  suffix      String
+  replacement String
+  /// Why this change. Shown inline without cluttering the diff.
+  reason      String
+
+  changeset Changeset       @relation(fields: [changesetId], references: [id])
+  verdict   ChangeVerdict?
+  findings  ReviewFinding[]
+
+  @@index([changesetId])
+  @@map("proposed_change")
+}
+
+/// APPEND-ONLY. The human's decision on one ProposedChange. These are what
+/// review produces — never a materialised document.
+model ChangeVerdict {
+  id        String   @id @default(cuid())
+  changeId  String   @unique
+  /// accept | reject | edit
+  verdict   String
+  /// Set only when verdict = edit.
+  editedText String?
+  createdAt DateTime @default(now())
+
+  change ProposedChange @relation(fields: [changeId], references: [id])
+
+  @@map("change_verdict")
+}
+
+/// The reviewer's annotation on a change. DISPLAY ONLY — scope adherence is
+/// scored from deterministic fields, so a finding grants and blocks nothing.
+/// The reviewer is close to decorative in slice 0; the brief mandates it, and
+/// whether it earns its place is a measured question, not an assumed answer.
+model ReviewFinding {
+  id       String @id @default(cuid())
+  runId    String
+  changeId String?
+  /// unsupported | outside-agreement | unclear | contradicts-source
+  kind     String
+  detail   String
+
+  run    AgentRun        @relation(fields: [runId], references: [id])
+  change ProposedChange? @relation(fields: [changeId], references: [id])
+
+  @@index([runId])
+  @@map("review_finding")
+}
+
+// ═══════════════════════════════════════════════════════════ 6. Re-entry
+
+/// A judgment call Propositum declined to make. Rendered as a decision, never
+/// as an error.
+model DecisionNeeded {
+  id         String   @id @default(cuid())
+  reportId   String
+  question   String
+  /// Why it stopped rather than guessing.
+  whyStopped String
+  /// What it would need in order to proceed.
+  needs      String
+  ordinal    Int
+
+  report ShiftReport @relation(fields: [reportId], references: [id])
+
+  @@index([reportId])
+  @@map("decision_needed")
+}
+
+/// The re-entry artifact for one Shift. Written IN THE APP PROCESS when the
+/// human returns — never by an AgentRun. A report producible only by a live
+/// runner cannot exist on `interrupted`, the outcome that most needs one.
+///
+/// Holds ONE model-authored narrative line. Every other section is a
+/// deterministic rendering of durable rows: completed work from the ledger,
+/// changes from the Changeset, refusals from ActionIntents, gaps from
+/// captureGap events, decisions from DecisionNeeded, stop from AgentRun.
+/// If the narrative boundary fails, the report renders without it.
+model ShiftReport {
+  id         String   @id @default(cuid())
+  contractId String   @unique
+  /// Nullable on purpose — see above.
+  narrative  String?
+  createdAt  DateTime @default(now())
+
+  contract  HandoffContract  @relation(fields: [contractId], references: [id])
+  decisions DecisionNeeded[]
+
+  @@map("shift_report")
 }
