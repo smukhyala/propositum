@@ -1,0 +1,49 @@
+// Propositum — local-first SQLite schema.
+//
+// DELIBERATELY MINIMAL. This file holds only what is needed to prove the
+// runtime stands up. The real schema is owned by issue #12 (artifact,
+// versioning and ledger model) and must not be written here ahead of it.
+//
+// Two findings from docs/research/append-only-persistence.md bind whoever
+// writes that schema, and are recorded here so they are not rediscovered:
+//
+//   1. Prisma's SQLite migrations DROP TRIGGERS on any table rebuild —
+//      dropped column, changed column, added required column, PK or FK
+//      change. Exit code 0, no warning. Append-only enforcement therefore
+//      has to be reinstalled AND VERIFIED at every app startup, after
+//      `migrate deploy`. It is a runtime invariant, not a migration artifact.
+//
+//   2. Append-only needs THREE triggers per table, not two. `INSERT OR
+//      REPLACE` walks straight through a no-UPDATE + no-DELETE pair because
+//      `PRAGMA recursive_triggers` defaults OFF, so the delete trigger never
+//      fires. The third is a no-replace BEFORE INSERT guard.
+//
+// Unverified and carried to this ticket: whether Prisma emits `BEGIN
+// IMMEDIATE` or a deferred `BEGIN` for `$transaction`. A deferred read-then-
+// write on the run-claim path fails with SQLITE_BUSY_SNAPSHOT, which the busy
+// timeout does not retry.
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../node_modules/.prisma/client"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+/// The single durable workspace the user creates explicitly. Owns every
+/// ApprovedSource, Document and WorkSession.
+///
+/// Holds no objective, no status and no free-text description — per
+/// CONTEXT.md, a description that inference reads is a project goal in
+/// disguise, and it would silently pre-answer whether the human declares
+/// what they are working on.
+model Project {
+  id        String   @id @default(cuid())
+  name      String
+  createdAt DateTime @default(now())
+
+  @@map("project")
+}
