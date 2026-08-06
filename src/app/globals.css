@@ -1,0 +1,36 @@
+/* Scaffold only. Real design direction is owned by issue #16 (the re-entry
+   screen prototype) — do not build a design system here ahead of it. */
+
+:root {
+  --bg: #fbfbfa;
+  --fg: #1a1a18;
+  --muted: #6b6b66;
+  --rule: #e4e4e0;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #131312;
+    --fg: #eeeeec;
+    --muted: #8f8f88;
+    --rule: #2a2a27;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}

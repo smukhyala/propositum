@@ -224,9 +224,10 @@ word — the same category error the observation layer forbids, arriving one lay
 is watching — and it would make handoff-correction-rate uncomputable.
 
 The model emits no ids and no cross-references: the grammar cannot enforce referential integrity,
-so we do not ask for it. Flat object with a `kind` string, not a discriminated union — if `const`
-does not survive schema transformation, a bad discriminator makes the whole union unresolvable and
-the repair message useless, whereas a flat shape fails on one named field.
+so we do not ask for it. Flat object with a `kind` string, **not a discriminated union** — `const`
+is **verified not to survive** schema transformation ([#3](https://github.com/smukhyala/propositum/issues/3)),
+so a bad discriminator makes the whole union unresolvable and the repair message useless, whereas a
+flat shape fails on one named field.
 
 **A `constraint` claim is display-only — decided.** It may be inferred, stored, and scored (the
 eval requires a constraint measure), and it renders on the pre-handoff screen as an **attributed
@@ -946,7 +947,11 @@ Recorded so they are found deliberately rather than discovered.
   Labels erode. The eval must score a guidance violation as bad work (H2), never as a bad stop (H3).
 - **One PlanStep is one action, and the plan is never revised mid-run.** The first fixture where the
   worker learns something in step 2 that invalidates step 1 will expose this.
-- **The SDK enum finding is unverified** ([#3](https://github.com/smukhyala/propositum/issues/3)).
+- **~~The SDK enum finding is unverified~~ — VERIFIED 2026-08-06** ([#3](https://github.com/smukhyala/propositum/issues/3)).
+  `enum`, `const`, `default`, `minLength`, `maxLength` and `pattern` are all dropped and folded into
+  `description` as prose; `z.record()` collapses so the empty object is the only legal value. The
+  grammar enforces **shape only**. Locked in by `tests/schema-transformation.test.ts`, which will
+  fail if an SDK or Zod upgrade changes it. Original risk text follows, now settled:
   Three model-facing enums remain — `SessionClaim.kind`, the objective confidence band, and
   `ActionKind` in worker proposals. All fail closed, so nothing unsafe reaches persistence either
   way; if the finding is wrong we are paying repair turns we did not need.
