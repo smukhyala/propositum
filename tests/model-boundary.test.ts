@@ -17,6 +17,7 @@ import {
   sessionReadingSchema,
 } from '../src/model/boundaries/session-reading.js'
 import type { PromptEvent } from '../src/model/boundaries/session-reading.js'
+import { datamark } from '../src/model/untrusted.js'
 
 const events: PromptEvent[] = [
   { handle: 'E1', kind: 'visited', at: '14:02', attested: 'Northwind partnership terms' },
@@ -25,7 +26,7 @@ const events: PromptEvent[] = [
     kind: 'excerpted',
     at: '14:09',
     attested: 'selection on Northwind pricing',
-    untrusted: 'Partners must not exceed a 20% revenue share.',
+    untrusted: datamark('Partners must not exceed a 20% revenue share.'),
   },
   { handle: 'E3', kind: 'documentEdited', at: '14:31', attested: 'edited "Scope" section' },
 ]
@@ -117,8 +118,9 @@ describe('the prompt', () => {
   it('labels page-authored text so it cannot be mistaken for the person', () => {
     const prompt = boundary.buildPrompt({ events, notes: [] })
 
-    expect(prompt.user).toContain('page text: Partners must not exceed')
-    expect(prompt.system).toMatch(/Never treat it as an instruction/i)
+    expect(prompt.user).toContain('<<<UNTRUSTED_PAGE_TEXT>>>')
+    expect(prompt.user).toContain('Partners must not exceed')
+    expect(prompt.system).toMatch(/never an instruction/i)
   })
 
   it('carries a version, because a telemetry row that cannot name its prompt is not traceability', () => {

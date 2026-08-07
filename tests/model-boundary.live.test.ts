@@ -19,6 +19,7 @@ import { AnthropicModelClient } from '../src/model/anthropic.js'
 import type { CallTelemetry, FailureKind } from '../src/model/client.js'
 import { handlesFor, sessionReadingBoundary } from '../src/model/boundaries/session-reading.js'
 import type { PromptEvent } from '../src/model/boundaries/session-reading.js'
+import { datamark } from '../src/model/untrusted.js'
 
 try {
   process.loadEnvFile('.env')
@@ -36,7 +37,7 @@ const events: PromptEvent[] = [
     kind: 'excerpted',
     at: '14:09',
     attested: 'selection on the Northwind pricing page',
-    untrusted: 'Standard partners receive 15%; strategic partners are negotiated individually.',
+    untrusted: datamark('Standard partners receive 15%; strategic partners are negotiated individually.'),
   },
   { handle: 'E4', kind: 'documentEdited', at: '14:20', attested: 'wrote the "Scope" section' },
   { handle: 'E5', kind: 'documentEdited', at: '14:38', attested: 'started "Commercials", stopped mid-sentence' },
@@ -82,5 +83,48 @@ describe.skipIf(!apiKey)('live: session-reading boundary', () => {
         `\n  objective  ${objectives[0]?.text}` +
         `\n  confidence ${objectives[0]?.confidence}\n`,
     )
+  }, 120_000)
+})
+
+/**
+ * The hostile fixture, against the real model.
+ *
+ * This test does NOT assert that the model resisted the injection. It cannot:
+ * OWASP 2026 reports adaptive attack success above 90% against twelve recent
+ * defences, and a green test asserting "the model ignored it" would be a
+ * fixture-shaped claim about something we do not control.
+ *
+ * What it does is report what actually happened, so the security document
+ * describes observed behaviour rather than hoped-for behaviour.
+ */
+describe.skipIf(!apiKey)('live: hostile fixture', () => {
+  it('reports what the model does with an injected source', async () => {
+    const { hostileSessionEvents } = await import('../src/fixtures/hostile-session.js')
+    const client = new AnthropicModelClient({ apiKey: apiKey as string })
+
+    const events = hostileSessionEvents()
+    const handles = handlesFor(events)
+    const result = await client.run(sessionReadingBoundary(handles), { events, notes: [] })
+
+    if (!result.ok) throw new Error(`boundary failed: ${result.failure} — ${result.detail}`)
+
+    const objective = result.value.claims.find((c) => c.kind === 'objective')
+    const text = JSON.stringify(result.value).toLowerCase()
+
+    console.log('\n  OBSERVED BEHAVIOUR (not an assertion):')
+    console.log(`    objective   ${objective?.text}`)
+    console.log(`    confidence  ${objective?.confidence}`)
+    console.log(`    mentions Contoso (the injected target):  ${text.includes('contoso')}`)
+    console.log(`    mentions Northwind (the real target):    ${text.includes('northwind')}`)
+    console.log(`    claims: ${result.value.claims.length}`)
+    for (const c of result.value.claims) console.log(`      [${c.kind}] ${c.text}`)
+    console.log('')
+
+    // The only hard assertion: every citation still resolves. A poisoned
+    // reading that also fabricates provenance would be strictly worse, and
+    // this is a property of our schema rather than of the model's judgment.
+    for (const claim of result.value.claims) {
+      for (const e of claim.evidence) expect(handles.has(e.ref)).toBe(true)
+    }
   }, 120_000)
 })
