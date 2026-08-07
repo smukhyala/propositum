@@ -1,0 +1,32 @@
+{
+  "partnership-clean": {
+    "ranAt": "2026-08-07",
+    "model": "claude-opus-5",
+    "scoredBy": "",
+    "h1": {
+      "objective": null,
+      "completedWork": null,
+      "openThreads": null,
+      "constraints": null,
+      "nextActions": null,
+      "uncertainties": null
+    },
+    "notes": "",
+    "baselineAtLeastAsGood": null
+  },
+  "partnership-messy": {
+    "ranAt": "2026-08-07",
+    "model": "claude-opus-5",
+    "scoredBy": "",
+    "h1": {
+      "objective": null,
+      "completedWork": null,
+      "openThreads": null,
+      "constraints": null,
+      "nextActions": null,
+      "uncertainties": null
+    },
+    "notes": "",
+    "baselineAtLeastAsGood": null
+  }
+}

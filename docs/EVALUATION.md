@@ -11,6 +11,8 @@ npm run eval -- --dry        # exercise the harness against a fake model, no cos
 npm run eval                 # run against the real model
 npm run eval -- --baseline   # also run the raw-log baseline
 npm run eval -- --seal       # seal any unsealed references
+npm run eval -- --worksheet  # create blank score slots in eval-scores.json
+npm run eval -- --report     # apply the H1 gates to what you have scored
 ```
 
 ---
@@ -73,6 +75,32 @@ model judge quietly removes.
 
 Revisit if the corpus outgrows one person, but on a measured judge/human agreement rate, not on
 convenience.
+
+## Entering scores
+
+Scores live in **`eval-scores.json`**, committed to git. Not a database and not a CLI prompt — a
+diffable file, because the useful property is that a changed score shows up in review with a date
+beside it. Same reasoning as sealing: the risk is not dishonesty, it is a number quietly softening
+between runs.
+
+```bash
+npm run eval -- --baseline    # run, and read the worksheets
+npm run eval -- --worksheet   # create blank slots
+$EDITOR eval-scores.json      # 0/1/2 per component, plus scoredBy
+npm run eval -- --report      # apply the gates
+```
+
+`null` means *not yet scored* and is distinct from `0`, which is a judgment. `--report` refuses to
+total a partial entry — a partial total is not a result.
+
+Two fields exist to stop things being skipped:
+
+- **`scoredBy`** — required. n=1 today; the field is there so it stops being n=1 visibly rather than
+  by nobody noticing.
+- **`baselineAtLeastAsGood`** — the question the baseline exists to answer, asked explicitly. When
+  true, `--report` prints a warning that `SessionReading` may not be earning its place.
+
+`notes` is free text. The number alone is not a finding.
 
 ## The baseline
 
