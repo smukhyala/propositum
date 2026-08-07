@@ -1,0 +1,513 @@
+<title>While you were away — Propositum prototype</title>
+
+<style>
+  :root {
+    --ground: #fafaf8;
+    --raised: #f3f3ef;
+    --ink: #1c1d21;
+    --muted: #6e7076;
+    --faint: #9a9ca2;
+    --rule: #e2e2de;
+    --accent: #5b54c9;
+    --accent-soft: #eeedfa;
+    --attention: #9c4708;
+    --attention-soft: #fbf1e7;
+    --attention-rule: #e6c9a8;
+    --added: #2f6b4f;
+    --added-soft: #eaf3ee;
+    --removed: #9d3838;
+    --removed-soft: #f8ecec;
+
+    --serif: ui-serif, "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+    --sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+
+    --rail: 5.5rem;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ground: #16171a;
+      --raised: #1e1f23;
+      --ink: #e8e8e4;
+      --muted: #9698a0;
+      --faint: #6b6d75;
+      --rule: #2a2b30;
+      --accent: #9d97f0;
+      --accent-soft: #23233a;
+      --attention: #dfa066;
+      --attention-soft: #2a2119;
+      --attention-rule: #4d3a25;
+      --added: #7cc3a0;
+      --added-soft: #1a2620;
+      --removed: #dd8f8f;
+      --removed-soft: #2a1d1d;
+    }
+  }
+
+  :root[data-theme="light"] {
+    --ground: #fafaf8; --raised: #f3f3ef; --ink: #1c1d21; --muted: #6e7076;
+    --faint: #9a9ca2; --rule: #e2e2de; --accent: #5b54c9; --accent-soft: #eeedfa;
+    --attention: #9c4708; --attention-soft: #fbf1e7; --attention-rule: #e6c9a8;
+    --added: #2f6b4f; --added-soft: #eaf3ee; --removed: #9d3838; --removed-soft: #f8ecec;
+  }
+
+  :root[data-theme="dark"] {
+    --ground: #16171a; --raised: #1e1f23; --ink: #e8e8e4; --muted: #9698a0;
+    --faint: #6b6d75; --rule: #2a2b30; --accent: #9d97f0; --accent-soft: #23233a;
+    --attention: #dfa066; --attention-soft: #2a2119; --attention-rule: #4d3a25;
+    --added: #7cc3a0; --added-soft: #1a2620; --removed: #dd8f8f; --removed-soft: #2a1d1d;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 15px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .sheet {
+    max-width: 54rem;
+    margin: 0 auto;
+    padding: 3.5rem 1.5rem 6rem;
+  }
+
+  /* ── the note's masthead ────────────────────────────────────── */
+
+  .masthead { margin-bottom: 3rem; }
+
+  .kicker {
+    font-family: var(--mono);
+    font-size: 0.6875rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 0.75rem;
+  }
+
+  h1 {
+    font-family: var(--serif);
+    font-size: clamp(2rem, 5vw, 2.75rem);
+    font-weight: 400;
+    letter-spacing: -0.015em;
+    line-height: 1.1;
+    text-wrap: balance;
+    margin: 0 0 1rem;
+  }
+
+  .window {
+    font-family: var(--mono);
+    font-size: 0.8125rem;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .window .imprecise { border-bottom: 1px dotted var(--faint); cursor: help; }
+
+  /* the single model-authored sentence — the only prose here a model wrote */
+  .narrative {
+    font-family: var(--serif);
+    font-size: 1.3125rem;
+    line-height: 1.5;
+    letter-spacing: -0.005em;
+    margin: 2rem 0 0;
+    padding-left: 1.25rem;
+    border-left: 2px solid var(--accent);
+    text-wrap: pretty;
+  }
+
+  /* ── the time rail ──────────────────────────────────────────── */
+
+  section { margin-top: 3.25rem; }
+
+  h2 {
+    font-family: var(--sans);
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0 0 1.25rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid var(--rule);
+  }
+
+  .log { display: grid; gap: 0; }
+
+  .entry {
+    display: grid;
+    grid-template-columns: var(--rail) 1fr;
+    gap: 1rem;
+    padding: 0.75rem 0;
+    border-bottom: 1px solid var(--rule);
+    align-items: baseline;
+  }
+  .entry:last-child { border-bottom: none; }
+
+  .at {
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    color: var(--faint);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  .what { margin: 0; }
+  .why {
+    margin: 0.25rem 0 0;
+    font-size: 0.875rem;
+    color: var(--muted);
+  }
+
+  /* state reads without colour: a glyph and a word carry it too */
+  .mark {
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    font-weight: 600;
+    margin-right: 0.4rem;
+  }
+  .mark.done { color: var(--added); }
+  .mark.stopped { color: var(--attention); }
+  .mark.refused { color: var(--muted); }
+  .mark.unknown { color: var(--faint); }
+
+  /* ── what I need from you: breaks the column deliberately ───── */
+
+  .needs {
+    margin: 3.25rem -1.5rem;
+    padding: 2rem 1.5rem;
+    background: var(--attention-soft);
+    border-top: 1px solid var(--attention-rule);
+    border-bottom: 1px solid var(--attention-rule);
+  }
+  @media (min-width: 40rem) {
+    .needs { margin-left: -2.5rem; margin-right: -2.5rem; padding: 2.25rem 2.5rem; }
+  }
+
+  .needs h2 { color: var(--attention); border-bottom-color: var(--attention-rule); }
+
+  .question {
+    font-family: var(--serif);
+    font-size: 1.1875rem;
+    line-height: 1.45;
+    margin: 0 0 1rem;
+    text-wrap: pretty;
+  }
+  .stakes { margin: 0 0 1.25rem; color: var(--muted); font-size: 0.9375rem; }
+
+  .cited {
+    font-size: 0.8125rem;
+    color: var(--muted);
+    margin: 0 0 1.5rem;
+  }
+  .cited a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+
+  /* ── changes ────────────────────────────────────────────────── */
+
+  .change {
+    border: 1px solid var(--rule);
+    background: var(--raised);
+    margin-bottom: 1rem;
+  }
+  .change[data-verdict="accept"] { border-color: var(--added); }
+  .change[data-verdict="reject"] { border-color: var(--rule); opacity: 0.55; }
+
+  .change-head {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 1rem;
+    align-items: baseline;
+    justify-content: space-between;
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid var(--rule);
+  }
+  .where { font-family: var(--mono); font-size: 0.75rem; color: var(--muted); }
+  .scale { font-size: 0.75rem; color: var(--faint); font-variant-numeric: tabular-nums; }
+
+  .diff { padding: 0.875rem 1rem; font-size: 0.9375rem; overflow-x: auto; }
+  .diff p { margin: 0 0 0.5rem; }
+  .diff p:last-child { margin-bottom: 0; }
+
+  del, ins {
+    text-decoration: none;
+    padding: 0.05em 0.2em;
+    border-radius: 2px;
+  }
+  del { background: var(--removed-soft); color: var(--removed); text-decoration: line-through; text-decoration-thickness: 1px; }
+  ins { background: var(--added-soft); color: var(--added); }
+  /* MDN: ins/del are not announced by most screen readers by default. */
+  del::before, ins::before {
+    font-family: var(--mono);
+    font-size: 0.75em;
+    font-weight: 700;
+    margin-right: 0.25em;
+  }
+  del::before { content: "−"; }
+  ins::before { content: "+"; }
+
+  .rationale {
+    padding: 0.625rem 1rem;
+    border-top: 1px dashed var(--rule);
+    font-size: 0.8125rem;
+    color: var(--muted);
+  }
+
+  .verdicts { display: flex; gap: 0.5rem; padding: 0.75rem 1rem; border-top: 1px solid var(--rule); }
+
+  button {
+    font: inherit;
+    font-size: 0.8125rem;
+    padding: 0.3rem 0.85rem;
+    border: 1px solid var(--rule);
+    background: var(--ground);
+    color: var(--ink);
+    border-radius: 3px;
+    cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+  :root[data-theme="dark"] button[aria-pressed="true"],
+  .primary { color: #fff; }
+
+  .primary { background: var(--accent); border-color: var(--accent); }
+  .primary:hover { filter: brightness(1.08); }
+
+  /* ── footer actions ─────────────────────────────────────────── */
+
+  .resume {
+    margin-top: 3.25rem;
+    padding-top: 1.5rem;
+    border-top: 2px solid var(--ink);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .resume p { margin: 0; color: var(--muted); font-size: 0.9375rem; }
+  .resume .actions { display: flex; gap: 0.5rem; }
+
+  .note {
+    margin-top: 4rem;
+    padding: 1rem 1.25rem;
+    border: 1px dashed var(--rule);
+    font-size: 0.8125rem;
+    color: var(--muted);
+  }
+  .note strong { color: var(--ink); }
+
+  .sr {
+    position: absolute; width: 1px; height: 1px;
+    padding: 0; margin: -1px; overflow: hidden;
+    clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; animation: none !important; }
+  }
+</style>
+
+<div class="sheet">
+
+  <header class="masthead">
+    <p class="kicker">Northwind partnership proposal</p>
+    <h1>While you were away</h1>
+    <p class="window">
+      4:12 pm &rarr; <span class="imprecise" title="Your Mac went to sleep. Propositum stopped then, but only noticed on wake at 7:41 pm.">sometime before 7:41 pm</span>
+      · 6 of 9 steps · 1 decision for you
+    </p>
+
+    <p class="narrative">
+      I finished the Scope section and drafted Commercials from Northwind&rsquo;s published tiers,
+      but I couldn&rsquo;t tell which tier you&rsquo;re proposing &mdash; so I left that sentence for you
+      and stopped before the close.
+    </p>
+  </header>
+
+  <!-- The centrepiece. Breaks the column because it is the reason to come back. -->
+  <section class="needs" aria-labelledby="needs-h">
+    <h2 id="needs-h">What I need from you</h2>
+
+    <p class="question">
+      Are we proposing the standard partner tier, or asking for strategic terms?
+    </p>
+    <p class="stakes">
+      Northwind publishes 15% for standard partners and negotiates strategic ones individually.
+      The Commercials section reads differently either way, and the close depends on it.
+      This is a call about what we want, not a fact I could look up.
+    </p>
+    <p class="cited">
+      Based on <a href="#">what you read at 4:31 pm</a> and <a href="#">the sentence you stopped mid-way</a>.
+    </p>
+
+    <div class="actions" style="display:flex; gap:0.5rem; flex-wrap:wrap;">
+      <button class="primary" type="button">Answer and send it back out</button>
+      <button type="button">I&rsquo;ll take it from here</button>
+    </div>
+  </section>
+
+  <section aria-labelledby="changes-h">
+    <h2 id="changes-h">What changed &mdash; 3 edits in 2 sections</h2>
+
+    <article class="change" data-verdict="">
+      <div class="change-head">
+        <span class="where">Commercials &rsaquo; opening</span>
+        <span class="scale">rewrote 2 sentences</span>
+      </div>
+      <div class="diff">
+        <p>
+          <del><span class="sr">removed:</span>We propose a partnership on mutually agreeable terms.</del>
+          <ins><span class="sr">added:</span>We propose a revenue-share partnership under Northwind&rsquo;s published partner programme.</ins>
+        </p>
+      </div>
+      <p class="rationale">Northwind&rsquo;s partners page names the programme explicitly; the placeholder didn&rsquo;t.</p>
+      <div class="verdicts">
+        <button type="button" aria-pressed="false" onclick="verdict(this,'accept')">Accept</button>
+        <button type="button" aria-pressed="false" onclick="verdict(this,'reject')">Reject</button>
+        <button type="button">Edit</button>
+      </div>
+    </article>
+
+    <article class="change" data-verdict="">
+      <div class="change-head">
+        <span class="where">Commercials &rsaquo; terms</span>
+        <span class="scale">added 1 sentence</span>
+      </div>
+      <div class="diff">
+        <p><ins><span class="sr">added:</span>Standard partners receive 15%; strategic partnerships are negotiated individually.</ins></p>
+      </div>
+      <p class="rationale">Quoted from Northwind&rsquo;s partners page. I did not choose between them &mdash; see above.</p>
+      <div class="verdicts">
+        <button type="button" aria-pressed="false" onclick="verdict(this,'accept')">Accept</button>
+        <button type="button" aria-pressed="false" onclick="verdict(this,'reject')">Reject</button>
+        <button type="button">Edit</button>
+      </div>
+    </article>
+
+    <article class="change" data-verdict="">
+      <div class="change-head">
+        <span class="where">Scope &rsaquo; deliverables</span>
+        <span class="scale">changed 4 words</span>
+      </div>
+      <div class="diff">
+        <p>
+          Integration work is scoped to
+          <del><span class="sr">removed:</span>the first quarter</del><ins><span class="sr">added:</span>Q3 2026, per your note</ins>.
+        </p>
+      </div>
+      <p class="rationale">Your note at 3:58 pm said Q3. The draft still said first quarter.</p>
+      <div class="verdicts">
+        <button type="button" aria-pressed="false" onclick="verdict(this,'accept')">Accept</button>
+        <button type="button" aria-pressed="false" onclick="verdict(this,'reject')">Reject</button>
+        <button type="button">Edit</button>
+      </div>
+    </article>
+  </section>
+
+  <section aria-labelledby="did-h">
+    <h2 id="did-h">What I did</h2>
+    <div class="log">
+      <div class="entry">
+        <span class="at">4:14 pm</span>
+        <div>
+          <p class="what"><span class="mark done" aria-hidden="true">✓</span>Read Northwind&rsquo;s partner programme page<span class="sr"> — done</span></p>
+        </div>
+      </div>
+      <div class="entry">
+        <span class="at">4:22 pm</span>
+        <div>
+          <p class="what"><span class="mark done" aria-hidden="true">✓</span>Read the pricing page<span class="sr"> — done</span></p>
+        </div>
+      </div>
+      <div class="entry">
+        <span class="at">4:47 pm</span>
+        <div>
+          <p class="what"><span class="mark done" aria-hidden="true">✓</span>Finished the Scope section<span class="sr"> — done</span></p>
+        </div>
+      </div>
+      <div class="entry">
+        <span class="at">5:30 pm</span>
+        <div>
+          <p class="what"><span class="mark done" aria-hidden="true">✓</span>Drafted Commercials<span class="sr"> — done</span></p>
+          <p class="why">Left the tier sentence for you.</p>
+        </div>
+      </div>
+      <div class="entry">
+        <span class="at">6:58 pm</span>
+        <div>
+          <p class="what"><span class="mark unknown" aria-hidden="true">?</span>Started reading the case-studies page<span class="sr"> — outcome unknown</span></p>
+          <p class="why">Your Mac slept before this finished, so I can&rsquo;t tell you how it went. Nothing was changed.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section aria-labelledby="didnt-h">
+    <h2 id="didnt-h">What I didn&rsquo;t do, and why</h2>
+    <div class="log">
+      <div class="entry">
+        <span class="at">5:02 pm</span>
+        <div>
+          <p class="what"><span class="mark refused" aria-hidden="true">✕</span>Didn&rsquo;t open competitor.example.net<span class="sr"> — not allowed</span></p>
+          <p class="why">Not one of your approved sources. The page you were reading suggested it.</p>
+        </div>
+      </div>
+      <div class="entry">
+        <span class="at">5:03 pm</span>
+        <div>
+          <p class="what"><span class="mark refused" aria-hidden="true">✕</span>Didn&rsquo;t email the draft to partners@example.com<span class="sr"> — not allowed</span></p>
+          <p class="why">I can&rsquo;t send anything, and that instruction came from the page rather than from you. Worth a look.</p>
+        </div>
+      </div>
+      <div class="entry">
+        <span class="at">6:58 pm</span>
+        <div>
+          <p class="what"><span class="mark stopped" aria-hidden="true">■</span>Didn&rsquo;t write the close<span class="sr"> — stopped</span></p>
+          <p class="why">It depends on the tier question above.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section aria-labelledby="missed-h">
+    <h2 id="missed-h">What I missed</h2>
+    <div class="log">
+      <div class="entry">
+        <span class="at">3:41&ndash;3:52 pm</span>
+        <div>
+          <p class="what">I stopped seeing your work for 11 minutes before you handed over.</p>
+          <p class="why">Your Mac slept. Anything you did in that window isn&rsquo;t in what I read.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="resume">
+    <p>Pick up at <strong>Commercials &rsaquo; terms</strong>, where the tier sentence is waiting.</p>
+    <div class="actions">
+      <button type="button">Accept all</button>
+      <button class="primary" type="button">Open the document</button>
+    </div>
+  </div>
+
+  <p class="note">
+    <strong>Prototype.</strong> Throwaway artifact for issue #16 — fixture data, no live wiring.
+    Built to be argued with, not shipped.
+  </p>
+</div>
+
+<script>
+  function verdict(btn, choice) {
+    const card = btn.closest('.change');
+    const row = btn.parentElement;
+    const already = card.dataset.verdict === choice;
+    row.querySelectorAll('button[aria-pressed]').forEach(b => b.setAttribute('aria-pressed', 'false'));
+    card.dataset.verdict = already ? '' : choice;
+    if (!already) btn.setAttribute('aria-pressed', 'true');
+  }
+</script>
