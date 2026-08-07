@@ -17,7 +17,8 @@
     "db:generate": "prisma generate",
     "db:push": "prisma db push",
     "db:studio": "prisma studio",
-    "verify:model": "tsx scripts/verify-model.ts"
+    "verify:model": "tsx scripts/verify-model.ts",
+    "eval": "tsx scripts/eval.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.71.0",

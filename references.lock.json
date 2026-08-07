@@ -1,0 +1,10 @@
+{
+  "partnership-clean": {
+    "hash": "3c6175f32208b18d2c272412a4296cb9a55328fa531113fa000968cbd493d67c",
+    "sealedAt": "2026-08-07T16:25:59.174Z"
+  },
+  "partnership-messy": {
+    "hash": "ff0416a5a64bf4743797cda02000fe90632257feca63a1df6789a1704bf9cb08",
+    "sealedAt": "2026-08-07T16:25:59.174Z"
+  }
+}
