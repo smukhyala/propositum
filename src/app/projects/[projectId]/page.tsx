@@ -1,0 +1,440 @@
+/**
+ * One project: what Propositum can see, the session boundary, and the timeline.
+ *
+ * ── The session boundary is the loudest thing on the page ────────────────
+ *
+ * Start and End are the two acts the whole product rests on. Before Start,
+ * nothing is recorded; after End, nothing is recorded; only a human act does
+ * either. So the control breaks the column — it is the one `attention` band on
+ * this screen, and everything else is an ordinary section — and the wording
+ * says what the act means rather than labelling a button.
+ *
+ * ── When the row and the reality disagree, say so ────────────────────────
+ *
+ * `WorkSession.phase = observing` means a person started a session and no
+ * person ended it. The live capture token, though, lives in memory in this
+ * process. Restart the app and you have an open session row that nothing is
+ * feeding — the extension is holding a token this process has never heard of,
+ * and every event it posts is refused.
+ *
+ * That state is real, it is reachable by pressing Save in an editor, and there
+ * is no honest way to render it as "Propositum is watching". So the band says
+ * the awkward thing out loud, and the timeline is told it is not live.
+ *
+ * ── Forms, not client state ──────────────────────────────────────────────
+ *
+ * Every control here is a form posting to a server action. Failures come back
+ * as a sentence in the URL, which survives a reload; the alternative is a
+ * client component holding a banner in `useState` that a refresh silently eats.
+ */
+
+import Link from 'next/link'
+import { notFound, redirect } from 'next/navigation'
+
+import { BackLink, Button, Empty, Masthead, Section, Sheet } from '@/ui/primitives'
+import { Away, Handover, Watching } from '@/ui/sprites'
+import { Timeline } from '@/ui/timeline'
+import type { TimelineEvent } from '@/ui/timeline'
+import { approveSource, endSession, startSession } from '@/server/actions'
+import { captureStore } from '@/server/capture-store'
+import { appContext } from '@/server/db'
+
+// In-memory capture state and a local database file. Nothing here is cacheable,
+// and a cached "Propositum is watching" would be a lie about our own software.
+export const dynamic = 'force-dynamic'
+
+const CSS = `
+.pj-problem { margin: 0 0 2.25rem; padding: 0.75rem 1rem; border-left: 2px solid var(--attention); background: var(--raised); color: var(--attention); font-size: 0.9375rem; }
+
+.pj-session { display: flex; flex-wrap: wrap; gap: 1.25rem; align-items: center; justify-content: space-between; }
+.pj-lede { font-family: var(--serif); font-size: 1.1875rem; line-height: 1.45; margin: 0; max-width: 36rem; text-wrap: pretty; }
+.pj-under { margin: 0.6rem 0 0; font-size: 0.875rem; color: var(--muted); max-width: 36rem; }
+.pj-acts { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+
+.pj-row { display: grid; grid-template-columns: 1fr auto; gap: 0.4rem 1.5rem; align-items: baseline; padding: 0.8rem 0; border-bottom: 1px solid var(--rule); }
+.pj-row:last-of-type { border-bottom: none; }
+.pj-name { margin: 0; }
+.pj-origin { font-family: var(--mono); font-size: 0.75rem; color: var(--muted); margin: 0.2rem 0 0; word-break: break-all; }
+.pj-state { font-size: 0.75rem; color: var(--faint); white-space: nowrap; }
+.pj-state[data-revoked="true"] { color: var(--attention); }
+.pj-revoked { margin: 0.35rem 0 0; font-size: 0.8125rem; color: var(--attention); }
+
+.pj-form { display: flex; gap: 0.75rem; flex-wrap: wrap; align-items: flex-end; margin-top: 1.75rem; padding-top: 1.5rem; border-top: 1px dashed var(--rule); }
+.pj-field { display: grid; gap: 0.35rem; flex: 1 1 15rem; }
+.pj-label { font-size: 0.6875rem; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+.pj-input { font: inherit; font-size: 0.9375rem; padding: 0.45rem 0.65rem; border: 1px solid var(--rule); background: var(--ground); color: var(--ink); border-radius: 3px; width: 100%; }
+.pj-input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.pj-submit { font: inherit; font-size: 0.8125rem; line-height: 1.4; padding: 0.45rem 0.9rem; border: 1px solid var(--rule); background: var(--ground); color: var(--ink); border-radius: 3px; cursor: pointer; }
+.pj-submit:hover { border-color: var(--accent); }
+.pj-submit:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.pj-hint { flex-basis: 100%; margin: 0.6rem 0 0; font-size: 0.8125rem; color: var(--faint); max-width: 42rem; }
+.pj-hint code { font-family: var(--mono); font-size: 0.9em; color: var(--muted); word-break: break-all; }
+
+/* Anchors that carry a control's weight. They navigate, so they stay <a>: a
+   button that goes somewhere breaks the back button and the keyboard. */
+.pj-go, .pj-quiet { display: inline-block; font: inherit; font-size: 0.8125rem; line-height: 1.4; padding: 0.35rem 0.9rem; border-radius: 3px; text-decoration: none; }
+.pj-go { border: 1px solid var(--accent); background: var(--accent); color: var(--ground); }
+.pj-go:hover { filter: brightness(1.07); }
+.pj-quiet { border: 1px solid var(--rule); background: var(--ground); color: var(--ink); }
+.pj-quiet:hover { border-color: var(--accent); }
+.pj-go:focus-visible, .pj-quiet:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.pj-earlier { list-style: none; margin: 0.9rem 0 0; padding: 0; }
+.pj-earlier li { padding: 0.5rem 0; border-bottom: 1px solid var(--rule); }
+.pj-earlier li:last-child { border-bottom: none; }
+.pj-earlier a { font-family: var(--mono); font-size: 0.8125rem; color: var(--muted); text-decoration: none; }
+.pj-earlier a:hover { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; }
+.pj-earlier a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 2px; }
+`
+
+const CLOCK = new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit' })
+const DAY = new Intl.DateTimeFormat('en-US', { weekday: 'long', day: 'numeric', month: 'long' })
+
+function clock(at: Date): string {
+  return CLOCK.format(at).replace(/AM$/, 'am').replace(/PM$/, 'pm')
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : {}
+}
+
+export default async function ProjectPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ projectId: string }>
+  searchParams: Promise<Record<string, string | string[] | undefined>>
+}) {
+  const { projectId } = await params
+  const query = await searchParams
+  const rawProblem = query['problem']
+  const problem = typeof rawProblem === 'string' ? rawProblem : null
+
+  const { repos } = await appContext()
+
+  const project = await repos.projects.byId(projectId)
+  if (!project) notFound()
+
+  const sources = await repos.projects.approvedSources(projectId)
+  const granted = sources.filter((source) => source.grantState === 'granted')
+
+  const sessions = await repos.sessions.forProject(projectId)
+  const openSession = sessions.find((session) => session.phase !== 'ended') ?? null
+  const shownSession = openSession ?? sessions[0] ?? null
+  const earlier = sessions.filter((session) => session.id !== shownSession?.id)
+
+  // The two questions that look like one and are not: is a session open, and is
+  // anything actually being captured into it.
+  const liveCapture = captureStore().current()
+  const watching =
+    openSession !== null &&
+    openSession.phase === 'observing' &&
+    liveCapture !== null &&
+    liveCapture.sessionId === openSession.id
+
+  const events = shownSession ? await repos.events.bySession(shownSession.id) : []
+  const labelById = new Map(sources.map((source) => [source.id, source.label]))
+
+  // The way back to "While you were away". Without this the shift report is
+  // reachable only by typing a contract id into the URL bar, which is not a
+  // route — and re-entry is the half of the product a person arrives at cold.
+  const shift = shownSession ? await repos.contracts.acceptedForSession(shownSession.id) : null
+
+  const rows: TimelineEvent[] = events.map((event) => {
+    const untrusted = asRecord(event.untrusted)
+    const stored = untrusted['text']
+
+    return {
+      id: event.id,
+      kind: event.kind,
+      observedAtIso: event.observedAt.toISOString(),
+      attested: asRecord(event.attested),
+      untrustedText: typeof stored === 'string' && stored.trim().length > 0 ? stored : null,
+      adversarial: untrusted['adversarial'] === true,
+      sourceLabel:
+        event.approvedSourceId === null ? null : labelById.get(event.approvedSourceId) ?? null,
+    }
+  })
+
+  /* ── the acts ───────────────────────────────────────────────────────── */
+
+  const here = `/projects/${projectId}`
+
+  async function addSource(formData: FormData) {
+    'use server'
+
+    const result = await approveSource(
+      projectId,
+      String(formData.get('origin') ?? ''),
+      String(formData.get('label') ?? ''),
+    )
+    if (!result.ok) redirect(`${here}?problem=${encodeURIComponent(result.problem.message)}`)
+    redirect(here)
+  }
+
+  async function begin() {
+    'use server'
+
+    const result = await startSession(projectId)
+    if (!result.ok) redirect(`${here}?problem=${encodeURIComponent(result.problem.message)}`)
+    redirect(here)
+  }
+
+  async function finish(formData: FormData) {
+    'use server'
+
+    const result = await endSession(String(formData.get('sessionId') ?? ''))
+    if (!result.ok) redirect(`${here}?problem=${encodeURIComponent(result.problem.message)}`)
+    redirect(here)
+  }
+
+  /* ── what the band says ─────────────────────────────────────────────── */
+
+  const away = openSession?.phase === 'away'
+  const stranded = openSession !== null && openSession.phase === 'observing' && !watching
+
+  const bandTitle = openSession === null
+    ? 'Start a session'
+    : away
+      ? 'Propositum is working while you are away'
+      : stranded
+        ? 'This session is open, but nothing is being recorded'
+        : 'This session'
+
+  return (
+    <Sheet>
+      <style href="propositum-project" precedence="default">
+        {CSS}
+      </style>
+
+      <BackLink href="/">&larr; All projects</BackLink>
+
+      <Masthead
+        kicker="Project"
+        title={project.name}
+        mark={watching ? <Watching size={20} delay={0.3} /> : <Away size={20} delay={0.3} />}
+        subtitle={
+          openSession
+            ? `Session started ${clock(openSession.startedAt)} on ${DAY.format(openSession.startedAt)} · ${granted.length} approved ${granted.length === 1 ? 'source' : 'sources'}`
+            : `${granted.length} approved ${granted.length === 1 ? 'source' : 'sources'} · nothing is being recorded`
+        }
+      />
+
+      {problem ? (
+        <p className="pj-problem" role="status">
+          {problem}
+        </p>
+      ) : null}
+
+      {/* The one thing on this screen that breaks the column. */}
+      <Section title={bandTitle} tone="attention" index={1}>
+        <div className="pj-session">
+          <div>
+            {openSession === null ? (
+              <>
+                <p className="pj-lede">
+                  Propositum records nothing until you start a session, and only you can end one.
+                </p>
+                <p className="pj-under">
+                  {granted.length === 0
+                    ? 'You have not approved anything yet, so it will see nothing until you do. You can approve sources while a session is running.'
+                    : `While it runs, Propositum sees what you do on your ${granted.length} approved ${granted.length === 1 ? 'source' : 'sources'} and nothing else.`}
+                </p>
+              </>
+            ) : away ? (
+              <>
+                <p className="pj-lede">
+                  Propositum is working on this under the agreement you accepted.
+                </p>
+                <p className="pj-under">
+                  It is not watching your screen &mdash; capture is off for the whole time it holds
+                  the work, which is what makes &ldquo;while you were away&rdquo; a straight answer.
+                </p>
+              </>
+            ) : stranded ? (
+              <>
+                <p className="pj-lede">
+                  This session is still open, but Propositum stopped watching when the app restarted.
+                </p>
+                <p className="pj-under">
+                  Nothing new is reaching the timeline, and anything the extension has tried to send
+                  since then was turned away. End this session and start another to pick capture
+                  back up.
+                </p>
+              </>
+            ) : (
+              <>
+                <p className="pj-lede">
+                  Propositum is watching your {granted.length} approved{' '}
+                  {granted.length === 1 ? 'source' : 'sources'}.
+                </p>
+                <p className="pj-under">
+                  It stops the moment you end the session, and not before. Ending is a human act; no
+                  timer and no setting does it for you.
+                </p>
+              </>
+            )}
+          </div>
+
+          <div className="pj-acts">
+            {openSession === null ? (
+              <form action={begin}>
+                <Button type="submit" variant="primary">
+                  Start session
+                </Button>
+              </form>
+            ) : away ? (
+              <>
+                {/* The only way back to the note, and the reason the person
+                    opened the app at all. It leads, even while the run is
+                    still going — the report says so itself in that case. */}
+                {shift ? (
+                  <Link className="pj-go" href={`/shifts/${shift.id}`}>
+                    While you were away
+                  </Link>
+                ) : null}
+                <Button
+                  type="button"
+                  disabled
+                  title="Propositum is working under the agreement you accepted. You can take the work back once you have read what it did."
+                >
+                  End session
+                </Button>
+              </>
+            ) : (
+              <>
+                {/* Where handing over begins: read what Propositum understood,
+                    then settle the agreement. Not shown while the session is
+                    stranded — nothing has been reaching the timeline, so there
+                    is nothing honest for it to have read. */}
+                {stranded ? null : (
+                  <Link className="pj-go" href={`/sessions/${openSession.id}`}>
+                    Hand this over
+                  </Link>
+                )}
+                <form action={finish}>
+                  <input type="hidden" name="sessionId" value={openSession.id} />
+                  <Button type="submit" variant={stranded ? 'primary' : 'default'}>
+                    End session
+                  </Button>
+                </form>
+              </>
+            )}
+          </div>
+        </div>
+      </Section>
+
+      <Section title="What Propositum can see" index={2}>
+        {sources.length === 0 ? (
+          <Empty
+            title="Propositum cannot see anything in this project."
+            next="Add a site below. It is the only thing Propositum will ever be allowed to look at here, and you can withdraw it in Chrome at any time."
+          />
+        ) : (
+          sources.map((source) => {
+            const revoked = source.grantState !== 'granted'
+
+            return (
+              <div className="pj-row" key={source.id}>
+                <div>
+                  <p className="pj-name">{source.label}</p>
+                  <p className="pj-origin">{source.originPattern}</p>
+                  {revoked ? (
+                    <p className="pj-revoked">
+                      Access was withdrawn in Chrome. Propositum cannot see this any more, and it
+                      will not ask again unless you add it back.
+                    </p>
+                  ) : null}
+                </div>
+                <span className="pj-state" data-revoked={revoked ? 'true' : 'false'}>
+                  {revoked ? 'withdrawn' : 'approved'}
+                </span>
+              </div>
+            )
+          })
+        )}
+
+        <form className="pj-form" action={addSource}>
+          <label className="pj-field">
+            <span className="pj-label">Site</span>
+            <input
+              className="pj-input"
+              name="origin"
+              type="text"
+              required
+              autoComplete="off"
+              placeholder="northwind.example.com"
+            />
+          </label>
+          <label className="pj-field">
+            <span className="pj-label">What to call it</span>
+            <input
+              className="pj-input"
+              name="label"
+              type="text"
+              autoComplete="off"
+              placeholder="Northwind partners"
+            />
+          </label>
+          <button className="pj-submit" type="submit">
+            Approve
+          </button>
+          <p className="pj-hint">
+            Stored as an origin like <code>https://northwind.example.com/*</code> &mdash; the whole
+            site, every page on it, and nothing off it. Approving a site grants access, not trust:
+            what a page says is evidence about what you read, never an instruction to Propositum.
+          </p>
+        </form>
+      </Section>
+
+      <Section title={openSession ? 'Session timeline' : 'The last session'} index={3}>
+        {shownSession === null ? (
+          <Empty
+            title="No session has been started in this project."
+            next="Start one above when you sit down at the work. Everything you do on an approved source lands here, in order, as plain sentences."
+          />
+        ) : (
+          <>
+            <Timeline events={rows} live={watching} approvedSourceCount={granted.length} />
+
+            {/* The foot of the timeline is where a person stops reading, so it
+                is where the two screens that follow from it belong. For an
+                ended session this is the ONLY route to either — the band
+                above has no controls once nothing is open. */}
+            <div className="pj-acts" style={{ marginTop: '1.5rem' }}>
+              <Link className="pj-quiet" href={`/sessions/${shownSession.id}`}>
+                What Propositum thinks you&rsquo;re working on
+              </Link>
+              {shift ? (
+                <Link className="pj-quiet" href={`/shifts/${shift.id}`}>
+                  While you were away
+                </Link>
+              ) : null}
+            </div>
+          </>
+        )}
+      </Section>
+
+      {earlier.length > 0 ? (
+        <Section title="Before this" index={4}>
+          <p className="pj-under" style={{ margin: 0 }}>
+            <Handover size={14} title="Earlier" /> {earlier.length} earlier{' '}
+            {earlier.length === 1 ? 'session' : 'sessions'} in this project. Each one starts cold:
+            what Propositum worked out last time does not carry over.
+          </p>
+          {/* A count that links nowhere is a count. These are the sessions
+              themselves, so an earlier reading can still be opened. */}
+          <ul className="pj-earlier">
+            {earlier.map((session) => (
+              <li key={session.id}>
+                <Link href={`/sessions/${session.id}`}>
+                  {DAY.format(session.startedAt)} · {clock(session.startedAt)}
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </Section>
+      ) : null}
+    </Sheet>
+  )
+}

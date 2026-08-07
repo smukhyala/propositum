@@ -314,6 +314,20 @@ export interface HandoffContractRepository {
       })
     | null
   >
+  /**
+   * The accepted contract for one session, if there is one.
+   *
+   * Slice 0 ships exactly one Shift per WorkSession, so there is at most one —
+   * but this orders by `acceptedAt` and takes the newest anyway, because
+   * continuation would mint a second contract rather than extend this one, and
+   * a reader that silently picked an arbitrary row would then point at the
+   * wrong shift.
+   *
+   * It exists so a person can REACH their shift report. Without it the only
+   * route to "While you were away" is typing a contract id into the URL bar,
+   * which is not a route.
+   */
+  acceptedForSession(sessionId: string): Promise<{ id: string; acceptedAt: Date } | null>
   /** The one legal transition. `acceptedAt` is the shift start AND the origin of
    *  the deadline, so a crash-restart cannot reset the budget. */
   accept(id: string, acceptedAt: Date): Promise<void>
@@ -343,6 +357,17 @@ function handoffContractRepository(prisma: PrismaClient): HandoffContractReposit
         approvedSourceIds: asStrings(row.approvedSourceIds),
         allowedActionKinds: asStrings(row.allowedActionKinds),
       }
+    },
+    acceptedForSession: async (sessionId) => {
+      const row = await prisma.handoffContract.findFirst({
+        where: { sessionId, status: 'accepted', acceptedAt: { not: null } },
+        orderBy: { acceptedAt: 'desc' },
+        select: { id: true, acceptedAt: true },
+      })
+      // `acceptedAt` is nullable in the schema and non-null by the WHERE, but
+      // the generated type does not know that — so it is narrowed rather than
+      // asserted.
+      return row && row.acceptedAt ? { id: row.id, acceptedAt: row.acceptedAt } : null
     },
     accept: async (id, acceptedAt) => {
       await guarded('handoff_contract', 'update', () =>
@@ -446,7 +471,9 @@ export interface DocumentRepository {
     contentHash: string
     origin: 'human' | 'accepted-changeset'
   }): Promise<{ id: string; ordinal: number }>
-  version(id: string): Promise<{ id: string; content: string; contentHash: string; ordinal: number } | null>
+  /** `documentId` is included because `readDocument` refuses to be pointed at a
+   *  document other than the one this shift pinned, and needs it to check. */
+  version(id: string): Promise<{ id: string; documentId: string; content: string; contentHash: string; ordinal: number } | null>
   latestVersion(documentId: string): Promise<{ id: string; content: string; contentHash: string; ordinal: number } | null>
 }
 
@@ -480,7 +507,7 @@ function documentRepository(prisma: PrismaClient): DocumentRepository {
     version: (id) =>
       prisma.documentVersion.findUnique({
         where: { id },
-        select: { id: true, content: true, contentHash: true, ordinal: true },
+        select: { id: true, documentId: true, content: true, contentHash: true, ordinal: true },
       }),
     latestVersion: (documentId) =>
       prisma.documentVersion.findFirst({

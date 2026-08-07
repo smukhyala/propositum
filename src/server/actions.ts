@@ -1,0 +1,1087 @@
+/**
+ * Everything the interface can ask the server to do.
+ *
+ * ── Failures are values ──────────────────────────────────────────────────
+ *
+ * Nothing here throws for anything a person can cause. A boundary that declines,
+ * a session with nothing in it, a change already decided — each of those is a
+ * result the screen has to render, and an exception thrown across the server-
+ * action boundary arrives at the client as an opaque digest with the reason
+ * stripped out. So every export returns `ActionResult<T>`, and every failure
+ * carries a sentence written for the person rather than for a log.
+ *
+ * The messages obey CONTEXT.md's consumer vocabulary. The gate REFUSES, the
+ * human REJECTS, the model DECLINES, and none of the three is called an error.
+ *
+ * ── Authorization stays where it already is ──────────────────────────────
+ *
+ * Nothing in this file decides what a run may touch. `compilePolicy` does that,
+ * from a scope and a set of dials, and it cannot be handed prose. What this file
+ * does is persist the human's ratification and enqueue the run — the two acts
+ * that must be a human's and are therefore in the app process, not the worker's.
+ *
+ * ── Where the model is called, and where it is not ───────────────────────
+ *
+ * Two of these actions call a model: `generateReading` and `draftContract`.
+ * Both go through `ModelClient`, both fail closed, and both persist nothing
+ * unless the output validated. No other action here touches a model.
+ */
+
+'use server'
+
+import { revalidatePath } from 'next/cache'
+
+import { appContext } from './db'
+import { captureStore } from './capture-store'
+import { AnthropicModelClient } from '../model/anthropic'
+import type { FailureKind, ModelClient } from '../model/client'
+import { datamark } from '../model/untrusted'
+import {
+  handlesFor,
+  sessionReadingBoundary,
+} from '../model/boundaries/session-reading'
+import type { PromptEvent } from '../model/boundaries/session-reading'
+import { handoffBoundary, sourceHandlesFor } from '../model/boundaries/handoff'
+import { ACTION_KINDS } from '../domain/handoff/policy'
+import type { ActionKind, AutonomyControls } from '../domain/handoff/policy'
+import type { ClaimInput } from '../persistence/repositories/index'
+
+/* ══════════════════════════════════════════════════ results and problems ══ */
+
+/**
+ * Why something did not happen. `message` is consumer copy — it is rendered
+ * verbatim, so it says the true thing plainly and never names a table, a
+ * boundary or a status code.
+ */
+export interface ActionProblem {
+  readonly code:
+    | 'invalid-input'
+    | 'not-found'
+    | 'nothing-to-read'
+    | 'already-done'
+    | 'model-unavailable'
+    | 'model-declined'
+    | 'model-unusable'
+    | 'blocked'
+    | 'write-failed'
+  readonly message: string
+}
+
+export type ActionResult<T> =
+  | { readonly ok: true; readonly value: T }
+  | { readonly ok: false; readonly problem: ActionProblem }
+
+function ok<T>(value: T): ActionResult<T> {
+  return { ok: true, value }
+}
+
+function no<T>(code: ActionProblem['code'], message: string): ActionResult<T> {
+  return { ok: false, problem: { code, message } }
+}
+
+/**
+ * A single blunt revalidation.
+ *
+ * The screens above this file are owned by other people and their route
+ * segments are not settled. Guessing paths would produce a mutation that
+ * silently does not refresh the page it changed, which is the worst of the
+ * available outcomes. One local user, a SQLite file and a handful of pages make
+ * the cost of revalidating the whole tree indistinguishable from zero.
+ */
+function refresh(): void {
+  revalidatePath('/', 'layout')
+}
+
+/**
+ * Nothing here throws. This is the net under that promise.
+ *
+ * The unexpected reason is shown rather than hidden — one local user, their own
+ * machine, and "say the true thing, including when it is unimpressive". It is
+ * scrubbed of the one credential the process holds first, because
+ * docs/SECURITY_AND_PRIVACY.md promises the key is never rendered, and a promise
+ * that depends on no library ever putting it in an error message is not one.
+ */
+async function attempt<T>(work: () => Promise<ActionResult<T>>): Promise<ActionResult<T>> {
+  try {
+    return await work()
+  } catch (error) {
+    const raw = error instanceof Error ? error.message : String(error)
+    const key = process.env['ANTHROPIC_API_KEY']
+    const scrubbed = key ? raw.split(key).join('«key»') : raw
+    const detail = scrubbed.length > 240 ? `${scrubbed.slice(0, 240)}…` : scrubbed
+
+    return no<T>(
+      'write-failed',
+      `Propositum could not finish that, and nothing was changed. (${detail})`,
+    )
+  }
+}
+
+/* ═════════════════════════════════════════════════════════════ the model ══ */
+
+function modelClient(): ModelClient | null {
+  const apiKey = process.env['ANTHROPIC_API_KEY']
+  if (!apiKey) return null
+  return new AnthropicModelClient({ apiKey })
+}
+
+/** One sentence per failure class, in the person's terms. */
+function sayWhyTheModelFailed(failure: FailureKind): ActionProblem {
+  switch (failure) {
+    case 'refusal':
+      // CONTEXT.md: the model DECLINES. Never "refused" — that word is the gate's.
+      return {
+        code: 'model-declined',
+        message: 'Propositum declined to do that, so nothing was recorded.',
+      }
+    case 'truncation':
+      return {
+        code: 'model-unusable',
+        message: 'There was more here than Propositum could take in at once. Nothing was recorded.',
+      }
+    case 'schema-mismatch':
+      return {
+        code: 'model-unusable',
+        message: "What came back didn't hold together, so Propositum recorded nothing rather than guess.",
+      }
+    case 'transport':
+      return {
+        code: 'model-unavailable',
+        message: "Propositum couldn't get through just now. Nothing was recorded — try again.",
+      }
+  }
+}
+
+const NO_KEY: ActionProblem = {
+  code: 'model-unavailable',
+  message:
+    'Propositum has no way to reach its model. Add ANTHROPIC_API_KEY to .env and restart, then try again.',
+}
+
+/* ═══════════════════════════════════════════════════════ small utilities ══ */
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : {}
+}
+
+function textOf(source: Record<string, unknown>, key: string): string | null {
+  const value = source[key]
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null
+}
+
+const CLOCK = new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false })
+
+/**
+ * Why a gap happened, said the way a person would say it.
+ *
+ * PRODUCT_PRINCIPLES §11 forbids dressing a gap up as anything other than "I
+ * stopped seeing your work", so these stay flat and factual.
+ */
+const GAP_REASONS: Record<string, string> = {
+  service_worker_terminated: 'the browser shut the extension down',
+  machine_slept: 'your Mac slept',
+  transport_disconnected: 'the connection dropped',
+  permission_revoked: 'access to that source was withdrawn',
+}
+
+/**
+ * One observation event as a plain sentence.
+ *
+ * This is the `attested` half only — values Chrome or Propositum itself
+ * asserted. Page-authored text never comes through here; it travels separately
+ * under `untrusted`, and it is datamarked before it can reach a prompt.
+ */
+function describeEvent(kind: string, attested: Record<string, unknown>): string {
+  const title = textOf(attested, 'title')
+  const url = textOf(attested, 'url')
+  const where = title ?? url ?? 'an approved source'
+
+  switch (kind) {
+    case 'visited':
+      return `opened ${where}`
+    case 'returnedTo':
+      return `came back to ${where}`
+    case 'queried': {
+      const term = textOf(attested, 'term')
+      return term ? `searched for "${term}"` : `searched on ${where}`
+    }
+    case 'engaged': {
+      const dwell = attested['dwellMs']
+      const minutes = typeof dwell === 'number' ? Math.max(1, Math.round(dwell / 60_000)) : null
+      return minutes ? `read ${where} for about ${minutes} min` : `read ${where}`
+    }
+    case 'excerpted':
+      return `selected text on ${where}`
+    case 'switchedAway': {
+      const cause = textOf(attested, 'cause')
+      return cause ? `stepped away from the screen (${cause})` : 'stepped away from the screen'
+    }
+    case 'documentEdited':
+      return 'edited the document'
+    case 'note':
+      return textOf(attested, 'text') ?? 'wrote a note'
+    case 'sourceApproved':
+      return `approved ${textOf(attested, 'label') ?? where} as a source`
+    case 'captureGap': {
+      const from = attested['startedAtElapsedMs']
+      const to = attested['endedAtElapsedMs']
+      const minutes =
+        typeof from === 'number' && typeof to === 'number'
+          ? Math.max(1, Math.round((to - from) / 60_000))
+          : null
+      const reason = GAP_REASONS[String(attested['reason'] ?? '')] ?? 'Propositum was not watching'
+      return minutes
+        ? `Propositum stopped seeing your work for about ${minutes} min — ${reason}`
+        : `Propositum stopped seeing your work — ${reason}`
+    }
+    default:
+      return kind
+  }
+}
+
+/**
+ * Whitespace collapsed, case folded. CONTEXT.md's canonical normalised form.
+ *
+ * A quote is kept only if it survives this comparison against the cited event's
+ * stored text. Raw substring matching would throw away nearly every quote,
+ * because the injection defence guarantees the model never saw the raw string.
+ */
+function canonical(text: string): string {
+  return text.replace(/\s+/g, ' ').trim().toLowerCase()
+}
+
+/* ══════════════════════════════════════════════════════════════ projects ══ */
+
+export interface ProjectCreated {
+  readonly id: string
+  readonly name: string
+}
+
+export async function createProject(name: string): Promise<ActionResult<ProjectCreated>> {
+  return attempt(async () => {
+    const clean = name.trim()
+    if (!clean) return no<ProjectCreated>('invalid-input', 'Give the project a name first.')
+    if (clean.length > 120) {
+      return no<ProjectCreated>('invalid-input', 'That name is too long — keep it under 120 characters.')
+    }
+
+    const { repos } = await appContext()
+    const project = await repos.projects.create(clean)
+    refresh()
+    return ok(project)
+  })
+}
+
+/**
+ * Turn whatever the person typed into a Chrome host-permission pattern.
+ *
+ * `northwind.com`, `https://northwind.com`, `https://northwind.com/partners`
+ * and `https://northwind.com/*` all mean the same grant, and asking a person to
+ * type the third form exactly is friction Propositum would be inventing on top
+ * of a grant Chrome already understands.
+ *
+ * Ports and credentials are rejected rather than stripped: MV3 match patterns
+ * cannot express a port, so accepting one would store a pattern Chrome will
+ * never grant and leave the person with a source that silently sees nothing.
+ */
+function normaliseOriginPattern(raw: string): string | null {
+  let text = raw.trim()
+  if (!text) return null
+
+  let scheme = 'https:'
+  const withScheme = /^(https?):\/\//i.exec(text)
+  if (withScheme) {
+    scheme = `${(withScheme[1] ?? 'https').toLowerCase()}:`
+    text = text.slice(withScheme[0].length)
+  }
+
+  const host = (text.split('/')[0] ?? '').toLowerCase()
+  const label = '[a-z0-9]([a-z0-9-]*[a-z0-9])?'
+  if (!new RegExp(`^(\\*\\.)?${label}(\\.${label})*$`).test(host)) return null
+
+  return `${scheme}//${host}/*`
+}
+
+export interface SourceApproved {
+  readonly id: string
+  readonly originPattern: string
+  readonly label: string
+  /** True when a session was live and the approval went into its record. */
+  readonly recordedInSession: boolean
+}
+
+export async function approveSource(
+  projectId: string,
+  originPattern: string,
+  label: string,
+): Promise<ActionResult<SourceApproved>> {
+  return attempt(async () => {
+    const pattern = normaliseOriginPattern(originPattern)
+    if (!pattern) {
+      return no<SourceApproved>(
+        'invalid-input',
+        "That doesn't look like a site address. Try something like northwind.com.",
+      )
+    }
+
+    const { repos, ledger } = await appContext()
+    const project = await repos.projects.byId(projectId)
+    if (!project) return no<SourceApproved>('not-found', "That project doesn't exist any more.")
+
+    const host = pattern.replace(/^https?:\/\//, '').replace(/\/\*$/, '')
+    const name = label.trim() || host
+
+    const source = await repos.projects.approveSource({
+      projectId,
+      originPattern: pattern,
+      label: name,
+    })
+
+    // If the person is at their desk with a session running, approving a source
+    // is part of that sitting and belongs in its record. If they are not, the
+    // approval still stands — it is project-scoped, not session-scoped.
+    let recordedInSession = false
+    const live = captureStore().current()
+    if (live) {
+      const session = await repos.sessions.byId(live.sessionId)
+      if (session && session.projectId === projectId) {
+        const now = Date.now()
+        const appended = await ledger.append(live.sessionId, {
+          kind: 'sourceApproved',
+          observedAt: new Date(now),
+          elapsedMs: Math.max(0, now - live.startedAtMs),
+          approvedSourceId: source.id,
+          attested: { originPattern: pattern, label: name },
+        })
+        recordedInSession = appended.ok
+      }
+    }
+
+    refresh()
+    return ok({ id: source.id, originPattern: pattern, label: name, recordedInSession })
+  })
+}
+
+/* ══════════════════════════════════════════════════════════════ sessions ══ */
+
+export interface SessionStarted {
+  readonly sessionId: string
+  readonly approvedSources: ReadonlyArray<{ id: string; label: string; originPattern: string }>
+}
+
+/**
+ * Start a sitting.
+ *
+ * `src/app/api/session/route.ts` does the same two things over HTTP for the
+ * extension, and issues it a bearer token besides. The overlap is deliberate
+ * and duplicated rather than shared: the route owns a credential this action
+ * has no business minting, and pulling the common half into a helper would mean
+ * editing a file this change does not own. See the report.
+ */
+export async function startSession(projectId: string): Promise<ActionResult<SessionStarted>> {
+  return attempt(async () => {
+    const { repos } = await appContext()
+    const project = await repos.projects.byId(projectId)
+    if (!project) return no<SessionStarted>('not-found', "That project doesn't exist any more.")
+
+    // One sitting at a time. The capture store holds exactly one live session,
+    // so starting a second would silently stop watching the first while its
+    // phase still said `observing` — the interface would then be telling the
+    // person something untrue about their own session.
+    const live = captureStore().current()
+    if (live) {
+      const running = await repos.sessions.byId(live.sessionId)
+      if (running && running.phase !== 'ended') {
+        return no<SessionStarted>(
+          'already-done',
+          'A session is already running. End that one before starting another.',
+        )
+      }
+    }
+
+    const session = await repos.sessions.start(projectId)
+    captureStore().start(session.id, Date.now())
+
+    const sources = await repos.projects.approvedSources(projectId)
+    refresh()
+
+    return ok({
+      sessionId: session.id,
+      approvedSources: sources
+        .filter((s) => s.grantState === 'granted')
+        .map((s) => ({ id: s.id, label: s.label, originPattern: s.originPattern })),
+    })
+  })
+}
+
+export interface SessionEnded {
+  readonly sessionId: string
+  readonly endedAt: string
+}
+
+export async function endSession(sessionId: string): Promise<ActionResult<SessionEnded>> {
+  return attempt(async () => {
+    const { repos } = await appContext()
+    const session = await repos.sessions.byId(sessionId)
+    if (!session) return no<SessionEnded>('not-found', "That session isn't there any more.")
+    if (session.phase === 'ended') {
+      return no<SessionEnded>('already-done', 'That session has already ended.')
+    }
+
+    const endedAt = new Date()
+    await repos.sessions.end(sessionId, endedAt)
+
+    // Only end capture if this is the session being captured. Ending someone
+    // else's live capture because a stale tab posted an old id would lose events
+    // with no trace.
+    const live = captureStore().current()
+    if (live && live.sessionId === sessionId) captureStore().end()
+
+    refresh()
+    return ok({ sessionId, endedAt: endedAt.toISOString() })
+  })
+}
+
+/* ═════════════════════════════════════════════════════════════ the reading ══ */
+
+export interface ReadingProduced {
+  readonly readingId: string
+  readonly claimCount: number
+  /**
+   * Quotes the model offered that did not match the cited event's stored text.
+   * Counted, not merely dropped: fabricated support is an H1 datum.
+   */
+  readonly discardedQuotes: number
+  /** False when a reading already existed. Slice 0 produces exactly one. */
+  readonly created: boolean
+}
+
+/**
+ * Read the session.
+ *
+ * Runs once, when the person asks to hand over — never on a timer. Periodic
+ * reading would feed page text to a model with nobody watching, during the one
+ * phase whose entire purpose is passive observation.
+ *
+ * Calling this a second time returns the reading that already exists rather
+ * than producing a second one. There is no re-read in slice 0: editing is the
+ * correction channel, and a re-runnable reading turns H1 from "did Propositum
+ * read a cold session correctly" into "did we converge after three tries".
+ */
+export async function generateReading(sessionId: string): Promise<ActionResult<ReadingProduced>> {
+  return attempt(async () => {
+    const { repos } = await appContext()
+
+    const session = await repos.sessions.byId(sessionId)
+    if (!session) return no<ReadingProduced>('not-found', "That session isn't there any more.")
+
+    const existing = await repos.readings.latestForSession(sessionId)
+    if (existing) {
+      const already = await repos.readings.byId(existing.id)
+      return ok({
+        readingId: existing.id,
+        claimCount: already?.claims.length ?? 0,
+        discardedQuotes: 0,
+        created: false,
+      })
+    }
+
+    const events = await repos.events.bySession(sessionId)
+    if (events.length === 0) {
+      return no<ReadingProduced>(
+        'nothing-to-read',
+        "Propositum didn't see anything in this session, so there is nothing to go on yet.",
+      )
+    }
+
+    const client = modelClient()
+    if (!client) return { ok: false, problem: NO_KEY } as const
+
+    /* ── the numbered event list the model is shown ─────────────────────── */
+
+    const handleToEventId = new Map<string, string>()
+    const textByHandle = new Map<string, string>()
+    const promptEvents: PromptEvent[] = []
+    const notes: string[] = []
+
+    events.forEach((event, i) => {
+      const handle = `E${i + 1}`
+      const attested = asRecord(event.attested)
+      const sentence = describeEvent(event.kind, attested)
+
+      // Page-authored text. Re-datamarked on the way out — `datamark()` is the
+      // only construction site for the brand, so this is the only way stored
+      // text can legally reach a prompt, and it is idempotent on text the
+      // ledger writer already sanitised.
+      const stored = textOf(asRecord(event.untrusted), 'text')
+      const marked = stored === null ? undefined : datamark(stored)
+
+      handleToEventId.set(handle, event.id)
+      textByHandle.set(handle, `${sentence} ${stored ?? ''}`)
+      promptEvents.push({
+        handle,
+        kind: event.kind,
+        at: CLOCK.format(event.observedAt),
+        attested: sentence,
+        ...(marked === undefined ? {} : { untrusted: marked }),
+      })
+
+      // A note is human-asserted, and the prompt has a section that says so.
+      // It also stays in the numbered list, because a claim that rests on a note
+      // must be able to cite it — provenance has no exceptions.
+      if (event.kind === 'note') {
+        const written = textOf(attested, 'text')
+        if (written) notes.push(written)
+      }
+    })
+
+    const handles = handlesFor(promptEvents)
+    const result = await client.run(sessionReadingBoundary(handles), {
+      events: promptEvents,
+      notes,
+    })
+
+    if (!result.ok) return { ok: false, problem: sayWhyTheModelFailed(result.failure) } as const
+
+    /* ── validate, then persist ─────────────────────────────────────────── */
+
+    let discardedQuotes = 0
+    const claims: ClaimInput[] = []
+
+    for (const claim of result.value.claims) {
+      const evidence: Array<{ eventId: string; quote?: string | undefined }> = []
+
+      for (const cited of claim.evidence) {
+        const eventId = handleToEventId.get(cited.ref)
+        if (!eventId) continue
+
+        let quote: string | undefined
+        if (cited.quote) {
+          const source = canonical(textByHandle.get(cited.ref) ?? '')
+          if (source.includes(canonical(cited.quote))) quote = cited.quote
+          else discardedQuotes += 1
+        }
+
+        evidence.push({ eventId, ...(quote === undefined ? {} : { quote }) })
+      }
+
+      // A claim whose every citation fails to resolve has no provenance, and an
+      // inference with no provenance is not a claim Propositum is allowed to
+      // make. Drop it rather than store it unsupported.
+      if (evidence.length === 0) continue
+
+      claims.push({
+        kind: claim.kind,
+        text: claim.text,
+        ordinal: claims.length,
+        evidence,
+        ...(claim.kind === 'objective' && claim.confidence !== undefined
+          ? { confidence: claim.confidence }
+          : {}),
+      })
+    }
+
+    const objectives = claims.filter((c) => c.kind === 'objective')
+    if (objectives.length !== 1) {
+      return no<ReadingProduced>(
+        'model-unusable',
+        "Propositum couldn't settle on one thing you were working on, so it recorded nothing. Start the agreement yourself and say what you're aiming for.",
+      )
+    }
+
+    const lastEvent = events[events.length - 1]
+    const reading = await repos.readings.create({
+      sessionId,
+      throughSeq: lastEvent?.seq ?? 0,
+      claims,
+    })
+
+    refresh()
+    return ok({
+      readingId: reading.id,
+      claimCount: claims.length,
+      discardedQuotes,
+      created: true,
+    })
+  })
+}
+
+export interface ClaimEdited {
+  readonly claimId: string
+}
+
+/**
+ * The person corrects one claim.
+ *
+ * `origin` moves to `edited` on that claim alone. Marking the whole reading
+ * edited would launder every untouched inferred claim into a human assertion
+ * the moment one word changed, and make the handoff correction rate — the
+ * measure that tells us whether principle 2 is being met — uncomputable.
+ */
+export async function editClaim(claimId: string, text: string): Promise<ActionResult<ClaimEdited>> {
+  return attempt(async () => {
+    const clean = text.trim()
+    if (!clean) {
+      return no<ClaimEdited>('invalid-input', "Say what it should be instead — an empty line can't stand in for it.")
+    }
+
+    const { repos } = await appContext()
+    await repos.readings.editClaim(claimId, clean)
+    refresh()
+    return ok({ claimId })
+  })
+}
+
+/* ══════════════════════════════════════════════════════════════ the handoff ══ */
+
+export interface QuotedConstraint {
+  /** Never pre-filled into the working agreement — the person retypes anything
+   *  they want honoured. */
+  readonly text: string
+  readonly sourceLabel: string | null
+  /**
+   * True only when `text` is a quote that VERIFIED against the cited event's
+   * stored page text.
+   *
+   * When false, `text` is the model's own paraphrase, and it must not be
+   * rendered as a quotation attributed to the source. A false attribution is
+   * worse than none: CONTEXT calls the attribution "a hard requirement, not a
+   * nicety" precisely because the person's retyping is only informed if the
+   * source really said it. Attributing the model's words to a real site turns
+   * that friction into laundering.
+   *
+   * It will be false often — the injection defence means the model rarely
+   * reproduces a byte-exact string.
+   */
+  readonly verbatim: boolean
+}
+
+export interface ContractDrafted {
+  readonly contractId: string
+  readonly objective: string
+  readonly definitionOfDone: string
+  readonly suggestedTimeLimitMinutes: number
+  readonly approvedSourceIds: readonly string[]
+  readonly allowedActionKinds: readonly ActionKind[]
+  readonly documentTitle: string
+  /**
+   * Constraints the reading found in page text. Display-only, structurally
+   * barred from the agreement — without the attribution beside them, a quoted
+   * constraint is a pre-filled one with an extra click.
+   */
+  readonly quotedConstraints: readonly QuotedConstraint[]
+}
+
+/** Time limit, initiative, progress, interruption, output — plus the two prose
+ *  fields and the guidance the person may have corrected on the same screen. */
+export interface HandoffChoices extends AutonomyControls {
+  /** Human-typed only. An inferred constraint claim never reaches this. */
+  readonly guidance?: readonly string[] | undefined
+  readonly objective?: string | undefined
+  readonly definitionOfDone?: string | undefined
+}
+
+/**
+ * Draft a working agreement from a reading.
+ *
+ * The model proposes the objective, what done means, a time budget and a
+ * NARROWING of the sources already seen. It is never asked what Propositum may
+ * do — there is no session-level action grant for a subset check to compare
+ * against, and a check that cannot fail looks like a safeguard while being none.
+ */
+export async function draftContract(readingId: string): Promise<ActionResult<ContractDrafted>> {
+  return attempt(async () => {
+    const { repos } = await appContext()
+
+    const reading = await repos.readings.byId(readingId)
+    if (!reading) {
+      return no<ContractDrafted>(
+        'not-found',
+        "Propositum has lost what it understood about that session. Start again from the session.",
+      )
+    }
+
+    const session = await repos.sessions.byId(reading.sessionId)
+    if (!session) return no<ContractDrafted>('not-found', "That session isn't there any more.")
+
+    const documents = await repos.documents.forProject(session.projectId)
+    const document = documents[0]
+    if (!document) {
+      return no<ContractDrafted>(
+        'blocked',
+        'There is no document in this project yet. Paste one in first, so Propositum has something to work on.',
+      )
+    }
+
+    const base = await repos.documents.latestVersion(document.id)
+    if (!base) {
+      return no<ContractDrafted>('blocked', 'That document has no saved text yet.')
+    }
+
+    /* ── the sources this sitting actually touched ──────────────────────── */
+
+    const events = await repos.events.bySession(reading.sessionId)
+    const granted = await repos.projects.approvedSources(session.projectId)
+    const labelById = new Map(granted.map((s) => [s.id, s.label]))
+    const sourceByEventId = new Map(events.map((e) => [e.id, e.approvedSourceId]))
+
+    const observed: Array<{ id: string; label: string }> = []
+    const seen = new Set<string>()
+    for (const event of events) {
+      const id = event.approvedSourceId
+      if (!id || seen.has(id)) continue
+      seen.add(id)
+      observed.push({ id, label: labelById.get(id) ?? id })
+    }
+
+    if (observed.length === 0) {
+      return no<ContractDrafted>(
+        'blocked',
+        'Propositum saw no approved sources in this session, so there is nothing it could look at while you are away.',
+      )
+    }
+
+    const handled = observed.map((s, i) => ({ handle: `S${i + 1}`, id: s.id, label: s.label }))
+    const idByHandle = new Map(handled.map((s) => [s.handle, s.id]))
+
+    /* ── the call ───────────────────────────────────────────────────────── */
+
+    const client = modelClient()
+    if (!client) return { ok: false, problem: NO_KEY } as const
+
+    // ── Constraint claims never reach this call ──────────────────────────
+    //
+    // ADR-0006 bars an inferred constraint from reaching StatedIntent, and
+    // StatedIntent is objective + definitionOfDone + guidance. The handoff
+    // schema has no `guidance` field, so that third is structural — but the
+    // model WRITES the other two, and it was being shown the constraint text to
+    // write them from.
+    //
+    // A page saying "proposals must offer a 40% revenue share" could therefore
+    // be absorbed into the drafted objective, arrive in the agreement as
+    // ordinary prose with no attribution, and be ratified by someone with no
+    // way to see where it came from — bypassing the attributed aside two
+    // sections below, whose whole purpose is that friction.
+    //
+    // The system prompt already says "never invent a constraint". ADR-0006's
+    // own table classifies a prompt instruction as DEPTH, not a boundary. This
+    // filter is the boundary.
+    const claimsForHandoff = reading.claims.filter((c) => c.kind !== 'constraint')
+
+    const drafted = await client.run(
+      handoffBoundary(sourceHandlesFor(handled)),
+      {
+        claims: claimsForHandoff.map((c) => ({
+          kind: c.kind,
+          text: c.text,
+          ...(c.confidence === null ? {} : { confidence: c.confidence }),
+        })),
+        sources: handled.map((s) => ({ handle: s.handle, label: s.label })),
+        documentTitle: document.title,
+      },
+    )
+
+    if (!drafted.ok) return { ok: false, problem: sayWhyTheModelFailed(drafted.failure) } as const
+
+    /* ── narrowing, verified deterministically ──────────────────────────── */
+
+    const proposed = drafted.value.narrowedSourceHandles
+      .map((h) => idByHandle.get(h))
+      .filter((id): id is string => id !== undefined)
+
+    // `proposed ⊆ observed` is guaranteed by the handle set, and checked anyway
+    // — a narrowing is the only thing a model may propose about scope, so the
+    // containment is worth asserting where it is used rather than trusting a
+    // refinement three files away. An empty narrowing falls back to everything
+    // observed: least privilege, not no privilege.
+    const narrowed = proposed.filter((id) => seen.has(id))
+    const approvedSourceIds = narrowed.length > 0 ? narrowed : observed.map((s) => s.id)
+
+    const minutes = Math.min(480, Math.max(5, Math.round(drafted.value.suggestedTimeLimitMinutes)))
+
+    /* ── constraints, quoted and attributed ─────────────────────────────── */
+
+    const quotedConstraints: QuotedConstraint[] = reading.claims
+      .filter((c) => c.kind === 'constraint')
+      .map((c) => {
+        const citedEventId = c.evidence[0]?.eventId
+        const sourceId = citedEventId === undefined ? null : sourceByEventId.get(citedEventId) ?? null
+        const quote = c.evidence[0]?.quote
+        return {
+          text: quote ?? c.text,
+          sourceLabel: sourceId === null ? null : labelById.get(sourceId) ?? null,
+          verbatim: quote !== undefined,
+        }
+      })
+
+    /* ── persist the draft ──────────────────────────────────────────────── */
+
+    // Full capability at draft time; the Output dial removes `draft-section` at
+    // ratification. Defaults are static product constants, never model-proposed.
+    const controls = DEFAULT_CONTROLS
+    const contract = await repos.contracts.createDraft({
+      sessionId: reading.sessionId,
+      readingId,
+      objective: drafted.value.objective,
+      definitionOfDone: drafted.value.definitionOfDone,
+      guidance: [],
+      approvedSourceIds,
+      allowedActionKinds: [...ACTION_KINDS],
+      baseVersionId: base.id,
+      initiative: controls.initiative,
+      progress: controls.progress,
+      output: controls.output,
+      interruption: controls.interruption,
+      timeLimitMinutes: minutes,
+    })
+
+    refresh()
+    return ok({
+      contractId: contract.id,
+      objective: drafted.value.objective,
+      definitionOfDone: drafted.value.definitionOfDone,
+      suggestedTimeLimitMinutes: minutes,
+      approvedSourceIds,
+      allowedActionKinds: [...ACTION_KINDS],
+      documentTitle: document.title,
+      quotedConstraints,
+    })
+  })
+}
+
+/**
+ * The dials as they arrive on screen, before the person touches them.
+ *
+ * Static product constants, never model-proposed — a model able to pre-set
+ * *use judgment / stop only when blocked* would be the autonomy dial itself
+ * hijacked.
+ *
+ * Four of the five sit at the cautious end. **Output does not**, and that is
+ * worth saying plainly rather than describing all five as "safe defaults":
+ * `draft-changes` is the permissive value, chosen because the product's whole
+ * claim is that work continues while you are away, and a default of
+ * `suggestions-only` would mean the ordinary path begins by widening a
+ * permission. The dial still bites — flipping it removes `draft-section` from
+ * the scope, not from the wording.
+ *
+ * Exported as an async function because a `'use server'` module may export
+ * nothing else. It lives here rather than in three screens that would drift.
+ */
+const DEFAULT_CONTROLS: AutonomyControls = {
+  initiative: 'follow-closely',
+  progress: 'current-step-only',
+  output: 'draft-changes',
+  interruption: 'stop-when-uncertain',
+  timeLimitMinutes: 30,
+}
+
+export async function defaultAutonomyControls(): Promise<AutonomyControls> {
+  return DEFAULT_CONTROLS
+}
+
+export interface ContractAccepted {
+  /** The contract that was ratified. Not always the one passed in — see below. */
+  readonly contractId: string
+  readonly runId: string
+  readonly acceptedAt: string
+  /** `acceptedAt + timeLimitMinutes`. Derived from an immutable pair, never
+   *  stored, so a crash-restart cannot silently reset the budget. */
+  readonly deadlineAt: string
+  readonly allowedActionKinds: readonly ActionKind[]
+}
+
+function sameList(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((value, i) => value === b[i])
+}
+
+function sameSet(a: readonly string[], b: readonly string[]): boolean {
+  return sameList([...a].sort(), [...b].sort())
+}
+
+/**
+ * Ratify, then queue the shift.
+ *
+ * Nothing in the controls can switch this step off. There is no auto-accept and
+ * no auto-handoff; a human act is the only thing that moves a contract out of
+ * `draft`, and no run may start from one that has not.
+ *
+ * ── Why this may write a second draft row ────────────────────────────────
+ *
+ * The Output dial is a real permission: `suggestions-only` removes
+ * `draft-section` from the scope, so a worker that proposes document text is
+ * refused by the same deny-by-default path as any unauthorized kind. That means
+ * the dials the person set must reach the stored contract, and the repository's
+ * `editDraft` can only patch the objective, the definition of done and the time
+ * limit.
+ *
+ * So when the chosen dials differ from the draft's, this writes a fresh draft
+ * carrying them and ratifies that one, returning its id. The superseded draft is
+ * inert — no run may start from an unaccepted contract. The alternative was to
+ * accept a contract whose stored permissions did not match the panel the person
+ * read, and a permission panel that does not bind is the exact failure
+ * PRODUCT_PRINCIPLES §6 exists to prevent. See the report for the repository
+ * method that would remove this.
+ */
+export async function acceptContract(
+  contractId: string,
+  controls: HandoffChoices,
+): Promise<ActionResult<ContractAccepted>> {
+  return attempt(async () => {
+    const { repos } = await appContext()
+
+    const draft = await repos.contracts.byId(contractId)
+    if (!draft) return no<ContractAccepted>('not-found', "That agreement isn't there any more.")
+    if (draft.status !== 'draft') {
+      return no<ContractAccepted>('already-done', "You've already handed this over.")
+    }
+
+    const session = await repos.sessions.byId(draft.sessionId)
+    if (!session) return no<ContractAccepted>('not-found', "That session isn't there any more.")
+    if (session.phase === 'ended') {
+      return no<ContractAccepted>(
+        'blocked',
+        'That session has ended, so there is nothing to hand over. Start a new one.',
+      )
+    }
+
+    const minutes = Math.round(controls.timeLimitMinutes)
+    if (!Number.isFinite(minutes) || minutes < 5 || minutes > 480) {
+      return no<ContractAccepted>(
+        'invalid-input',
+        'Give Propositum somewhere between 5 minutes and 8 hours.',
+      )
+    }
+
+    const objective = (controls.objective ?? draft.objective).trim()
+    const definitionOfDone = (controls.definitionOfDone ?? draft.definitionOfDone).trim()
+    if (!objective) {
+      return no<ContractAccepted>('invalid-input', "Say what Propositum should work on while you're away.")
+    }
+    if (!definitionOfDone) {
+      return no<ContractAccepted>('invalid-input', 'Say how Propositum will know it is finished.')
+    }
+
+    // Human-typed only. Nothing derived from page text arrives here — the
+    // handoff boundary has no field that could carry it.
+    const guidance = (controls.guidance ?? []).map((g) => g.trim()).filter((g) => g.length > 0)
+
+    // The Output dial, applied to the stored scope. `compilePolicy` applies it
+    // again at run time; both agreeing is the point, not redundancy.
+    const allowedActionKinds: ActionKind[] =
+      controls.output === 'suggestions-only'
+        ? ACTION_KINDS.filter((k) => k !== 'draft-section')
+        : [...ACTION_KINDS]
+
+    const unchanged =
+      draft.objective === objective &&
+      draft.definitionOfDone === definitionOfDone &&
+      draft.timeLimitMinutes === minutes &&
+      draft.initiative === controls.initiative &&
+      draft.progress === controls.progress &&
+      draft.output === controls.output &&
+      draft.interruption === controls.interruption &&
+      sameList(draft.guidance, guidance) &&
+      sameSet(draft.allowedActionKinds, allowedActionKinds)
+
+    const targetId = unchanged
+      ? contractId
+      : (
+          await repos.contracts.createDraft({
+            sessionId: draft.sessionId,
+            readingId: draft.readingId,
+            objective,
+            definitionOfDone,
+            guidance,
+            approvedSourceIds: draft.approvedSourceIds,
+            allowedActionKinds,
+            baseVersionId: draft.baseVersionId,
+            initiative: controls.initiative,
+            progress: controls.progress,
+            output: controls.output,
+            interruption: controls.interruption,
+            timeLimitMinutes: minutes,
+          })
+        ).id
+
+    const acceptedAt = new Date()
+    await repos.contracts.accept(targetId, acceptedAt)
+
+    // observing → away. Capture is off for the whole shift, which is what makes
+    // "While you were away" describe a stable interval.
+    await repos.sessions.markAway(draft.sessionId)
+
+    const run = await repos.runs.enqueue({ contractId: targetId, role: 'worker' })
+
+    refresh()
+    return ok({
+      contractId: targetId,
+      runId: run.id,
+      acceptedAt: acceptedAt.toISOString(),
+      deadlineAt: new Date(acceptedAt.getTime() + minutes * 60_000).toISOString(),
+      allowedActionKinds,
+    })
+  })
+}
+
+/* ═════════════════════════════════════════════════════════════════ review ══ */
+
+export interface VerdictRecorded {
+  readonly changeId: string
+  readonly verdict: 'accept' | 'reject' | 'edit'
+}
+
+/**
+ * The person decides on one change.
+ *
+ * Only a human writes one of these. No model, worker run or reviewer run may,
+ * and there is no column that could record otherwise — a verdict is
+ * human-authored by definition.
+ *
+ * `edit` is not decoration. Generated work is scored accepted / edited /
+ * rejected, so folding an edit into an accept would make the hypothesis
+ * unmeasurable.
+ */
+export async function recordVerdict(
+  changeId: string,
+  verdict: 'accept' | 'reject' | 'edit',
+  editedText?: string,
+): Promise<ActionResult<VerdictRecorded>> {
+  return attempt(async () => {
+    if (verdict !== 'accept' && verdict !== 'reject' && verdict !== 'edit') {
+      return no<VerdictRecorded>('invalid-input', 'Choose accept, reject, or edit.')
+    }
+
+    const clean = editedText?.trim()
+    if (verdict === 'edit' && !clean) {
+      return no<VerdictRecorded>('invalid-input', 'Write what it should say instead.')
+    }
+    if (verdict !== 'edit' && clean) {
+      return no<VerdictRecorded>(
+        'invalid-input',
+        'Replacement text only goes with an edit. Choose Edit to keep it.',
+      )
+    }
+
+    const { repos } = await appContext()
+
+    try {
+      await repos.changesets.recordVerdict({
+        changeId,
+        verdict,
+        ...(verdict === 'edit' && clean ? { editedText: clean } : {}),
+      })
+    } catch (error) {
+      // One verdict per change, enforced by a unique index. Changing your mind
+      // is a thing the interface has to say out loud rather than something a
+      // second silent write papers over.
+      const message = error instanceof Error ? error.message : String(error)
+      if (/unique|P2002/i.test(message)) {
+        return no<VerdictRecorded>('already-done', "You've already decided on this change.")
+      }
+      throw error
+    }
+
+    refresh()
+    return ok({ changeId, verdict })
+  })
+}

@@ -1,0 +1,265 @@
+/**
+ * Executing one claimed run, and writing the note when it ends.
+ *
+ * ── The gap this closes ──────────────────────────────────────────────────
+ *
+ * Before this file, `runWorker` had no caller and `repos.reports.create` had no
+ * caller. Both were built, tested, and unreachable. The visible consequence was
+ * worse than "a feature is missing":
+ *
+ *   - Pressing Take over stranded the session in `away` forever. The UI offered
+ *     "Take back control" pointing at a disabled button, and the shift page said
+ *     "Propositum is still working" in perpetuity — which Principle 11 forbids.
+ *   - No `DecisionNeeded` row was ever written, so the Accept-all guard the
+ *     re-entry prototype exists to enforce could never fire. It would have
+ *     demoed as fixed while having never once run.
+ *
+ * ── Who writes the ShiftReport, and why it matters ───────────────────────
+ *
+ * The app process, when the run ends — never the `AgentRun` itself. A report
+ * only a live runner could produce cannot exist on `interrupted`, which is the
+ * outcome that most needs one, and under the "leave your desk" constraint it is
+ * a routine outcome rather than an exotic one.
+ *
+ * So the runner returns a `WorkerResult` and this file turns it into rows.
+ */
+
+import { runWorker } from '../runtime/worker-loop'
+import type { RunLedger, WorkerJob, WorkerResult } from '../runtime/worker-loop'
+import { STOP_RULES } from '../domain/execution/stop-conditions'
+import { allowlisted } from '../policy/fetcher'
+import type { SourceFetcher } from '../policy/fetcher'
+import { diff } from '../domain/document/changeset'
+import type { AppContext } from './db'
+import type { ModelClient } from '../model/client'
+import type { ActionKind } from '../domain/handoff/policy'
+
+export interface ExecuteDeps {
+  readonly ctx: AppContext
+  readonly model: ModelClient
+  readonly fetcher: SourceFetcher
+  readonly now: () => number
+}
+
+/** A ledger backed by real rows. The worker writes intents before effects
+ *  through this, so a run that dies mid-action still shows what it attempted. */
+function ledgerFor(ctx: AppContext, runId: string): RunLedger {
+  return {
+    async recordIntent(input) {
+      const row = await ctx.db.prisma.actionIntent.create({
+        data: {
+          runId: input.runId,
+          ...(input.stepId === null ? {} : { stepId: input.stepId }),
+          seq: input.seq,
+          kind: input.kind,
+          reason: input.reason,
+          params: input.params as object,
+          authorized: input.authorized,
+          ...(input.refusedRule === undefined ? {} : { refusedRule: input.refusedRule }),
+        },
+        select: { id: true },
+      })
+      return row.id
+    },
+
+    async recordOutcome(input) {
+      await ctx.db.prisma.actionOutcome.create({
+        data: {
+          intentId: input.intentId,
+          result: input.result,
+          scopeVerdict: input.scopeVerdict,
+          ...(input.detail === undefined ? {} : { detail: input.detail }),
+          ...(input.draftText === undefined ? {} : { draftText: input.draftText }),
+        },
+      })
+    },
+
+    async recordSteps(_runId, steps) {
+      const ids: string[] = []
+      for (const step of steps) {
+        const row = await ctx.db.prisma.planStep.create({
+          data: { runId, ordinal: step.ordinal, intent: step.intent },
+          select: { id: true },
+        })
+        ids.push(row.id)
+      }
+      return ids
+    },
+
+    advanceProgress: (id, step) => ctx.repos.runs.advanceProgress(id, step),
+  }
+}
+
+/**
+ * Execute one claimed run end to end, then write the note.
+ *
+ * Never throws for a run-level failure — a failed run is a recorded outcome,
+ * and throwing would lose the ledger context the person needs on return.
+ */
+export async function executeRun(runId: string, deps: ExecuteDeps): Promise<void> {
+  const { ctx } = deps
+
+  const run = await ctx.repos.runs.byId(runId)
+  if (!run) return
+
+  const contract = await ctx.repos.contracts.byId(run.contractId)
+  if (!contract) {
+    await ctx.repos.runs.complete(runId, 'failed', new Date(deps.now()), 'error')
+    return
+  }
+
+  const version = await ctx.repos.documents.version(contract.baseVersionId)
+  const document = version ? await ctx.repos.documents.byId(version.documentId) : null
+
+  const sources = await ctx.db.prisma.approvedSource.findMany({
+    where: { id: { in: contract.approvedSourceIds } },
+    select: { id: true, label: true, originPattern: true },
+  })
+
+  // The deadline is DERIVED from an immutable pair, never stored — a
+  // crash-restart loop must not be able to silently reset the budget.
+  const acceptedAt = contract.acceptedAt?.getTime() ?? deps.now()
+  const deadlineEpochMs = acceptedAt + contract.timeLimitMinutes * 60_000
+
+  const job: WorkerJob = {
+    runId,
+    objective: contract.objective,
+    definitionOfDone: contract.definitionOfDone,
+    guidance: contract.guidance,
+    scope: {
+      approvedSourceIds: contract.approvedSourceIds,
+      allowedActionKinds: contract.allowedActionKinds as ActionKind[],
+      baseVersionId: contract.baseVersionId,
+    },
+    controls: {
+      initiative: contract.initiative as 'follow-closely' | 'use-judgment',
+      progress: contract.progress as 'current-step-only' | 'remaining-plan',
+      output: contract.output as 'suggestions-only' | 'draft-changes',
+      interruption: contract.interruption as 'stop-when-uncertain' | 'stop-only-when-blocked',
+      timeLimitMinutes: contract.timeLimitMinutes,
+    },
+    documentTitle: document?.title ?? 'the document',
+    sections: sectionsOf(version?.content ?? ''),
+    sourceLabels: sources.map((s) => ({ id: s.id, label: s.label })),
+    deadlineEpochMs,
+  }
+
+  let result: WorkerResult
+  try {
+    result = await runWorker(job, {
+      model: deps.model,
+      ledger: ledgerFor(ctx, runId),
+      readSource: {
+        fetcher: allowlisted(deps.fetcher, sources.map((s) => s.originPattern)),
+        sources: {
+          urlFor: async (id) => {
+            const source = sources.find((s) => s.id === id)
+            return source ? source.originPattern.replace(/\/\*$/, '/') : null
+          },
+        },
+      },
+      readDoc: { versions: { byId: (id) => ctx.repos.documents.version(id) }, baseVersionId: contract.baseVersionId },
+      now: deps.now,
+      renewLease: (id) => ctx.repos.runs.renewLease(id, new Date(deps.now() + 60_000)),
+    })
+  } catch (error) {
+    await ctx.repos.runs.complete(runId, 'failed', new Date(deps.now()), 'error')
+    await writeReport(ctx, contract.id, null, [], error instanceof Error ? error.message : String(error))
+    return
+  }
+
+  /* ── the changeset, computed deterministically from the worker's prose ── */
+
+  if (result.drafts.length > 0 && version) {
+    let proposed = version.content
+    for (const draft of result.drafts) proposed = replaceSection(proposed, draft.section, draft.prose)
+
+    const { baseHash, changes } = diff(version.content, proposed, 'Drafted while you were away.')
+    if (changes.length > 0) {
+      await ctx.repos.changesets.create({
+        contractId: contract.id,
+        baseVersionId: version.id,
+        baseHash,
+        changes: changes.map((c) => ({
+          startOffset: c.startOffset,
+          endOffset: c.endOffset,
+          prefix: c.prefix,
+          exact: c.exact,
+          suffix: c.suffix,
+          replacement: c.replacement,
+          reason: c.reason,
+        })),
+      })
+    }
+  }
+
+  await ctx.repos.runs.complete(
+    runId,
+    result.status,
+    new Date(deps.now()),
+    result.terminalReason ?? undefined,
+  )
+
+  /* ── the note ───────────────────────────────────────────────────────── */
+
+  const stopLabel = result.stoppedBy.length ? STOP_RULES[result.stoppedBy[0]!].consumerLabel : null
+
+  await writeReport(ctx, contract.id, stopLabel, result.decisions)
+
+  // The session goes back to the person. Without this it stays `away` forever,
+  // and every control that offers to hand it back is a promise the product
+  // cannot keep.
+  await ctx.repos.sessions.markObserving(contract.sessionId)
+}
+
+async function writeReport(
+  ctx: AppContext,
+  contractId: string,
+  stopLabel: string | null,
+  decisions: ReadonlyArray<{ question: string; whyItMatters: string }>,
+  failureDetail?: string,
+): Promise<void> {
+  const existing = await ctx.repos.reports.forContract(contractId)
+  if (existing) return
+
+  await ctx.repos.reports.create({
+    contractId,
+    // The narrative boundary fails open. A null narrative is a designed
+    // outcome, not an error — the report renders without it.
+    narrative: failureDetail ? null : stopLabel,
+    decisions: decisions.map((d, i) => ({
+      question: d.question,
+      whyStopped: d.whyItMatters,
+      needs: 'A decision only you can make.',
+      ordinal: i,
+    })),
+  })
+}
+
+/** Markdown `## ` headings, in order. */
+function sectionsOf(content: string): string[] {
+  return content
+    .split('\n')
+    .filter((l) => /^#{2,3}\s/.test(l.trim()))
+    .map((l) => l.replace(/^#+\s*/, '').trim())
+}
+
+/** Replace a named section's body with new prose, leaving its heading. Appends
+ *  when the section does not exist — a worker drafting a section the document
+ *  lacks is a planning error the reviewer should see, not something to drop. */
+function replaceSection(content: string, section: string, prose: string): string {
+  const lines = content.split('\n')
+  const start = lines.findIndex((l) => /^#{2,3}\s/.test(l.trim()) && l.replace(/^#+\s*/, '').trim() === section)
+
+  if (start === -1) return `${content.trimEnd()}\n\n## ${section}\n\n${prose}\n`
+
+  let end = lines.length
+  for (let i = start + 1; i < lines.length; i += 1) {
+    if (/^#{2,3}\s/.test(lines[i]!.trim())) {
+      end = i
+      break
+    }
+  }
+
+  return [...lines.slice(0, start + 1), '', prose, '', ...lines.slice(end)].join('\n')
+}

@@ -1,181 +1,221 @@
 /**
- * The status page.
+ * The front door.
  *
- * Still deliberately NOT a mock of the product — the brief asks for a real
- * vertical slice, not disconnected screens, so this says what exists rather
- * than pretending a flow works.
+ * Projects, and — above them, breaking the column — whether a session is
+ * running right now. That ordering is deliberate: a running session is the only
+ * state in which Propositum is doing anything at all, and burying it under a
+ * list is the same mistake re-entry finding 1 caught in the shift report.
  *
- * What it does do is carry the prototype's design language and motion, so the
- * app and the prototype are recognisably the same product before the real
- * screens exist.
+ * ── Why "running" is not read off the session row ────────────────────────
+ *
+ * A WorkSession whose phase is `observing` means a human started one and no
+ * human has ended it. It does not mean anything is being captured: the live
+ * token lives in memory in this process, so a restart leaves an open session
+ * row that nothing is feeding. Saying "a session is running" in that state
+ * would be a false statement about our own software, which §11 rules out. So
+ * the banner is gated on the capture store, and the project screen says the
+ * awkward thing out loud when the two disagree.
+ *
+ * ── Why the form is a plain server action ────────────────────────────────
+ *
+ * No client state, so no client component: the form posts, the action returns a
+ * result, and a failure comes back as a sentence in the URL. That keeps the
+ * whole screen renderable on the server and means the error survives a reload,
+ * which a `useState` banner does not.
  */
 
-'use client'
+import Link from 'next/link'
+import { redirect } from 'next/navigation'
 
-import { motion, useReducedMotion } from 'motion/react'
-import type { ReactNode } from 'react'
-import { Away, Done, Handover, Refused, Unknown, Watching, Wrote } from '@/ui/sprites'
+import { Empty, Masthead, Section, Sheet } from '@/ui/primitives'
+import { Away, Handover, Watching } from '@/ui/sprites'
+import { createProject } from '@/server/actions'
+import { captureStore } from '@/server/capture-store'
+import { appContext } from '@/server/db'
 
-const BUILT = [
-  { sprite: Watching, name: 'CONTEXT.md', detail: 'the ubiquitous language — 38 terms, 28 banned' },
-  { sprite: Wrote, name: 'docs/adr/', detail: 'seven decisions, each with what it rejected' },
-  { sprite: Refused, name: 'src/policy/', detail: 'a gate nothing can reach a tool without passing' },
-  { sprite: Handover, name: 'src/model/', detail: 'six boundaries behind one interface' },
-  { sprite: Done, name: 'src/eval/', detail: 'sealed answer keys, and a baseline to lose to' },
-] as const
+// The capture store is in-memory and the database is a local file. Neither is
+// cacheable, and a stale "a session is running" is exactly the lie §11 forbids.
+export const dynamic = 'force-dynamic'
 
-const NEXT = [
-  { name: 'capture', detail: 'a Chrome extension that only ever sees approved sources' },
-  { name: 'inference', detail: 'a reading of the session, with evidence behind every claim' },
-  { name: 'the shift', detail: 'one worker, one reviewer, inside an agreement you ratified' },
-  { name: 're-entry', detail: 'what changed, what it could not decide, where to pick up' },
-] as const
+const CSS = `
+.hm-row { display: grid; grid-template-columns: 1fr auto; gap: 0.5rem 1.5rem; align-items: baseline; padding: 0.85rem 0; border-bottom: 1px solid var(--rule); }
+.hm-row:last-of-type { border-bottom: none; }
+.hm-name { font-family: var(--serif); font-size: 1.1875rem; color: var(--ink); text-decoration: none; }
+.hm-name:hover { text-decoration: underline; text-underline-offset: 3px; }
+.hm-name:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 2px; }
+.hm-meta { font-size: 0.8125rem; color: var(--faint); font-family: var(--mono); }
 
-export default function Page() {
-  const still = useReducedMotion()
+.hm-form { display: flex; gap: 0.75rem; flex-wrap: wrap; align-items: flex-end; margin-top: 1.75rem; padding-top: 1.5rem; border-top: 1px dashed var(--rule); }
+.hm-field { display: grid; gap: 0.35rem; flex: 1 1 18rem; }
+.hm-label { font-size: 0.6875rem; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+.hm-input { font: inherit; font-size: 0.9375rem; padding: 0.45rem 0.65rem; border: 1px solid var(--rule); background: var(--ground); color: var(--ink); border-radius: 3px; width: 100%; }
+.hm-input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.hm-hint { margin: 0.5rem 0 0; font-size: 0.8125rem; color: var(--faint); flex-basis: 100%; }
 
-  const rise = (i: number) => ({
-    initial: still ? false : { opacity: 0, y: 8 },
-    animate: { opacity: 1, y: 0 },
-    transition: { duration: 0.5, delay: 0.08 * i, ease: [0.16, 1, 0.3, 1] as const },
-  })
+.hm-submit { font: inherit; font-size: 0.8125rem; line-height: 1.4; padding: 0.45rem 0.9rem; border: 1px solid var(--accent); background: var(--accent); color: var(--ground); border-radius: 3px; cursor: pointer; }
+.hm-submit:hover { filter: brightness(1.07); }
+.hm-submit:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.hm-go { display: inline-block; font-size: 0.8125rem; line-height: 1.4; padding: 0.35rem 0.9rem; border: 1px solid var(--accent); background: var(--accent); color: var(--ground); border-radius: 3px; text-decoration: none; }
+.hm-go:hover { filter: brightness(1.07); text-decoration: none; }
+.hm-go:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.hm-live { display: flex; flex-wrap: wrap; gap: 1rem; align-items: center; justify-content: space-between; }
+.hm-live p { margin: 0; max-width: 34rem; font-family: var(--serif); font-size: 1.125rem; line-height: 1.5; }
+
+.hm-problem { margin: 0 0 2.25rem; padding: 0.75rem 1rem; border-left: 2px solid var(--attention); background: var(--raised); color: var(--attention); font-size: 0.9375rem; }
+
+.hm-prose { margin: 0; color: var(--muted); max-width: 38rem; }
+.hm-aside { display: flex; align-items: center; gap: 0.5rem; margin: 0.85rem 0 0; color: var(--faint); max-width: 38rem; font-size: 0.875rem; }
+`
+
+const CLOCK = new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit' })
+
+function clock(at: Date): string {
+  return CLOCK.format(at).replace(/AM$/, 'am').replace(/PM$/, 'pm')
+}
+
+interface RunningSession {
+  readonly projectId: string
+  readonly projectName: string
+  readonly startedAt: Date
+  /** `away` means an agreement is live and Propositum holds the work. */
+  readonly away: boolean
+}
+
+export default async function Home({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>
+}) {
+  const params = await searchParams
+  const raw = params['problem']
+  const problem = typeof raw === 'string' ? raw : null
+
+  const { repos } = await appContext()
+  const projects = await repos.projects.list()
+
+  const live = captureStore().current()
+  let running: RunningSession | null = null
+
+  if (live) {
+    const session = await repos.sessions.byId(live.sessionId)
+    if (session && session.phase !== 'ended') {
+      const project = await repos.projects.byId(session.projectId)
+      if (project) {
+        running = {
+          projectId: project.id,
+          projectName: project.name,
+          startedAt: new Date(live.startedAtMs),
+          away: session.phase === 'away',
+        }
+      }
+    }
+  }
+
+  async function create(formData: FormData) {
+    'use server'
+
+    const result = await createProject(String(formData.get('name') ?? ''))
+    if (!result.ok) redirect(`/?problem=${encodeURIComponent(result.problem.message)}`)
+    redirect(`/projects/${result.value.id}`)
+  }
 
   return (
-    <main style={{ maxWidth: '42rem', margin: '0 auto', padding: '5rem 1.5rem 7rem' }}>
-      <motion.header {...rise(0)} style={{ marginBottom: '3.5rem' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '1rem', color: 'var(--accent)' }}>
-          <Away size={22} delay={0.3} />
-          <span style={{ fontFamily: 'var(--mono)', fontSize: '0.6875rem', letterSpacing: '0.14em', textTransform: 'uppercase' }}>
-            Propositum
-          </span>
-        </div>
+    <Sheet>
+      <style href="propositum-home" precedence="default">
+        {CSS}
+      </style>
 
-        <h1
-          style={{
-            fontFamily: 'var(--serif)',
-            fontSize: 'clamp(1.9rem, 5vw, 2.6rem)',
-            fontWeight: 400,
-            letterSpacing: '-0.015em',
-            lineHeight: 1.12,
-            textWrap: 'balance',
-            margin: '0 0 1rem',
-          }}
+      <Masthead
+        kicker="Propositum"
+        title="Your projects"
+        subtitle="Propositum watches only the sites you approve, and only between the moment you start a session and the moment you end it."
+        mark={running ? <Watching size={20} delay={0.3} /> : <Away size={20} delay={0.3} />}
+      />
+
+      {problem ? (
+        <p className="hm-problem" role="status">
+          {problem}
+        </p>
+      ) : null}
+
+      {running ? (
+        <Section
+          title={running.away ? 'Propositum is working while you are away' : 'A session is running'}
+          tone="attention"
+          index={1}
         >
-          Understands where you were going, and keeps going while you&rsquo;re away.
-        </h1>
+          <div className="hm-live">
+            <p>
+              {running.away
+                ? `You handed ${running.projectName} over. Propositum holds the work until it is finished or you take it back.`
+                : `You started a session in ${running.projectName} at ${clock(running.startedAt)}. Everything you do on an approved source is going into its timeline.`}
+            </p>
+            <Link className="hm-go" href={`/projects/${running.projectId}`}>
+              {running.away ? 'Take back control' : 'Open the session'}
+            </Link>
+          </div>
+        </Section>
+      ) : null}
 
-        <p style={{ color: 'var(--muted)', margin: 0, maxWidth: '34rem' }}>
-          The runtime is up and the decisions are made. There is no product here yet &mdash; and this
-          page says so rather than mocking one.
-        </p>
-      </motion.header>
+      <Section title="Projects" index={2}>
+        {projects.length === 0 ? (
+          <Empty
+            title="No projects yet."
+            next="Make one for the piece of work you want Propositum to watch. A project holds the sites it may see, the sessions you start, and the document you are writing."
+          />
+        ) : (
+          projects.map((project) => (
+            <div className="hm-row" key={project.id}>
+              <Link className="hm-name" href={`/projects/${project.id}`}>
+                {project.name}
+              </Link>
+              <span className="hm-meta">
+                {running?.projectId === project.id ? 'session running' : 'open'}
+              </span>
+            </div>
+          ))
+        )}
 
-      <Section title="What exists" index={1}>
-        {BUILT.map((row, i) => {
-          const Sprite = row.sprite
-          return (
-            <Row key={row.name} index={i} mark={<Sprite size={18} delay={0.6 + i * 0.12} />}>
-              <Term>{row.name}</Term>
-              <Detail>{row.detail}</Detail>
-            </Row>
-          )
-        })}
+        <form className="hm-form" action={create}>
+          <label className="hm-field">
+            <span className="hm-label">New project</span>
+            <input
+              className="hm-input"
+              name="name"
+              type="text"
+              required
+              maxLength={120}
+              autoComplete="off"
+              placeholder="Northwind partnership"
+            />
+          </label>
+          <button className="hm-submit" type="submit">
+            Create project
+          </button>
+          {/* A project is a name and nothing else. There is deliberately no
+              description field: a description Propositum reads is a goal in
+              disguise, and it would pre-answer the one question the session is
+              supposed to answer. */}
+          <p className="hm-hint">
+            Just a name. What you are working on is something Propositum works out from the session,
+            not something you declare up front.
+          </p>
+        </form>
       </Section>
 
-      <Section title="What is next" index={2}>
-        {NEXT.map((row, i) => (
-          <Row key={row.name} index={i} mark={<Unknown size={18} delay={1.2 + i * 0.12} />}>
-            <Term>{row.name}</Term>
-            <Detail>{row.detail}</Detail>
-          </Row>
-        ))}
+      <Section title="How this works" index={3}>
+        <p className="hm-prose">
+          Approve the sites Propositum may see. Start a session when you sit down at the work. When
+          you need to step away, hand it over inside a working agreement you write and accept
+          &mdash; and when you come back, read what changed and decide.
+        </p>
+        <p className="hm-aside">
+          <Handover size={14} title="Handed over" /> Nothing is recorded before you start a session,
+          and only you can end one.
+        </p>
       </Section>
-
-      <motion.footer
-        {...rise(3)}
-        style={{
-          marginTop: '3.5rem',
-          paddingTop: '1.5rem',
-          borderTop: '1px solid var(--rule)',
-          color: 'var(--muted)',
-          fontSize: '0.9375rem',
-        }}
-      >
-        <p style={{ margin: '0 0 0.5rem' }}>
-          The only surface that looks like the product is the{' '}
-          <a href="/prototypes/re-entry.html">re-entry prototype</a>.
-        </p>
-        <p style={{ margin: 0, fontSize: '0.8125rem', color: 'var(--faint)' }}>
-          Progress on the{' '}
-          <a href="https://github.com/smukhyala/propositum/issues/1" style={{ color: 'inherit' }}>
-            wayfinder map
-          </a>
-          .
-        </p>
-      </motion.footer>
-    </main>
+    </Sheet>
   )
-}
-
-function Section({ title, index, children }: { title: string; index: number; children: ReactNode }) {
-  const still = useReducedMotion()
-
-  return (
-    <motion.section
-      initial={still ? false : { opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.5, delay: 0.08 * index, ease: [0.16, 1, 0.3, 1] }}
-      style={{ marginBottom: '3rem' }}
-    >
-      <h2
-        style={{
-          fontSize: '0.6875rem',
-          fontWeight: 600,
-          letterSpacing: '0.12em',
-          textTransform: 'uppercase',
-          color: 'var(--muted)',
-          margin: '0 0 0.5rem',
-          paddingBottom: '0.5rem',
-          borderBottom: '1px solid var(--rule)',
-        }}
-      >
-        {title}
-      </h2>
-      <div>{children}</div>
-    </motion.section>
-  )
-}
-
-function Row({ index, mark, children }: { index: number; mark: ReactNode; children: ReactNode }) {
-  const still = useReducedMotion()
-
-  return (
-    <motion.div
-      initial={still ? false : { opacity: 0, x: -4 }}
-      animate={{ opacity: 1, x: 0 }}
-      transition={{ duration: 0.4, delay: 0.5 + index * 0.09, ease: [0.16, 1, 0.3, 1] }}
-      {...(still ? {} : { whileHover: { x: 3 } })}
-      style={{
-        display: 'grid',
-        gridTemplateColumns: '1.6rem 8.5rem 1fr',
-        gap: '0.85rem',
-        alignItems: 'baseline',
-        padding: '0.7rem 0',
-        borderBottom: '1px solid var(--rule)',
-      }}
-    >
-      <span style={{ color: 'var(--accent)', position: 'relative', top: '0.2rem' }}>{mark}</span>
-      {children}
-    </motion.div>
-  )
-}
-
-function Term({ children }: { children: ReactNode }) {
-  return (
-    <span style={{ fontFamily: 'var(--mono)', fontSize: '0.8125rem' }}>{children}</span>
-  )
-}
-
-function Detail({ children }: { children: ReactNode }) {
-  return <span style={{ color: 'var(--muted)', fontSize: '0.9375rem' }}>{children}</span>
 }
