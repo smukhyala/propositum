@@ -22,8 +22,8 @@
  * field for field — so those carriers are represented, not just page bodies.
  */
 
-import { datamark } from '../model/untrusted.js'
-import type { PromptEvent } from '../model/boundaries/session-reading.js'
+import { datamark } from '../model/untrusted'
+import type { PromptEvent } from '../model/boundaries/session-reading'
 
 export interface HostileCase {
   readonly id: string

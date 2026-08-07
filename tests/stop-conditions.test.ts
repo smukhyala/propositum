@@ -7,8 +7,8 @@ import {
   effectOfRaisedQuestion,
   evaluateStructuralStops,
   shouldStop,
-} from '../src/domain/execution/stop-conditions.js'
-import type { RunProgress } from '../src/domain/execution/stop-conditions.js'
+} from '../src/domain/execution/stop-conditions'
+import type { RunProgress } from '../src/domain/execution/stop-conditions'
 
 const fine: RunProgress = {
   nowEpochMs: 0,

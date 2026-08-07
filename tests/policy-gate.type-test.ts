@@ -11,11 +11,11 @@
  * loudly in exactly the direction that matters.
  */
 
-import { compilePolicy } from '../src/domain/handoff/policy.js'
-import type { AutonomyControls, ContractScope } from '../src/domain/handoff/policy.js'
-import { authorize } from '../src/policy/gate.js'
-import type { AuthorizedAction, RunContext } from '../src/policy/gate.js'
-import { draftSection, readApprovedSource } from '../src/policy/tools.js'
+import { compilePolicy } from '../src/domain/handoff/policy'
+import type { AutonomyControls, ContractScope } from '../src/domain/handoff/policy'
+import { authorize } from '../src/policy/gate'
+import type { AuthorizedAction, RunContext } from '../src/policy/gate'
+import { draftSection, readApprovedSource } from '../src/policy/tools'
 
 const scope: ContractScope = {
   approvedSourceIds: ['src-1'],

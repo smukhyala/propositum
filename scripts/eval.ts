@@ -14,14 +14,14 @@
  * blind spots and at n=1 there is no second signal to catch that.
  */
 
-import { AnthropicModelClient } from '../src/model/anthropic.js'
-import { FakeModelClient } from '../src/model/fake.js'
-import type { ModelClient } from '../src/model/client.js'
-import { SCENARIOS } from '../src/eval/index.js'
-import { checkSeal, readSeals, sealNew, writeSeals } from '../src/eval/seal.js'
-import { renderWorksheet, runScenario } from '../src/eval/run.js'
-import { blankEntry, isComplete, readScores, resultFor, writeScores } from '../src/eval/record.js'
-import { H1_COMPONENTS } from '../src/eval/scenario.js'
+import { AnthropicModelClient } from '../src/model/anthropic'
+import { FakeModelClient } from '../src/model/fake'
+import type { ModelClient } from '../src/model/client'
+import { SCENARIOS } from '../src/eval/index'
+import { checkSeal, readSeals, sealNew, writeSeals } from '../src/eval/seal'
+import { renderWorksheet, runScenario } from '../src/eval/run'
+import { blankEntry, isComplete, readScores, resultFor, writeScores } from '../src/eval/record'
+import { H1_COMPONENTS } from '../src/eval/scenario'
 
 try {
   process.loadEnvFile('.env')

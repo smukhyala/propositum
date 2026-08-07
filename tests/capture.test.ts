@@ -7,8 +7,8 @@ import {
   TransportUnreachableError,
   admit,
   verifyTransportReachable,
-} from '../src/capture/transport.js'
-import type { TransportContext } from '../src/capture/transport.js'
+} from '../src/capture/transport'
+import type { TransportContext } from '../src/capture/transport'
 import {
   ENGAGEMENT_DWELL_MS,
   classifyAway,
@@ -17,8 +17,8 @@ import {
   cleanUrl,
   createNavigationClassifier,
   searchTermOf,
-} from '../src/capture/semantics.js'
-import { OBSERVATION_KINDS } from '../src/persistence/ledger-writer.js'
+} from '../src/capture/semantics'
+import { OBSERVATION_KINDS } from '../src/persistence/ledger-writer'
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), '..')
 

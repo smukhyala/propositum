@@ -11,10 +11,10 @@ import {
   ACTION_KINDS,
   MAX_PLAN_STEPS,
   compilePolicy,
-} from '../src/domain/handoff/policy.js'
-import type { ActionKind, AutonomyControls, ContractScope } from '../src/domain/handoff/policy.js'
-import { authorize } from '../src/policy/gate.js'
-import type { RunContext, ToolProposal } from '../src/policy/gate.js'
+} from '../src/domain/handoff/policy'
+import type { ActionKind, AutonomyControls, ContractScope } from '../src/domain/handoff/policy'
+import { authorize } from '../src/policy/gate'
+import type { RunContext, ToolProposal } from '../src/policy/gate'
 
 const scope: ContractScope = {
   approvedSourceIds: ['src-approved'],

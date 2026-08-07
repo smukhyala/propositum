@@ -1,16 +1,16 @@
 import { describe, it, expect } from 'vitest'
-import { compilePolicy } from '../src/domain/handoff/policy.js'
-import { authorize } from '../src/policy/gate.js'
-import type { AuthorizedAction, RunContext } from '../src/policy/gate.js'
+import { compilePolicy } from '../src/domain/handoff/policy'
+import { authorize } from '../src/policy/gate'
+import type { AuthorizedAction, RunContext } from '../src/policy/gate'
 import {
   SourceNotAllowedError,
   allowlisted,
   fixtureFetcher,
   isAllowed,
   matchesPattern,
-} from '../src/policy/fetcher.js'
-import { draftSection, readApprovedSource, readDocument } from '../src/policy/tools.js'
-import { HOSTILE_CASES } from '../src/fixtures/hostile-session.js'
+} from '../src/policy/fetcher'
+import { draftSection, readApprovedSource, readDocument } from '../src/policy/tools'
+import { HOSTILE_CASES } from '../src/fixtures/hostile-session'
 
 const ALLOWED = ['https://northwind.example.com/*']
 

@@ -30,7 +30,7 @@
  */
 
 import { z } from 'zod'
-import type { ModelBoundary } from '../client.js'
+import type { ModelBoundary } from '../client'
 
 export interface ShiftReportInput {
   readonly objective: string

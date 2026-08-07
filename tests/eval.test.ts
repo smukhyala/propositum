@@ -1,18 +1,18 @@
 import { describe, it, expect } from 'vitest'
-import { SCENARIOS } from '../src/eval/index.js'
-import { checkSeal, hashReference, readSeals, sealNew } from '../src/eval/seal.js'
+import { SCENARIOS } from '../src/eval/index'
+import { checkSeal, hashReference, readSeals, sealNew } from '../src/eval/seal'
 import {
   H1_PASS_TOTAL,
   scoreH1,
   scoreH2,
   scoreH3,
   summariseH3,
-} from '../src/eval/score.js'
-import type { H1Scores } from '../src/eval/score.js'
-import { H1_COMPONENTS } from '../src/eval/scenario.js'
-import type { Scenario } from '../src/eval/scenario.js'
-import { FakeModelClient } from '../src/model/fake.js'
-import { runScenario } from '../src/eval/run.js'
+} from '../src/eval/score'
+import type { H1Scores } from '../src/eval/score'
+import { H1_COMPONENTS } from '../src/eval/scenario'
+import type { Scenario } from '../src/eval/scenario'
+import { FakeModelClient } from '../src/model/fake'
+import { runScenario } from '../src/eval/run'
 
 const full = (over: Partial<H1Scores> = {}): H1Scores =>
   Object.fromEntries(H1_COMPONENTS.map((c) => [c, 2])) as H1Scores as H1Scores

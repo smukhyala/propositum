@@ -31,7 +31,7 @@
  */
 
 import type { PrismaClient } from '@prisma/client'
-import { guarded } from '../errors.js'
+import { guarded } from '../errors'
 
 export interface Repositories {
   readonly projects: ProjectRepository

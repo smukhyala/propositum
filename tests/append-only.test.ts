@@ -30,7 +30,7 @@ import {
   findMissingGuards,
   installAppendOnlyGuards,
   REQUIRED_GUARDS,
-} from '../src/persistence/append-only.js'
+} from '../src/persistence/append-only'
 
 let dir: string
 let prisma: PrismaClient

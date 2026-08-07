@@ -25,7 +25,7 @@
  */
 
 import { createHash } from 'node:crypto'
-import { linesOf, normalise } from './normalise.js'
+import { linesOf, normalise } from './normalise'
 
 export interface ProposedChange {
   readonly startOffset: number

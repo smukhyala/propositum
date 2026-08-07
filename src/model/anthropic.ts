@@ -35,7 +35,7 @@ import {
   NON_STREAMING_MAX_TOKENS,
   classifyStopReason,
   recoveryFor,
-} from './client.js'
+} from './client'
 import type {
   BoundaryResult,
   CallTelemetry,
@@ -43,7 +43,7 @@ import type {
   ModelBoundary,
   ModelClient,
   PromptParts,
-} from './client.js'
+} from './client'
 
 export interface AnthropicModelClientOptions {
   readonly apiKey: string

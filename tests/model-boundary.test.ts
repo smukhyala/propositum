@@ -9,15 +9,15 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import { classifyStopReason, recoveryFor } from '../src/model/client.js'
-import { FakeModelClient } from '../src/model/fake.js'
+import { classifyStopReason, recoveryFor } from '../src/model/client'
+import { FakeModelClient } from '../src/model/fake'
 import {
   handlesFor,
   sessionReadingBoundary,
   sessionReadingSchema,
-} from '../src/model/boundaries/session-reading.js'
-import type { PromptEvent } from '../src/model/boundaries/session-reading.js'
-import { datamark } from '../src/model/untrusted.js'
+} from '../src/model/boundaries/session-reading'
+import type { PromptEvent } from '../src/model/boundaries/session-reading'
+import { datamark } from '../src/model/untrusted'
 
 const events: PromptEvent[] = [
   { handle: 'E1', kind: 'visited', at: '14:02', attested: 'Northwind partnership terms' },

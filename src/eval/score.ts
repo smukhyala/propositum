@@ -23,9 +23,9 @@
  * a measured judge/human agreement rate, not on convenience.
  */
 
-import { H1_COMPONENTS } from './scenario.js'
-import type { H1Component, Scenario } from './scenario.js'
-import type { SessionReadingOutput } from '../model/boundaries/session-reading.js'
+import { H1_COMPONENTS } from './scenario'
+import type { H1Component, Scenario } from './scenario'
+import type { SessionReadingOutput } from '../model/boundaries/session-reading'
 
 /* ── mechanical checks ─────────────────────────────────────────────────── */
 

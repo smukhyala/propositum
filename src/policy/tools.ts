@@ -27,8 +27,8 @@
  * gated worker loop holding real dependencies.
  */
 
-import type { AuthorizedAction } from './gate.js'
-import type { SourceFetcher } from './fetcher.js'
+import type { AuthorizedAction } from './gate'
+import type { SourceFetcher } from './fetcher'
 
 export interface SourceText {
   readonly approvedSourceId: string

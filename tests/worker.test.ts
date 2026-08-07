@@ -1,11 +1,11 @@
 import { describe, it, expect, vi } from 'vitest'
-import { runWorker } from '../src/runtime/worker-loop.js'
-import type { RunLedger, WorkerDeps, WorkerJob } from '../src/runtime/worker-loop.js'
-import { startWorkerProcess } from '../src/runtime/worker-process.js'
-import { FakeModelClient } from '../src/model/fake.js'
-import type { ScriptedReply } from '../src/model/fake.js'
-import { allowlisted, fixtureFetcher } from '../src/policy/fetcher.js'
-import { MAX_PLAN_STEPS } from '../src/domain/handoff/policy.js'
+import { runWorker } from '../src/runtime/worker-loop'
+import type { RunLedger, WorkerDeps, WorkerJob } from '../src/runtime/worker-loop'
+import { startWorkerProcess } from '../src/runtime/worker-process'
+import { FakeModelClient } from '../src/model/fake'
+import type { ScriptedReply } from '../src/model/fake'
+import { allowlisted, fixtureFetcher } from '../src/policy/fetcher'
+import { MAX_PLAN_STEPS } from '../src/domain/handoff/policy'
 
 /* ── harness ───────────────────────────────────────────────────────────── */
 
