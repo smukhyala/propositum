@@ -1,0 +1,55 @@
+{
+  "manifest_version": 3,
+  "name": "Propositum",
+  "version": "0.0.1",
+  "description": "Watches the sources you approve, while a work session is running. Nothing else.",
+
+  "_comment_permissions": [
+    "Every permission here is WARNING-FREE at install. Chrome shows no scary",
+    "prompt for any of them, which matters because a consumer product that asks",
+    "to 'read your browsing history' has already lost the argument it is trying",
+    "to make.",
+    "",
+    "DELIBERATELY ABSENT — see ADR-0002:",
+    "  tabs          would grant the URL and title of EVERY tab. Without it the",
+    "                extension is structurally incapable of learning the person",
+    "                visited anything they did not approve. Chrome enforces the",
+    "                constraint, not our code.",
+    "  webNavigation costs the 'Read your browsing history' warning, and carries",
+    "                transitionType — the most semantically loaded signal there",
+    "                is ('typed it' vs 'followed a link'). We give it up and take",
+    "                document.referrer plus Navigation Timing as partial",
+    "                substitutes. Revisit only if H1 scores badly and ablation",
+    "                points here.",
+    "  history       not needed and not defensible.",
+    "  debugger      would make every constraint below advisory."
+  ],
+  "permissions": ["storage", "alarms", "idle", "scripting", "sidePanel"],
+
+  "_comment_hosts": [
+    "optional_host_permissions, never host_permissions. Nothing is granted at",
+    "install; each origin is requested when the person approves that source, and",
+    "is revocable in Chrome's own UI independently of us."
+  ],
+  "optional_host_permissions": ["https://*/*"],
+
+  "_comment_key": [
+    "Pinned so the extension id is stable. Without it the id changes if the repo",
+    "moves, and the Origin check on the loopback transport starts rejecting our",
+    "own events.",
+    "REPLACE before any real install — this is a placeholder."
+  ],
+
+  "background": {
+    "service_worker": "src/service-worker.js",
+    "type": "module"
+  },
+
+  "side_panel": {
+    "default_path": "src/panel.html"
+  },
+
+  "action": {
+    "default_title": "Propositum"
+  }
+}

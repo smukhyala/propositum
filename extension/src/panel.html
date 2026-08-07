@@ -1,0 +1,34 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>Propositum</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    font: 14px/1.6 ui-sans-serif, -apple-system, system-ui, sans-serif;
+    margin: 0; padding: 1.25rem;
+  }
+  h1 { font-size: 0.6875rem; letter-spacing: 0.14em; text-transform: uppercase; margin: 0 0 1rem; opacity: 0.6; }
+  p { margin: 0 0 0.75rem; }
+  .off { color: #9c4708; }
+</style>
+<h1>Propositum</h1>
+<p id="state">Checking…</p>
+<p class="off" id="warning" hidden>
+  Can’t reach the app — capture is off. Nothing is being recorded.
+</p>
+<script type="module">
+  // Deliberately thin. The panel reports state; it does not hold any.
+  const state = document.getElementById('state')
+  const warning = document.getElementById('warning')
+  const { session } = await chrome.storage.session.get(['session'])
+
+  if (!session) {
+    state.textContent = 'No session running. Start one in the app.'
+  } else {
+    const { pending = [] } = await chrome.storage.session.get(['pending'])
+    state.textContent = `Watching ${session.sources.length} approved source(s). ${pending.length} event(s) waiting to send.`
+  }
+
+  const badge = await chrome.action.getBadgeText({})
+  warning.hidden = badge !== '!'
+</script>
