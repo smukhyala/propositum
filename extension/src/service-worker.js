@@ -29,9 +29,42 @@ const CUSTOM_HEADER = 'x-propositum-capture'
 
 /* ── session state, which never lives in a module variable ─────────────── */
 
+/**
+ * The session comes from the APP, not from here.
+ *
+ * A person starts a session in the UI, which mints the bearer token this
+ * extension must present on every event. Before, that token never reached us —
+ * so capture silently 403'd while the interface said a session was running.
+ * That is the worst failure available: they believe they are being watched and
+ * they are not.
+ *
+ * So we ask. `GET /api/session/current` returns the live session and its token,
+ * guarded by the same Origin + custom-header checks as everything else.
+ */
 async function loadSession() {
-  const stored = await chrome.storage.session.get(['session'])
-  return stored.session ?? null
+  const cached = (await chrome.storage.session.get(['session'])).session ?? null
+
+  try {
+    const response = await fetch(`${APP_ORIGIN}/api/session/current`, {
+      headers: { [CUSTOM_HEADER]: '1' },
+    })
+    if (!response.ok) return cached
+
+    const { session } = await response.json()
+    if (!session) {
+      // The app says no session is running. Believe it, and stop capturing —
+      // a stale local session would keep buffering events with nowhere to go.
+      if (cached) await chrome.storage.session.remove(['session'])
+      return null
+    }
+
+    await chrome.storage.session.set({ session })
+    return session
+  } catch {
+    // The app is unreachable. Keep what we have so a brief outage does not
+    // drop the session; the health badge already says capture is at risk.
+    return cached
+  }
 }
 
 async function saveSession(session) {

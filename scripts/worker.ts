@@ -18,7 +18,7 @@ import { createLedgerWriter } from '../src/persistence/ledger-writer'
 import { AnthropicModelClient } from '../src/model/anthropic'
 import { startWorkerProcess, installSignalHandlers } from '../src/runtime/worker-process'
 import { executeRun } from '../src/server/execute-run'
-import { fixtureFetcher } from '../src/policy/fetcher'
+import { createPlaywrightFetcher } from '../src/policy/playwright-fetcher'
 
 try {
   process.loadEnvFile('.env')
@@ -42,13 +42,15 @@ const ctx = {
 }
 
 /**
- * Real browsing is a Playwright process behind this same interface (ADR-0002,
- * kept separate from the human's browser). Until that lands the worker reads
- * from a fixture map, which is empty — so a read of any real source fails
- * honestly and is recorded as a failed action, rather than silently returning
- * nothing and looking like the page was blank.
+ * The worker's own browser — its own process, a fresh ephemeral context per
+ * fetch, no credentials (ADR-0002). Never the person's browser: a shared one
+ * would put the worker one click from acting inside their authenticated
+ * session.
+ *
+ * The allowlist is applied per run in executeRun, from that contract's approved
+ * sources, so this fetcher is never handed an unrestricted one.
  */
-const fetcher = fixtureFetcher({})
+const fetcher = await createPlaywrightFetcher({})
 
 const handle = startWorkerProcess(
   {
@@ -71,7 +73,9 @@ const handle = startWorkerProcess(
 // Explicitly exits. Installing a handler removes Node's default exit, and
 // omitting the exit is how you get a worker you cannot kill.
 installSignalHandlers(handle, (code) => {
-  void db.close().then(() => process.exit(code))
+  // Close the browser too, or chromium outlives the worker — Node never kills
+  // its children, which is the same default that makes orphaned runs possible.
+  void Promise.allSettled([fetcher.close(), db.close()]).then(() => process.exit(code))
 })
 
 console.log('[worker] draining runs — ctrl-c to stop')

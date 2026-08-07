@@ -44,6 +44,26 @@ A missed heartbeat is how the app detects a gap — **the gap is inferred from
 silence, never reported by the dead worker**. That is why `captureGap` is a
 first-class event with `service_worker_terminated` as one of its reasons.
 
+## Setting it up for real work
+
+1. `npm run dev` and `npm run worker` in the repo.
+2. `chrome://extensions` → Developer mode → **Load unpacked** → select `extension/`.
+3. Copy the extension **ID** Chrome shows, and put it in `.env`:
+   ```
+   PROPOSITUM_EXTENSION_ID=<the id>
+   ```
+   Restart `npm run dev`. Without this the app rejects every request with
+   `bad-origin` — the response says so explicitly rather than failing silently.
+4. In the app, create a project and approve the sources you want watched.
+5. Press **Start session**. The extension picks up the session and its token
+   from `GET /api/session/current` on its next heartbeat.
+6. Chrome will prompt for host permission the first time it needs one. That
+   prompt is the point: the grant is Chrome's, visible and revocable in Chrome's
+   own UI, not ours.
+
+If the toolbar icon shows a **!**, the extension cannot reach the app and
+**capture is off**. It fails loudly on purpose.
+
 ## Before a real install
 
 `manifest.json` has no pinned `key`. Add one, or the extension id changes if the
