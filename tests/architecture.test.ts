@@ -31,24 +31,32 @@ function tsFilesUnder(dir: string): string[] {
 }
 
 describe('every tool requires an AuthorizedAction', () => {
-  const source = readFileSync(join(repo, 'src/policy/tools.ts'), 'utf8')
+  /**
+   * Matches `export function` AND `export async function`, and tolerates a
+   * signature broken across lines.
+   *
+   * The first version of this only matched single-line `export function`, so
+   * when the tools became `export async function` with multi-line signatures it
+   * silently found one of three — a guard that had stopped guarding. Only the
+   * "did the regex match anything" canary below revealed it, which is why that
+   * assertion exists.
+   */
+  const EXPORTED_FN = /export\s+(?:async\s+)?function\s+(\w+)\s*\(\s*(\w+)\s*:\s*([^,)]+)/g
 
-  // Exported function declarations and their first parameter's type.
-  const exported = [...source.matchAll(/export function (\w+)\s*\(\s*(\w+)\s*:\s*([^,)]+)/g)].map(
-    ([, name, , type]) => ({ name, type: (type ?? '').trim() }),
-  )
+  const tools = () =>
+    [...readFileSync(join(repo, 'src/policy/tools.ts'), 'utf8').matchAll(EXPORTED_FN)].map(
+      ([, name, , type]) => ({ name: name ?? '', type: (type ?? '').trim().replace(/\s+/g, ' ') }),
+    )
 
-  it('finds the tools (guards against the regex silently matching nothing)', () => {
-    expect(exported.length).toBeGreaterThan(0)
-    expect(exported.map((e) => e.name)).toContain('readApprovedSource')
+  it('finds every tool, including async ones (guards against the regex silently matching nothing)', () => {
+    const names = tools().map((t) => t.name)
+
+    expect(names).toContain('readApprovedSource')
+    expect(names).toContain('readDocument')
+    expect(names).toContain('draftSection')
   })
 
-  it.each(
-    // Vitest needs the cases at collection time; recompute rather than close over.
-    [...readFileSync(join(repo, 'src/policy/tools.ts'), 'utf8').matchAll(
-      /export function (\w+)\s*\(\s*(\w+)\s*:\s*([^,)]+)/g,
-    )].map(([, name, , type]) => ({ name: name ?? '', type: (type ?? '').trim() })),
-  )('$name takes an AuthorizedAction', ({ type }) => {
+  it.each(tools())('$name takes an AuthorizedAction', ({ type }) => {
     expect(type).toMatch(/^AuthorizedAction(<|$)/)
   })
 })
