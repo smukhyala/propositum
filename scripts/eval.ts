@@ -6,6 +6,8 @@
  *   npm run eval -- --dry             run against a fake model (no cost)
  *   npm run eval                      run against the real model
  *   npm run eval -- --baseline        also run the raw-log baseline
+ *   npm run eval -- --worksheet       create blank score slots in eval-scores.json
+ *   npm run eval -- --report          apply the H1 gates to what you have scored
  *
  * Produces a scoring worksheet per scenario. It does not produce H1 scores —
  * those are entered by a person, because a model judge shares the generator's
@@ -18,6 +20,8 @@ import type { ModelClient } from '../src/model/client.js'
 import { SCENARIOS } from '../src/eval/index.js'
 import { checkSeal, readSeals, sealNew, writeSeals } from '../src/eval/seal.js'
 import { renderWorksheet, runScenario } from '../src/eval/run.js'
+import { blankEntry, isComplete, readScores, resultFor, writeScores } from '../src/eval/record.js'
+import { H1_COMPONENTS } from '../src/eval/scenario.js'
 
 try {
   process.loadEnvFile('.env')
@@ -51,6 +55,74 @@ if (args.has('--check')) {
     process.exit(1)
   }
   process.exit(0)
+}
+
+/* ── --worksheet ────────────────────────────────────────────────────────── */
+
+if (args.has('--worksheet')) {
+  const scores = readScores()
+  const ranAt = new Date().toISOString().slice(0, 10)
+  const model = process.env['PROPOSITUM_MODEL'] ?? 'claude-opus-5'
+  let added = 0
+
+  for (const scenario of SCENARIOS) {
+    if (scores[scenario.id] && !isComplete(scores[scenario.id]!)) continue
+    if (scores[scenario.id]) continue
+    scores[scenario.id] = blankEntry(ranAt, model)
+    added += 1
+  }
+
+  writeScores(scores)
+  console.log(
+    added
+      ? `Added ${added} blank slot(s) to eval-scores.json. Fill in 0/1/2 per component and your name in scoredBy.`
+      : 'eval-scores.json already has a slot for every scenario.',
+  )
+  console.log('\nRubric (docs/MVP.md):')
+  console.log('  0 = wrong, absent, or invented   1 = partial   2 = matches the reference')
+  console.log('  Pass needs total >= 10/12 AND objective = 2.')
+  process.exit(0)
+}
+
+/* ── --report ───────────────────────────────────────────────────────────── */
+
+if (args.has('--report')) {
+  const scores = readScores()
+  let anyIncomplete = false
+  let anyFailed = false
+
+  for (const scenario of SCENARIOS) {
+    const entry = scores[scenario.id]
+    if (!entry) {
+      console.log(`  ·  ${scenario.id.padEnd(24)} not scored — run --worksheet`)
+      anyIncomplete = true
+      continue
+    }
+
+    const result = resultFor(scenario.id, entry)
+    if (!result) {
+      const missing = H1_COMPONENTS.filter((c) => entry.h1[c] === null)
+      const why = missing.length ? `unscored: ${missing.join(', ')}` : 'scoredBy is empty'
+      console.log(`  ·  ${scenario.id.padEnd(24)} incomplete — ${why}`)
+      anyIncomplete = true
+      continue
+    }
+
+    const mark = result.passed ? 'PASS' : 'FAIL'
+    if (!result.passed) anyFailed = true
+    console.log(`  ${result.passed ? '✓' : '✗'}  ${scenario.id.padEnd(24)} ${mark}  ${result.total}/12`)
+    for (const reason of result.failureReasons) console.log(`       ${reason}`)
+    if (entry.baselineAtLeastAsGood === true) {
+      console.log('       ⚠ baseline judged at least as good — SessionReading may not be earning its place')
+    }
+    if (entry.notes) console.log(`       note: ${entry.notes}`)
+  }
+
+  console.log(
+    '\nEvery number above is n=1, scored by the person who wrote the answer key,' +
+      '\nagainst references sealed before the run. Report it with that attached.',
+  )
+  process.exit(anyIncomplete || anyFailed ? 1 : 0)
 }
 
 /* ── --seal ─────────────────────────────────────────────────────────────── */
