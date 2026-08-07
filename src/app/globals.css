@@ -1,36 +1,69 @@
-/* Scaffold only. Real design direction is owned by issue #16 (the re-entry
-   screen prototype) — do not build a design system here ahead of it. */
+/* Carries the prototype's design language into the app, so the two do not
+   diverge before the real screens exist. Tokens only — components style
+   through them, never inside the media query. */
 
 :root {
-  --bg: #fbfbfa;
-  --fg: #1a1a18;
-  --muted: #6b6b66;
-  --rule: #e4e4e0;
+  --ground: #fafaf8;
+  --raised: #f3f3ef;
+  --ink: #1c1d21;
+  --muted: #6e7076;
+  --faint: #9a9ca2;
+  --rule: #e2e2de;
+  --accent: #5b54c9;
+  --accent-soft: #eeedfa;
+  --attention: #9c4708;
+
+  --serif: ui-serif, "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+  --sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #131312;
-    --fg: #eeeeec;
-    --muted: #8f8f88;
-    --rule: #2a2a27;
+    --ground: #16171a;
+    --raised: #1e1f23;
+    --ink: #e8e8e4;
+    --muted: #9698a0;
+    --faint: #6b6d75;
+    --rule: #2a2b30;
+    --accent: #9d97f0;
+    --accent-soft: #23233a;
+    --attention: #dfa066;
   }
 }
 
-* {
-  box-sizing: border-box;
+:root[data-theme="light"] {
+  --ground: #fafaf8; --raised: #f3f3ef; --ink: #1c1d21; --muted: #6e7076;
+  --faint: #9a9ca2; --rule: #e2e2de; --accent: #5b54c9; --accent-soft: #eeedfa;
+  --attention: #9c4708;
 }
 
-html,
-body {
-  margin: 0;
-  padding: 0;
+:root[data-theme="dark"] {
+  --ground: #16171a; --raised: #1e1f23; --ink: #e8e8e4; --muted: #9698a0;
+  --faint: #6b6d75; --rule: #2a2b30; --accent: #9d97f0; --accent-soft: #23233a;
+  --attention: #dfa066;
 }
 
+* { box-sizing: border-box; }
+
+html, body { margin: 0; padding: 0; }
+
 body {
-  background: var(--bg);
-  color: var(--fg);
-  font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 15px;
   line-height: 1.6;
   -webkit-font-smoothing: antialiased;
+}
+
+a { color: var(--accent); text-underline-offset: 2px; text-decoration-thickness: 1px; }
+a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 2px; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

@@ -5,6 +5,14 @@
  * hand-made table — otherwise it would prove the triggers work on a fixture
  * while saying nothing about the tables that actually hold the ledger.
  *
+ * NOTE ON SPEED: beforeAll shells out to `prisma db push`, which takes a few
+ * seconds and contends with anything else invoking Prisma at the same time
+ * (running `next build` alongside it pushed this file from 3s to 23s and made
+ * it fail). That is not a realistic CI condition — CI does not build and test
+ * concurrently against one install — so the subprocess stays, because pushing
+ * the REAL schema is the whole point. If it ever flakes in CI, that is the
+ * thing to look at first rather than the assertions.
+ *
  * The third case is the one worth having. `INSERT OR REPLACE` walks straight
  * through a no-UPDATE + no-DELETE pair, because `PRAGMA recursive_triggers`
  * defaults OFF so the DELETE trigger never fires. A two-trigger design looks
