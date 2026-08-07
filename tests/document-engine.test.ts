@@ -1,13 +1,13 @@
 import { describe, it, expect } from 'vitest'
-import { linesOf, normalise } from '../src/domain/document/normalise.js'
+import { linesOf, normalise } from '../src/domain/document/normalise'
 import {
   SIMILARITY_FLOOR,
   checkDrift,
   diff,
   hashContent,
   materialise,
-} from '../src/domain/document/changeset.js'
-import type { Decision } from '../src/domain/document/changeset.js'
+} from '../src/domain/document/changeset'
+import type { Decision } from '../src/domain/document/changeset'
 
 const DOC = [
   '# Northwind partnership proposal',

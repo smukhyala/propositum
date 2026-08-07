@@ -28,7 +28,7 @@
 
 import { z } from 'zod'
 import type { PrismaClient } from '@prisma/client'
-import { datamark, looksAdversarial } from '../model/untrusted.js'
+import { datamark, looksAdversarial } from '../model/untrusted'
 
 /** Closed and code-owned. Adding a member is a schema change plus migration,
  *  never configuration. There is no `other`. */

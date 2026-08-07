@@ -7,17 +7,17 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import { BOUNDARY_NAMES } from '../src/model/client.js'
-import type { BoundaryName } from '../src/model/client.js'
-import { datamark } from '../src/model/untrusted.js'
-import { MAX_PLAN_STEPS } from '../src/domain/handoff/policy.js'
+import { BOUNDARY_NAMES } from '../src/model/client'
+import type { BoundaryName } from '../src/model/client'
+import { datamark } from '../src/model/untrusted'
+import { MAX_PLAN_STEPS } from '../src/domain/handoff/policy'
 
-import { handoffBoundary, handoffSchema, sourceHandlesFor } from '../src/model/boundaries/handoff.js'
-import { planBoundary, planSchema } from '../src/model/boundaries/plan.js'
-import { workerActionBoundary, workerActionSchema } from '../src/model/boundaries/worker-action.js'
-import { changeHandlesFor, reviewBoundary, reviewSchema } from '../src/model/boundaries/review.js'
-import { shiftReportBoundary } from '../src/model/boundaries/shift-report.js'
-import { sessionReadingBoundary, handlesFor } from '../src/model/boundaries/session-reading.js'
+import { handoffBoundary, handoffSchema, sourceHandlesFor } from '../src/model/boundaries/handoff'
+import { planBoundary, planSchema } from '../src/model/boundaries/plan'
+import { workerActionBoundary, workerActionSchema } from '../src/model/boundaries/worker-action'
+import { changeHandlesFor, reviewBoundary, reviewSchema } from '../src/model/boundaries/review'
+import { shiftReportBoundary } from '../src/model/boundaries/shift-report'
+import { sessionReadingBoundary, handlesFor } from '../src/model/boundaries/session-reading'
 
 const sources = [
   { handle: 'S1', label: 'Northwind partners' },

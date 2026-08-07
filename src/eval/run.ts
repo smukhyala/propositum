@@ -12,17 +12,17 @@
  * ModelClient interface.
  */
 
-import { handlesFor, sessionReadingBoundary } from '../model/boundaries/session-reading.js'
-import type { SessionReadingOutput } from '../model/boundaries/session-reading.js'
-import { baselineBoundary } from './baseline.js'
-import type { BaselineOutput } from './baseline.js'
-import { runMechanicalChecks } from './score.js'
-import type { MechanicalChecks } from './score.js'
-import { checkSeal, readSeals } from './seal.js'
-import type { SealStatus } from './seal.js'
-import { BrokenSealError } from './seal.js'
-import type { Scenario } from './scenario.js'
-import type { CallTelemetry, ModelClient } from '../model/client.js'
+import { handlesFor, sessionReadingBoundary } from '../model/boundaries/session-reading'
+import type { SessionReadingOutput } from '../model/boundaries/session-reading'
+import { baselineBoundary } from './baseline'
+import type { BaselineOutput } from './baseline'
+import { runMechanicalChecks } from './score'
+import type { MechanicalChecks } from './score'
+import { checkSeal, readSeals } from './seal'
+import type { SealStatus } from './seal'
+import { BrokenSealError } from './seal'
+import type { Scenario } from './scenario'
+import type { CallTelemetry, ModelClient } from '../model/client'
 
 export interface ScenarioRun {
   readonly scenario: Scenario

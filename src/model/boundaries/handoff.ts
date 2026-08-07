@@ -23,7 +23,7 @@
  */
 
 import { z } from 'zod'
-import type { ModelBoundary } from '../client.js'
+import type { ModelBoundary } from '../client'
 
 export interface HandoffInput {
   /** Claims from the reading, already human-editable and possibly edited. */

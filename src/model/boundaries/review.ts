@@ -26,9 +26,9 @@
  */
 
 import { z } from 'zod'
-import type { ModelBoundary } from '../client.js'
-import { UNTRUSTED_CONTENT_RULE } from '../untrusted.js'
-import type { Datamarked } from '../untrusted.js'
+import type { ModelBoundary } from '../client'
+import { UNTRUSTED_CONTENT_RULE } from '../untrusted'
+import type { Datamarked } from '../untrusted'
 
 export const FINDING_KINDS = [
   'unsupported',

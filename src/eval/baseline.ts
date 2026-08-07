@@ -21,9 +21,9 @@
  */
 
 import { z } from 'zod'
-import type { ModelBoundary } from '../model/client.js'
-import { UNTRUSTED_CONTENT_RULE } from '../model/untrusted.js'
-import type { PromptEvent, SessionReadingInput } from '../model/boundaries/session-reading.js'
+import type { ModelBoundary } from '../model/client'
+import { UNTRUSTED_CONTENT_RULE } from '../model/untrusted'
+import type { PromptEvent, SessionReadingInput } from '../model/boundaries/session-reading'
 
 export const baselineSchema = z.object({
   summary: z

@@ -15,11 +15,11 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import { AnthropicModelClient } from '../src/model/anthropic.js'
-import type { CallTelemetry, FailureKind } from '../src/model/client.js'
-import { handlesFor, sessionReadingBoundary } from '../src/model/boundaries/session-reading.js'
-import type { PromptEvent } from '../src/model/boundaries/session-reading.js'
-import { datamark } from '../src/model/untrusted.js'
+import { AnthropicModelClient } from '../src/model/anthropic'
+import type { CallTelemetry, FailureKind } from '../src/model/client'
+import { handlesFor, sessionReadingBoundary } from '../src/model/boundaries/session-reading'
+import type { PromptEvent } from '../src/model/boundaries/session-reading'
+import { datamark } from '../src/model/untrusted'
 
 try {
   process.loadEnvFile('.env')
@@ -99,7 +99,7 @@ describe.skipIf(!apiKey)('live: session-reading boundary', () => {
  */
 describe.skipIf(!apiKey)('live: hostile fixture', () => {
   it('reports what the model does with an injected source', async () => {
-    const { hostileSessionEvents } = await import('../src/fixtures/hostile-session.js')
+    const { hostileSessionEvents } = await import('../src/fixtures/hostile-session')
     const client = new AnthropicModelClient({ apiKey: apiKey as string })
 
     const events = hostileSessionEvents()

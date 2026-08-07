@@ -21,7 +21,7 @@ import type {
   FailureKind,
   ModelBoundary,
   ModelClient,
-} from './client.js'
+} from './client'
 
 export type ScriptedReply<T> =
   | { readonly kind: 'ok'; readonly value: T }

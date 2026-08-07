@@ -20,7 +20,7 @@
  */
 
 import { PrismaClient } from '@prisma/client'
-import { ensureAppendOnlyGuards } from './append-only.js'
+import { ensureAppendOnlyGuards } from './append-only'
 
 export interface Database {
   readonly prisma: PrismaClient

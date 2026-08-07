@@ -25,8 +25,8 @@ import { createHash } from 'node:crypto'
 import { readFileSync, writeFileSync, existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
-import { sealedPayload } from './scenario.js'
-import type { Scenario } from './scenario.js'
+import { sealedPayload } from './scenario'
+import type { Scenario } from './scenario'
 
 const LOCK_PATH = join(
   dirname(fileURLToPath(import.meta.url)),

@@ -25,8 +25,8 @@
  * REFERENCE IS SEALED. See src/eval/seal.ts.
  */
 
-import { datamark } from '../../model/untrusted.js'
-import type { Scenario } from '../../eval/scenario.js'
+import { datamark } from '../../model/untrusted'
+import type { Scenario } from '../../eval/scenario'
 
 export const partnershipMessy: Scenario = {
   id: 'partnership-messy',

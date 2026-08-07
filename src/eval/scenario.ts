@@ -19,8 +19,8 @@
  */
 
 import { z } from 'zod'
-import { CLAIM_KINDS, CONFIDENCE_BANDS } from '../model/boundaries/session-reading.js'
-import type { PromptEvent } from '../model/boundaries/session-reading.js'
+import { CLAIM_KINDS, CONFIDENCE_BANDS } from '../model/boundaries/session-reading'
+import type { PromptEvent } from '../model/boundaries/session-reading'
 
 /** The four classes from ADR-0007's H3 rubric. */
 export const SCENARIO_CLASSES = [

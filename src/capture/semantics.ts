@@ -17,7 +17,7 @@
  * screen disagree about whether it happened? If yes, it is inference.
  */
 
-import type { ObservationKind } from '../persistence/ledger-writer.js'
+import type { ObservationKind } from '../persistence/ledger-writer'
 
 /** Dwell past this, with some scroll, counts as engagement rather than a glance. */
 export const ENGAGEMENT_DWELL_MS = 20_000

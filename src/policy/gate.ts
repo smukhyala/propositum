@@ -31,8 +31,8 @@
  * structural ones that are already implied by the compiled policy.
  */
 
-import type { ActionKind, EnforcedPolicy } from '../domain/handoff/policy.js'
-import { ACTION_KINDS } from '../domain/handoff/policy.js'
+import type { ActionKind, EnforcedPolicy } from '../domain/handoff/policy'
+import { ACTION_KINDS } from '../domain/handoff/policy'
 
 /**
  * The entire enforcement mechanism. A real runtime symbol, never exported.

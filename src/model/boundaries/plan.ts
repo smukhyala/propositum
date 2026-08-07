@@ -23,8 +23,8 @@
  */
 
 import { z } from 'zod'
-import { MAX_PLAN_STEPS } from '../../domain/handoff/policy.js'
-import type { ModelBoundary } from '../client.js'
+import { MAX_PLAN_STEPS } from '../../domain/handoff/policy'
+import type { ModelBoundary } from '../client'
 
 export interface PlanInput {
   readonly objective: string

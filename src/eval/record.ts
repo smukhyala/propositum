@@ -13,10 +13,10 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
-import { H1_COMPONENTS } from './scenario.js'
-import type { H1Component } from './scenario.js'
-import type { ComponentScore, H1Scores } from './score.js'
-import { scoreH1 } from './score.js'
+import { H1_COMPONENTS } from './scenario'
+import type { H1Component } from './scenario'
+import type { ComponentScore, H1Scores } from './score'
+import { scoreH1 } from './score'
 
 const SCORES_PATH = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'eval-scores.json')
 

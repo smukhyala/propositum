@@ -3,12 +3,12 @@ import { execFileSync } from 'node:child_process'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createDatabase } from '../src/persistence/client.js'
-import type { Database } from '../src/persistence/client.js'
-import { createRepositories } from '../src/persistence/repositories/index.js'
-import type { Repositories } from '../src/persistence/repositories/index.js'
-import { createLedgerWriter } from '../src/persistence/ledger-writer.js'
-import type { GapSignal, LedgerWriter } from '../src/persistence/ledger-writer.js'
+import { createDatabase } from '../src/persistence/client'
+import type { Database } from '../src/persistence/client'
+import { createRepositories } from '../src/persistence/repositories/index'
+import type { Repositories } from '../src/persistence/repositories/index'
+import { createLedgerWriter } from '../src/persistence/ledger-writer'
+import type { GapSignal, LedgerWriter } from '../src/persistence/ledger-writer'
 
 let dir: string
 let db: Database

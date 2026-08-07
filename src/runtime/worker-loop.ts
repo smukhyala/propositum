@@ -27,19 +27,19 @@
  * budget decision never depends on when the test ran.
  */
 
-import { compilePolicy } from '../domain/handoff/policy.js'
-import type { ActionKind, AutonomyControls, ContractScope } from '../domain/handoff/policy.js'
-import { authorize } from '../policy/gate.js'
-import type { AuthorizedAction, RunContext, ToolProposal } from '../policy/gate.js'
-import { draftSection, readApprovedSource, readDocument } from '../policy/tools.js'
-import type { ReadDocumentDeps, ReadSourceDeps } from '../policy/tools.js'
-import { STOP_RULES, effectOfRaisedQuestion, shouldStop } from '../domain/execution/stop-conditions.js'
-import type { StopRuleId } from '../domain/execution/stop-conditions.js'
-import { datamark } from '../model/untrusted.js'
-import type { Datamarked } from '../model/untrusted.js'
-import type { ModelClient } from '../model/client.js'
-import { planBoundary } from '../model/boundaries/plan.js'
-import { workerActionBoundary } from '../model/boundaries/worker-action.js'
+import { compilePolicy } from '../domain/handoff/policy'
+import type { ActionKind, AutonomyControls, ContractScope } from '../domain/handoff/policy'
+import { authorize } from '../policy/gate'
+import type { AuthorizedAction, RunContext, ToolProposal } from '../policy/gate'
+import { draftSection, readApprovedSource, readDocument } from '../policy/tools'
+import type { ReadDocumentDeps, ReadSourceDeps } from '../policy/tools'
+import { STOP_RULES, effectOfRaisedQuestion, shouldStop } from '../domain/execution/stop-conditions'
+import type { StopRuleId } from '../domain/execution/stop-conditions'
+import { datamark } from '../model/untrusted'
+import type { Datamarked } from '../model/untrusted'
+import type { ModelClient } from '../model/client'
+import { planBoundary } from '../model/boundaries/plan'
+import { workerActionBoundary } from '../model/boundaries/worker-action'
 
 export interface RunLedger {
   /** Committed BEFORE any effect. Returns the intent id. */
