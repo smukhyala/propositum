@@ -18,15 +18,16 @@
  */
 
 import type { ObservationKind } from '../persistence/ledger-writer'
+import { cleanUrl, searchTermOf } from './url'
+
+/** Re-exported so callers keep one import for the capture vocabulary. The
+ *  definitions live in `./url` because the ledger writer needs them too, and a
+ *  module importing the ledger writer's types cannot also be its dependency. */
+export { cleanUrl, searchTermOf }
 
 /** Dwell past this, with some scroll, counts as engagement rather than a glance. */
 export const ENGAGEMENT_DWELL_MS = 20_000
 export const ENGAGEMENT_SCROLL_FRACTION = 0.25
-
-/** Query parameters that carry a search term, by convention across engines and
- *  site search. A closed list — guessing at arbitrary parameters would capture
- *  things the person did not search for. */
-const QUERY_PARAMS = ['q', 'query', 'search', 's', 'k', 'p'] as const
 
 export interface RawNavigation {
   readonly url: string
@@ -66,44 +67,6 @@ export interface SemanticEvent {
   readonly attested: Record<string, unknown>
   /** Raw. The ledger writer datamarks — one door. */
   readonly untrustedText?: string | undefined
-}
-
-/** Strip everything that is not needed to identify the page. Tracking
- *  parameters are noise at best and identifying at worst. */
-export function cleanUrl(raw: string): string {
-  let url: URL
-  try {
-    url = new URL(raw)
-  } catch {
-    return raw
-  }
-
-  url.hash = ''
-  url.username = ''
-  url.password = ''
-
-  const keep = new URLSearchParams()
-  for (const [key, value] of url.searchParams) {
-    if ((QUERY_PARAMS as readonly string[]).includes(key.toLowerCase())) keep.set(key, value)
-  }
-  url.search = keep.toString()
-
-  return url.toString()
-}
-
-/** The search term, if this URL is a search. Only from the closed parameter
- *  list — otherwise a `?ref=` would become a "search". */
-export function searchTermOf(raw: string): string | null {
-  try {
-    const url = new URL(raw)
-    for (const param of QUERY_PARAMS) {
-      const value = url.searchParams.get(param)
-      if (value && value.trim().length > 1) return value.trim()
-    }
-  } catch {
-    /* not a URL */
-  }
-  return null
 }
 
 /**

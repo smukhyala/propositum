@@ -57,11 +57,28 @@ function stripComments(source: string): string {
   return source.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/[^\n]*/g, '$1')
 }
 
-/** Files that CALL `needle` — in code, not in prose — excluding its definition. */
+/**
+ * Strip imports too, for the same reason.
+ *
+ * Found the same way the comment bug was: removing the real `cleanUrl` calls
+ * from the ledger writer left its `import { cleanUrl }` line behind, and the
+ * grep counted that as a caller while three behavioural tests went red. An
+ * unused import satisfying a reachability check is exactly the failure the
+ * comment strip exists to prevent — a file that mentions a function is not a
+ * file that runs it.
+ */
+function stripImports(source: string): string {
+  return source
+    .replace(/^\s*import\s[\s\S]*?from\s+['"][^'"]+['"]\s*;?\s*$/gm, ' ')
+    .replace(/^\s*import\s+['"][^'"]+['"]\s*;?\s*$/gm, ' ')
+}
+
+/** Files that CALL `needle` — in code, not in prose or an import — excluding
+ *  its definition. */
 function callersOf(needle: string, definedIn: string): string[] {
   return PRODUCTION.filter((f) => {
     if (relative(repo, f) === definedIn) return false
-    return stripComments(readFileSync(f, 'utf8')).includes(needle)
+    return stripImports(stripComments(readFileSync(f, 'utf8'))).includes(needle)
   }).map((f) => relative(repo, f))
 }
 
@@ -127,6 +144,22 @@ describe('the safety machinery is reachable from the product', () => {
     const callers = callersOf('documents.addVersion', 'src/persistence/repositories/index.ts')
 
     expect(callers, 'nothing calls addVersion — the version chain never grows').not.toEqual([])
+  })
+
+  it('URLs are cleaned by something on the write path, not just in a test', () => {
+    // `cleanUrl` was written, tested, and called by NOTHING for the whole build,
+    // while `content.js` sent raw `location.href` and SECURITY_AND_PRIVACY.md
+    // promised a cleaned URL. A tested function is not a kept promise.
+    // The paren matters. Without it this matches the ledger writer's own
+    // `cleanUrls` helper, so gutting the helper's body leaves the guard green —
+    // caught while verifying this very test.
+    const callers = callersOf('cleanUrl(', 'src/capture/url.ts')
+
+    expect(callers, 'nothing calls cleanUrl — raw URLs reach the ledger').not.toEqual([])
+    expect(
+      callers,
+      'cleanUrl must be called at the ledger door, so no caller can bypass it',
+    ).toContain('src/persistence/ledger-writer.ts')
   })
 })
 

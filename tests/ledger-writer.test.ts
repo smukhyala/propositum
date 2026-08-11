@@ -169,6 +169,83 @@ describe('sanitisation happens at the door', () => {
 
     expect(result).toMatchObject({ ok: true, adversarial: false })
   })
+
+  /**
+   * The door sanitises URLs, not only page text.
+   *
+   * This was false for the whole of the build: `cleanUrl` was written, tested,
+   * and called by nothing, while the extension sent raw `location.href` and the
+   * security document promised a cleaned URL. Testing it here rather than at
+   * `cleanUrl` is the point — the promise is about what is STORED, so it has to
+   * be asserted against a row.
+   */
+  const storedAttested = async (id: string) => {
+    const events = await repos.events.bySession(sessionId)
+    return events.find((e) => e.id === id)?.attested as Record<string, unknown>
+  }
+
+  it('strips credentials out of a URL before it is stored', async () => {
+    const result = await ledger.append(sessionId, {
+      ...base,
+      kind: 'visited',
+      approvedSourceId: sourceId,
+      attested: { url: 'https://user:secret@northwind.example.com/tiers' },
+    })
+
+    expect(result.ok).toBe(true)
+    const attested = await storedAttested((result as { id: string }).id)
+
+    expect(attested['url']).not.toContain('secret')
+    expect(attested['url']).not.toContain('user')
+    expect(attested['url']).toContain('northwind.example.com/tiers')
+  })
+
+  it('strips tracking parameters but keeps a recognised search term', async () => {
+    const result = await ledger.append(sessionId, {
+      ...base,
+      kind: 'queried',
+      approvedSourceId: sourceId,
+      attested: {
+        url: 'https://northwind.example.com/search?q=partner+tiers&utm_source=newsletter&fbclid=xyz',
+      },
+    })
+
+    const attested = await storedAttested((result as { id: string }).id)
+
+    expect(attested['url']).toContain('q=partner')
+    expect(attested['url']).not.toContain('utm_source')
+    expect(attested['url']).not.toContain('fbclid')
+  })
+
+  it('cleans a referrer too, since it is a URL the person did not choose to send', async () => {
+    const result = await ledger.append(sessionId, {
+      ...base,
+      kind: 'visited',
+      approvedSourceId: sourceId,
+      attested: {
+        url: 'https://northwind.example.com/tiers',
+        referrer: 'https://northwind.example.com/in?utm_campaign=q3&token=abc123',
+      },
+    })
+
+    const attested = await storedAttested((result as { id: string }).id)
+
+    expect(attested['referrer']).not.toContain('utm_campaign')
+    expect(attested['referrer']).not.toContain('abc123')
+  })
+
+  it('leaves a non-URL attested value alone rather than mangling it', async () => {
+    const result = await ledger.append(sessionId, {
+      ...base,
+      kind: 'note',
+      attested: { title: 'check whether Q3 is realistic', url: 'not a url at all' },
+    })
+
+    const attested = await storedAttested((result as { id: string }).id)
+
+    expect(attested['title']).toBe('check whether Q3 is realistic')
+    expect(attested['url']).toBe('not a url at all')
+  })
 })
 
 describe('adapter sequence is a health signal, never an ordering key', () => {
