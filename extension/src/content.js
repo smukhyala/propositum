@@ -116,14 +116,46 @@ document.addEventListener('visibilitychange', () => {
   }
 })
 
-addEventListener('pagehide', () => {
+/**
+ * Report while the page is still open, not only when it closes.
+ *
+ * This used to fire on `pagehide` alone, which meant dwell was reported only
+ * when you LEFT a page — so someone reading four tabs they had not closed yet
+ * produced no engagement at all, and detection could never fire while the
+ * reading was still happening. That is precisely when the offer is worth
+ * making.
+ *
+ * Every report carries CUMULATIVE dwell for this page, not a delta. A delta
+ * would be lost for good if a message failed while the service worker was
+ * asleep; a cumulative figure is self-correcting — the next report carries the
+ * time the missed one would have. The app takes the largest report per URL
+ * rather than summing them, which is what makes resending safe.
+ */
+function engagedMs() {
   const hidden = hiddenMs + (hiddenSince === null ? 0 : Date.now() - hiddenSince)
+  return Math.max(0, Date.now() - ARRIVED_AT - hidden)
+}
 
+function reportEngagement() {
   send({
     signal: 'engagement',
     at: new Date().toISOString(),
     url: location.href,
-    dwellMs: Math.max(0, Date.now() - ARRIVED_AT - hidden),
+    dwellMs: engagedMs(),
     scrollFraction: Math.round(deepest * 100) / 100,
   })
-})
+}
+
+/** Often enough to notice a person mid-read, rarely enough not to be chatter. */
+const REPORT_EVERY_MS = 15_000
+
+setInterval(() => {
+  // A hidden tab is not being read. Reporting anyway would let a backgrounded
+  // tab accumulate a claim on attention it never had.
+  if (document.visibilityState === 'hidden') return
+  reportEngagement()
+}, REPORT_EVERY_MS)
+
+// Still report on the way out, so the final few seconds are not lost and a page
+// read for less than one interval is still counted.
+addEventListener('pagehide', reportEngagement)

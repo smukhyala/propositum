@@ -86,6 +86,33 @@ function inWindow(observations: readonly AmbientObservation[], now: number) {
 }
 
 /**
+ * Engaged time per page, largest report wins.
+ *
+ * Engagement is reported repeatedly while a page is open, and every report
+ * carries CUMULATIVE dwell rather than a delta. Summing them would count the
+ * same minute once per report — a page read for two minutes would arrive as
+ * 15s + 30s + 45s + … and look like far more attention than it had.
+ *
+ * Taking the maximum per URL is also what makes a resend safe: a report lost
+ * while the service worker was asleep costs nothing, because the next one
+ * carries the time the missed one would have.
+ */
+function engagedByUrl(observations: readonly AmbientObservation[]): Map<string, number> {
+  const byUrl = new Map<string, number>()
+  for (const observation of observations) {
+    if (observation.engagedMs === undefined) continue
+    byUrl.set(observation.url, Math.max(byUrl.get(observation.url) ?? 0, observation.engagedMs))
+  }
+  return byUrl
+}
+
+function engagedTotal(observations: readonly AmbientObservation[]): number {
+  let total = 0
+  for (const ms of engagedByUrl(observations).values()) total += ms
+  return total
+}
+
+/**
  * Is coherent work underway on some origin?
  *
  * Returns the strongest candidate, or null. One origin at a time on purpose: an
@@ -112,15 +139,11 @@ export function detectWork(
   for (const [origin, list] of byOrigin) {
     const pages = new Set(list.map((o) => o.url)).size
     const queries = list.filter((o) => o.kind === 'query').length
-    const engagedMs = list.reduce((total, o) => total + (o.engagedMs ?? 0), 0)
+    const dwellByUrl = engagedByUrl(list)
+    const engagedMs = engagedTotal(list)
     const since = Math.min(...list.map((o) => o.at))
 
     // The page someone spent longest on says more than the one they landed on.
-    const dwellByUrl = new Map<string, number>()
-    for (const o of list) {
-      if (o.engagedMs === undefined) continue
-      dwellByUrl.set(o.url, (dwellByUrl.get(o.url) ?? 0) + o.engagedMs)
-    }
     let focus: string | null = null
     let best = 0
     for (const [url, ms] of dwellByUrl) {
@@ -181,7 +204,7 @@ export function detectPause(
   const idleForMs = now - last.at
   if (idleForMs < PAUSE_MS) return null
 
-  const engagedMs = recent.reduce((total, o) => total + (o.engagedMs ?? 0), 0)
+  const engagedMs = engagedTotal(recent)
   if (engagedMs < WORKED_MS_FOR_HANDOFF) return null
 
   return { idleForMs, workedMs: engagedMs, since: Math.min(...recent.map((o) => o.at)) }

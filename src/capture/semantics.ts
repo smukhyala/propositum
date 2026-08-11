@@ -76,6 +76,7 @@ export interface SemanticEvent {
  */
 export function createNavigationClassifier() {
   const seen = new Set<string>()
+  const engaged = new Set<string>()
 
   return {
     classify(nav: RawNavigation): SemanticEvent {
@@ -113,9 +114,35 @@ export function createNavigationClassifier() {
       }
     },
 
+    /**
+     * Has this page already been recorded as engaged in this sitting?
+     *
+     * Engagement is now reported repeatedly while a page is open, so without
+     * this the ledger would gain an `engaged` row every fifteen seconds for as
+     * long as someone read — a timeline of one page, forty times. The FIRST
+     * crossing of the threshold is the fact worth keeping; the rest are the
+     * same fact restated.
+     *
+     * Ambient detection is unaffected: it reads its own buffer and takes the
+     * largest report per URL, so it still sees dwell grow while this stays
+     * quiet.
+     */
+    hasEngaged(url: string): boolean {
+      return engaged.has(url)
+    },
+
+    /** Called only once an engagement event was actually PRODUCED. Marking on
+     *  the query instead would let an early below-threshold report claim the
+     *  page, so the real crossing a minute later would be suppressed and the
+     *  engagement never recorded at all. */
+    markEngaged(url: string): void {
+      engaged.add(url)
+    },
+
     /** New session, new memory. */
     reset() {
       seen.clear()
+      engaged.clear()
     },
   }
 }

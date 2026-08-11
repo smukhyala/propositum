@@ -129,8 +129,12 @@ export function toSemanticEvent(
         text: signal.text,
       })
 
-    case 'engagement':
-      return classifyEngagement({
+    case 'engagement': {
+      // One `engaged` row per page per sitting. Reports keep arriving while the
+      // page is open; the first crossing is the fact, the rest restate it.
+      if (classifier.hasEngaged(signal.url)) return null
+
+      const engagement = classifyEngagement({
         url: signal.url,
         approvedSourceId,
         at,
@@ -138,6 +142,12 @@ export function toSemanticEvent(
         dwellMs: signal.dwellMs,
         scrollFraction: signal.scrollFraction,
       })
+
+      // Mark only on a real crossing. An early report below the dwell threshold
+      // must not claim the page and silence the crossing that follows it.
+      if (engagement !== null) classifier.markEngaged(signal.url)
+      return engagement
+    }
 
     case 'away':
       // Not attributable to an approved source by construction — the person

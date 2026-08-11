@@ -152,6 +152,63 @@ describe('engagement thresholds actually bite', () => {
   })
 })
 
+describe('engagement is reported while the page is open, not only on unload', () => {
+  const report = (classifier: ReturnType<typeof createNavigationClassifier>, dwellMs: number) =>
+    toSemanticEvent(
+      {
+        signal: 'engagement',
+        at: AT,
+        elapsedMs: 10,
+        url: 'https://northwind.example.com/tiers',
+        dwellMs,
+        scrollFraction: ENGAGEMENT_SCROLL_FRACTION + 0.1,
+      },
+      SOURCE,
+      classifier,
+    )
+
+  it('records the page once, however many reports arrive', () => {
+    // content.js now reports every 15s while the page is visible, so without
+    // this the ledger would gain a row every fifteen seconds for as long as
+    // someone read — a timeline of one page, forty times.
+    const classifier = fresh()
+
+    expect(report(classifier, ENGAGEMENT_DWELL_MS + 1)?.kind).toBe('engaged')
+    expect(report(classifier, ENGAGEMENT_DWELL_MS * 2)).toBeNull()
+    expect(report(classifier, ENGAGEMENT_DWELL_MS * 4)).toBeNull()
+  })
+
+  it('an early report below the threshold does not silence the real crossing', () => {
+    // The bug this shape exists to avoid: marking the page on the QUERY rather
+    // than on a produced event lets a 15s report claim it, so the 25s crossing
+    // is suppressed and the engagement is never recorded at all.
+    const classifier = fresh()
+
+    expect(report(classifier, ENGAGEMENT_DWELL_MS - 5_000)).toBeNull()
+    expect(report(classifier, ENGAGEMENT_DWELL_MS + 5_000)?.kind).toBe('engaged')
+  })
+
+  it('a different page in the same sitting is still recorded', () => {
+    const classifier = fresh()
+    expect(report(classifier, ENGAGEMENT_DWELL_MS + 1)?.kind).toBe('engaged')
+
+    const other = toSemanticEvent(
+      {
+        signal: 'engagement',
+        at: AT,
+        elapsedMs: 10,
+        url: 'https://northwind.example.com/pricing',
+        dwellMs: ENGAGEMENT_DWELL_MS + 1,
+        scrollFraction: ENGAGEMENT_SCROLL_FRACTION + 0.1,
+      },
+      SOURCE,
+      classifier,
+    )
+
+    expect(other?.kind).toBe('engaged')
+  })
+})
+
 describe('selection', () => {
   it('a stray two-character selection is not intent', () => {
     const event = toSemanticEvent(
