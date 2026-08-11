@@ -32,6 +32,7 @@
 import { revalidatePath } from 'next/cache'
 
 import { appContext } from './db'
+import { readableCause } from './problem'
 import { captureStore } from './capture-store'
 import { AnthropicModelClient } from '../model/anthropic'
 import type { FailureKind, ModelClient } from '../model/client'
@@ -111,11 +112,10 @@ async function attempt<T>(work: () => Promise<ActionResult<T>>): Promise<ActionR
     const raw = error instanceof Error ? error.message : String(error)
     const key = process.env['ANTHROPIC_API_KEY']
     const scrubbed = key ? raw.split(key).join('«key»') : raw
-    const detail = scrubbed.length > 240 ? `${scrubbed.slice(0, 240)}…` : scrubbed
 
     return no<T>(
       'write-failed',
-      `Propositum could not finish that, and nothing was changed. (${detail})`,
+      `Propositum could not finish that, and nothing was changed. (${readableCause(scrubbed)})`,
     )
   }
 }
