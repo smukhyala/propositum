@@ -212,6 +212,47 @@ describe('the safety machinery is reachable from the product', () => {
   })
 })
 
+/**
+ * What is knowingly not wired.
+ *
+ * A guard that quietly omits what it cannot yet satisfy reads as proof of
+ * coverage it does not have. These assert the CURRENT state — unreachable — so
+ * that wiring one of them turns this file red and forces the claim to be moved
+ * up into the section above rather than left ambiguous.
+ *
+ * Each is a real gap with a real consequence, named in the map's fog.
+ */
+describe('deferred, and asserted as deferred', () => {
+  it('boundary 6 is still unwired, so the narrative is a stop-rule label', () => {
+    // `execute-run` stores `narrative: stopLabel` — a consumer label rendered
+    // where model prose belongs. Not wrong, but not what the field means.
+    expect(
+      callersOf('shiftReportBoundary(', 'src/model/boundaries/shift-report.ts'),
+      'shiftReportBoundary is wired now — move this into the section above',
+    ).toEqual([])
+  })
+
+  it('nothing polls for heartbeat silence, so that gap reason cannot occur', () => {
+    // `sweepForGap` turns silence into a `captureGap` with reason
+    // `service_worker_terminated`. With no caller, that reason is unreachable,
+    // and so is `machine_slept` — two of the four are unwritable in slice 0.
+    expect(
+      callersOf('sweepForGap(', 'src/server/gap-sweeper.ts'),
+      'the gap sweeper has a caller now — move this into the section above',
+    ).toEqual([])
+  })
+
+  it('no model call is recorded, so the ledger does not reconstruct them', () => {
+    // Acceptance bullet 11 says the full ledger reconstructs what happened.
+    // `model_call_record` has a table and append-only guards and no writer.
+    // The hook exists — `AnthropicModelClient` takes `onCall`.
+    expect(
+      callersOf('modelCallRecord.create', 'src/persistence/repositories/index.ts'),
+      'model calls are recorded now — move this into the section above',
+    ).toEqual([])
+  })
+})
+
 describe('the extension can actually capture', () => {
   const extensionSource = (name: string) =>
     stripComments(
