@@ -100,6 +100,28 @@ describe('the manifest asks for nothing frightening', () => {
     }
   })
 
+  it('the app accepts the origin the extension is pinned to', () => {
+    // 127.0.0.1 and localhost are the same machine and DIFFERENT ORIGINS. The
+    // dev server announces itself as localhost and 403s dev-asset requests from
+    // origins it was not told about — so a static chunk requested with
+    // `Origin: http://127.0.0.1:3117` failed, hydration never completed, and
+    // every motion section stayed at the opacity:0 its own server render
+    // emitted. A blank page, 200 in the log, no error anywhere.
+    //
+    // The extension is buildless and hardcodes 127.0.0.1, so the app is the
+    // side that has to accept it.
+    const config = readFileSync(join(repo, 'next.config.ts'), 'utf8')
+    const workerOrigin = /const APP_ORIGIN = 'https?:\/\/([^:']+)/.exec(
+      readFileSync(join(repo, 'extension/src/service-worker.js'), 'utf8'),
+    )?.[1]
+
+    expect(workerOrigin).toBeDefined()
+    expect(
+      config,
+      `next.config.ts must allow ${workerOrigin} as a dev origin, or the client bundle 403s`,
+    ).toContain(`'${workerOrigin}'`)
+  })
+
   it('keeps the app port pinned to the one the extension talks to', () => {
     // The extension is buildless on purpose (ADR-0002), so this constant cannot
     // be read from config — it is duplicated, and the duplication is only safe
