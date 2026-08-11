@@ -220,32 +220,34 @@ async function showSuggestionBadge() {
     await chrome.action.setTitle({ title: `${suggestion.sentence} ${suggestion.because}` })
 
     /**
-     * Open the panel once, when the offer first has a NAME.
+     * Actually interrupt, once, when the offer has a NAME.
      *
-     * "It pops up and says: hey, I see you're doing this, can I help?" — so it
-     * has to surface itself, not wait to be found.
+     * This was `chrome.sidePanel.open()` and it never fired. That call requires
+     * a USER GESTURE, and an alarm handler has none — so it threw into a catch
+     * every thirty seconds while the app sat there having correctly worked out
+     * "hiking to Kauai's Secret Falls". The person saw a small dot and
+     * concluded detection had failed. It had not; the surfacing had.
      *
-     * Once, and only once the model has named the subject. Opening on the
-     * deterministic offer would show "you have been looking into general
-     * intuition — across 3 sites", which is not what anyone asked to be
-     * interrupted for. And re-opening every thirty seconds is how a helpful
-     * thing becomes the thing you uninstall.
+     * A notification is the only thing that can appear unprompted, which is
+     * what "it pops up and says, hey, I see you're doing this" requires.
+     *
+     * Once per subject. Re-notifying every thirty seconds is how a helpful
+     * thing becomes the thing you uninstall, and the badge already carries the
+     * offer for anyone who dismissed it.
      */
-    const key = `opened:${suggestion.subject ?? ''}`
-    const seen = await chrome.storage.session.get([key])
-    if (suggestion.subject && !seen[key]) {
-      await chrome.storage.session.set({ [key]: true })
-      try {
-        // `chrome.windows` rather than `chrome.tabs`: opening a panel needs a
-        // window id and nothing more. `tabs` would grant the URL and title of
-        // EVERY tab, which ADR-0002 refuses and which this does not need.
-        const window = await chrome.windows.getLastFocused()
-        if (window?.id !== undefined) await chrome.sidePanel.open({ windowId: window.id })
-      } catch {
-        // `sidePanel.open` needs a user gesture in some Chrome builds. The badge
-        // already carries the offer; a failure here costs discoverability, not
-        // the feature.
-      }
+    const key = `told:${suggestion.subject ?? ''}`
+    const already = await chrome.storage.session.get([key])
+    if (suggestion.subject && !already[key]) {
+      await chrome.storage.session.set({ [key]: true, offer: suggestion })
+
+      chrome.notifications.create(`propositum:${suggestion.subject}`, {
+        type: 'basic',
+        iconUrl: chrome.runtime.getURL('icon.png'),
+        title: suggestion.offerLabel || `Looks like you're working on ${suggestion.subject}.`,
+        message: suggestion.because,
+        buttons: [{ title: 'Yes, do it' }, { title: 'Not now' }],
+        requireInteraction: true,
+      })
     }
   } catch {
     /* the health check owns the unreachable case, and says so louder */
@@ -370,6 +372,54 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   })()
 
   return true // async response
+})
+
+/* ── answering the notification ────────────────────────────────────────── */
+
+/**
+ * Both answers are a USER GESTURE, which is what makes them able to do things
+ * the alarm cannot. Opening a tab is deliberate: the person lands on a page
+ * showing the four durable things about to be created in their name, rather
+ * than a toast claiming it happened.
+ */
+async function answeredYes() {
+  const { offer } = await chrome.storage.session.get(['offer'])
+  if (!offer) return
+
+  const params = new URLSearchParams({
+    subject: offer.subject ?? '',
+    origins: (offer.origins ?? [offer.origin]).filter(Boolean).join(','),
+    intent: offer.offer ?? 'deep-research',
+  })
+  await chrome.tabs.create({ url: `${APP_ORIGIN}/start?${params.toString()}` })
+  await chrome.action.setBadgeText({ text: '' })
+}
+
+async function answeredNo() {
+  const { offer } = await chrome.storage.session.get(['offer'])
+  await chrome.action.setBadgeText({ text: '' })
+  if (!offer?.origin) return
+
+  // Declining drops the evidence as well as snoozing, so the same detection
+  // cannot immediately re-fire off the pages that produced it.
+  await fetch(`${APP_ORIGIN}/api/capture/ambient/decline`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', [CUSTOM_HEADER]: '1' },
+    body: JSON.stringify({ origin: offer.origin }),
+  }).catch(() => {})
+}
+
+chrome.notifications.onButtonClicked.addListener(async (id, index) => {
+  if (!id.startsWith('propositum:')) return
+  chrome.notifications.clear(id)
+  await (index === 0 ? answeredYes() : answeredNo())
+})
+
+// Clicking the body, rather than a button, means "tell me more" — same as yes.
+chrome.notifications.onClicked.addListener(async (id) => {
+  if (!id.startsWith('propositum:')) return
+  chrome.notifications.clear(id)
+  await answeredYes()
 })
 
 /* ── host grants, and the content scripts that follow from them ────────── */

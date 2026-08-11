@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import {
@@ -45,9 +45,31 @@ describe('the manifest asks for nothing frightening', () => {
   }
 
   it('requests only warning-free permissions', () => {
+    // `notifications` is warning-free and is the ONLY way to surface an offer
+    // nobody asked for. `sidePanel.open()` needs a user gesture, so calling it
+    // from an alarm silently throws — which is what happened: the app named
+    // "hiking to Kauai's Secret Falls" correctly and the person saw a dot.
     expect(manifest.permissions.sort()).toEqual(
-      ['alarms', 'idle', 'scripting', 'sidePanel', 'storage'].sort(),
+      ['alarms', 'idle', 'notifications', 'scripting', 'sidePanel', 'storage'].sort(),
     )
+  })
+
+  it('can actually raise a notification — icon and all', () => {
+    // `type: 'basic'` REQUIRES an iconUrl. Without the file the create call
+    // fails silently and the popup simply never appears, which is the same
+    // symptom as no detection at all.
+    const worker = readFileSync(join(repo, 'extension/src/service-worker.js'), 'utf8')
+
+    expect(worker).toContain('notifications.create')
+    expect(worker).toContain("getURL('icon.png')")
+    expect(existsSync(join(repo, 'extension/icon.png'))).toBe(true)
+  })
+
+  it('answers to the notification, or it is just a dismissable banner', () => {
+    const worker = readFileSync(join(repo, 'extension/src/service-worker.js'), 'utf8')
+
+    expect(worker).toContain('notifications.onButtonClicked')
+    expect(worker).toContain('notifications.onClicked')
   })
 
   it('does not request tabs, webNavigation, history or debugger', () => {

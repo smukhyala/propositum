@@ -22,9 +22,14 @@
     "                substitutes. Revisit only if H1 scores badly and ablation",
     "                points here.",
     "  history       not needed and not defensible.",
-    "  debugger      would make every constraint below advisory."
+    "  debugger      would make every constraint below advisory.",
+    "",
+    "notifications is warning-free and is the ONLY way to surface an offer",
+    "nobody asked for. sidePanel.open() requires a user gesture, so calling it",
+    "from an alarm silently throws — which is exactly what happened: the app",
+    "named the subject correctly and the person saw nothing but a small dot."
   ],
-  "permissions": ["storage", "alarms", "idle", "scripting", "sidePanel"],
+  "permissions": ["storage", "alarms", "idle", "scripting", "sidePanel", "notifications"],
 
   "_comment_hosts": [
     "BROAD BY DECISION, and this reverses ADR-0002. Detection cannot work on",
@@ -69,7 +74,12 @@
     "default_path": "src/panel.html"
   },
 
+  "icons": {
+    "128": "icon.png"
+  },
+
   "action": {
-    "default_title": "Propositum"
+    "default_title": "Propositum",
+    "default_icon": "icon.png"
   }
 }
