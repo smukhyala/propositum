@@ -121,6 +121,66 @@ describe('the transport does not rely on CORS', () => {
     })
   })
 
+  /**
+   * The real shape of an extension request, captured off the wire.
+   *
+   * Granting `host_permissions` for loopback — which the extension cannot work
+   * without — makes Chrome treat the fetch as privileged and send NO Origin at
+   * all. Requiring one meant the extension reached the app and was refused by
+   * its own transport every 30 seconds, silently, while the interface said
+   * capture was running.
+   */
+  const EXTENSION_REQUEST = {
+    headers: {
+      'content-type': 'application/json',
+      [CUSTOM_HEADER]: '1',
+      'sec-fetch-site': 'none',
+      'sec-fetch-mode': 'cors',
+      // No `origin`. This is the point.
+    },
+    body: good.body,
+  }
+
+  it('admits the extension when Chrome sends no Origin at all', () => {
+    expect(admit(EXTENSION_REQUEST, context).ok).toBe(true)
+  })
+
+  it('rejects a missing Origin that is NOT browser-attested as non-page', () => {
+    // A page-initiated request carries `cross-site`. Only a privileged caller
+    // with no initiating document sends `none`, and Sec-Fetch-* is a forbidden
+    // header name, so no script can set or suppress it.
+    const headers = { ...EXTENSION_REQUEST.headers, 'sec-fetch-site': 'cross-site' }
+
+    expect(admit({ ...EXTENSION_REQUEST, headers }, context)).toEqual({
+      ok: false,
+      reason: 'bad-origin',
+    })
+  })
+
+  it('rejects a missing Origin with no Sec-Fetch-Site at all', () => {
+    const headers = { ...EXTENSION_REQUEST.headers, 'sec-fetch-site': undefined }
+
+    expect(admit({ ...EXTENSION_REQUEST, headers }, context)).toEqual({
+      ok: false,
+      reason: 'bad-origin',
+    })
+  })
+
+  it('still rejects a hostile page even if it claims sec-fetch-site: none', () => {
+    // Belt: a present Origin is checked against ours regardless of what else
+    // the request claims, so a forged Sec-Fetch-Site cannot launder a page.
+    const headers = {
+      ...EXTENSION_REQUEST.headers,
+      origin: 'https://northwind.example.com',
+      'sec-fetch-site': 'none',
+    }
+
+    expect(admit({ ...EXTENSION_REQUEST, headers }, context)).toEqual({
+      ok: false,
+      reason: 'bad-origin',
+    })
+  })
+
   it('rejects an Origin that is not our extension', () => {
     const fromPage = { ...good, headers: { ...good.headers, origin: 'https://northwind.example.com' } }
 

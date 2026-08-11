@@ -16,8 +16,10 @@
  * This endpoint is credential-bearing, so it is guarded the same way event
  * submission is, minus the token it exists to supply:
  *
- *   - `Origin` pinned to the extension id. A page's Origin is its own site and
- *     cannot be forged by script.
+ *   - Proof the request was not page-initiated: our `Origin` when Chrome sends
+ *     one, and `Sec-Fetch-Site: none` when it does not. Granting the loopback
+ *     host permission the extension cannot work without makes Chrome drop the
+ *     Origin header entirely — see `fromOurExtension`.
  *   - A custom header, which forces a preflight a hostile page cannot satisfy.
  *     Remember `text/plain` is CORS-safelisted — CORS alone stops nothing here.
  *
@@ -28,7 +30,7 @@
  */
 
 import { NextResponse } from 'next/server'
-import { CUSTOM_HEADER } from '@/capture/transport'
+import { CUSTOM_HEADER, fromOurExtension } from '@/capture/transport'
 import { appContext } from '@/server/db'
 import { captureStore, expectedOrigin } from '@/server/capture-store'
 
@@ -37,8 +39,10 @@ export async function GET(request: Request) {
     return NextResponse.json({ ok: false, reason: 'missing-custom-header' }, { status: 403 })
   }
 
-  const origin = request.headers.get('origin')
-  if (origin !== expectedOrigin()) {
+  // The same check event submission uses, from one definition. Chrome sends NO
+  // Origin for a host-permitted loopback fetch, so this accepts either our
+  // origin or a browser-attested non-page caller — see `fromOurExtension`.
+  if (!fromOurExtension((name) => request.headers.get(name) ?? undefined, expectedOrigin())) {
     return NextResponse.json(
       {
         ok: false,

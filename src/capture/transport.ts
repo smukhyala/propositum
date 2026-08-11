@@ -17,7 +17,10 @@
  *   1. `application/json` — not CORS-safelisted, so it forces a preflight the
  *      page cannot satisfy.
  *   2. A custom header — same reason, and belt to the above's braces.
- *   3. `Origin` pinned to the extension id — a page's Origin is its own site.
+ *   3. Proof this was not page-initiated — the extension's `Origin` when Chrome
+ *      sends one, and `Sec-Fetch-Site: none` when it does not. See
+ *      `fromOurExtension`: granting the loopback host permission the extension
+ *      cannot work without makes Chrome DROP the Origin header entirely.
  *   4. A per-session bearer token — the extension gets it at session start;
  *      a page never sees it.
  *
@@ -70,6 +73,55 @@ export interface IncomingRequest {
 }
 
 /**
+ * Is this our extension, given that Chrome may not tell us its origin?
+ *
+ * ── The trap, found by shipping it ───────────────────────────────────────
+ *
+ * The manifest needs `host_permissions` for `http://127.0.0.1/*`, or the
+ * service worker cannot reach the app at all. But granting it makes the fetch
+ * PRIVILEGED rather than cross-origin — and Chrome then sends **no `Origin`
+ * header at all**. Observed directly: the extension's request arrives with
+ * `sec-fetch-site: none`, our custom header, and no origin.
+ *
+ * So requiring `Origin` meant the extension reached the app and was refused by
+ * its own transport, every 30 seconds, silently. Removing `host_permissions`
+ * does not fix it either: the fetch is then a real CORS request, the app sends
+ * no `Access-Control-Allow-Origin` deliberately, and the browser withholds the
+ * response. Both directions fail; only the failure mode changes.
+ *
+ * ── What replaces it, and why it is not weaker ───────────────────────────
+ *
+ * The threat this control exists for is a HOSTILE WEB PAGE reaching loopback.
+ * It is not a local process — a local process can read the SQLite file directly
+ * and has no need of this route.
+ *
+ * Against a page, two things already hold and neither involves `Origin`:
+ *
+ *   - `Sec-Fetch-Site` is a **forbidden header name**. No script can set or
+ *     suppress it. A page-initiated request carries `cross-site`; only a
+ *     browser-privileged caller with no initiating document sends `none`.
+ *   - The custom header and `application/json` both force a CORS preflight
+ *     that this app never satisfies, so a page's request is never delivered.
+ *
+ * So: accept the expected extension origin when it is present, and otherwise
+ * accept only a request the browser itself attests was not page-initiated. A
+ * forged `Origin` was always possible from a non-browser client; this is the
+ * same guarantee, stated honestly.
+ */
+export function fromOurExtension(
+  header: (name: string) => string | undefined,
+  expectedOrigin: string,
+): boolean {
+  const origin = header('origin')
+
+  // Present: it must be ours. A page that reaches this far is rejected here.
+  if (origin !== undefined && origin !== '') return origin === expectedOrigin
+
+  // Absent: only a caller the browser itself attests was not page-initiated.
+  return header('sec-fetch-site') === 'none'
+}
+
+/**
  * All four checks, in the order that reveals the cheapest failure first.
  *
  * Deliberately does not distinguish a bad token from a wrong session in what it
@@ -88,7 +140,7 @@ export function admit(request: IncomingRequest, context: TransportContext): Admi
 
   if (header(CUSTOM_HEADER) !== '1') return { ok: false, reason: 'missing-custom-header' }
 
-  if (header('origin') !== context.expectedOrigin) return { ok: false, reason: 'bad-origin' }
+  if (!fromOurExtension(header, context.expectedOrigin)) return { ok: false, reason: 'bad-origin' }
 
   const parsed = envelopeSchema.safeParse(request.body)
   if (!parsed.success) return { ok: false, reason: 'malformed-envelope' }
