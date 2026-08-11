@@ -30,6 +30,7 @@ import { STOP_RULES } from '../domain/execution/stop-conditions'
 import { allowlisted } from '../policy/fetcher'
 import type { SourceFetcher } from '../policy/fetcher'
 import { diff } from '../domain/document/changeset'
+import { readableCause } from './problem'
 import { FINDING_KINDS, changeHandlesFor, reviewBoundary } from '../model/boundaries/review'
 import type { AppContext } from './db'
 import type { ModelClient } from '../model/client'
@@ -321,9 +322,21 @@ async function writeReport(
 
   await ctx.repos.reports.create({
     contractId,
-    // The narrative boundary fails open. A null narrative is a designed
-    // outcome, not an error — the report renders without it.
-    narrative: failureDetail ? null : stopLabel,
+    /**
+     * A failure has to SAY something, or it is undiagnosable.
+     *
+     * This used `failureDetail` as a boolean and discarded the message. A run
+     * failed in real use, the report said nothing, the ledger held no intents,
+     * and the only copy of the reason was a line in a terminal nobody had kept.
+     * That is the same shape as the blank page and the swallowed notification:
+     * the software knew what went wrong and told no one.
+     *
+     * The narrative boundary still fails open — a null narrative is a designed
+     * outcome. A CRASH is not, and now reads as one.
+     */
+    narrative: failureDetail
+      ? `Propositum stopped before it could finish, and nothing was changed. (${readableCause(failureDetail)})`
+      : stopLabel,
     decisions: decisions.map((d, i) => ({
       question: d.question,
       whyStopped: d.whyItMatters,

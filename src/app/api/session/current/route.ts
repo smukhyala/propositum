@@ -92,7 +92,13 @@ export async function GET(request: Request) {
     }
 
     const suggestion = describeWork(detected)
-    const named = ambient.nameFor(signatureOf(detected.terms))
+    const signature = signatureOf(detected.terms)
+
+    // Pin which pages this thread was made of, so accepting later carries the
+    // thread and not everything that happened to be on the same sites.
+    ambient.rememberThread(signature, detected.urls)
+
+    const named = ambient.nameFor(signature)
 
     // Naming happens in the BACKGROUND. This poll exists to be cheap, a model
     // call takes about 15 seconds, and a failure must not take the offer with
@@ -108,6 +114,7 @@ export async function GET(request: Request) {
       suggestion: named
         ? {
             ...suggestion,
+            thread: signature,
             // Only overwrite the sentence when the model was sure. A confident
             // wrong name is worse than an honest vague one.
             sentence: named.confident
@@ -117,7 +124,7 @@ export async function GET(request: Request) {
             offer: named.offer,
             offerLabel: named.offerLabel,
           }
-        : suggestion,
+        : { ...suggestion, thread: signature },
     })
   }
 

@@ -106,6 +106,10 @@ export interface WorkDetected {
   readonly focus: string | null
   /** Page titles, in order. What a naming step would be shown. */
   readonly titles: readonly string[]
+  /** The exact pages that formed the thread. What gets carried into a session
+   *  on accept — NOT everything from the same site, which is how a search for
+   *  "nissan altima" ended up as evidence for a hiking trip. */
+  readonly urls: readonly string[]
   /** Which rule fired. Shown to the person, so it can never be a mystery. */
   readonly because: 'searched-and-followed' | 'followed-across-sites'
 }
@@ -205,6 +209,7 @@ export function detectWork(
     since: thread.since,
     focus: focusPage?.title ?? null,
     titles: thread.pages.map((p) => p.title).filter((t) => t !== ''),
+    urls: thread.pages.map((p) => p.url),
     because: thread.searches > 0 ? 'searched-and-followed' : 'followed-across-sites',
   }
 }

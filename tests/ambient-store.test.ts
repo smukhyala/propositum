@@ -101,6 +101,66 @@ describe('it forgets when told', () => {
   })
 })
 
+describe('accepting carries the thread, not the neighbourhood', () => {
+  /**
+   * The real pollution, from the Kauai session. Five pages were the thread;
+   * thirty-seven were carried, because everything on google.com came along —
+   * including a search for a used car and a browser warmup page.
+   */
+  const KAUAI = 'https://www.google.com/search?q=kauai+secret+falls'
+  const TRIP = 'https://www.tripadvisor.com/secret-falls'
+  const ALTIMA = 'https://www.google.com/search?q=nissan+altima'
+  const WARMUP = 'https://www.google.com/warmup'
+
+  function loaded() {
+    const store = createAmbientStore()
+    for (const [url, title] of [
+      [KAUAI, 'kauai secret falls - Google Search'],
+      [TRIP, 'Secret Falls Trail'],
+      [ALTIMA, 'nissan altima - Google Search'],
+      [WARMUP, 'Warmup Page'],
+    ] as const) {
+      const origin = new URL(url).origin
+      store.record({ at: T0, origin, url, title, kind: 'navigation' }, T0)
+    }
+    return store
+  }
+
+  it('returns only the pages the thread was made of', () => {
+    const store = loaded()
+    store.rememberThread('kauai+falls', [KAUAI, TRIP])
+
+    const carried = store.forUrls(store.pagesOfThread('kauai+falls'), T0)
+    const urls = carried.map((o) => o.url)
+
+    expect(urls).toContain(KAUAI)
+    expect(urls).toContain(TRIP)
+    expect(urls).not.toContain(ALTIMA)
+    expect(urls).not.toContain(WARMUP)
+  })
+
+  it('does not sweep in the rest of an origin just because one page qualified', () => {
+    // google.com hosted both the thread's search AND the car search. Carrying
+    // by origin is what made the second one evidence for a hiking trip.
+    const store = loaded()
+    store.rememberThread('kauai+falls', [KAUAI, TRIP])
+
+    const carried = store.forUrls(store.pagesOfThread('kauai+falls'), T0)
+    const fromGoogle = carried.filter((o) => o.origin === 'https://www.google.com')
+
+    expect(fromGoogle).toHaveLength(1)
+  })
+
+  it('an unknown thread carries nothing, rather than falling back to everything', () => {
+    // The fallback has to be silence. A reading built on the wrong pages is
+    // worse than one built on none.
+    const store = loaded()
+
+    expect(store.pagesOfThread('never-seen')).toEqual([])
+    expect(store.forUrls(store.pagesOfThread('never-seen'), T0)).toEqual([])
+  })
+})
+
 describe('it cannot hold page text', () => {
   it('records only the fields the detector needs', () => {
     const store = createAmbientStore()

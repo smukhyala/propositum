@@ -136,6 +136,7 @@
         subject: suggestion.subject ?? '',
         origins: (suggestion.origins ?? [suggestion.origin]).join(','),
         intent: suggestion.offer ?? 'deep-research',
+        thread: suggestion.thread ?? '',
       })
       await chrome.tabs.create({
         url:

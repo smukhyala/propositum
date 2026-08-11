@@ -45,17 +45,19 @@ export default async function StartPage({
   const subject = one(params['subject']).trim()
   const origins = one(params['origins']).split(',').filter((o) => o !== '')
   const intent = one(params['intent']) === 'draft-document' ? 'draft-document' : 'deep-research'
+  const thread = one(params['thread'])
   const problem = one(params['problem'])
 
   async function go() {
     'use server'
 
-    const result = await startFromSuggestion(subject, origins, intent)
+    const result = await startFromSuggestion(subject, origins, intent, thread)
     if (!result.ok) {
       const back = new URLSearchParams({
         subject,
         origins: origins.join(','),
         intent,
+        thread,
         problem: result.problem.message,
       })
       redirect(`/start?${back.toString()}`)

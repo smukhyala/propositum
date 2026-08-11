@@ -390,6 +390,7 @@ async function answeredYes() {
     subject: offer.subject ?? '',
     origins: (offer.origins ?? [offer.origin]).filter(Boolean).join(','),
     intent: offer.offer ?? 'deep-research',
+    thread: offer.thread ?? '',
   })
   await chrome.tabs.create({ url: `${APP_ORIGIN}/start?${params.toString()}` })
   await chrome.action.setBadgeText({ text: '' })

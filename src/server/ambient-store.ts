@@ -60,6 +60,12 @@ export interface AmbientStore {
   isNaming(signature: string): boolean
   startNaming(signature: string): void
   finishNaming(signature: string): void
+  /** The pages that formed a thread, kept so accepting carries the THREAD
+   *  rather than everything from the same sites. */
+  rememberThread(signature: string, urls: readonly string[]): void
+  pagesOfThread(signature: string): readonly string[]
+  /** Observations for an explicit set of pages. */
+  forUrls(urls: readonly string[], nowMs: number): readonly AmbientObservation[]
   /** Record one ambient observation. Trims by window and cap on the way in. */
   record(observation: AmbientObservation, nowMs: number): void
   /** Everything still inside the window, oldest first. */
@@ -79,6 +85,7 @@ export function createAmbientStore(): AmbientStore {
   const declined = new Map<string, number>()
   const names = new Map<string, NamedThread>()
   const naming = new Set<string>()
+  const threads = new Map<string, readonly string[]>()
 
   const trim = (nowMs: number) => {
     observations = observations.filter((o) => nowMs - o.at <= WINDOW_MS)
@@ -118,6 +125,16 @@ export function createAmbientStore(): AmbientStore {
     forOrigin(origin, nowMs) {
       trim(nowMs)
       return observations.filter((o) => o.origin === origin)
+    },
+
+    rememberThread(signature, urls) {
+      threads.set(signature, [...urls])
+    },
+    pagesOfThread: (signature) => threads.get(signature) ?? [],
+    forUrls(urls, nowMs) {
+      trim(nowMs)
+      const wanted = new Set(urls)
+      return observations.filter((o) => wanted.has(o.url))
     },
 
     nameFor: (signature) => names.get(signature) ?? null,

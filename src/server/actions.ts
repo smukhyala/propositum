@@ -596,6 +596,10 @@ export async function startFromSuggestion(
   subject: string,
   origins: readonly string[],
   intent: 'draft-document' | 'deep-research',
+  /** The thread's signature. What makes the carry-over precise — without it
+   *  this falls back to everything from the same sites, which is how a search
+   *  for "nissan altima" became evidence for a hiking trip. */
+  threadSignature?: string,
 ): Promise<ActionResult<WorkStarted>> {
   return attempt(async () => {
     const name = subject.trim()
@@ -648,24 +652,37 @@ export async function startFromSuggestion(
     const startedAtMs = Date.now()
     captureStore().start(session.id, startedAtMs)
 
-    // What was already seen becomes the session's own record, so the reading
-    // has evidence for the work that triggered the offer.
+    /**
+     * What was already seen becomes the session's own record — but only the
+     * pages that were part of the THREAD.
+     *
+     * This used to carry everything from each approved origin, which meant a
+     * hiking trip arrived with "nissan altima - Google Search" and a "Warmup
+     * Page" as evidence, because those were also on google.com. The detector
+     * knew exactly which five pages mattered and the answer threw that away.
+     *
+     * Falling back to the origin when no signature is supplied would quietly
+     * restore the bug, so the fallback is to carry NOTHING: a session with a
+     * thin record is recoverable, and a reading built on the wrong pages is
+     * worse than one built on none.
+     */
     const ambient = ambientStore()
-    let carriedOver = 0
-    for (const origin of origins) {
-      for (const observation of ambient.forOrigin(origin, startedAtMs)) {
-        const sourceId = sourceIds[origins.indexOf(origin)]
-        if (!sourceId) continue
+    const threadPages = threadSignature ? ambient.pagesOfThread(threadSignature) : []
+    const sourceByOrigin = new Map(origins.map((origin, i) => [origin, sourceIds[i]]))
 
-        const appended = await ledger.append(session.id, {
-          kind: observation.kind === 'query' ? 'queried' : 'visited',
-          observedAt: new Date(observation.at),
-          elapsedMs: 0,
-          approvedSourceId: sourceId,
-          attested: { url: observation.url, title: observation.title, ambient: true },
-        })
-        if (appended.ok) carriedOver += 1
-      }
+    let carriedOver = 0
+    for (const observation of ambient.forUrls(threadPages, startedAtMs)) {
+      const sourceId = sourceByOrigin.get(observation.origin)
+      if (!sourceId) continue
+
+      const appended = await ledger.append(session.id, {
+        kind: observation.kind === 'query' ? 'queried' : 'visited',
+        observedAt: new Date(observation.at),
+        elapsedMs: 0,
+        approvedSourceId: sourceId,
+        attested: { url: observation.url, title: observation.title, ambient: true },
+      })
+      if (appended.ok) carriedOver += 1
     }
     ambient.clear()
 
