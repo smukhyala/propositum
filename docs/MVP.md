@@ -203,6 +203,23 @@ Recorded so they can be checked rather than absorbed.
 4. **A reviewer `AgentRun` adds value.** Currently doubtful — scope adherence is scored from
    deterministic fields, so `ReviewFinding` has no effect and the reviewer is close to decorative.
    The brief mandates it. Slice 0 ships it and measures whether it earns its place.
+
+   **Shipped 2026-08-11.** It runs after the worker reaches a terminal status, only when there is a
+   changeset to review, in its own `AgentRun` with `role: 'reviewer'`. Findings render beside the
+   changes and are explicitly non-authorizing: no default verdict, no disabled control, no
+   reordering. A reviewer failure is swallowed — the `ShiftReport` renders without it, which is
+   acceptance bullet 9 and is tested by scripting the boundary to throw.
+
+   **Its most plausible check is the one it cannot make.** `sourcesRead` is empty and will stay
+   empty until something retains fetched page text — `ActionOutcome.detail` holds `read <title>`,
+   not the body. So it can judge internal support and vagueness, and **cannot compare a draft
+   against the source it cites**. Stated here rather than left to be discovered, because a reviewer
+   that looks like it checked the sources and did not is worse than no reviewer. Re-fetching is the
+   fix and is not slice 0.
+
+   So the measurement is now possible but is **not yet made**: it needs findings from a real shift,
+   judged by hand, against the question *did this tell me something the diff did not*. Answer it in
+   this bullet.
 5. **15.1 s per model call is tolerable** inside a run nobody is watching — measured on the real
    session-reading boundary, roughly double the toy-call figure first recorded. Untested against a full
    worker loop.

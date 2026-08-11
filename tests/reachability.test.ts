@@ -187,6 +187,22 @@ describe('the safety machinery is reachable from the product', () => {
     ).not.toEqual([])
   })
 
+  it('the reviewer actually runs, or assumption 4 stays unanswerable', () => {
+    // `reviewBoundary` was built and tested with zero callers, and `runs.enqueue`
+    // was only ever called with role 'worker'. docs/MVP.md assumption 4 asks
+    // whether the reviewer earns its place; a reviewer that never runs makes
+    // that unanswerable rather than answered.
+    expect(callersOf('reviewBoundary(', 'src/model/boundaries/review.ts')).not.toEqual([])
+    expect(
+      callersOf("role: 'reviewer'", 'src/persistence/repositories/index.ts'),
+      'no reviewer run is ever enqueued',
+    ).not.toEqual([])
+    expect(
+      callersOf('findings.create(', 'src/persistence/repositories/index.ts'),
+      'nothing persists a ReviewFinding',
+    ).not.toEqual([])
+  })
+
   it('the classifiers run in production, not only in their own tests', () => {
     // 205 lines of tested classification that no production file imported. The
     // extension re-implemented a thinner, wrong version inline instead.

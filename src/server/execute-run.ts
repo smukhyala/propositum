@@ -30,6 +30,7 @@ import { STOP_RULES } from '../domain/execution/stop-conditions'
 import { allowlisted } from '../policy/fetcher'
 import type { SourceFetcher } from '../policy/fetcher'
 import { diff } from '../domain/document/changeset'
+import { FINDING_KINDS, changeHandlesFor, reviewBoundary } from '../model/boundaries/review'
 import type { AppContext } from './db'
 import type { ModelClient } from '../model/client'
 import type { ActionKind } from '../domain/handoff/policy'
@@ -200,6 +201,10 @@ export async function executeRun(runId: string, deps: ExecuteDeps): Promise<void
     result.terminalReason ?? undefined,
   )
 
+  /* ── the second pass ─────────────────────────────────────────────────── */
+
+  await review(ctx, deps, contract)
+
   /* ── the note ───────────────────────────────────────────────────────── */
 
   const stopLabel = result.stoppedBy.length ? STOP_RULES[result.stoppedBy[0]!].consumerLabel : null
@@ -210,6 +215,98 @@ export async function executeRun(runId: string, deps: ExecuteDeps): Promise<void
   // and every control that offers to hand it back is a promise the product
   // cannot keep.
   await ctx.repos.sessions.markObserving(contract.sessionId)
+}
+
+/**
+ * A second pass over what the worker proposed, before the person sees it.
+ *
+ * ── It grants nothing, and cannot fail the shift ─────────────────────────
+ *
+ * `ReviewFinding` is display-only: it cannot block a change, fail a run or
+ * alter a verdict. Scope adherence is deterministic and the gate already
+ * enforced it, so there is nothing here for a model to adjudicate. This judges
+ * only what determinism cannot — whether a claim is actually supported, whether
+ * a draft contradicts its source, whether prose is vague where it needed a
+ * number.
+ *
+ * So every failure below is swallowed. Acceptance bullet 9 requires the
+ * `ShiftReport` to render WITHOUT a reviewer pass, and this file writes that
+ * report specifically so one exists on `interrupted`. A reviewer that throws
+ * must not take the note down with it.
+ *
+ * ── An honest limitation, stated rather than implied ─────────────────────
+ *
+ * `sourcesRead` is EMPTY, and will be until something retains fetched page
+ * text. `ActionOutcome.detail` holds "read <title>", not the body. So the
+ * reviewer can check internal support and vagueness, and **cannot** compare a
+ * draft against the source it cites — which is the check it looks most capable
+ * of making. Re-fetching is the fix and is not slice 0.
+ *
+ * `docs/MVP.md` assumption 4 calls the reviewer "currently doubtful" and says
+ * slice 0 ships it and measures whether it earns its place. This is that ship.
+ */
+async function review(
+  ctx: AppContext,
+  deps: ExecuteDeps,
+  contract: { id: string; objective: string; definitionOfDone: string; guidance: readonly string[] },
+): Promise<void> {
+  try {
+    const changeset = await ctx.repos.changesets.forContract(contract.id)
+    if (!changeset || changeset.changes.length === 0) return
+
+    // Its own run row, so the second pass is visible in the ledger as a thing
+    // that happened rather than folded into the worker's record.
+    const run = await ctx.repos.runs.enqueue({ contractId: contract.id, role: 'reviewer' })
+
+    // The model sees handles, never ids — the same rule every other boundary
+    // follows, and a Zod refinement resolves them back.
+    const handles = changeset.changes.map((change, index) => ({
+      handle: `C${index + 1}`,
+      changeId: change.id,
+      section: sectionTitleFor(change.exact) ?? 'the document',
+      replacement: change.replacement,
+      reason: change.reason,
+    }))
+
+    const outcome = await deps.model.run(reviewBoundary(changeHandlesFor(handles)), {
+      objective: contract.objective,
+      definitionOfDone: contract.definitionOfDone,
+      guidance: contract.guidance,
+      changes: handles,
+      // Empty, and see the note above. Not a bug to fix here.
+      sourcesRead: [],
+    })
+
+    if (!outcome.ok) {
+      await ctx.repos.runs.complete(run.id, 'failed', new Date(deps.now()), 'error')
+      return
+    }
+
+    const byHandle = new Map(handles.map((h) => [h.handle, h.changeId]))
+    const kinds = new Set<string>(FINDING_KINDS)
+
+    const findings = outcome.value.findings
+      // A kind outside the closed list is dropped rather than stored. The
+      // grammar enforces shape only, so `kind` is a free string at the wire and
+      // the constraint has to be applied here.
+      .filter((finding: { kind: string }) => kinds.has(finding.kind))
+      .map((finding: { changeHandle: string; kind: string; detail: string }) => ({
+        changeId: byHandle.get(finding.changeHandle) ?? null,
+        kind: finding.kind,
+        detail: finding.detail,
+      }))
+
+    await ctx.repos.findings.create({ runId: run.id, findings })
+    await ctx.repos.runs.complete(run.id, 'succeeded', new Date(deps.now()))
+  } catch {
+    // Deliberately silent. The note is the thing the person came back for.
+  }
+}
+
+/** The `## ` heading a change sits under, if the anchor happens to carry one. */
+function sectionTitleFor(exact: string): string | null {
+  const heading = /^#{2,3}\s+(.+)$/m.exec(exact)
+  return heading?.[1]?.trim() ?? null
 }
 
 async function writeReport(

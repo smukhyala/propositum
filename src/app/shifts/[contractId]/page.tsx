@@ -297,6 +297,18 @@ export default async function ShiftPage({ params }: { params: Promise<{ contract
   }))
   const scales = scalesByOffset(baseContent, stored)
 
+  // Display-only annotations from the second pass. Grouped by change here so
+  // the card never has to ask for them, and absent entirely when the reviewer
+  // did not run — which is a supported outcome, not a degraded one.
+  const findings = changeset ? await repos.findings.forChangeset(changeset.id) : []
+  const findingsByChange = new Map<string, Array<{ kind: string; detail: string }>>()
+  for (const finding of findings) {
+    if (finding.changeId === null) continue
+    const list = findingsByChange.get(finding.changeId) ?? []
+    list.push({ kind: finding.kind, detail: finding.detail })
+    findingsByChange.set(finding.changeId, list)
+  }
+
   const changes: ChangeView[] = (changeset?.changes ?? []).map((change) => {
     const scale = scales.get(change.startOffset) ?? scaleOfPair(change.exact, change.replacement)
     const verdict = change.verdict?.verdict
@@ -305,6 +317,7 @@ export default async function ShiftPage({ params }: { params: Promise<{ contract
       where: headingAbove(headings, change.startOffset),
       scaleLabel: scale.label,
       scaleKind: scale.kind,
+      findings: findingsByChange.get(change.id) ?? [],
       before: change.exact,
       after: change.replacement,
       reason: change.reason,

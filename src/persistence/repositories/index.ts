@@ -42,6 +42,7 @@ export interface Repositories {
   readonly runs: AgentRunRepository
   readonly documents: DocumentRepository
   readonly changesets: ChangesetRepository
+  readonly findings: ReviewFindingRepository
   readonly reports: ShiftReportRepository
 }
 
@@ -55,6 +56,7 @@ export function createRepositories(prisma: PrismaClient): Repositories {
     runs: agentRunRepository(prisma),
     documents: documentRepository(prisma),
     changesets: changesetRepository(prisma),
+    findings: reviewFindingRepository(prisma),
     reports: shiftReportRepository(prisma),
   }
 }
@@ -644,6 +646,49 @@ function changesetRepository(prisma: PrismaClient): ChangesetRepository {
       })
       return row?.changeset.settledAs != null
     },
+  }
+}
+
+/* ── ReviewFinding ─────────────────────────────────────────────────────── */
+
+/**
+ * Display-only, by design (ADR-0004 and boundary 5's own header).
+ *
+ * A finding cannot block a change, fail a run, or alter a verdict. Scope
+ * adherence is deterministic and already enforced by the gate, so there is
+ * nothing here for a model to adjudicate — these annotate the things
+ * determinism cannot judge, and the person decides.
+ *
+ * There is deliberately no update and no delete. A finding is a record of what
+ * the second pass said, not a mutable annotation.
+ */
+export interface ReviewFindingRepository {
+  create(input: {
+    runId: string
+    findings: ReadonlyArray<{ changeId: string | null; kind: string; detail: string }>
+  }): Promise<number>
+  forChangeset(changesetId: string): Promise<Array<{ changeId: string | null; kind: string; detail: string }>>
+}
+
+function reviewFindingRepository(prisma: PrismaClient): ReviewFindingRepository {
+  return {
+    create: async ({ runId, findings }) => {
+      if (findings.length === 0) return 0
+      const { count } = await prisma.reviewFinding.createMany({
+        data: findings.map((f) => ({
+          runId,
+          kind: f.kind,
+          detail: f.detail,
+          ...(f.changeId === null ? {} : { changeId: f.changeId }),
+        })),
+      })
+      return count
+    },
+    forChangeset: (changesetId) =>
+      prisma.reviewFinding.findMany({
+        where: { change: { changesetId } },
+        select: { changeId: true, kind: true, detail: true },
+      }),
   }
 }
 

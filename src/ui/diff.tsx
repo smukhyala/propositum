@@ -70,6 +70,11 @@ const CSS = `
 .pd-prev summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 2px; }
 .pd-prev-text { margin: 0.5rem 0 0; color: var(--muted); text-decoration: line-through; text-decoration-thickness: 1px; white-space: pre-wrap; }
 
+.pd-findings { margin: 0.9rem 0 0; padding: 0.6rem 0 0.6rem 0.85rem; border-left: 2px solid var(--rule); }
+.pd-findings-head { margin: 0 0 0.35rem; font-size: 0.6875rem; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+.pd-findings ul { margin: 0; padding-left: 1.1rem; }
+.pd-findings li { font-size: 0.875rem; color: var(--muted); max-width: 42rem; }
+.pd-findings li + li { margin-top: 0.3rem; }
 .pd-reason { margin: 0; padding: 0.625rem 1rem; border-top: 1px dashed var(--rule); font-size: 0.8125rem; color: var(--muted); }
 .pd-verdicts { display: flex; gap: 0.5rem; align-items: baseline; flex-wrap: wrap; padding: 0.75rem 1rem; border-top: 1px solid var(--rule); }
 .pd-aside { font-size: 0.8125rem; color: var(--faint); margin: 0; }
@@ -233,6 +238,16 @@ export interface ChangeView {
   readonly reason: string
   /** The decision already recorded, if there is one. */
   readonly verdict: ChangeVerdict | null
+  /**
+   * What a second pass noticed about this change.
+   *
+   * Explicitly NON-AUTHORIZING (ADR-0004, and boundary 5's own header). A
+   * finding never sets a default verdict, never disables a control, and never
+   * reorders anything. Scope adherence is deterministic and the gate already
+   * enforced it — these judge only what determinism cannot, and the person
+   * decides. Usually empty, which is a good outcome rather than a lazy one.
+   */
+  readonly findings?: ReadonlyArray<{ readonly kind: string; readonly detail: string }>
 }
 
 export interface ChangeCardProps {
@@ -282,6 +297,17 @@ export function ChangeCard({ change, index, busy = false, onDecide }: ChangeCard
         </div>
 
         <p className="pd-reason">{change.reason}</p>
+
+        {change.findings && change.findings.length > 0 ? (
+          <div className="pd-findings">
+            <p className="pd-findings-head">A second pass flagged this</p>
+            <ul>
+              {change.findings.map((finding, i) => (
+                <li key={`${finding.kind}-${i}`}>{finding.detail}</li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
 
         <div className="pd-verdicts">
           {decided ? (
