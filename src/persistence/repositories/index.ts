@@ -71,6 +71,17 @@ export interface ProjectRepository {
     label: string
   }): Promise<{ id: string }>
   approvedSources(projectId: string): Promise<Array<{ id: string; originPattern: string; label: string; grantState: string }>>
+  /**
+   * Chrome is authoritative about grants; this mirrors a withdrawal.
+   *
+   * Nothing wrote this for the whole build — only `'granted'` was ever set — so
+   * five UI surfaces rendered a withdrawn state that could not be reached, and
+   * a `permission_revoked` CaptureGap could never occur. A stale `granted`
+   * leaks nothing, because the extension is structurally incapable of reading a
+   * revoked origin; a state the interface can render and the system can never
+   * produce is the part worth fixing.
+   */
+  revokeSource(input: { projectId: string; originPattern: string }): Promise<number>
 }
 
 function projectRepository(prisma: PrismaClient): ProjectRepository {
@@ -92,6 +103,21 @@ function projectRepository(prisma: PrismaClient): ProjectRepository {
         where: { projectId },
         select: { id: true, originPattern: true, label: true, grantState: true },
       }),
+    revokeSource: async ({ projectId, originPattern }) => {
+      // Chrome reports the origin it withdrew, which may or may not carry the
+      // `/*` the pattern is stored with. Match on the host either way rather
+      // than silently updating nothing.
+      const host = originPattern.replace(/\/\*$/, '')
+      const { count } = await prisma.approvedSource.updateMany({
+        where: {
+          projectId,
+          grantState: 'granted',
+          OR: [{ originPattern: host }, { originPattern: `${host}/*` }],
+        },
+        data: { grantState: 'revoked' },
+      })
+      return count
+    },
   }
 }
 

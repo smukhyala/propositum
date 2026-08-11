@@ -8,26 +8,113 @@
     margin: 0; padding: 1.25rem;
   }
   h1 { font-size: 0.6875rem; letter-spacing: 0.14em; text-transform: uppercase; margin: 0 0 1rem; opacity: 0.6; }
+  h2 { font-size: 0.6875rem; letter-spacing: 0.14em; text-transform: uppercase; margin: 1.5rem 0 0.6rem; opacity: 0.6; }
   p { margin: 0 0 0.75rem; }
   .off { color: #9c4708; }
+  .src { display: flex; align-items: baseline; justify-content: space-between; gap: 0.75rem; padding: 0.55rem 0; border-bottom: 1px solid rgba(128,128,128,0.25); }
+  .src:last-child { border-bottom: none; }
+  .name { font-weight: 500; }
+  .origin { font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; opacity: 0.6; word-break: break-all; }
+  .yes { font-size: 12px; opacity: 0.6; white-space: nowrap; }
+  button { font: inherit; font-size: 12px; padding: 0.3rem 0.7rem; border-radius: 3px; border: 1px solid currentColor; background: transparent; color: inherit; cursor: pointer; white-space: nowrap; }
+  button:hover { opacity: 0.75; }
+  .why { font-size: 12px; opacity: 0.65; margin-top: 1rem; }
 </style>
+
 <h1>Propositum</h1>
 <p id="state">Checking…</p>
 <p class="off" id="warning" hidden>
   Can’t reach the app — capture is off. Nothing is being recorded.
 </p>
+
+<div id="grants" hidden>
+  <h2>What Propositum may see</h2>
+  <div id="list"></div>
+  <p class="why">
+    Each grant is Chrome’s, not ours. Propositum can only read a site after you allow it
+    here, and you can withdraw it in Chrome at any time — it stops reading immediately,
+    whether or not Propositum is running.
+  </p>
+</div>
+
 <script type="module">
-  // Deliberately thin. The panel reports state; it does not hold any.
+  /**
+   * The panel is thin, with one exception: this is where a host grant is asked for.
+   *
+   * `chrome.permissions.request()` needs a user gesture, and a service worker
+   * responding to a message does not have one. So the button lives here, and the
+   * worker does the registration work once the grant lands — see
+   * `permissions.onAdded` in service-worker.js.
+   *
+   * Before this existed, extension/README.md told people "Chrome will prompt for
+   * host permission the first time it needs one". Nothing prompted, ever, and the
+   * content script was never injected on any page.
+   */
   const state = document.getElementById('state')
   const warning = document.getElementById('warning')
-  const { session } = await chrome.storage.session.get(['session'])
+  const grants = document.getElementById('grants')
+  const list = document.getElementById('list')
 
-  if (!session) {
-    state.textContent = 'No session running. Start one in the app.'
-  } else {
-    const { pending = [] } = await chrome.storage.session.get(['pending'])
-    state.textContent = `Watching ${session.sources.length} approved source(s). ${pending.length} event(s) waiting to send.`
+  function patternFor(origin) {
+    return origin.endsWith('/*') ? origin : `${origin}/*`
   }
+
+  async function render() {
+    const { running, sources } = await chrome.runtime.sendMessage({ ask: 'grants' })
+
+    if (!running) {
+      state.textContent = 'No session running. Start one in the app.'
+      grants.hidden = sources.length === 0
+    } else {
+      const { pending = [] } = await chrome.storage.session.get(['pending'])
+      const live = sources.filter((s) => s.granted).length
+      state.textContent =
+        `Watching ${live} of ${sources.length} approved source(s). ` +
+        `${pending.length} event(s) waiting to send.`
+      grants.hidden = false
+    }
+
+    list.replaceChildren()
+    for (const source of sources) {
+      const row = document.createElement('div')
+      row.className = 'src'
+
+      const left = document.createElement('div')
+      const name = document.createElement('div')
+      name.className = 'name'
+      name.textContent = source.label
+      const origin = document.createElement('div')
+      origin.className = 'origin'
+      origin.textContent = source.origin
+      left.append(name, origin)
+
+      row.append(left)
+
+      if (source.granted) {
+        const yes = document.createElement('span')
+        yes.className = 'yes'
+        yes.textContent = 'allowed'
+        row.append(yes)
+      } else {
+        const button = document.createElement('button')
+        button.textContent = 'Allow'
+        button.addEventListener('click', async () => {
+          // Must be called directly in the click handler. Awaiting anything
+          // first spends the user gesture and Chrome rejects the request.
+          const granted = await chrome.permissions.request({
+            origins: [patternFor(source.origin)],
+          })
+          if (granted) await chrome.runtime.sendMessage({ ask: 'reconcile' })
+          await render()
+        })
+        row.append(button)
+      }
+
+      list.append(row)
+    }
+  }
+
+  await render()
 
   const badge = await chrome.action.getBadgeText({})
   warning.hidden = badge !== '!'

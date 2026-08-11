@@ -67,10 +67,6 @@ async function loadSession() {
   }
 }
 
-async function saveSession(session) {
-  await chrome.storage.session.set({ session })
-}
-
 /* ── transport ─────────────────────────────────────────────────────────── */
 
 /**
@@ -150,15 +146,23 @@ async function flush() {
 
 /* ── lifecycle ─────────────────────────────────────────────────────────── */
 
-chrome.runtime.onStartup.addListener(async () => {
-  await verifyReachable()
-  chrome.alarms.create(HEARTBEAT_ALARM, { periodInMinutes: HEARTBEAT_MINUTES })
-})
+async function wake() {
+  // The panel is where a host grant is requested, because that needs a user
+  // gesture and a service worker responding to a message does not have one.
+  // Clicking the toolbar icon has to be able to open it.
+  await chrome.sidePanel
+    .setPanelBehavior({ openPanelOnActionClick: true })
+    .catch(() => {})
 
-chrome.runtime.onInstalled.addListener(async () => {
   await verifyReachable()
+  // Dynamic registrations do not survive an extension reload, and a grant can
+  // be withdrawn while this worker is dead. Reconcile rather than assume.
+  await reconcileContentScripts()
   chrome.alarms.create(HEARTBEAT_ALARM, { periodInMinutes: HEARTBEAT_MINUTES })
-})
+}
+
+chrome.runtime.onStartup.addListener(wake)
+chrome.runtime.onInstalled.addListener(wake)
 
 /**
  * The heartbeat does double duty: it flushes the buffer, and it is how the app
@@ -186,10 +190,10 @@ chrome.idle.onStateChanged.addListener(async (state) => {
   if (state === 'active') return
 
   await buffer({
-    kind: 'switchedAway',
-    observedAt: new Date().toISOString(),
+    signal: 'away',
+    at: new Date().toISOString(),
     elapsedMs: Date.now() - session.startedAtMs,
-    attested: { cause: state === 'locked' ? 'lock' : 'idle' },
+    cause: state === 'locked' ? 'lock' : 'idle',
   })
   await flush()
 })
@@ -198,18 +202,29 @@ chrome.idle.onStateChanged.addListener(async (state) => {
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   ;(async () => {
+    // The panel asks; everything else reports.
+    if (message?.ask === 'grants') return sendResponse(await grantState())
+    if (message?.ask === 'reconcile') {
+      await reconcileContentScripts()
+      return sendResponse(await grantState())
+    }
+
     const session = await loadSession()
     if (!session) return sendResponse({ ok: false, reason: 'no-session' })
 
-    // A content script only runs on an origin the person granted, but check
-    // anyway — the sender is the least trustworthy input this file receives.
+    // A content script only runs on an origin the person granted, because
+    // Chrome refuses to register it anywhere else. Check anyway — the sender is
+    // the least trustworthy input this file receives, and the app checks a
+    // third time against its own grant list before anything is stored.
     const origin = sender.origin ?? ''
-    const source = session.sources.find((s) => origin.startsWith(s.origin))
-    if (!source) return sendResponse({ ok: false, reason: 'origin-not-approved' })
+    const approved = session.sources.some((s) => origin.startsWith(s.origin))
+    if (!approved) return sendResponse({ ok: false, reason: 'origin-not-approved' })
 
+    // No `approvedSourceId` and no `kind`. The app decides both: which source
+    // this belongs to, from its own grant list, and what the signal was, from
+    // the tested classifiers. See src/server/capture-adapter.ts.
     await buffer({
-      ...message.event,
-      approvedSourceId: source.id,
+      ...message.signal,
       elapsedMs: Date.now() - session.startedAtMs,
     })
     sendResponse({ ok: true })
@@ -218,18 +233,107 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return true // async response
 })
 
-/* ── session control, from the side panel ──────────────────────────────── */
+/* ── host grants, and the content scripts that follow from them ────────── */
 
-chrome.runtime.onMessageExternal?.addListener?.(() => undefined)
+/**
+ * Registration is dynamic, and that is the whole privacy argument.
+ *
+ * A static `content_scripts` block in the manifest would need `https://*​/*` to
+ * cover origins chosen at runtime, which costs "Read and change all your data
+ * on all websites" at install and puts the injected set back under our control
+ * — an `if` statement we could get wrong.
+ *
+ * `chrome.scripting.registerContentScripts` inverts it: Chrome REFUSES to
+ * register for an origin the extension has no host permission for. So the set
+ * of pages this runs on is the set the person granted, enforced by the browser,
+ * and withdrawing a grant in Chrome's own UI stops the injection whether or not
+ * our code notices. That is ADR-0002's claim made structural.
+ */
+const SCRIPT_PREFIX = 'propositum-'
 
-export async function startSession(session) {
-  await saveSession({ ...session, startedAtMs: Date.now() })
-  await chrome.storage.session.set({ pending: [] })
-  chrome.alarms.create(HEARTBEAT_ALARM, { periodInMinutes: HEARTBEAT_MINUTES })
+function scriptIdFor(origin) {
+  return `${SCRIPT_PREFIX}${origin.replace(/[^a-z0-9]/gi, '-')}`
 }
 
-export async function endSession() {
-  await flush()
-  await chrome.storage.session.remove(['session', 'pending'])
-  await chrome.alarms.clear(HEARTBEAT_ALARM)
+/** Origins Chrome has actually granted, as match patterns. */
+async function grantedOrigins() {
+  const { origins = [] } = await chrome.permissions.getAll()
+  return origins.filter((o) => !o.startsWith('http://127.0.0.1'))
 }
+
+/**
+ * Make the registered scripts match the grants, in both directions.
+ *
+ * Dynamic registrations survive a browser restart but NOT an extension reload,
+ * and a grant can be withdrawn while the worker is dead. So this runs on every
+ * startup rather than only on change — reconciling is cheap and drift here is
+ * silent.
+ */
+async function reconcileContentScripts() {
+  const origins = await grantedOrigins()
+  const wanted = new Map(origins.map((o) => [scriptIdFor(o), o]))
+
+  const registered = await chrome.scripting.getRegisteredContentScripts()
+  const ours = registered.filter((s) => s.id.startsWith(SCRIPT_PREFIX))
+
+  const stale = ours.filter((s) => !wanted.has(s.id)).map((s) => s.id)
+  if (stale.length > 0) {
+    await chrome.scripting.unregisterContentScripts({ ids: stale }).catch(() => {})
+  }
+
+  const have = new Set(ours.map((s) => s.id))
+  const missing = [...wanted].filter(([id]) => !have.has(id))
+  if (missing.length === 0) return
+
+  await chrome.scripting
+    .registerContentScripts(
+      missing.map(([id, origin]) => ({
+        id,
+        matches: [origin],
+        js: ['src/content.js'],
+        runAt: 'document_idle',
+      })),
+    )
+    .catch((error) => {
+      // Registration failing is capture silently not happening, which is the
+      // failure this whole file is written against.
+      console.error('[propositum] could not register capture for', missing, error)
+    })
+}
+
+/** What the panel renders: which approved sources still need a grant. */
+async function grantState() {
+  const session = await loadSession()
+  const origins = await grantedOrigins()
+
+  const sources = (session?.sources ?? []).map((source) => ({
+    ...source,
+    granted: origins.some((o) => o.replace(/\/\*$/, '') === source.origin.replace(/\/\*$/, '')),
+  }))
+
+  return { running: session !== null, sources }
+}
+
+chrome.permissions.onAdded.addListener(async () => {
+  await reconcileContentScripts()
+})
+
+chrome.permissions.onRemoved.addListener(async (removed) => {
+  await reconcileContentScripts()
+
+  // Tell the app. Until now nothing ever wrote `grantState = 'revoked'` — only
+  // `'granted'` was ever set — so five UI surfaces rendered a withdrawn state
+  // that was unreachable, and a `permission_revoked` CaptureGap could not occur.
+  const session = await loadSession()
+  if (!session) return
+
+  for (const origin of removed.origins ?? []) {
+    try {
+      await post('/api/capture/revoked', { origin }, session)
+    } catch {
+      // The app will find out on its next grant check. Losing this is a stale
+      // `granted` flag, which leaks nothing: the extension is structurally
+      // incapable of reading a revoked origin.
+    }
+  }
+})

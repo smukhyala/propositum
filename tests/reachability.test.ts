@@ -29,13 +29,13 @@ import { dirname, join, relative } from 'node:path'
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), '..')
 
-function sourceFiles(dirs: string[]): string[] {
+function sourceFiles(dirs: string[], pattern = /\.tsx?$/): string[] {
   const out: string[] = []
   const walk = (d: string) => {
     for (const entry of readdirSync(d)) {
       const full = join(d, entry)
       if (statSync(full).isDirectory()) walk(full)
-      else if (/\.tsx?$/.test(entry)) out.push(full)
+      else if (pattern.test(entry)) out.push(full)
     }
   }
   for (const d of dirs) walk(join(repo, d))
@@ -43,6 +43,17 @@ function sourceFiles(dirs: string[]): string[] {
 }
 
 const PRODUCTION = sourceFiles(['src', 'scripts'])
+
+/**
+ * The extension, which this file could not see.
+ *
+ * `sourceFiles` walked only `src` and `scripts`, and only `.tsx?`. So the whole
+ * extension was invisible to every check here — which is part of why
+ * `content.js` was never registered by anything, and no test noticed while the
+ * suite stayed green. A reachability guard with a blind spot the size of the
+ * privacy-holding component is not a guard.
+ */
+const EXTENSION = sourceFiles(['extension'], /\.(js|html)$/)
 
 /**
  * Strip comments before searching.
@@ -160,6 +171,69 @@ describe('the safety machinery is reachable from the product', () => {
       callers,
       'cleanUrl must be called at the ledger door, so no caller can bypass it',
     ).toContain('src/persistence/ledger-writer.ts')
+  })
+
+  it('the classifiers run in production, not only in their own tests', () => {
+    // 205 lines of tested classification that no production file imported. The
+    // extension re-implemented a thinner, wrong version inline instead.
+    expect(callersOf('createNavigationClassifier(', 'src/capture/semantics.ts')).not.toEqual([])
+    expect(callersOf('classifyEngagement(', 'src/capture/semantics.ts')).not.toEqual([])
+    expect(callersOf('classifySelection(', 'src/capture/semantics.ts')).not.toEqual([])
+  })
+})
+
+describe('the extension can actually capture', () => {
+  const extensionSource = (name: string) =>
+    stripComments(
+      readFileSync(
+        EXTENSION.find((f) => f.endsWith(name)) ?? join(repo, 'extension/src', name),
+        'utf8',
+      ),
+    )
+
+  it('something registers the content script, or nothing is ever injected', () => {
+    // The defect this whole ticket existed for. `content.js` was written,
+    // reviewed and shipped, and no line of code ever caused it to run: no
+    // `content_scripts` manifest block, no `registerContentScripts` call. In
+    // production the extension could emit only `switchedAway` from chrome.idle.
+    const worker = extensionSource('service-worker.js')
+
+    // The leading dot matters: `unregisterContentScripts` contains
+    // `registerContentScripts`, so the bare name stays satisfied by the cleanup
+    // path alone. Caught while verifying this test — deleting the registration
+    // left it green.
+    expect(worker, 'nothing registers content.js — the extension captures nothing').toContain(
+      '.registerContentScripts(',
+    )
+    expect(worker, 'the registration must actually name the content script').toContain(
+      'src/content.js',
+    )
+  })
+
+  it('the content script is never registered statically for all sites', () => {
+    // A `content_scripts` block would need https://*/* to cover origins chosen
+    // at runtime, which costs the "read all your data on all websites" warning
+    // and puts the injected set back under our control instead of Chrome's.
+    const manifest = JSON.parse(readFileSync(join(repo, 'extension/manifest.json'), 'utf8'))
+
+    expect(manifest.content_scripts).toBeUndefined()
+  })
+
+  it('something asks Chrome for the host permission', () => {
+    // Without a request, `optional_host_permissions` is a list nobody ever
+    // grants — and extension/README.md claimed Chrome would prompt on its own.
+    const panel = extensionSource('panel.html')
+
+    expect(panel, 'no user gesture requests a host grant, so none is ever given').toContain(
+      'permissions.request',
+    )
+  })
+
+  it('a withdrawn grant is reported, so grantState can ever be revoked', () => {
+    const worker = extensionSource('service-worker.js')
+
+    expect(worker).toContain('permissions.onRemoved')
+    expect(callersOf('revokeSource', 'src/persistence/repositories/index.ts')).not.toEqual([])
   })
 })
 

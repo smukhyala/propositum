@@ -46,7 +46,10 @@ first-class event with `service_worker_terminated` as one of its reasons.
 
 ## Setting it up for real work
 
-1. `npm run dev` and `npm run worker` in the repo.
+1. `npm run dev` and `npm run worker` in the repo. The app serves on **port
+   3117**, which `manifest.json` and `service-worker.js` both hardcode — a test
+   asserts the two agree, because when they drifted capture was silently off and
+   the badge blamed Local Network Access.
 2. `chrome://extensions` → Developer mode → **Load unpacked** → select `extension/`.
 3. Copy the extension **ID** Chrome shows, and put it in `.env`:
    ```
@@ -54,15 +57,29 @@ first-class event with `service_worker_terminated` as one of its reasons.
    ```
    Restart `npm run dev`. Without this the app rejects every request with
    `bad-origin` — the response says so explicitly rather than failing silently.
-4. In the app, create a project and approve the sources you want watched.
+4. In the app, create a project, paste in your document, and approve the sources
+   you want watched.
 5. Press **Start session**. The extension picks up the session and its token
    from `GET /api/session/current` on its next heartbeat.
-6. Chrome will prompt for host permission the first time it needs one. That
-   prompt is the point: the grant is Chrome's, visible and revocable in Chrome's
-   own UI, not ours.
+6. **Open the side panel** (click the Propositum toolbar icon) and press
+   **Allow** next to each approved source. Chrome shows its own permission
+   prompt; the grant is Chrome's, visible and revocable in Chrome's own UI, not
+   ours.
+
+   This step is not optional and nothing else can do it. A host grant requires a
+   user gesture, so it cannot be requested from the service worker — and until
+   the grant lands, Chrome refuses to register the content script and **nothing
+   on that site is captured**. Earlier versions of this file promised Chrome
+   would "prompt the first time it needs one". It never did, and the content
+   script was never injected on any page.
 
 If the toolbar icon shows a **!**, the extension cannot reach the app and
 **capture is off**. It fails loudly on purpose.
+
+Withdrawing a grant in `chrome://extensions` stops capture for that site
+immediately, whether or not Propositum is running — Chrome unregisters the
+script itself. The extension also tells the app, so the source shows as
+withdrawn rather than sitting there looking live.
 
 ## Before a real install
 
