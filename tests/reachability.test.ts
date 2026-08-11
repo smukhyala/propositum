@@ -173,6 +173,20 @@ describe('the safety machinery is reachable from the product', () => {
     ).toContain('src/persistence/ledger-writer.ts')
   })
 
+  it('a finished review reaches the document, or the loop produces nothing', () => {
+    // `materialise` had exactly one call site — the shift page's scale-label
+    // recovery — and no code path ever wrote a version from a review. The
+    // interface admitted it: "yours to fold into the document."
+    expect(
+      callersOf('finishReview(', 'src/server/actions.ts'),
+      'nothing calls finishReview — decisions are recorded and discarded',
+    ).not.toEqual([])
+    expect(
+      callersOf("origin: 'accepted-changeset'", 'src/persistence/repositories/index.ts'),
+      'no code path writes an accepted-changeset version',
+    ).not.toEqual([])
+  })
+
   it('the classifiers run in production, not only in their own tests', () => {
     // 205 lines of tested classification that no production file imported. The
     // extension re-implemented a thinner, wrong version inline instead.

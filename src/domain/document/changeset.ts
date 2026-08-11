@@ -272,9 +272,19 @@ export interface Decision {
  * is the whole trick, and it is why accepting change 1 then 3 gives exactly the
  * same document as accepting 3 then 1.
  */
+/**
+ * What the fold actually reads: a span and what goes in it.
+ *
+ * Deliberately narrower than `ProposedChange`. The fold does not look at the
+ * quote anchor or the scale label, and requiring them meant every caller
+ * holding stored rows had to invent a `scale` — a fabricated value passed to a
+ * function that ignores it, which reads like data and is not.
+ */
+export type FoldableChange = Pick<ProposedChange, 'startOffset' | 'endOffset' | 'replacement'>
+
 export function materialise(
   baseContent: string,
-  changes: readonly ProposedChange[],
+  changes: readonly FoldableChange[],
   decisions: readonly Decision[],
 ): string {
   const byIndex = new Map(decisions.map((d) => [d.changeIndex, d]))

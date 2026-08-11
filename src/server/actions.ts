@@ -42,7 +42,8 @@ import {
 } from '../model/boundaries/session-reading'
 import type { PromptEvent } from '../model/boundaries/session-reading'
 import { handoffBoundary, sourceHandlesFor } from '../model/boundaries/handoff'
-import { hashContent } from '../domain/document/changeset'
+import { checkDrift, hashContent, materialise } from '../domain/document/changeset'
+import type { Decision } from '../domain/document/changeset'
 import { normalise } from '../domain/document/normalise'
 import { ACTION_KINDS } from '../domain/handoff/policy'
 import type { ActionKind, AutonomyControls } from '../domain/handoff/policy'
@@ -1211,6 +1212,18 @@ export async function recordVerdict(
 
     const { repos } = await appContext()
 
+    // Deciding after the fold has already happened would record a verdict the
+    // document does not reflect, and the version chain cannot be revised —
+    // `DocumentVersion` is insert-only. The unique index below catches a second
+    // verdict on one change; this catches a first verdict on a settled review.
+    const settled = await repos.changesets.settledFor(changeId)
+    if (settled) {
+      return no<VerdictRecorded>(
+        'already-done',
+        "These are already in your document. Edit it directly — what's there now is yours.",
+      )
+    }
+
     try {
       await repos.changesets.recordVerdict({
         changeId,
@@ -1230,5 +1243,107 @@ export async function recordVerdict(
 
     refresh()
     return ok({ changeId, verdict })
+  })
+}
+
+export interface ReviewFinished {
+  readonly versionId: string
+  readonly ordinal: number
+  readonly kept: number
+  readonly discarded: number
+}
+
+/**
+ * The person is done deciding, and what they kept becomes a new version.
+ *
+ * ── Why this is one act at the end, not one per verdict ──────────────────
+ *
+ * Review produces decisions, never documents, and the base is immutable **for
+ * the whole review** — so offsets stay valid while the person works through the
+ * changes in any order. Folding as each verdict lands would move the text under
+ * the changes not yet decided, and every offset after the first would need
+ * re-anchoring. That is the problem this design exists to avoid, not a
+ * refinement of it.
+ *
+ * Until this existed the review loop terminated without producing anything at
+ * all, and the interface said so in its own copy: "Whatever you decide here is
+ * yours to fold into the document."
+ *
+ * ── Drift is checked twice, and both are real ────────────────────────────
+ *
+ * The shift screen checks it to decide which screen to render. This checks it to
+ * decide whether to write. The window between the two is a person editing their
+ * document while looking at the report, which is neither rare nor a misuse —
+ * ADR-0003 §4 says the document is never locked, so their edit wins and this
+ * refuses.
+ */
+export async function finishReview(contractId: string): Promise<ActionResult<ReviewFinished>> {
+  return attempt(async () => {
+    const { repos } = await appContext()
+
+    const changeset = await repos.changesets.forContract(contractId)
+    if (!changeset) {
+      return no<ReviewFinished>('not-found', 'There are no changes to put into your document.')
+    }
+    if (changeset.settledAsVersionId !== null) {
+      return no<ReviewFinished>(
+        'already-done',
+        "You've already put these into your document. What's there now is yours to edit.",
+      )
+    }
+
+    const undecided = changeset.changes.filter((change) => change.verdict === null)
+    if (undecided.length > 0) {
+      const count = undecided.length === 1 ? 'one change' : `${undecided.length} changes`
+      return no<ReviewFinished>(
+        'blocked',
+        `Decide on ${count} still waiting, and Propositum will put the rest in.`,
+      )
+    }
+
+    const base = await repos.documents.version(changeset.baseVersionId)
+    if (!base) {
+      return no<ReviewFinished>('not-found', 'The version this shift worked from is gone.')
+    }
+
+    const latest = await repos.documents.latestVersion(base.documentId)
+    if (!latest) {
+      return no<ReviewFinished>('not-found', 'That document has no saved text.')
+    }
+
+    // The human's own edit always wins. Nothing is written, and nothing they
+    // decided is lost — the verdicts stay on the record.
+    const drift = checkDrift(latest.content, changeset.baseHash)
+    if (!drift.ok) {
+      return no<ReviewFinished>(
+        'blocked',
+        'You changed this document while Propositum was working, so these changes no longer line up with it. Yours is the one that counts — nothing was overwritten.',
+      )
+    }
+
+    const decisions = changeset.changes.map((change, changeIndex) => ({
+      changeIndex,
+      verdict: change.verdict?.verdict as Decision['verdict'],
+      ...(change.verdict?.editedText ? { editedText: change.verdict.editedText } : {}),
+    }))
+
+    const folded = materialise(base.content, changeset.changes, decisions)
+    const kept = decisions.filter((d) => d.verdict !== 'reject').length
+
+    const version = await repos.documents.addVersion({
+      documentId: base.documentId,
+      content: folded,
+      contentHash: hashContent(folded),
+      origin: 'accepted-changeset',
+      committedFromChangesetId: changeset.id,
+    })
+
+    refresh()
+    return ok({
+      versionId: version.id,
+      ordinal: version.ordinal,
+      kept,
+      discarded: decisions.length - kept,
+    })
   })
 }

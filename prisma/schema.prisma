@@ -73,13 +73,13 @@ model WorkSession {
 /// host-permission grant. Approval scopes where Propositum may LOOK; it confers
 /// no trust on what is found there.
 model ApprovedSource {
-  id              String   @id @default(cuid())
-  projectId       String
-  originPattern   String
-  label           String
+  id             String   @id @default(cuid())
+  projectId      String
+  originPattern  String
+  label          String
   /// granted | revoked
-  grantState      String   @default("granted")
-  grantCheckedAt  DateTime @default(now())
+  grantState     String   @default("granted")
+  grantCheckedAt DateTime @default(now())
 
   project Project            @relation(fields: [projectId], references: [id])
   events  ObservationEvent[]
@@ -127,15 +127,15 @@ model ObservationEvent {
 /// A structured interpretation of a WorkSession. Named "Reading" rather than
 /// "State" so it never collides with SessionPhase in the authorization path.
 model SessionReading {
-  id         String   @id @default(cuid())
-  sessionId  String
-  createdAt  DateTime @default(now())
+  id          String   @id @default(cuid())
+  sessionId   String
+  createdAt   DateTime @default(now())
   /// Highest ObservationEvent.seq this reading saw. Makes the reading
   /// reproducible and tells the eval exactly what input produced it.
-  throughSeq Int
+  throughSeq  Int
   /// Set only on references authored for the eval harness, before any model
   /// output exists. A reference is never edited after a run.
-  isReference Boolean @default(false)
+  isReference Boolean  @default(false)
 
   session   WorkSession       @relation(fields: [sessionId], references: [id])
   claims    SessionClaim[]
@@ -150,16 +150,16 @@ model SessionReading {
 /// transformation (#3), so a bad discriminator would make the whole union
 /// unresolvable, whereas a flat shape fails on one named field.
 model SessionClaim {
-  id        String @id @default(cuid())
-  readingId String
+  id         String  @id @default(cuid())
+  readingId  String
   /// objective | completed | openThread | constraint | nextAction | uncertainty
-  kind      String
-  text      String
+  kind       String
+  text       String
   /// Per claim, never per reading. Revision-level authorship would launder
   /// every unedited inferred claim into a human assertion the moment the human
   /// fixes one word — and make handoff correction rate uncomputable.
   /// inferred | human | edited
-  origin    String @default("inferred")
+  origin     String  @default("inferred")
   /// ObjectiveConfidence, on the objective claim only: high | medium | low.
   /// Never a number, never compared against a tunable threshold, and NOT a
   /// control-flow input — Take Over gates on an objective existing and having
@@ -199,12 +199,12 @@ model Evidence {
 /// continuation. No AgentRun may start from an unaccepted contract, and NOTHING
 /// in the controls can switch off human ratification.
 model HandoffContract {
-  id        String    @id @default(cuid())
-  sessionId String
-  readingId String
+  id         String    @id @default(cuid())
+  sessionId  String
+  readingId  String
   /// draft | accepted — two values only. Supersession would be derived from a
   /// successor's supersedesId, so the immutability trigger has a single job.
-  status    String    @default("draft")
+  status     String    @default("draft")
   /// The shift start AND the origin of the deadline, so a crash-restart cannot
   /// silently reset the budget. Deadline is DERIVED, never stored.
   acceptedAt DateTime?
@@ -260,22 +260,22 @@ model HandoffContract {
 /// MUTABLE BY DESIGN. The ledger is append-only; this row is not. It is the
 /// claim target, and a claim is by definition a mutation.
 model AgentRun {
-  id         String   @id @default(cuid())
-  contractId String
+  id             String    @id @default(cuid())
+  contractId     String
   /// worker | reviewer
-  role       String
+  role           String
   /// pending | claimed | running | succeeded | failed | interrupted
-  status     String   @default("pending")
+  status         String    @default("pending")
   /// lease-expired | budget-exhausted | stop-condition | cancelled | error
   terminalReason String?
-  createdAt  DateTime @default(now())
-  startedAt  DateTime?
-  endedAt    DateTime?
+  createdAt      DateTime  @default(now())
+  startedAt      DateTime?
+  endedAt        DateTime?
   /// Renewed by the worker. A startup sweep marks expired leases `interrupted`
   /// — Node never kills its children, so orphans are the default, not the edge.
-  leaseUntil DateTime?
+  leaseUntil     DateTime?
   /// Monotonic high-water mark, so PlanSteps stay immutable.
-  progressStep Int @default(0)
+  progressStep   Int       @default(0)
 
   contract HandoffContract   @relation(fields: [contractId], references: [id])
   steps    PlanStep[]
@@ -311,21 +311,21 @@ model PlanStep {
 /// A REFUSAL is an ActionIntent with authorized=false and no ActionOutcome. It
 /// is evidence about H3, so it must be queryable.
 model ActionIntent {
-  id         String   @id @default(cuid())
-  runId      String
-  stepId     String?
-  seq        Int
+  id          String   @id @default(cuid())
+  runId       String
+  stepId      String?
+  seq         Int
   /// ActionKind: read-approved-source | read-document | draft-section
-  kind       String
+  kind        String
   /// Why the worker proposed this. Exists BEFORE the action runs.
-  reason     String
-  params     Json
-  authorized Boolean
+  reason      String
+  params      Json
+  authorized  Boolean
   /// Set only when authorized=false. Deterministic rule id, never prose:
   /// e.g. source_not_approved, action_kind_not_allowed, budget_exhausted,
   /// unknown_action_kind.
   refusedRule String?
-  createdAt  DateTime @default(now())
+  createdAt   DateTime @default(now())
 
   run     AgentRun       @relation(fields: [runId], references: [id])
   step    PlanStep?      @relation(fields: [stepId], references: [id])
@@ -341,18 +341,18 @@ model ActionIntent {
 /// holding both would force an UPDATE, which append-only forbids. This split
 /// resolves a contradiction in the founding brief's own ActionRecord definition.
 model ActionOutcome {
-  id        String   @id @default(cuid())
-  intentId  String   @unique
+  id           String   @id @default(cuid())
+  intentId     String   @unique
   /// succeeded | failed
-  result    String
+  result       String
   /// within_scope | out_of_scope | unverified. `unverified` covers both
   /// "nothing happened" and "we cannot tell" — and under the sleep constraint
   /// it is the ROUTINE value, not the exception.
   scopeVerdict String
-  detail    String?
+  detail       String?
   /// For draft-section actions only.
-  draftText String?
-  createdAt DateTime @default(now())
+  draftText    String?
+  createdAt    DateTime @default(now())
 
   intent ActionIntent @relation(fields: [intentId], references: [id])
 
@@ -363,21 +363,21 @@ model ActionOutcome {
 /// ActionIntent: a model call is not an action the person authorized, and the
 /// ledger they READ must not list them.
 model ModelCallRecord {
-  id           String   @id @default(cuid())
-  runId        String?
+  id            String   @id @default(cuid())
+  runId         String?
   /// session-reading | handoff | plan | worker-action | review | shift-report
-  boundary     String
-  model        String
+  boundary      String
+  model         String
   promptVersion String
-  inputTokens  Int
-  outputTokens Int
-  latencyMs    Int
+  inputTokens   Int
+  outputTokens  Int
+  latencyMs     Int
   /// end_turn | max_tokens | refusal | stop_sequence
-  stopReason   String?
+  stopReason    String?
   /// none | schema-mismatch | truncation | refusal | transport
-  failureKind  String?
-  repairTurns  Int      @default(0)
-  createdAt    DateTime @default(now())
+  failureKind   String?
+  repairTurns   Int      @default(0)
+  createdAt     DateTime @default(now())
 
   run AgentRun? @relation(fields: [runId], references: [id])
 
@@ -408,21 +408,29 @@ model Document {
 /// and an immutable base that can be read without replaying a chain is worth
 /// far more than the bytes.
 model DocumentVersion {
-  id         String   @id @default(cuid())
-  documentId String
-  ordinal    Int
+  id                       String   @id @default(cuid())
+  documentId               String
+  ordinal                  Int
   /// sha256 of `content`. Gates refuse-on-drift — the human is never locked out
   /// of their own document, so the base CAN move under a live Shift, and this
   /// is how review detects it.
-  contentHash String
-  content    String
+  contentHash              String
+  content                  String
   /// human | accepted-changeset. Null run means the human wrote it directly.
-  origin     String
-  createdAt  DateTime @default(now())
+  origin                   String
+  /// The changeset this version was folded from, for an `accepted-changeset`
+  /// version. Null when the human wrote it directly.
+  ///
+  /// Unique, so a changeset settles exactly once: the foreign key IS the
+  /// "already reviewed" flag, rather than a second nullable boolean that could
+  /// disagree with it.
+  committedFromChangesetId String?  @unique
+  createdAt                DateTime @default(now())
 
-  document   Document          @relation(fields: [documentId], references: [id])
-  contracts  HandoffContract[]
-  changesets Changeset[]
+  document      Document          @relation(fields: [documentId], references: [id])
+  contracts     HandoffContract[]
+  changesets    Changeset[]
+  committedFrom Changeset?        @relation("settled", fields: [committedFromChangesetId], references: [id])
 
   @@unique([documentId, ordinal])
   @@map("document_version")
@@ -443,9 +451,12 @@ model Changeset {
   baseHash      String
   createdAt     DateTime @default(now())
 
-  contract HandoffContract  @relation(fields: [contractId], references: [id])
-  base     DocumentVersion  @relation(fields: [baseVersionId], references: [id])
-  changes  ProposedChange[]
+  contract  HandoffContract  @relation(fields: [contractId], references: [id])
+  base      DocumentVersion  @relation(fields: [baseVersionId], references: [id])
+  changes   ProposedChange[]
+  /// Present once the person finished the review and the kept changes became a
+  /// new version. Its absence is what "still open" means.
+  settledAs DocumentVersion? @relation("settled")
 
   @@index([contractId])
   @@map("changeset")
@@ -484,13 +495,13 @@ model ProposedChange {
 /// APPEND-ONLY. The human's decision on one ProposedChange. These are what
 /// review produces — never a materialised document.
 model ChangeVerdict {
-  id        String   @id @default(cuid())
-  changeId  String   @unique
+  id         String   @id @default(cuid())
+  changeId   String   @unique
   /// accept | reject | edit
-  verdict   String
+  verdict    String
   /// Set only when verdict = edit.
   editedText String?
-  createdAt DateTime @default(now())
+  createdAt  DateTime @default(now())
 
   change ProposedChange @relation(fields: [changeId], references: [id])
 
@@ -502,7 +513,7 @@ model ChangeVerdict {
 /// The reviewer is close to decorative in slice 0; the brief mandates it, and
 /// whether it earns its place is a measured question, not an assumed answer.
 model ReviewFinding {
-  id       String @id @default(cuid())
+  id       String  @id @default(cuid())
   runId    String
   changeId String?
   /// unsupported | outside-agreement | unclear | contradicts-source
@@ -521,7 +532,7 @@ model ReviewFinding {
 /// A judgment call Propositum declined to make. Rendered as a decision, never
 /// as an error.
 model DecisionNeeded {
-  id         String   @id @default(cuid())
+  id         String @id @default(cuid())
   reportId   String
   question   String
   /// Why it stopped rather than guessing.

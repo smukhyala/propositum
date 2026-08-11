@@ -498,6 +498,9 @@ export interface DocumentRepository {
     content: string
     contentHash: string
     origin: 'human' | 'accepted-changeset'
+    /** Set for an `accepted-changeset` version. Unique, so a changeset settles
+     *  exactly once and the foreign key is the "already reviewed" flag. */
+    committedFromChangesetId?: string
   }): Promise<{ id: string; ordinal: number }>
   /** `documentId` is included because `readDocument` refuses to be pointed at a
    *  document other than the one this shift pinned, and needs it to check. */
@@ -528,9 +531,16 @@ function documentRepository(prisma: PrismaClient): DocumentRepository {
       prisma.document.findUnique({ where: { id }, select: { id: true, title: true, projectId: true } }),
     forProject: (projectId) =>
       prisma.document.findMany({ where: { projectId }, select: { id: true, title: true } }),
-    addVersion: async ({ documentId, content, contentHash, origin }) =>
+    addVersion: async ({ documentId, content, contentHash, origin, committedFromChangesetId }) =>
       prisma.documentVersion.create({
-        data: { documentId, ordinal: await nextOrdinal(documentId), content, contentHash, origin },
+        data: {
+          documentId,
+          ordinal: await nextOrdinal(documentId),
+          content,
+          contentHash,
+          origin,
+          ...(committedFromChangesetId === undefined ? {} : { committedFromChangesetId }),
+        },
         select: { id: true, ordinal: true },
       }),
     version: (id) =>
@@ -570,11 +580,19 @@ export interface ChangesetRepository {
     id: string
     baseVersionId: string
     baseHash: string
+    /** The version folded from this changeset, once the person finished the
+     *  review. Its absence is what "still open" means — there is no separate
+     *  status column that could disagree with the foreign key. */
+    settledAsVersionId: string | null
     changes: Array<ProposedChangeInput & { id: string; verdict: { verdict: string; editedText: string | null } | null }>
   } | null>
   /** Append-only: a verdict is recorded once. Changing your mind means the UI
    *  has to say so explicitly rather than overwriting the record. */
   recordVerdict(input: { changeId: string; verdict: 'accept' | 'reject' | 'edit'; editedText?: string }): Promise<void>
+  /** Has the review this change belongs to already been folded into a version?
+   *  Asked from the change rather than the changeset, because that is what the
+   *  verdict controls have in hand. */
+  settledFor(changeId: string): Promise<boolean>
 }
 
 function changesetRepository(prisma: PrismaClient): ChangesetRepository {
@@ -592,6 +610,7 @@ function changesetRepository(prisma: PrismaClient): ChangesetRepository {
           id: true,
           baseVersionId: true,
           baseHash: true,
+          settledAs: { select: { id: true } },
           changes: {
             orderBy: { startOffset: 'asc' },
             select: {
@@ -608,12 +627,22 @@ function changesetRepository(prisma: PrismaClient): ChangesetRepository {
           },
         },
       })
-      return row
+      if (!row) return null
+
+      const { settledAs, ...rest } = row
+      return { ...rest, settledAsVersionId: settledAs?.id ?? null }
     },
     recordVerdict: async ({ changeId, verdict, editedText }) => {
       await prisma.changeVerdict.create({
         data: { changeId, verdict, ...(editedText === undefined ? {} : { editedText }) },
       })
+    },
+    settledFor: async (changeId) => {
+      const row = await prisma.proposedChange.findUnique({
+        where: { id: changeId },
+        select: { changeset: { select: { settledAs: { select: { id: true } } } } },
+      })
+      return row?.changeset.settledAs != null
     },
   }
 }
