@@ -119,7 +119,12 @@ export function createAmbientStore(): AmbientStore {
 export type Suggestion =
   | {
       readonly kind: 'start-session'
+      /** The primary site, for the source that gets approved on accept. */
       readonly origin: string
+      /** Every site the thread runs through. */
+      readonly origins: readonly string[]
+      /** The recurring subject words. */
+      readonly terms: readonly string[]
       /** Rendered verbatim. Says what was seen, never what it means. */
       readonly sentence: string
       readonly because: string
@@ -146,18 +151,32 @@ export function hostOf(origin: string): string {
   return origin.replace(/^https?:\/\//, '').replace(/\/$/, '')
 }
 
+/**
+ * The offer, in the words the pages themselves used.
+ *
+ * This says WHAT RECURRED, not what it means: "General Intuition, across 3
+ * sites", never "you are researching frontier world-model labs". Naming the
+ * subject in a sentence a person would recognise needs a model, and that is a
+ * separate decision — see ADR-0008.
+ */
 export function describeWork(detected: WorkDetected): Suggestion {
-  const host = hostOf(detected.origin)
-  const focus = detected.focus ? ` — mostly ${detected.focus}` : ''
+  const subject = detected.terms.slice(0, 3).join(' ')
+  const sites = detected.origins.length
+  const where = sites === 1 ? hostOf(detected.origins[0] ?? '') : `${sites} sites`
 
   return {
     kind: 'start-session',
-    origin: detected.origin,
-    sentence: `You have been reading ${host}${focus}.`,
+    // The site the thread ran through most, for the source that gets approved.
+    origin: detected.origins[0] ?? '',
+    origins: detected.origins,
+    terms: detected.terms,
+    sentence: subject
+      ? `You have been looking into ${subject} — across ${where}.`
+      : `You have been reading across ${where}.`,
     because:
-      detected.because === 'query-then-reading'
-        ? `You searched there and then read ${detected.pages} pages, for ${minutes(detected.engagedMs)}.${UNDER_TEST}`
-        : `${detected.pages} pages, ${minutes(detected.engagedMs)} of reading.${UNDER_TEST}`,
+      detected.because === 'searched-and-followed'
+        ? `You searched for it, then read ${detected.pages} pages across ${where}.${UNDER_TEST}`
+        : `${detected.pages} pages across ${where}, ${minutes(detected.engagedMs)} of reading.${UNDER_TEST}`,
     detected,
   }
 }

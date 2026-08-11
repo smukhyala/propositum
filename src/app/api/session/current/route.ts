@@ -86,7 +86,7 @@ export async function GET(request: Request) {
     const detected = detectWork(ambient.since(now), now)
 
     const suggestion =
-      detected && !ambient.isSnoozed(detected.origin, now) ? describeWork(detected) : null
+      detected && !ambient.isSnoozed(detected.origins[0] ?? '', now) ? describeWork(detected) : null
 
     return NextResponse.json({ ok: true, session: null, suggestion })
   }

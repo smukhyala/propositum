@@ -125,124 +125,60 @@ describe('what must not be mistaken for work', () => {
   })
 })
 
-describe('what is work', () => {
-  const working: AmbientObservation[] = [
-    nav(T0, '/partners'),
-    read(T0 + 1, '/partners', ENGAGED_MS_FOR_WORK / 2),
-    nav(T0 + 2, '/tiers'),
-    read(T0 + 3, '/tiers', ENGAGED_MS_FOR_WORK / 2),
-    nav(T0 + 4, '/pricing'),
-    read(T0 + 5, '/pricing', ENGAGED_MS_FOR_WORK / 2),
+describe('what is work — a subject followed across sites', () => {
+  /** Three sites, one subject. The shape research actually has. */
+  const thread: AmbientObservation[] = [
+    { at: T0, origin: 'https://a.example', url: 'https://a.example/1', title: 'World Models Survey', kind: 'navigation' },
+    { at: T0 + 1, origin: 'https://a.example', url: 'https://a.example/1', title: 'World Models Survey', kind: 'engagement', engagedMs: ENGAGED_MS_FOR_WORK / 2 },
+    { at: T0 + 2, origin: 'https://b.example', url: 'https://b.example/1', title: 'World Models Explained', kind: 'navigation' },
+    { at: T0 + 3, origin: 'https://b.example', url: 'https://b.example/1', title: 'World Models Explained', kind: 'engagement', engagedMs: ENGAGED_MS_FOR_WORK / 2 },
+    { at: T0 + 4, origin: 'https://c.example', url: 'https://c.example/1', title: 'Training World Models', kind: 'navigation' },
   ]
 
-  it('several pages on one site, genuinely read', () => {
-    const found = detectWork(working, T0 + 6)
+  it('finds the subject, not the site', () => {
+    const found = detectWork(thread, T0 + 5)
 
     expect(found).not.toBeNull()
-    expect(found?.origin).toBe('https://northwind.example.com')
-    expect(found?.pages).toBeGreaterThanOrEqual(PAGES_FOR_WORK)
-    expect(found?.because).toBe('pages-and-dwell')
+    expect(found?.terms).toContain('world')
+    expect(found?.terms).toContain('models')
   })
 
-  it('a search followed by reading fires below the page threshold', () => {
-    // A query is a statement of intent in a way a third click is not.
-    const observations = [
-      query(T0, '/search?q=partner+tiers'),
-      nav(T0 + 1, '/tiers'),
-      read(T0 + 2, '/tiers', 60_000),
+  it('names every site the subject ran through', () => {
+    expect(detectWork(thread, T0 + 5)?.origins.length).toBe(3)
+  })
+
+  it('a searched subject fires without much reading at all', () => {
+    // Searching for something states the intent outright. Waiting for eight
+    // minutes of dwell after that is waiting for a fact already established.
+    const searched: AmbientObservation[] = [
+      { at: T0, origin: 'https://www.google.com', url: 'https://www.google.com/search?q=world+models', title: 'world models - Google Search', kind: 'query' },
+      { at: T0 + 1, origin: 'https://a.example', url: 'https://a.example/1', title: 'World Models Survey', kind: 'navigation' },
+      { at: T0 + 2, origin: 'https://b.example', url: 'https://b.example/1', title: 'World Models Explained', kind: 'navigation' },
     ]
 
-    const found = detectWork(observations, T0 + 3)
-    expect(found?.because).toBe('query-then-reading')
-    expect(found?.queries).toBe(1)
+    const found = detectWork(searched, T0 + 3)
+    expect(found?.because).toBe('searched-and-followed')
+    expect(found?.searches).toBeGreaterThanOrEqual(1)
   })
 
-  it('names the page they spent longest on, not the one they landed on', () => {
-    const observations = [
-      nav(T0, '/index'),
-      read(T0 + 1, '/index', 10_000),
-      nav(T0 + 2, '/tiers'),
-      read(T0 + 3, '/tiers', ENGAGED_MS_FOR_WORK),
-      nav(T0 + 4, '/contact'),
-      read(T0 + 5, '/contact', 5_000),
+  it('names the page they spent longest on', () => {
+    expect(detectWork(thread, T0 + 5)?.focus).toBe('World Models Survey')
+  })
+
+  it('always reports why it fired', () => {
+    expect(detectWork(thread, T0 + 5)?.because).toBeDefined()
+  })
+
+  it('takes the largest cumulative report per page, not the sum', () => {
+    // Reports arrive every 15s carrying cumulative dwell. Summing them would
+    // count the same minute once per report.
+    const repeated: AmbientObservation[] = [
+      ...thread,
+      { at: T0 + 6, origin: 'https://a.example', url: 'https://a.example/1', title: 'World Models Survey', kind: 'engagement', engagedMs: ENGAGED_MS_FOR_WORK / 2 },
+      { at: T0 + 7, origin: 'https://a.example', url: 'https://a.example/1', title: 'World Models Survey', kind: 'engagement', engagedMs: ENGAGED_MS_FOR_WORK / 2 },
     ]
 
-    expect(detectWork(observations, T0 + 6)?.focus).toBe('/tiers')
-  })
-
-  it('picks the site with the most engaged time when two qualify', () => {
-    const busy = 'https://busy.example.com'
-    const quiet = 'https://quiet.example.com'
-    const observations = [
-      ...[0, 1, 2].map((i) => nav(T0 + i, `/q${i}`, quiet)),
-      read(T0 + 3, '/q0', ENGAGED_MS_FOR_WORK, quiet),
-      ...[0, 1, 2].map((i) => nav(T0 + 10 + i, `/b${i}`, busy)),
-      read(T0 + 13, '/b0', ENGAGED_MS_FOR_WORK * 3, busy),
-    ]
-
-    expect(detectWork(observations, T0 + 20)?.origin).toBe(busy)
-  })
-
-  it('reports why it fired, so the offer is never a mystery', () => {
-    const found = detectWork(working, T0 + 6)
-
-    expect(found?.because).toBeDefined()
-    expect(found?.engagedMs).toBeGreaterThanOrEqual(ENGAGED_MS_FOR_WORK)
-    expect(found?.since).toBe(T0)
-  })
-})
-
-describe('cumulative reports are not double-counted', () => {
-  // content.js reports every 15s while a page is open, and every report carries
-  // CUMULATIVE dwell rather than a delta. Summing them would count the same
-  // minute once per report.
-  it('takes the largest report for a page, not the sum', () => {
-    const third = ENGAGED_MS_FOR_WORK / 3
-    const observations = [
-      nav(T0, '/a'),
-      read(T0 + 1, '/a', third / 3),
-      read(T0 + 2, '/a', (third * 2) / 3),
-      read(T0 + 3, '/a', third),
-      nav(T0 + 4, '/b'),
-      read(T0 + 5, '/b', third / 3),
-      nav(T0 + 6, '/c'),
-      read(T0 + 7, '/c', third / 3),
-    ]
-
-    // Summed, the '/a' reports alone would clear the bar. Taking the largest
-    // per page, the real total is well under it.
-    expect(detectWork(observations, T0 + 8)).toBeNull()
-  })
-
-  it('still adds up across different pages', () => {
-    const observations = [
-      nav(T0, '/a'),
-      read(T0 + 1, '/a', ENGAGED_MS_FOR_WORK / 8),
-      read(T0 + 2, '/a', ENGAGED_MS_FOR_WORK / 2),
-      nav(T0 + 3, '/b'),
-      read(T0 + 4, '/b', ENGAGED_MS_FOR_WORK / 2),
-      nav(T0 + 5, '/c'),
-      read(T0 + 6, '/c', ENGAGED_MS_FOR_WORK / 8),
-    ]
-
-    expect(detectWork(observations, T0 + 7)?.engagedMs).toBe(
-      ENGAGED_MS_FOR_WORK + ENGAGED_MS_FOR_WORK / 8,
-    )
-  })
-
-  it('a lost report costs nothing, because the next one carries its time', () => {
-    // The reason reports are cumulative rather than deltas: a message dropped
-    // while the service worker was asleep is self-correcting.
-    const late = ENGAGED_MS_FOR_WORK / 4
-    const withGap = [
-      nav(T0, '/a'),
-      read(T0 + 1, '/a', late / 3),
-      // The middle report never arrived.
-      read(T0 + 3, '/a', late),
-    ]
-
-    const observations = [...withGap, nav(T0 + 4, '/b'), read(T0 + 5, '/b', ENGAGED_MS_FOR_WORK), nav(T0 + 6, '/c')]
-    expect(detectWork(observations, T0 + 7)?.engagedMs).toBe(late + ENGAGED_MS_FOR_WORK)
+    expect(detectWork(repeated, T0 + 8)?.engagedMs).toBe(ENGAGED_MS_FOR_WORK)
   })
 })
 

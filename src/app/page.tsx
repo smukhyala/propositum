@@ -127,7 +127,7 @@ export default async function Home({
   const nowMs = Date.now()
   const detected = live ? null : detectWork(ambient.since(nowMs), nowMs)
   const suggestion =
-    detected && !ambient.isSnoozed(detected.origin, nowMs) ? describeWork(detected) : null
+    detected && !ambient.isSnoozed(detected.origins[0] ?? '', nowMs) ? describeWork(detected) : null
 
   async function acceptSuggestion(formData: FormData) {
     'use server'

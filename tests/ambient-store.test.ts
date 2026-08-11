@@ -113,31 +113,49 @@ describe('it cannot hold page text', () => {
 })
 
 describe('what the offer says', () => {
+  /** One subject across three sites — what research actually looks like. */
   const working: AmbientObservation[] = [
-    { at: T0, origin: ORIGIN, url: '/partners', title: 'Partners', kind: 'navigation' },
-    { at: T0 + 1, origin: ORIGIN, url: '/partners', title: 'Partners', kind: 'engagement', engagedMs: 5 * 60_000 },
-    { at: T0 + 2, origin: ORIGIN, url: '/tiers', title: 'Tiers', kind: 'navigation' },
-    { at: T0 + 3, origin: ORIGIN, url: '/tiers', title: 'Tiers', kind: 'engagement', engagedMs: 5 * 60_000 },
-    { at: T0 + 4, origin: ORIGIN, url: '/pricing', title: 'Pricing', kind: 'navigation' },
+    { at: T0, origin: 'https://a.example', url: 'https://a.example/1', title: 'World Models Survey', kind: 'navigation' },
+    { at: T0 + 1, origin: 'https://a.example', url: 'https://a.example/1', title: 'World Models Survey', kind: 'engagement', engagedMs: 5 * 60_000 },
+    { at: T0 + 2, origin: 'https://b.example', url: 'https://b.example/1', title: 'World Models Explained', kind: 'navigation' },
+    { at: T0 + 3, origin: 'https://b.example', url: 'https://b.example/1', title: 'World Models Explained', kind: 'engagement', engagedMs: 5 * 60_000 },
+    { at: T0 + 4, origin: 'https://c.example', url: 'https://c.example/1', title: 'Training World Models', kind: 'navigation' },
   ]
 
-  it('says what was seen, and names the site plainly', () => {
+  it('names the SUBJECT, not the site', () => {
     const detected = detectWork(working, T0 + 5)
     expect(detected).not.toBeNull()
     if (!detected) return
 
     const suggestion = describeWork(detected)
 
-    expect(suggestion.kind).toBe('start-session')
-    expect(suggestion.sentence).toContain('northwind.example.com')
-    expect(suggestion.sentence).not.toContain('https://')
+    expect(suggestion.sentence.toLowerCase()).toContain('world')
+    expect(suggestion.sentence.toLowerCase()).toContain('models')
+  })
+
+  it('says how many sites it ran across, because that is the evidence', () => {
+    const detected = detectWork(working, T0 + 5)
+    if (!detected) throw new Error('expected a detection')
+
+    expect(describeWork(detected).sentence).toContain('3 sites')
+  })
+
+  it('says what was seen and never what it means', () => {
+    // ADR-0008: naming the subject in a sentence a person would recognise needs
+    // a model, and a model on a timer is what CONTEXT.md §2 forbids.
+    const detected = detectWork(working, T0 + 5)
+    if (!detected) throw new Error('expected a detection')
+
+    const suggestion = describeWork(detected)
+    for (const overclaim of ['researching', 'you are trying', 'you want']) {
+      expect(suggestion.sentence.toLowerCase()).not.toContain(overclaim)
+    }
   })
 
   it('always explains why it fired', () => {
     const detected = detectWork(working, T0 + 5)
     if (!detected) throw new Error('expected a detection')
 
-    // A suggestion nobody can interrogate is one people learn to dismiss.
     expect(describeWork(detected).because.length).toBeGreaterThan(0)
   })
 

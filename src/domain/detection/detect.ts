@@ -50,6 +50,9 @@
 const FAST = process.env['PROPOSITUM_FAST_DETECT'] === '1'
 const SPEED = FAST ? 20 : 1
 
+import { findThreads, termsOf } from './topics'
+import type { ThreadPage } from './topics'
+
 /** The window everything is measured inside. Older observations are dropped. */
 export const WINDOW_MS = (30 * 60_000) / SPEED
 
@@ -91,17 +94,50 @@ export interface AmbientObservation {
 
 /** What was noticed, in enough detail to phrase an offer and to explain it. */
 export interface WorkDetected {
-  readonly origin: string
-  /** Distinct cleaned URLs seen on that origin, inside the window. */
+  /** The recurring subject words, most common first. Raw material for a name. */
+  readonly terms: readonly string[]
+  /** Every site the thread runs through. Research is rarely on one. */
+  readonly origins: readonly string[]
   readonly pages: number
-  readonly queries: number
+  readonly searches: number
   readonly engagedMs: number
-  /** Earliest observation on this origin in the window. */
   readonly since: number
   /** The most-read page, for a concrete sentence rather than a bare hostname. */
   readonly focus: string | null
+  /** Page titles, in order. What a naming step would be shown. */
+  readonly titles: readonly string[]
   /** Which rule fired. Shown to the person, so it can never be a mystery. */
-  readonly because: 'pages-and-dwell' | 'query-then-reading'
+  readonly because: 'searched-and-followed' | 'followed-across-sites'
+}
+
+/**
+ * Ambient observations to the pages a thread is built from.
+ *
+ * Engagement is reported cumulatively and repeatedly, so dwell is the LARGEST
+ * report per URL rather than the sum — see `engagedByUrl`.
+ */
+function pagesOf(observations: readonly AmbientObservation[]): ThreadPage[] {
+  const dwell = engagedByUrl(observations)
+  const byUrl = new Map<string, ThreadPage>()
+
+  for (const o of observations) {
+    if (o.kind === 'away') continue
+    const existing = byUrl.get(o.url)
+
+    byUrl.set(o.url, {
+      url: o.url,
+      origin: o.origin,
+      // Keep the most informative title seen for this page — the first report
+      // often lands before the document has one.
+      title: (o.title || existing?.title) ?? '',
+      terms: termsOf((o.title || existing?.title) ?? '', o.url),
+      engagedMs: dwell.get(o.url) ?? 0,
+      at: Math.min(existing?.at ?? o.at, o.at),
+      searched: (existing?.searched ?? false) || o.kind === 'query',
+    })
+  }
+
+  return [...byUrl.values()]
 }
 
 function inWindow(observations: readonly AmbientObservation[], now: number) {
@@ -149,54 +185,28 @@ export function detectWork(
   const recent = inWindow(observations, now)
   if (recent.length === 0) return null
 
-  const byOrigin = new Map<string, AmbientObservation[]>()
-  for (const observation of recent) {
-    if (observation.kind === 'away') continue
-    const list = byOrigin.get(observation.origin) ?? []
-    list.push(observation)
-    byOrigin.set(observation.origin, list)
+  const threads = findThreads(pagesOf(recent))
+  const thread = threads[0]
+  if (!thread) return null
+
+  // A thread is already several pages across several sites sharing a subject.
+  // The remaining bar is that they actually read some of it, so a burst of tabs
+  // opened and abandoned does not qualify.
+  if (thread.engagedMs < ENGAGED_MS_FOR_WORK && thread.searches === 0) return null
+
+  const focusPage = [...thread.pages].sort((a, b) => b.engagedMs - a.engagedMs)[0]
+
+  return {
+    terms: thread.terms,
+    origins: thread.origins,
+    pages: thread.pages.length,
+    searches: thread.searches,
+    engagedMs: thread.engagedMs,
+    since: thread.since,
+    focus: focusPage?.title ?? null,
+    titles: thread.pages.map((p) => p.title).filter((t) => t !== ''),
+    because: thread.searches > 0 ? 'searched-and-followed' : 'followed-across-sites',
   }
-
-  const candidates: WorkDetected[] = []
-
-  for (const [origin, list] of byOrigin) {
-    const pages = new Set(list.map((o) => o.url)).size
-    const queries = list.filter((o) => o.kind === 'query').length
-    const dwellByUrl = engagedByUrl(list)
-    const engagedMs = engagedTotal(list)
-    const since = Math.min(...list.map((o) => o.at))
-
-    // The page someone spent longest on says more than the one they landed on.
-    let focus: string | null = null
-    let best = 0
-    for (const [url, ms] of dwellByUrl) {
-      if (ms > best) {
-        best = ms
-        focus = list.find((o) => o.url === url)?.title ?? null
-      }
-    }
-
-    const byVolume = pages >= PAGES_FOR_WORK && engagedMs >= ENGAGED_MS_FOR_WORK
-    const byIntent = queries >= 1 && pages >= PAGES_AFTER_QUERY && engagedMs > 0
-
-    if (!byVolume && !byIntent) continue
-
-    candidates.push({
-      origin,
-      pages,
-      queries,
-      engagedMs,
-      since,
-      focus,
-      because: byVolume ? 'pages-and-dwell' : 'query-then-reading',
-    })
-  }
-
-  if (candidates.length === 0) return null
-
-  // Most engaged time wins. Ties go to the one with more pages.
-  candidates.sort((a, b) => b.engagedMs - a.engagedMs || b.pages - a.pages)
-  return candidates[0] ?? null
 }
 
 /** A natural stopping point inside a running session. */
