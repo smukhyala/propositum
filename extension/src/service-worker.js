@@ -218,6 +218,35 @@ async function showSuggestionBadge() {
     await chrome.action.setBadgeText({ text: '•' })
     await chrome.action.setBadgeBackgroundColor({ color: '#7c6cf0' })
     await chrome.action.setTitle({ title: `${suggestion.sentence} ${suggestion.because}` })
+
+    /**
+     * Open the panel once, when the offer first has a NAME.
+     *
+     * "It pops up and says: hey, I see you're doing this, can I help?" — so it
+     * has to surface itself, not wait to be found.
+     *
+     * Once, and only once the model has named the subject. Opening on the
+     * deterministic offer would show "you have been looking into general
+     * intuition — across 3 sites", which is not what anyone asked to be
+     * interrupted for. And re-opening every thirty seconds is how a helpful
+     * thing becomes the thing you uninstall.
+     */
+    const key = `opened:${suggestion.subject ?? ''}`
+    const seen = await chrome.storage.session.get([key])
+    if (suggestion.subject && !seen[key]) {
+      await chrome.storage.session.set({ [key]: true })
+      try {
+        // `chrome.windows` rather than `chrome.tabs`: opening a panel needs a
+        // window id and nothing more. `tabs` would grant the URL and title of
+        // EVERY tab, which ADR-0002 refuses and which this does not need.
+        const window = await chrome.windows.getLastFocused()
+        if (window?.id !== undefined) await chrome.sidePanel.open({ windowId: window.id })
+      } catch {
+        // `sidePanel.open` needs a user gesture in some Chrome builds. The badge
+        // already carries the offer; a failure here costs discoverability, not
+        // the feature.
+      }
+    }
   } catch {
     /* the health check owns the unreachable case, and says so louder */
   }

@@ -33,7 +33,9 @@ import { NextResponse } from 'next/server'
 import { CUSTOM_HEADER, fromOurExtension } from '@/capture/transport'
 import { appContext } from '@/server/db'
 import { ambientStore, captureStore, expectedOrigin } from '@/server/capture-store'
-import { describePause, describeWork } from '@/server/ambient-store'
+import { describePause, describeWork, signatureOf } from '@/server/ambient-store'
+import { nameThread } from '@/server/name-thread'
+import { AnthropicModelClient } from '@/model/anthropic'
 import { detectPause, detectWork } from '@/domain/detection/detect'
 
 /** An origin, or an empty string. Never throws — a malformed stored URL is a
@@ -85,10 +87,38 @@ export async function GET(request: Request) {
     const now = Date.now()
     const detected = detectWork(ambient.since(now), now)
 
-    const suggestion =
-      detected && !ambient.isSnoozed(detected.origins[0] ?? '', now) ? describeWork(detected) : null
+    if (!detected || ambient.isSnoozed(detected.origins[0] ?? '', now)) {
+      return NextResponse.json({ ok: true, session: null, suggestion: null })
+    }
 
-    return NextResponse.json({ ok: true, session: null, suggestion })
+    const suggestion = describeWork(detected)
+    const named = ambient.nameFor(signatureOf(detected.terms))
+
+    // Naming happens in the BACKGROUND. This poll exists to be cheap, a model
+    // call takes about 15 seconds, and a failure must not take the offer with
+    // it. The deterministic offer goes out now; the next poll carries the name.
+    const apiKey = process.env['ANTHROPIC_API_KEY']
+    if (!named && apiKey) {
+      void nameThread(ambient, new AnthropicModelClient({ apiKey }), detected)
+    }
+
+    return NextResponse.json({
+      ok: true,
+      session: null,
+      suggestion: named
+        ? {
+            ...suggestion,
+            // Only overwrite the sentence when the model was sure. A confident
+            // wrong name is worse than an honest vague one.
+            sentence: named.confident
+              ? `Looks like you're working on ${named.subject}.`
+              : suggestion.sentence,
+            subject: named.subject,
+            offer: named.offer,
+            offerLabel: named.offerLabel,
+          }
+        : suggestion,
+    })
   }
 
   const { repos } = await appContext()

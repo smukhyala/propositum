@@ -28,7 +28,7 @@
 
 import type { ZodType } from 'zod'
 
-/** The six. Used as `ModelCallRecord.boundary`. */
+/** The seven. Used as `ModelCallRecord.boundary`. */
 export const BOUNDARY_NAMES = [
   'session-reading',
   'handoff',
@@ -36,6 +36,10 @@ export const BOUNDARY_NAMES = [
   'worker-action',
   'review',
   'shift-report',
+  /** Naming a detected thread. The only one that runs with no session and no
+   *  contract — gated behind deterministic detection, sees titles only, and
+   *  grants nothing. See ADR-0008 and boundaries/subject.ts. */
+  'subject',
 ] as const
 export type BoundaryName = (typeof BOUNDARY_NAMES)[number]
 

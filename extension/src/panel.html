@@ -106,18 +106,40 @@
     const yes = document.getElementById('offer-yes')
     const no = document.getElementById('offer-no')
 
+    /**
+     * The offer, in the model's words when it had any.
+     *
+     * `offerLabel` names the subject and the thing being offered — "Want me to
+     * draft a doc on projects you could build with world models?" Without a
+     * name it falls back to starting a session, which is true and duller.
+     */
     yes.textContent =
-      suggestion.kind === 'hand-off' ? 'Hand it over' : 'Start a session here'
+      suggestion.kind === 'hand-off'
+        ? 'Hand it over'
+        : suggestion.offer === 'draft-document'
+          ? 'Draft a doc on this'
+          : suggestion.offer === 'deep-research'
+            ? 'Research this for me'
+            : 'Start a session here'
+
+    if (suggestion.offerLabel) {
+      document.getElementById('offer-what').textContent = suggestion.offerLabel
+      document.getElementById('offer-why').textContent =
+        `${suggestion.sentence} ${suggestion.because}`
+    }
 
     yes.onclick = async () => {
-      // The app owns what happens next — this only carries the answer. Opening
-      // the page rather than acting silently keeps the decision somewhere the
-      // person can see what they agreed to.
+      // The app owns what happens next; this only carries the answer. Landing
+      // on a page rather than acting silently means the person sees what they
+      // agreed to — and nothing runs until they ratify the agreement there.
+      const params = new URLSearchParams({
+        subject: suggestion.subject ?? '',
+        origins: (suggestion.origins ?? [suggestion.origin]).join(','),
+        intent: suggestion.offer ?? 'deep-research',
+      })
       await chrome.tabs.create({
         url:
-          suggestion.kind === 'hand-off'
-            ? `${APP}/`
-            : `${APP}/?offer=${encodeURIComponent(suggestion.origin)}`,
+          suggestion.kind === 'hand-off' ? `${APP}/` : `${APP}/start?${params.toString()}`,
       })
     }
 

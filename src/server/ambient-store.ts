@@ -42,7 +42,24 @@ export const MAX_OBSERVATIONS = 500
 /** Once declined, stay quiet about the same origin for this long. */
 export const SNOOZE_MS = 60 * 60_000
 
+/** A thread that has been named, keyed by the terms that defined it. */
+export interface NamedThread {
+  readonly signature: string
+  readonly subject: string
+  readonly confident: boolean
+  readonly offer: string
+  readonly offerLabel: string
+}
+
 export interface AmbientStore {
+  /** The name for this thread, if one has been produced. */
+  nameFor(signature: string): NamedThread | null
+  remember(named: NamedThread): void
+  /** True if naming is already in flight for this thread, so a poll every 30
+   *  seconds cannot start a second call for the same subject. */
+  isNaming(signature: string): boolean
+  startNaming(signature: string): void
+  finishNaming(signature: string): void
   /** Record one ambient observation. Trims by window and cap on the way in. */
   record(observation: AmbientObservation, nowMs: number): void
   /** Everything still inside the window, oldest first. */
@@ -60,6 +77,8 @@ export interface AmbientStore {
 export function createAmbientStore(): AmbientStore {
   let observations: AmbientObservation[] = []
   const declined = new Map<string, number>()
+  const names = new Map<string, NamedThread>()
+  const naming = new Set<string>()
 
   const trim = (nowMs: number) => {
     observations = observations.filter((o) => nowMs - o.at <= WINDOW_MS)
@@ -101,8 +120,28 @@ export function createAmbientStore(): AmbientStore {
       return observations.filter((o) => o.origin === origin)
     },
 
+    nameFor: (signature) => names.get(signature) ?? null,
+    remember(named) {
+      names.set(named.signature, named)
+      naming.delete(named.signature)
+    },
+    isNaming: (signature) => naming.has(signature),
+    startNaming(signature) {
+      naming.add(signature)
+    },
+    finishNaming(signature) {
+      naming.delete(signature)
+    },
+
     size: () => observations.length,
   }
+}
+
+/** The identity of a thread, for caching a name against it. Terms are already
+ *  ordered by how often they recur, so the same subject followed longer keeps
+ *  the same signature until its shape genuinely changes. */
+export function signatureOf(terms: readonly string[]): string {
+  return terms.slice(0, 4).join('+')
 }
 
 /* ── the suggestion the person actually sees ───────────────────────────── */

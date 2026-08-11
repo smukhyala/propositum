@@ -561,6 +561,124 @@ export interface OfferAccepted {
  * thinner than one from a watched session, and that is honest rather than a
  * bug to paper over.
  */
+/**
+ * One click, from a suggestion to a session with everything it needs.
+ *
+ * ── Why this exists ──────────────────────────────────────────────────────
+ *
+ * "I don't want to have to go into the UI, create a project, and do all of it.
+ * My whole vision is that whatever I'm doing, it pops up and says: hey, I see
+ * you're doing this, can I help?"
+ *
+ * Creating a project by hand is asking someone to name and file work before
+ * they know they want help with it. So the thread names the project, its sites
+ * become the approved sources, and a document is created to work in — all from
+ * one answer to one question.
+ *
+ * ── What is still a human act, and stays one ─────────────────────────────
+ *
+ * This starts a SESSION. It does not start a run. The person lands on the
+ * agreement screen with the objective filled in from what they were doing, and
+ * nothing happens until they ratify it — `MVP.md` acceptance bullet 4, and the
+ * invariant the whole product rests on.
+ *
+ * Removing setup friction is not the same as removing consent, and this is the
+ * line between them.
+ */
+export interface WorkStarted {
+  readonly projectId: string
+  readonly sessionId: string
+  readonly documentId: string
+  readonly carriedOver: number
+}
+
+export async function startFromSuggestion(
+  subject: string,
+  origins: readonly string[],
+  intent: 'draft-document' | 'deep-research',
+): Promise<ActionResult<WorkStarted>> {
+  return attempt(async () => {
+    const name = subject.trim()
+    if (!name) return no<WorkStarted>('invalid-input', 'Propositum could not name that work.')
+
+    const { repos, ledger } = await appContext()
+
+    const live = captureStore().current()
+    if (live) {
+      const running = await repos.sessions.byId(live.sessionId)
+      if (running && running.phase !== 'ended') {
+        return no<WorkStarted>(
+          'already-done',
+          'A session is already running. End that one first.',
+        )
+      }
+    }
+
+    // The thread names the project. Nobody is asked to file anything.
+    const project = await repos.projects.create(name)
+
+    const sourceIds: string[] = []
+    for (const origin of origins) {
+      const pattern = normaliseOriginPattern(origin)
+      if (!pattern) continue
+      const host = pattern.replace(/^https?:\/\//, '').replace(/\/\*$/, '')
+      const source = await repos.projects.approveSource({
+        projectId: project.id,
+        originPattern: pattern,
+        label: host,
+      })
+      sourceIds.push(source.id)
+    }
+
+    // Something to work in. A heading rather than an empty file, so the first
+    // draft has somewhere to go and the diff has something to anchor against.
+    const skeleton = normalise(
+      intent === 'draft-document'
+        ? `# ${name}\n\n## What this is\n\n## What to do about it\n`
+        : `# ${name}\n\n## What I found\n\n## Open questions\n`,
+    )
+    const document = await repos.documents.create({
+      projectId: project.id,
+      title: name,
+      content: skeleton,
+      contentHash: hashContent(skeleton),
+    })
+
+    const session = await repos.sessions.start(project.id)
+    const startedAtMs = Date.now()
+    captureStore().start(session.id, startedAtMs)
+
+    // What was already seen becomes the session's own record, so the reading
+    // has evidence for the work that triggered the offer.
+    const ambient = ambientStore()
+    let carriedOver = 0
+    for (const origin of origins) {
+      for (const observation of ambient.forOrigin(origin, startedAtMs)) {
+        const sourceId = sourceIds[origins.indexOf(origin)]
+        if (!sourceId) continue
+
+        const appended = await ledger.append(session.id, {
+          kind: observation.kind === 'query' ? 'queried' : 'visited',
+          observedAt: new Date(observation.at),
+          elapsedMs: 0,
+          approvedSourceId: sourceId,
+          attested: { url: observation.url, title: observation.title, ambient: true },
+        })
+        if (appended.ok) carriedOver += 1
+      }
+    }
+    ambient.clear()
+
+    refresh()
+    return ok({
+      projectId: project.id,
+      sessionId: session.id,
+      documentId: document.id,
+      carriedOver,
+    })
+  })
+}
+
 export async function acceptOffer(
   projectId: string,
   origin: string,
