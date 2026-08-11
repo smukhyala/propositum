@@ -42,6 +42,8 @@ import {
 } from '../model/boundaries/session-reading'
 import type { PromptEvent } from '../model/boundaries/session-reading'
 import { handoffBoundary, sourceHandlesFor } from '../model/boundaries/handoff'
+import { hashContent } from '../domain/document/changeset'
+import { normalise } from '../domain/document/normalise'
 import { ACTION_KINDS } from '../domain/handoff/policy'
 import type { ActionKind, AutonomyControls } from '../domain/handoff/policy'
 import type { ClaimInput } from '../persistence/repositories/index'
@@ -359,6 +361,151 @@ export async function approveSource(
 
     refresh()
     return ok({ id: source.id, originPattern: pattern, label: name, recordedInSession })
+  })
+}
+
+/* ═════════════════════════════════════════════════════════════ documents ══ */
+
+/**
+ * Paste-in, and the version chain that follows from it.
+ *
+ * ── Why the stored bytes are normalised ──────────────────────────────────
+ *
+ * `ProposedChange.startOffset` addresses the NORMALISED base — `diff()` and
+ * `checkDrift()` both run `normalise()` before they hash or index. Store raw
+ * bytes while hashing the normalised form and `contentHash` stops being
+ * `hashContent(content)`, so the next person to re-derive it gets a drift
+ * failure against a document that never moved.
+ *
+ * This is a deliberate deviation from CONTEXT.md's "bytes are stored exactly as
+ * written", and it agrees with the schema's own docstring. No words are changed;
+ * the text is laid out one sentence per line.
+ *
+ * ── One document per project in slice 0 ──────────────────────────────────
+ *
+ * `draftContract` and the session screen both take `documents[0]`. Until
+ * something chooses between them, a second document would make which one the
+ * shift works on a matter of insertion order. Refusing is the honest version of
+ * a constraint that already exists.
+ */
+
+export interface DocumentCreated {
+  readonly documentId: string
+  readonly versionId: string
+  readonly title: string
+}
+
+export async function createDocument(
+  projectId: string,
+  title: string,
+  content: string,
+): Promise<ActionResult<DocumentCreated>> {
+  return attempt(async () => {
+    const name = title.trim()
+    if (!name) return no<DocumentCreated>('invalid-input', 'Give the document a name.')
+
+    const body = content.trim()
+    if (!body) {
+      return no<DocumentCreated>(
+        'invalid-input',
+        'Paste in the text you are working on. Propositum works on your words — it never starts from a blank page.',
+      )
+    }
+
+    const { repos } = await appContext()
+    const project = await repos.projects.byId(projectId)
+    if (!project) return no<DocumentCreated>('not-found', "That project doesn't exist any more.")
+
+    const existing = await repos.documents.forProject(projectId)
+    if (existing.length > 0) {
+      return no<DocumentCreated>(
+        'already-done',
+        `This project already has a document — ${existing[0]?.title}. Propositum works on one document at a time.`,
+      )
+    }
+
+    const stored = normalise(body)
+    const created = await repos.documents.create({
+      projectId,
+      title: name,
+      content: stored,
+      contentHash: hashContent(stored),
+    })
+
+    refresh()
+    return ok({ documentId: created.id, versionId: created.versionId, title: name })
+  })
+}
+
+export interface DocumentSaved {
+  readonly versionId: string
+  readonly ordinal: number
+  /** True when a session was live and the edit went into its record. */
+  readonly recordedInSession: boolean
+}
+
+/**
+ * The person edits their own document.
+ *
+ * Insert-only: this never mutates the previous version, because a changeset
+ * already pins one by hash and an edited base would silently invalidate it.
+ * The shift is not blocked while this happens — ADR-0003 §4, the document is
+ * never locked. If a run is mid-flight its changeset will fail `checkDrift`
+ * later, and the person's edit wins. That is the designed path, not an error.
+ */
+export async function saveDocument(
+  documentId: string,
+  content: string,
+): Promise<ActionResult<DocumentSaved>> {
+  return attempt(async () => {
+    const body = content.trim()
+    if (!body) {
+      return no<DocumentSaved>(
+        'invalid-input',
+        'The document would be empty. If you meant to clear it, keep a heading so there is something to work on.',
+      )
+    }
+
+    const { repos, ledger } = await appContext()
+    const document = await repos.documents.byId(documentId)
+    if (!document) return no<DocumentSaved>('not-found', "That document isn't there any more.")
+
+    const stored = normalise(body)
+    const latest = await repos.documents.latestVersion(documentId)
+    if (latest && latest.contentHash === hashContent(stored)) {
+      return no<DocumentSaved>('already-done', 'Nothing changed, so nothing was saved.')
+    }
+
+    const version = await repos.documents.addVersion({
+      documentId,
+      content: stored,
+      contentHash: hashContent(stored),
+      origin: 'human',
+    })
+
+    // A live sitting should show that the person worked on their document. This
+    // is the only way `documentEdited` occurs in production; without it the kind
+    // exists solely in fixtures and the reading has nothing to cite about the
+    // document itself.
+    let recordedInSession = false
+    const live = captureStore().current()
+    if (live) {
+      const session = await repos.sessions.byId(live.sessionId)
+      if (session && session.projectId === document.projectId) {
+        const now = Date.now()
+        const appended = await ledger.append(live.sessionId, {
+          kind: 'documentEdited',
+          observedAt: new Date(now),
+          elapsedMs: Math.max(0, now - live.startedAtMs),
+          documentId,
+          attested: { title: document.title, ordinal: version.ordinal },
+        })
+        recordedInSession = appended.ok
+      }
+    }
+
+    refresh()
+    return ok({ versionId: version.id, ordinal: version.ordinal, recordedInSession })
   })
 }
 

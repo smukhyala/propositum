@@ -461,7 +461,9 @@ function agentRunRepository(prisma: PrismaClient): AgentRunRepository {
 
 export interface DocumentRepository {
   create(input: { projectId: string; title: string; content: string; contentHash: string }): Promise<{ id: string; versionId: string }>
-  byId(id: string): Promise<{ id: string; title: string } | null>
+  /** `projectId` is included because an edit has to prove the document belongs
+   *  to the project whose session is live before it writes a ledger row. */
+  byId(id: string): Promise<{ id: string; title: string; projectId: string } | null>
   forProject(projectId: string): Promise<Array<{ id: string; title: string }>>
   /** Insert-only. A new version never mutates the previous one — an edited base
    *  would silently invalidate every changeset hash pointing at it. */
@@ -496,7 +498,8 @@ function documentRepository(prisma: PrismaClient): DocumentRepository {
       })
       return { id: doc.id, versionId: version.id }
     },
-    byId: (id) => prisma.document.findUnique({ where: { id }, select: { id: true, title: true } }),
+    byId: (id) =>
+      prisma.document.findUnique({ where: { id }, select: { id: true, title: true, projectId: true } }),
     forProject: (projectId) =>
       prisma.document.findMany({ where: { projectId }, select: { id: true, title: true } }),
     addVersion: async ({ documentId, content, contentHash, origin }) =>

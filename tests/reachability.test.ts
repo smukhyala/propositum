@@ -109,6 +109,25 @@ describe('the safety machinery is reachable from the product', () => {
   it('events reach the ledger writer rather than a repository', () => {
     expect(callersOf('createLedgerWriter', 'src/persistence/ledger-writer.ts')).not.toEqual([])
   })
+
+  it('a person can create a document, or the whole handoff path is unreachable', () => {
+    // This one shipped broken. `documents.create` was correct, tested, and
+    // called by nothing, so `draftContract` always returned "There is no
+    // document in this project yet. Paste one in first" — pointing at an
+    // affordance that did not exist. Everything downstream of the handoff was
+    // dead code behind a refusal that read like a hint.
+    const callers = callersOf('documents.create', 'src/persistence/repositories/index.ts')
+
+    expect(callers, 'nothing creates a Document — draftContract can only ever refuse').not.toEqual(
+      [],
+    )
+  })
+
+  it('something writes a new version, or a document can never change', () => {
+    const callers = callersOf('documents.addVersion', 'src/persistence/repositories/index.ts')
+
+    expect(callers, 'nothing calls addVersion — the version chain never grows').not.toEqual([])
+  })
 })
 
 describe('page-derived prose cannot reach the drafted agreement', () => {
