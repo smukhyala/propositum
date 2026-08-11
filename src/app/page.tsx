@@ -29,8 +29,11 @@ import { redirect } from 'next/navigation'
 
 import { Empty, Masthead, Section, Sheet } from '@/ui/primitives'
 import { Away, Handover, Watching } from '@/ui/sprites'
-import { createProject } from '@/server/actions'
-import { captureStore } from '@/server/capture-store'
+import { acceptOffer, createProject, declineOffer } from '@/server/actions'
+import { ambientStore, captureStore } from '@/server/capture-store'
+import { describeWork, hostOf } from '@/server/ambient-store'
+import { detectWork } from '@/domain/detection/detect'
+
 import { appContext } from '@/server/db'
 
 // The capture store is in-memory and the database is a local file. Neither is
@@ -113,6 +116,38 @@ export default async function Home({
     }
   }
 
+  /**
+   * Has Propositum noticed work nobody told it about?
+   *
+   * Rendered only when no session is running, because during one the timeline
+   * already shows what is being seen — an offer to start something that has
+   * started would be nonsense.
+   */
+  const ambient = ambientStore()
+  const nowMs = Date.now()
+  const detected = live ? null : detectWork(ambient.since(nowMs), nowMs)
+  const suggestion =
+    detected && !ambient.isSnoozed(detected.origin, nowMs) ? describeWork(detected) : null
+
+  async function acceptSuggestion(formData: FormData) {
+    'use server'
+
+    const result = await acceptOffer(
+      String(formData.get('projectId') ?? ''),
+      String(formData.get('origin') ?? ''),
+      String(formData.get('label') ?? ''),
+    )
+    if (!result.ok) redirect(`/?problem=${encodeURIComponent(result.problem.message)}`)
+    redirect(`/projects/${result.value.projectId}`)
+  }
+
+  async function dismissSuggestion(formData: FormData) {
+    'use server'
+
+    await declineOffer(String(formData.get('origin') ?? ''))
+    redirect('/')
+  }
+
   async function create(formData: FormData) {
     'use server'
 
@@ -159,7 +194,49 @@ export default async function Home({
         </Section>
       ) : null}
 
-      <Section title="Projects" index={2}>
+      {suggestion === null || suggestion.kind !== 'start-session' ? null : (
+        <Section title="Propositum noticed" tone="attention" index={2}>
+          <p className="hm-lede">{suggestion.sentence}</p>
+          <p className="hm-under">{suggestion.because}</p>
+          <p className="hm-under">
+            Nothing has been recorded. What Propositum saw is held in memory for half an hour
+            and thrown away unless you say yes — and it never included the words on the page.
+          </p>
+
+          {projects.length === 0 ? (
+            <p className="hm-under">
+              Make a project below first, then this will offer to start a session in it.
+            </p>
+          ) : (
+            <form className="hm-form" action={acceptSuggestion}>
+              <input type="hidden" name="origin" value={suggestion.origin} />
+              <input type="hidden" name="label" value={hostOf(suggestion.origin)} />
+              <label className="hm-field">
+                <span className="hm-label">Work on this in</span>
+                <select className="hm-input" name="projectId" defaultValue={projects[0]?.id}>
+                  {projects.map((project) => (
+                    <option key={project.id} value={project.id}>
+                      {project.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <button className="hm-submit" type="submit">
+                Start a session here
+              </button>
+            </form>
+          )}
+
+          <form action={dismissSuggestion}>
+            <input type="hidden" name="origin" value={suggestion.origin} />
+            <button className="hm-submit" type="submit">
+              Not now
+            </button>
+          </form>
+        </Section>
+      )}
+
+      <Section title="Projects" index={suggestion ? 3 : 2}>
         {projects.length === 0 ? (
           <Empty
             title="No projects yet."
@@ -205,7 +282,7 @@ export default async function Home({
         </form>
       </Section>
 
-      <Section title="How this works" index={3}>
+      <Section title="How this works" index={suggestion ? 4 : 3}>
         <p className="hm-prose">
           Approve the sites Propositum may see. Start a session when you sit down at the work. When
           you need to step away, hand it over inside a working agreement you write and accept

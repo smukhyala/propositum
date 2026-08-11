@@ -32,7 +32,19 @@
 import { NextResponse } from 'next/server'
 import { CUSTOM_HEADER, fromOurExtension } from '@/capture/transport'
 import { appContext } from '@/server/db'
-import { captureStore, expectedOrigin } from '@/server/capture-store'
+import { ambientStore, captureStore, expectedOrigin } from '@/server/capture-store'
+import { describePause, describeWork } from '@/server/ambient-store'
+import { detectPause, detectWork } from '@/domain/detection/detect'
+
+/** An origin, or an empty string. Never throws — a malformed stored URL is a
+ *  ledger curiosity, not a reason to fail a poll the extension depends on. */
+function safeOrigin(url: string): string {
+  try {
+    return new URL(url).origin
+  } catch {
+    return ''
+  }
+}
 
 export async function GET(request: Request) {
   if (request.headers.get(CUSTOM_HEADER) !== '1') {
@@ -57,7 +69,27 @@ export async function GET(request: Request) {
   }
 
   const live = captureStore().current()
-  if (!live) return NextResponse.json({ ok: true, session: null })
+
+  /**
+   * No session. Has Propositum noticed work anyway?
+   *
+   * The offer rides on the poll the extension already makes, rather than a
+   * second endpoint on its own timer — one round trip, and the suggestion can
+   * never be staler than the session state it arrives with.
+   *
+   * It is a SUGGESTION. Nothing here starts a session, approves a source or
+   * records anything durable; accepting is a human act on a human's click.
+   */
+  if (!live) {
+    const ambient = ambientStore()
+    const now = Date.now()
+    const detected = detectWork(ambient.since(now), now)
+
+    const suggestion =
+      detected && !ambient.isSnoozed(detected.origin, now) ? describeWork(detected) : null
+
+    return NextResponse.json({ ok: true, session: null, suggestion })
+  }
 
   const { repos } = await appContext()
   const session = await repos.sessions.byId(live.sessionId)
@@ -65,8 +97,35 @@ export async function GET(request: Request) {
 
   const sources = await repos.projects.approvedSources(session.projectId)
 
+  /**
+   * A session IS running. Is this a natural point to hand over?
+   *
+   * Computed from the session's own ObservationEvents rather than from the
+   * ambient buffer, which is not being fed while a session runs — the ledger
+   * already holds exactly this, and double-recording the same browsing in two
+   * places to save a mapping would be the worse trade.
+   */
+  const events = await repos.events.bySession(live.sessionId)
+  const asAmbient = events.map((event) => {
+    const attested = (event.attested ?? {}) as Record<string, unknown>
+    const url = typeof attested['url'] === 'string' ? attested['url'] : ''
+    const dwell = attested['dwellMs']
+
+    return {
+      at: event.observedAt.getTime(),
+      origin: url === '' ? '' : safeOrigin(url),
+      url,
+      title: typeof attested['title'] === 'string' ? attested['title'] : '',
+      kind: 'navigation' as const,
+      ...(typeof dwell === 'number' ? { engagedMs: dwell } : {}),
+    }
+  })
+
+  const pause = detectPause(asAmbient, Date.now())
+
   return NextResponse.json({
     ok: true,
+    suggestion: pause === null ? null : describePause(pause),
     session: {
       id: live.sessionId,
       token: live.token,

@@ -58,22 +58,46 @@ describe('the manifest asks for nothing frightening', () => {
     }
   })
 
-  it('grants no access to any WEBSITE at install — each origin is requested on approval', () => {
-    // This used to assert `host_permissions` was absent entirely, which was a
-    // proxy for the real property and became false for the right reason: the
-    // extension cannot reach the app at all without loopback access, because a
-    // service worker fetch to 127.0.0.1 is cross-origin and the app sends no
-    // CORS headers deliberately.
+  it('grants broad website access at install — a REVERSAL, priced in the open', () => {
+    // This test used to assert the opposite, and the assertion was load-bearing:
+    // ADR-0002's whole argument was that Chrome, not our code, decides what the
+    // extension may see.
     //
-    // So assert the property rather than the proxy. Loopback is our own
-    // process, not a site the person browses.
+    // Detection cannot work on sources the person has not set up yet, and
+    // noticing work before being told about it is the entire feature. So the
+    // broad grant is deliberate, and it costs Chrome's "Read and change all
+    // your data on all websites" warning at install.
+    //
+    // The limit is now BEHAVIOURAL, not a permission, which is a weaker kind of
+    // guarantee and is written down as such. The two tests below are what
+    // enforce it.
     const hosts: string[] = manifest.host_permissions ?? []
 
-    expect(hosts).toEqual(['http://127.0.0.1/*'])
-    for (const host of hosts) {
-      expect(host).toMatch(/^http:\/\/127\.0\.0\.1/)
+    expect(hosts).toContain('https://*/*')
+    expect(hosts).toContain('http://127.0.0.1/*')
+  })
+
+  it('the content script strips page text when no session is running', () => {
+    // The behavioural half of the guarantee above. There is exactly one place
+    // that decides page text may travel, and it is the service worker — the
+    // content script deliberately does not know whether a session is running,
+    // because a page could learn that by timing what its own script may do.
+    const worker = readFileSync(join(repo, 'extension/src/service-worker.js'), 'utf8')
+
+    expect(worker).toContain('bufferAmbient')
+    // `text` destructured out and discarded on the no-session path.
+    expect(worker).toMatch(/const \{ text, \.\.\.metadataOnly \} = message\.signal/)
+  })
+
+  it('the ambient endpoint has no field that could carry page text', () => {
+    const route = readFileSync(join(repo, 'src/app/api/capture/ambient/route.ts'), 'utf8')
+    const schema = route.slice(route.indexOf('ambientSchema'), route.indexOf('export async function'))
+
+    for (const banned of ['text', 'excerpt', 'content', 'untrusted', 'body']) {
+      expect(schema, `ambient observations must not carry ${banned}`).not.toMatch(
+        new RegExp(`\\b${banned}\\s*:`),
+      )
     }
-    expect(manifest.optional_host_permissions).toBeDefined()
   })
 
   it('keeps the app port pinned to the one the extension talks to', () => {

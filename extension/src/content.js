@@ -43,6 +43,14 @@ const BUDGET = 2000 // published product constant, see SECURITY_AND_PRIVACY.md
 // no row, rather than becoming a false "they read this".
 const ARRIVED_AT = Date.now()
 
+/**
+ * Everything goes to the worker, which decides where it belongs.
+ *
+ * This script does not know whether a session is running, and must not — a
+ * content script asking "am I being recorded?" is a question a hostile page
+ * could learn the answer to by timing. The worker knows, and it is the worker
+ * that strips page text when the answer is no.
+ */
 function send(signal) {
   chrome.runtime.sendMessage({ signal }).catch(() => {
     /* the worker may be asleep; the buffer survives in session storage */

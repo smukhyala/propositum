@@ -27,12 +27,21 @@
   "permissions": ["storage", "alarms", "idle", "scripting", "sidePanel"],
 
   "_comment_hosts": [
-    "optional_host_permissions, never host_permissions. Nothing is granted at",
-    "install; each origin is requested when the person approves that source, and",
-    "is revocable in Chrome's own UI independently of us."
+    "BROAD BY DECISION, and this reverses ADR-0002. Detection cannot work on",
+    "sources the person has not set up yet, and the whole point of the feature",
+    "is noticing work before they have told us about it. That costs Chrome's",
+    "'Read and change all your data on all websites' warning at install, which",
+    "is the honest price and is not hidden anywhere in the UI.",
+    "",
+    "What limits the exposure is NOT the permission any more, so it has to be",
+    "the behaviour, and it is enforced in two places:",
+    "  - content.js sends METADATA ONLY while no session is running: a cleaned",
+    "    URL, a title, dwell and scroll. Never page text.",
+    "  - the app holds those in memory, bounded and discarded, and they never",
+    "    reach the ledger unless the person accepts an offer.",
+    "Full page text still begins only after a session starts on an approved",
+    "source, exactly as before."
   ],
-  "optional_host_permissions": ["https://*/*"],
-
   "_comment_loopback": [
     "The app's own origin, and the ONLY entry here that is not warning-free.",
     "A service worker fetch to http://127.0.0.1 is cross-origin, and the app",
@@ -42,7 +51,7 @@
     "shows '!', and capture is silently OFF.",
     "Pinned to the port in package.json's dev script; a test asserts they match."
   ],
-  "host_permissions": ["http://127.0.0.1/*"],
+  "host_permissions": ["http://127.0.0.1/*", "https://*/*"],
 
   "_comment_key": [
     "Pinned so the extension id is stable. Without it the id changes if the repo",

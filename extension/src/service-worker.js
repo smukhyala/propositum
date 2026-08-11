@@ -127,6 +127,56 @@ async function buffer(event) {
   await chrome.storage.session.set({ pending })
 }
 
+/**
+ * Ambient observations, held separately from session events.
+ *
+ * A separate buffer and a separate endpoint, because they have different
+ * destinations and different rules. Mixing them would mean one flush deciding
+ * per-item where each belongs, which is exactly the kind of branch that
+ * eventually sends page text to the wrong place.
+ */
+async function bufferAmbient(observation) {
+  const { ambient = [] } = await chrome.storage.session.get(['ambient'])
+  ambient.push(observation)
+  // Bounded here too. The app bounds it again; neither trusts the other.
+  await chrome.storage.session.set({ ambient: ambient.slice(-200) })
+}
+
+async function flushAmbient() {
+  const { ambient = [] } = await chrome.storage.session.get(['ambient'])
+  if (ambient.length === 0) return
+
+  try {
+    const response = await fetch(`${APP_ORIGIN}/api/capture/ambient`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', [CUSTOM_HEADER]: '1' },
+      body: JSON.stringify({
+        observations: ambient.map((o) => ({
+          at: o.at,
+          url: o.url ?? '',
+          title: o.title ?? '',
+          kind:
+            o.signal === 'engagement'
+              ? 'engagement'
+              : o.signal === 'away'
+                ? 'away'
+                : o.url && o.url.includes('?')
+                  ? 'query'
+                  : 'navigation',
+          ...(typeof o.dwellMs === 'number' ? { engagedMs: o.dwellMs } : {}),
+        })),
+      }),
+    })
+    // 409 means a session started under us. Drop them: the ledger is now the
+    // right destination and these would be a duplicate of what it records.
+    if (response.ok || response.status === 409) {
+      await chrome.storage.session.set({ ambient: [] })
+    }
+  } catch {
+    /* the app is down; keep them until the window ages them out */
+  }
+}
+
 async function flush() {
   const session = await loadSession()
   if (!session) return
@@ -141,6 +191,35 @@ async function flush() {
     // Keep the buffer. The app records a gap if the disconnection outlasts it;
     // dropping events silently would be the one unrecoverable mistake.
     console.warn('[propositum] flush failed, keeping buffer:', error)
+  }
+}
+
+/**
+ * The badge is the whole of the interruption.
+ *
+ * No notification, no popup, no sound. A suggestion that interrupts is one
+ * people turn off, and the offer is worth nothing if it arrives while someone
+ * is mid-sentence. A dot on the toolbar icon waits until they look.
+ */
+async function showSuggestionBadge() {
+  try {
+    const response = await fetch(`${APP_ORIGIN}/api/session/current`, {
+      headers: { [CUSTOM_HEADER]: '1' },
+    })
+    if (!response.ok) return
+
+    const { suggestion } = await response.json()
+    if (!suggestion) {
+      const current = await chrome.action.getBadgeText({})
+      if (current === '•') await chrome.action.setBadgeText({ text: '' })
+      return
+    }
+
+    await chrome.action.setBadgeText({ text: '•' })
+    await chrome.action.setBadgeBackgroundColor({ color: '#7c6cf0' })
+    await chrome.action.setTitle({ title: `${suggestion.sentence} ${suggestion.because}` })
+  } catch {
+    /* the health check owns the unreachable case, and says so louder */
   }
 }
 
@@ -172,6 +251,12 @@ chrome.runtime.onInstalled.addListener(wake)
  */
 chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name !== HEARTBEAT_ALARM) return
+
+  // Ambient first, and unconditionally — it is the path that runs when there is
+  // no session, which is precisely when the rest of this returns early.
+  await flushAmbient()
+  await showSuggestionBadge()
+
   const session = await loadSession()
   if (!session) return
 
@@ -210,15 +295,40 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
 
     const session = await loadSession()
-    if (!session) return sendResponse({ ok: false, reason: 'no-session' })
 
-    // A content script only runs on an origin the person granted, because
-    // Chrome refuses to register it anywhere else. Check anyway — the sender is
-    // the least trustworthy input this file receives, and the app checks a
-    // third time against its own grant list before anything is stored.
+    /**
+     * No session: this is AMBIENT, and it is metadata only.
+     *
+     * The strip happens here rather than in the content script because the
+     * content script must not know whether a session is running — a page could
+     * learn the answer by timing what its own script is allowed to do.
+     *
+     * `text` is deleted rather than omitted at the source, so there is exactly
+     * one line in this extension that decides page text may travel, and it is
+     * this one.
+     */
+    if (!session) {
+      const { text, ...metadataOnly } = message.signal ?? {}
+      void text
+
+      await bufferAmbient({ ...metadataOnly, at: Date.now() })
+      return sendResponse({ ok: true, ambient: true })
+    }
+
+    // A session IS running. Full capture, but only on approved sources — the
+    // sender is the least trustworthy input this file receives, and the app
+    // checks again against its own grant list before anything is stored.
     const origin = sender.origin ?? ''
     const approved = session.sources.some((s) => origin.startsWith(s.origin))
-    if (!approved) return sendResponse({ ok: false, reason: 'origin-not-approved' })
+    if (!approved) {
+      // Approved-source capture is off here, but the person may still be
+      // working somewhere they have not set up. That is what ambient is for.
+      const { text, ...metadataOnly } = message.signal ?? {}
+      void text
+
+      await bufferAmbient({ ...metadataOnly, at: Date.now() })
+      return sendResponse({ ok: true, ambient: true })
+    }
 
     // No `approvedSourceId` and no `kind`. The app decides both: which source
     // this belongs to, from its own grant list, and what the signal was, from

@@ -33,7 +33,7 @@ import { revalidatePath } from 'next/cache'
 
 import { appContext } from './db'
 import { readableCause } from './problem'
-import { captureStore } from './capture-store'
+import { ambientStore, captureStore } from './capture-store'
 import { AnthropicModelClient } from '../model/anthropic'
 import type { FailureKind, ModelClient } from '../model/client'
 import { datamark } from '../model/untrusted'
@@ -526,6 +526,120 @@ export interface SessionStarted {
  * has no business minting, and pulling the common half into a helper would mean
  * editing a file this change does not own. See the report.
  */
+export interface OfferAccepted {
+  readonly sessionId: string
+  readonly projectId: string
+  readonly sourceId: string
+  /** Ambient observations folded into the new session's ledger. */
+  readonly carriedOver: number
+}
+
+/**
+ * The person says yes to a suggestion.
+ *
+ * ── One click, three acts, all of them theirs ────────────────────────────
+ *
+ * Approving the source, starting the session, and admitting what was already
+ * seen are separate decisions in the data model and one decision in the
+ * interface. Splitting them across three prompts would make the feature more
+ * annoying than doing it by hand, which is the whole thing it exists to avoid.
+ *
+ * ── Why the ambient observations are carried over ────────────────────────
+ *
+ * The offer says "you have been reading northwind.example.com for 12 minutes".
+ * A session that then began at zero would produce a reading with no evidence
+ * for the work that triggered it, and the person would have to redo the
+ * browsing Propositum just told them it watched.
+ *
+ * So they are folded in — and once folded they are ORDINARY ObservationEvents,
+ * written through the one ledger door with every normal rule applying. They
+ * carry `attested.ambient = true`, because "Propositum saw this before you
+ * started the session" is a fact about provenance the timeline should not hide.
+ *
+ * Nothing is invented on the way in. Ambient observations hold no page text, so
+ * the events that come out of this hold none either — the reading will be
+ * thinner than one from a watched session, and that is honest rather than a
+ * bug to paper over.
+ */
+export async function acceptOffer(
+  projectId: string,
+  origin: string,
+  label: string,
+): Promise<ActionResult<OfferAccepted>> {
+  return attempt(async () => {
+    const { repos, ledger } = await appContext()
+
+    const project = await repos.projects.byId(projectId)
+    if (!project) return no<OfferAccepted>('not-found', "That project doesn't exist any more.")
+
+    const live = captureStore().current()
+    if (live) {
+      const running = await repos.sessions.byId(live.sessionId)
+      if (running && running.phase !== 'ended') {
+        return no<OfferAccepted>(
+          'already-done',
+          'A session is already running. End that one before starting another.',
+        )
+      }
+    }
+
+    const pattern = normaliseOriginPattern(origin)
+    if (!pattern) {
+      return no<OfferAccepted>('invalid-input', "Propositum could not make sense of that site.")
+    }
+
+    const host = pattern.replace(/^https?:\/\//, '').replace(/\/\*$/, '')
+    const source = await repos.projects.approveSource({
+      projectId,
+      originPattern: pattern,
+      label: label.trim() || host,
+    })
+
+    const session = await repos.sessions.start(projectId)
+    const startedAtMs = Date.now()
+    captureStore().start(session.id, startedAtMs)
+
+    // Take what was seen before folding, then forget the buffer entirely —
+    // including anything about other sites, which the person did not accept.
+    const ambient = ambientStore()
+    const carried = ambient.forOrigin(new URL(pattern.replace(/\/\*$/, '')).origin, startedAtMs)
+
+    let carriedOver = 0
+    for (const observation of carried) {
+      const appended = await ledger.append(session.id, {
+        kind: observation.kind === 'query' ? 'queried' : 'visited',
+        observedAt: new Date(observation.at),
+        // Before the session began, so it is negative time. Clamp rather than
+        // lie: the ledger's elapsed clock starts when the session does.
+        elapsedMs: 0,
+        approvedSourceId: source.id,
+        attested: {
+          url: observation.url,
+          title: observation.title,
+          // Provenance, said out loud. This event was seen before the person
+          // started the session, and the timeline should not imply otherwise.
+          ambient: true,
+        },
+      })
+      if (appended.ok) carriedOver += 1
+    }
+
+    ambient.clear()
+    refresh()
+
+    return { ok: true, value: { sessionId: session.id, projectId, sourceId: source.id, carriedOver } }
+  })
+}
+
+/** The person says no. Forget it, and stay quiet about that site for a while. */
+export async function declineOffer(origin: string): Promise<ActionResult<{ origin: string }>> {
+  return attempt(async () => {
+    ambientStore().decline(origin, Date.now())
+    refresh()
+    return ok({ origin })
+  })
+}
+
 export async function startSession(projectId: string): Promise<ActionResult<SessionStarted>> {
   return attempt(async () => {
     const { repos } = await appContext()
