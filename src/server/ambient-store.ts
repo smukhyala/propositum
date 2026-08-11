@@ -27,7 +27,7 @@
  * written down.
  */
 
-import { WINDOW_MS } from '../domain/detection/detect'
+import { FAST_DETECT, WINDOW_MS } from '../domain/detection/detect'
 import type { AmbientObservation, PauseDetected, WorkDetected } from '../domain/detection/detect'
 
 /**
@@ -132,6 +132,10 @@ export type Suggestion =
       readonly detected: PauseDetected
     }
 
+/** Said out loud, because a suggestion produced under shortened test thresholds
+ *  must not read like one produced by real work. */
+const UNDER_TEST = FAST_DETECT ? ' (fast-detect is on — thresholds are 20× shorter than normal.)' : ''
+
 function minutes(ms: number): string {
   const m = Math.max(1, Math.round(ms / 60_000))
   return `${m} minute${m === 1 ? '' : 's'}`
@@ -152,8 +156,8 @@ export function describeWork(detected: WorkDetected): Suggestion {
     sentence: `You have been reading ${host}${focus}.`,
     because:
       detected.because === 'query-then-reading'
-        ? `You searched there and then read ${detected.pages} pages, for ${minutes(detected.engagedMs)}.`
-        : `${detected.pages} pages, ${minutes(detected.engagedMs)} of reading.`,
+        ? `You searched there and then read ${detected.pages} pages, for ${minutes(detected.engagedMs)}.${UNDER_TEST}`
+        : `${detected.pages} pages, ${minutes(detected.engagedMs)} of reading.${UNDER_TEST}`,
     detected,
   }
 }
@@ -162,7 +166,7 @@ export function describePause(detected: PauseDetected): Suggestion {
   return {
     kind: 'hand-off',
     sentence: 'You have stepped away.',
-    because: `${minutes(detected.workedMs)} of work, then quiet for ${minutes(detected.idleForMs)}.`,
+    because: `${minutes(detected.workedMs)} of work, then quiet for ${minutes(detected.idleForMs)}.${UNDER_TEST}`,
     detected,
   }
 }

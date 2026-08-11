@@ -197,48 +197,52 @@ describe('cumulative reports are not double-counted', () => {
   // CUMULATIVE dwell rather than a delta. Summing them would count the same
   // minute once per report.
   it('takes the largest report for a page, not the sum', () => {
+    const third = ENGAGED_MS_FOR_WORK / 3
     const observations = [
       nav(T0, '/a'),
-      read(T0 + 1, '/a', 60_000),
-      read(T0 + 2, '/a', 120_000),
-      read(T0 + 3, '/a', 180_000),
+      read(T0 + 1, '/a', third / 3),
+      read(T0 + 2, '/a', (third * 2) / 3),
+      read(T0 + 3, '/a', third),
       nav(T0 + 4, '/b'),
-      read(T0 + 5, '/b', 60_000),
+      read(T0 + 5, '/b', third / 3),
       nav(T0 + 6, '/c'),
-      read(T0 + 7, '/c', 60_000),
+      read(T0 + 7, '/c', third / 3),
     ]
 
-    // Summed it would be 480_000 and would fire. Correctly it is 300_000.
-    const found = detectWork(observations, T0 + 8)
-    expect(found).toBeNull()
+    // Summed, the '/a' reports alone would clear the bar. Taking the largest
+    // per page, the real total is well under it.
+    expect(detectWork(observations, T0 + 8)).toBeNull()
   })
 
   it('still adds up across different pages', () => {
     const observations = [
       nav(T0, '/a'),
-      read(T0 + 1, '/a', 60_000),
+      read(T0 + 1, '/a', ENGAGED_MS_FOR_WORK / 8),
       read(T0 + 2, '/a', ENGAGED_MS_FOR_WORK / 2),
       nav(T0 + 3, '/b'),
       read(T0 + 4, '/b', ENGAGED_MS_FOR_WORK / 2),
       nav(T0 + 5, '/c'),
-      read(T0 + 6, '/c', 60_000),
+      read(T0 + 6, '/c', ENGAGED_MS_FOR_WORK / 8),
     ]
 
-    expect(detectWork(observations, T0 + 7)?.engagedMs).toBe(ENGAGED_MS_FOR_WORK + 60_000)
+    expect(detectWork(observations, T0 + 7)?.engagedMs).toBe(
+      ENGAGED_MS_FOR_WORK + ENGAGED_MS_FOR_WORK / 8,
+    )
   })
 
   it('a lost report costs nothing, because the next one carries its time', () => {
     // The reason reports are cumulative rather than deltas: a message dropped
     // while the service worker was asleep is self-correcting.
+    const late = ENGAGED_MS_FOR_WORK / 4
     const withGap = [
       nav(T0, '/a'),
-      read(T0 + 1, '/a', 60_000),
-      // 120_000 never arrived.
-      read(T0 + 3, '/a', 180_000),
+      read(T0 + 1, '/a', late / 3),
+      // The middle report never arrived.
+      read(T0 + 3, '/a', late),
     ]
 
     const observations = [...withGap, nav(T0 + 4, '/b'), read(T0 + 5, '/b', ENGAGED_MS_FOR_WORK), nav(T0 + 6, '/c')]
-    expect(detectWork(observations, T0 + 7)?.engagedMs).toBe(180_000 + ENGAGED_MS_FOR_WORK)
+    expect(detectWork(observations, T0 + 7)?.engagedMs).toBe(late + ENGAGED_MS_FOR_WORK)
   })
 })
 
@@ -257,7 +261,7 @@ describe('a natural stopping point', () => {
   })
 
   it('does not offer to continue work that barely happened', () => {
-    const barely = [nav(T0, '/a'), read(T0 + 1, '/a', 30_000)]
+    const barely = [nav(T0, '/a'), read(T0 + 1, '/a', WORKED_MS_FOR_HANDOFF / 20)]
 
     expect(detectPause(barely, T0 + PAUSE_MS * 2)).toBeNull()
   })

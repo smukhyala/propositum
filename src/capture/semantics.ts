@@ -26,7 +26,8 @@ import { cleanUrl, searchTermOf } from './url'
 export { cleanUrl, searchTermOf }
 
 /** Dwell past this, with some scroll, counts as engagement rather than a glance. */
-export const ENGAGEMENT_DWELL_MS = 20_000
+export const ENGAGEMENT_DWELL_MS =
+  process.env['PROPOSITUM_FAST_DETECT'] === '1' ? 3_000 : 20_000
 export const ENGAGEMENT_SCROLL_FRACTION = 0.25
 
 export interface RawNavigation {

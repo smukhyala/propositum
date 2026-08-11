@@ -10,7 +10,41 @@ depth rather than a boundary, this document says so.
 
 ## Data collected
 
-Only during an explicitly started `WorkSession`, and only from sources the person approved.
+There are **two modes**, and they collect very different things. *(Amended 2026-08-11 —
+[ADR-0008](./adr/0008-ambient-detection.md). This section previously said "only during an
+explicitly started WorkSession, and only from sources the person approved", which is no longer
+true and is the reason this amendment leads rather than follows.)*
+
+### 1. Ambient — always, every `https` site, metadata only
+
+Propositum watches continuously so it can notice work you have not told it about. What it keeps
+while doing so is deliberately thin:
+
+| Collected | Detail |
+|---|---|
+| Cleaned URL | credentials and tracking parameters stripped |
+| Page title | as the page reports it |
+| Interaction shape | dwell time and scroll depth |
+
+**No page text. No selections. No excerpt.** There is no field in the ambient schema that could
+carry any, and a test asserts it.
+
+Where it goes matters as much as what it is:
+
+- **In memory only.** It never reaches the database. It dies when the app process does.
+- **Bounded twice** — a rolling 30-minute window *and* a 500-row cap.
+- **Discarded by default.** Declining an offer drops it. Accepting one folds it into the session
+  you just started, where it becomes an ordinary `ObservationEvent` marked `ambient: true`.
+
+The extension holds `host_permissions: ["https://*/*"]`, so Chrome shows **"Read and change all your
+data on all websites"** at install. That warning is accurate. What limits the exposure is no longer
+the permission — it is the behaviour above, enforced in three places and tested. ADR-0008 states
+plainly that this is a weaker kind of guarantee than the one it replaced.
+
+### 2. Session — only when you started one, only on approved sources
+
+Everything below is collected **only** during an explicitly started `WorkSession`, and only from
+sources the person approved. This is where page text begins.
 
 | Collected | Detail |
 |---|---|

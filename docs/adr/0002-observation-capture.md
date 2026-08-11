@@ -1,6 +1,17 @@
 # ADR-0002 — Chrome MV3 extension for observation; Playwright kept separate
 
-**Status:** accepted · 2026-08-06
+**Status:** accepted · 2026-08-06 · **permission model amended 2026-08-11 by
+[ADR-0008](0008-ambient-detection.md)**
+
+> **What changed.** `optional_host_permissions` scoped to `ApprovedSource`s became
+> `host_permissions: ["https://*/*"]` at install. The rest of this ADR stands — the extension over
+> Playwright, the absent `tabs`/`webNavigation`/`history`/`debugger`, the separate worker browser,
+> the retention budget, the transport controls.
+>
+> **The argument below is the one that changed, and it is worth reading before the amendment.** It
+> says the constraints are enforced by Chrome rather than by us. That is no longer true of *which
+> origins are visible*; it is still true of everything else. ADR-0008 states what replaces it and
+> why the replacement is weaker.
 **Ticket:** [#11](https://github.com/smukhyala/propositum/issues/11)
 **Research:** [`docs/research/observation-capture.md`](../research/observation-capture.md)
 

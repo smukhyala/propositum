@@ -191,6 +191,17 @@ summarisation would feed hostile page text to a model while no human is watching
 phase whose whole purpose is passive observation, and would make the event stream
 non-reproducible so the harness could not re-score a fixture.
 
+**Both reasons still hold, and detection does not breach them** *(added 2026-08-11,
+[ADR-0008](docs/adr/0008-ambient-detection.md))*. Propositum now watches continuously and can
+notice that work is underway without being told — but that detector is **arithmetic over metadata**
+and calls no model. No page text reaches it; the ambient observations it reads carry a cleaned URL,
+a title, dwell and scroll, and nothing else.
+
+The cost of keeping this rule is precise and worth naming: the offer can say **what was seen** and
+not **what it means**. *"You have been reading northwind.example.com — mostly Tiers"*, never *"you
+are comparing partner tiers"*. Naming the work needs a model, and a model on a timer is the thing
+these two sentences exist to prevent.
+
 ### SessionReading — *table*
 One immutable, versioned interpretation of a WorkSession (`id`, `sessionId`, `revision`,
 `createdAt`, `modelCallId` when any claim is inferred). Its content is its SessionClaims.

@@ -198,8 +198,19 @@ Recorded so they can be checked rather than absorbed.
 2. **2,000 characters of readable text per `ApprovedSource` is enough** for a reading to be about
    content rather than titles. Expensive to revisit: `ObservationEvent`s are append-only, so
    changing the budget invalidates every fixture already captured.
-3. **The person will actually start and stop sessions explicitly.** Automatic session detection is
-   out of scope, so a forgotten *Start session* means no data at all.
+3. ~~**The person will actually start and stop sessions explicitly.** Automatic session detection is
+   out of scope, so a forgotten *Start session* means no data at all.~~
+
+   **This bet lost, 2026-08-11.** Not to a forgotten *Start session* — to a session that was
+   started, on a site that was approved, after which nothing happened. Part of that was a transport
+   bug ([#63](https://github.com/smukhyala/propositum/issues/63)), and part was this: explicit
+   sessions ask the person to know in advance that what they are about to do is worth recording.
+
+   Replaced by [ADR-0008](adr/0008-ambient-detection.md): Propositum watches continuously, detects
+   work by deterministic heuristic, and **offers**. It still never starts a session itself — that
+   remains a human act. The new assumption underneath it is narrower and also untested: **that a
+   suggestion arriving unprompted is welcome rather than an interruption.** The thresholds are
+   guesses set before any real browsing existed, and a false positive is the expensive failure.
 4. **A reviewer `AgentRun` adds value.** Currently doubtful — scope adherence is scored from
    deterministic fields, so `ReviewFinding` has no effect and the reviewer is close to decorative.
    The brief mandates it. Slice 0 ships it and measures whether it earns its place.

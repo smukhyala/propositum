@@ -31,25 +31,48 @@
  * reading needs evidence, a model, and a human looking at the result.
  */
 
+/**
+ * Thresholds — and one deliberate escape hatch.
+ *
+ * `PROPOSITUM_FAST_DETECT=1` divides every duration by twenty, so the whole
+ * loop can be exercised in about a minute instead of ten. Page COUNTS are left
+ * alone: dropping those would stop testing the rule that a single page is
+ * reading rather than work, which is the one most likely to be wrong.
+ *
+ * This exists because a ten-minute feedback loop is how a false-positive rate
+ * goes unmeasured. It is read once, at module load, and never from the request
+ * — a threshold that could change between the detection and the offer would
+ * make a suggestion impossible to explain afterwards.
+ *
+ * These numbers are guesses, set before any real browsing existed. They live
+ * together in one place so tuning them is a diff rather than an excavation.
+ */
+const FAST = process.env['PROPOSITUM_FAST_DETECT'] === '1'
+const SPEED = FAST ? 20 : 1
+
 /** The window everything is measured inside. Older observations are dropped. */
-export const WINDOW_MS = 30 * 60_000
+export const WINDOW_MS = (30 * 60_000) / SPEED
 
 /** Distinct pages on one origin before it looks like work rather than a visit. */
 export const PAGES_FOR_WORK = 3
 
 /** Engaged time across the window. Engagement already required dwell + scroll,
  *  so this is time actually spent reading, not tabs left open. */
-export const ENGAGED_MS_FOR_WORK = 8 * 60_000
+export const ENGAGED_MS_FOR_WORK = (8 * 60_000) / SPEED
 
 /** A search plus this many pages is work, even below the page threshold — a
  *  query is a statement of intent in a way a third click is not. */
 export const PAGES_AFTER_QUERY = 2
 
 /** Idle this long, after real work, is a natural stopping point. */
-export const PAUSE_MS = 4 * 60_000
+export const PAUSE_MS = (4 * 60_000) / SPEED
 
 /** Work done before a pause is worth offering to continue. */
-export const WORKED_MS_FOR_HANDOFF = 10 * 60_000
+export const WORKED_MS_FOR_HANDOFF = (10 * 60_000) / SPEED
+
+/** True when thresholds are shortened. Surfaced in the UI, because a
+ *  suggestion produced under test thresholds must not read like a real one. */
+export const FAST_DETECT = FAST
 
 /**
  * One ambient observation. Metadata only — there is deliberately no field that
