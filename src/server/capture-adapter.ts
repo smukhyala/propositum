@@ -75,6 +75,7 @@ export const rawSignalSchema = z.discriminatedUnion('signal', [
     url: z.string(),
     dwellMs: z.number().int().nonnegative(),
     scrollFraction: z.number().min(0).max(1),
+    interacted: z.boolean().optional(),
   }),
   // The one the service worker still produces itself, because chrome.idle is
   // not a page event and no content script can observe it.
@@ -141,6 +142,7 @@ export function toSemanticEvent(
         elapsedMs: signal.elapsedMs,
         dwellMs: signal.dwellMs,
         scrollFraction: signal.scrollFraction,
+        ...(signal.interacted === undefined ? {} : { interacted: signal.interacted }),
       })
 
       // Mark only on a real crossing. An early report below the dwell threshold

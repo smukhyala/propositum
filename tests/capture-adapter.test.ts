@@ -178,6 +178,46 @@ describe('engagement is reported while the page is open, not only on unload', ()
     expect(report(classifier, ENGAGEMENT_DWELL_MS * 4)).toBeNull()
   })
 
+  it('counts a page read without any window scroll — the container-scroll case', () => {
+    // The bug this exists for: `window.scrollY` stays 0 on a site that scrolls
+    // inside a div, so a page read seven times over several minutes produced
+    // ZERO engagement events. Scrolling was always a proxy for presence.
+    const event = toSemanticEvent(
+      {
+        signal: 'engagement',
+        at: AT,
+        elapsedMs: 10,
+        url: 'https://www.tripadvisor.com/secret-falls',
+        dwellMs: ENGAGEMENT_DWELL_MS + 60_000,
+        scrollFraction: 0,
+        interacted: true,
+      },
+      SOURCE,
+      fresh(),
+    )
+
+    expect(event?.kind).toBe('engaged')
+  })
+
+  it('still refuses a tab left open and never touched', () => {
+    // The rule's actual purpose, unchanged: dwell alone is not reading.
+    const event = toSemanticEvent(
+      {
+        signal: 'engagement',
+        at: AT,
+        elapsedMs: 10,
+        url: 'https://news.example/left-open',
+        dwellMs: ENGAGEMENT_DWELL_MS * 20,
+        scrollFraction: 0,
+        interacted: false,
+      },
+      SOURCE,
+      fresh(),
+    )
+
+    expect(event).toBeNull()
+  })
+
   it('an early report below the threshold does not silence the real crossing', () => {
     // The bug this shape exists to avoid: marking the page on the QUERY rather
     // than on a produced event lets a 15s report claim it, so the 25s crossing

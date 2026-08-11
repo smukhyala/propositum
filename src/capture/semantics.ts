@@ -50,6 +50,9 @@ export interface RawEngagement {
   readonly elapsedMs: number
   readonly dwellMs: number
   readonly scrollFraction: number
+  /** Any deliberate act on the page — scroll, click, key, selection. Absent on
+   *  older captures, where scroll alone has to carry it. */
+  readonly interacted?: boolean | undefined
 }
 
 export interface RawSelection {
@@ -152,7 +155,22 @@ export function createNavigationClassifier() {
  *  timeline free of "they glanced at a page" noise. */
 export function classifyEngagement(raw: RawEngagement): SemanticEvent | null {
   if (raw.dwellMs < ENGAGEMENT_DWELL_MS) return null
-  if (raw.scrollFraction < ENGAGEMENT_SCROLL_FRACTION) return null
+
+  /**
+   * Dwell, plus evidence a person was actually there.
+   *
+   * This used to demand a scroll fraction and nothing else, which rejected
+   * every page on a site that scrolls inside a container — `window.scrollY`
+   * stays 0 however far you read. A real session produced ZERO engagement
+   * events across several minutes on a page opened seven times.
+   *
+   * Scrolling was always a proxy for presence, and a poor one: a short page
+   * read fully, or a long one read above the fold, involves no scrolling. Any
+   * deliberate act serves the purpose better, and the purpose is unchanged —
+   * separating reading from a tab left open.
+   */
+  const present = raw.interacted === true || raw.scrollFraction >= ENGAGEMENT_SCROLL_FRACTION
+  if (!present) return null
 
   return {
     kind: 'engaged',

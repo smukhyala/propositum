@@ -65,6 +65,29 @@ describe('the manifest asks for nothing frightening', () => {
     expect(existsSync(join(repo, 'extension/icon.png'))).toBe(true)
   })
 
+  it('never reports a page the person has not actually seen', () => {
+    // Typing in the omnibox makes Chrome prerender search/warmup.html in a
+    // hidden document, and the content script fired on it like a real page. In
+    // one recorded session that stub was the MOST-captured page in a piece of
+    // research about a waterfall: 13 of 45 events, complete with `returnedTo`
+    // for somewhere nobody had been once.
+    const content = readFileSync(join(repo, 'extension/src/content.js'), 'utf8')
+
+    expect(content).toContain('document.prerendering')
+    expect(content).toContain('prerenderingchange')
+    // And a background tab is not a visit until it is looked at.
+    expect(content).toContain("visibilityState === 'hidden'")
+  })
+
+  it('measures scroll from any element, not just the window', () => {
+    // Scroll events do not bubble but do fire during capture. Without this,
+    // a site that scrolls inside a container reports 0 however far you read.
+    const content = readFileSync(join(repo, 'extension/src/content.js'), 'utf8')
+
+    expect(content).toMatch(/capture:\s*true/)
+    expect(content).toContain('scrollHeight > el.clientHeight')
+  })
+
   it('answers to the notification, or it is just a dismissable banner', () => {
     const worker = readFileSync(join(repo, 'extension/src/service-worker.js'), 'utf8')
 
