@@ -33,7 +33,7 @@ import type { PrismaClient } from '@prisma/client'
 
 import { appContext } from '@/server/db'
 import { checkDrift, diff, materialise } from '@/domain/document/changeset'
-import type { ChangeScale, ProposedChange } from '@/domain/document/changeset'
+import type { ChangeScale, FoldableChange } from '@/domain/document/changeset'
 import { linesOf, normalise } from '@/domain/document/normalise'
 import { MUTATING_ACTION_KINDS } from '@/domain/handoff/policy'
 import { BackLink, Empty, Masthead, Sheet } from '@/ui/primitives'
@@ -172,7 +172,7 @@ function headingAbove(headings: readonly Heading[], offset: number): string | nu
  * renderer that computes its own scale is how two parts of the product come to
  * disagree about how big a change is.
  */
-function scalesByOffset(base: string, changes: readonly ProposedChange[]): Map<number, ChangeScale> {
+function scalesByOffset(base: string, changes: readonly FoldableChange[]): Map<number, ChangeScale> {
   const byOffset = new Map<number, ChangeScale>()
   if (changes.length === 0) return byOffset
 
@@ -264,20 +264,50 @@ export default async function ShiftPage({ params }: { params: Promise<{ contract
   /* ── the changes ──────────────────────────────────────────────────────── */
 
   const changeset = await repos.changesets.forContract(contractId)
-  const drift =
-    changeset && latest ? checkDrift(latest.content, changeset.baseHash) : ({ ok: true } as const)
 
-  const stored: ProposedChange[] = (changeset?.changes ?? []).map((change) => ({
+  /**
+   * Has this review already been folded into a version?
+   *
+   * A settled review is not a drifted one and must not render as either. The
+   * changes are in the document, the decisions are on the record, and the only
+   * honest thing left to say is which version came out of it — so the drift
+   * check is skipped entirely rather than reporting a base that legitimately
+   * moved because we ourselves moved it.
+   */
+  const settledVersion =
+    changeset?.settledAsVersionId === undefined || changeset.settledAsVersionId === null
+      ? null
+      : await repos.documents.version(changeset.settledAsVersionId)
+
+  const drift =
+    settledVersion !== null
+      ? ({ ok: true } as const)
+      : changeset && latest
+        ? checkDrift(latest.content, changeset.baseHash)
+        : ({ ok: true } as const)
+
+  // Only the spans and their replacements. This used to carry a fabricated
+  // `scale` to satisfy the type, passed to a fold that never read it — a value
+  // that looked like data and was not. `materialise` and `scalesByOffset` both
+  // take `FoldableChange` now, so there is nothing to invent.
+  const stored: FoldableChange[] = (changeset?.changes ?? []).map((change) => ({
     startOffset: change.startOffset,
     endOffset: change.endOffset,
-    prefix: change.prefix,
-    exact: change.exact,
-    suffix: change.suffix,
     replacement: change.replacement,
-    reason: change.reason,
-    scale: { kind: 'edited', label: '', similarity: 1 },
   }))
   const scales = scalesByOffset(baseContent, stored)
+
+  // Display-only annotations from the second pass. Grouped by change here so
+  // the card never has to ask for them, and absent entirely when the reviewer
+  // did not run — which is a supported outcome, not a degraded one.
+  const findings = changeset ? await repos.findings.forChangeset(changeset.id) : []
+  const findingsByChange = new Map<string, Array<{ kind: string; detail: string }>>()
+  for (const finding of findings) {
+    if (finding.changeId === null) continue
+    const list = findingsByChange.get(finding.changeId) ?? []
+    list.push({ kind: finding.kind, detail: finding.detail })
+    findingsByChange.set(finding.changeId, list)
+  }
 
   const changes: ChangeView[] = (changeset?.changes ?? []).map((change) => {
     const scale = scales.get(change.startOffset) ?? scaleOfPair(change.exact, change.replacement)
@@ -287,6 +317,7 @@ export default async function ShiftPage({ params }: { params: Promise<{ contract
       where: headingAbove(headings, change.startOffset),
       scaleLabel: scale.label,
       scaleKind: scale.kind,
+      findings: findingsByChange.get(change.id) ?? [],
       before: change.exact,
       after: change.replacement,
       reason: change.reason,
@@ -485,6 +516,10 @@ export default async function ShiftPage({ params }: { params: Promise<{ contract
           : `Pick up at ${changes[0]?.where ?? 'the top of the document'}, where the first change is waiting.`
       }
       up={up}
+      contractId={contract.id}
+      alreadyPutIn={
+        settledVersion === null ? null : { ordinal: settledVersion.ordinal }
+      }
     />
   )
 }

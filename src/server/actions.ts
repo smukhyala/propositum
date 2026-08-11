@@ -42,6 +42,9 @@ import {
 } from '../model/boundaries/session-reading'
 import type { PromptEvent } from '../model/boundaries/session-reading'
 import { handoffBoundary, sourceHandlesFor } from '../model/boundaries/handoff'
+import { checkDrift, hashContent, materialise } from '../domain/document/changeset'
+import type { Decision } from '../domain/document/changeset'
+import { normalise } from '../domain/document/normalise'
 import { ACTION_KINDS } from '../domain/handoff/policy'
 import type { ActionKind, AutonomyControls } from '../domain/handoff/policy'
 import type { ClaimInput } from '../persistence/repositories/index'
@@ -359,6 +362,151 @@ export async function approveSource(
 
     refresh()
     return ok({ id: source.id, originPattern: pattern, label: name, recordedInSession })
+  })
+}
+
+/* ═════════════════════════════════════════════════════════════ documents ══ */
+
+/**
+ * Paste-in, and the version chain that follows from it.
+ *
+ * ── Why the stored bytes are normalised ──────────────────────────────────
+ *
+ * `ProposedChange.startOffset` addresses the NORMALISED base — `diff()` and
+ * `checkDrift()` both run `normalise()` before they hash or index. Store raw
+ * bytes while hashing the normalised form and `contentHash` stops being
+ * `hashContent(content)`, so the next person to re-derive it gets a drift
+ * failure against a document that never moved.
+ *
+ * This is a deliberate deviation from CONTEXT.md's "bytes are stored exactly as
+ * written", and it agrees with the schema's own docstring. No words are changed;
+ * the text is laid out one sentence per line.
+ *
+ * ── One document per project in slice 0 ──────────────────────────────────
+ *
+ * `draftContract` and the session screen both take `documents[0]`. Until
+ * something chooses between them, a second document would make which one the
+ * shift works on a matter of insertion order. Refusing is the honest version of
+ * a constraint that already exists.
+ */
+
+export interface DocumentCreated {
+  readonly documentId: string
+  readonly versionId: string
+  readonly title: string
+}
+
+export async function createDocument(
+  projectId: string,
+  title: string,
+  content: string,
+): Promise<ActionResult<DocumentCreated>> {
+  return attempt(async () => {
+    const name = title.trim()
+    if (!name) return no<DocumentCreated>('invalid-input', 'Give the document a name.')
+
+    const body = content.trim()
+    if (!body) {
+      return no<DocumentCreated>(
+        'invalid-input',
+        'Paste in the text you are working on. Propositum works on your words — it never starts from a blank page.',
+      )
+    }
+
+    const { repos } = await appContext()
+    const project = await repos.projects.byId(projectId)
+    if (!project) return no<DocumentCreated>('not-found', "That project doesn't exist any more.")
+
+    const existing = await repos.documents.forProject(projectId)
+    if (existing.length > 0) {
+      return no<DocumentCreated>(
+        'already-done',
+        `This project already has a document — ${existing[0]?.title}. Propositum works on one document at a time.`,
+      )
+    }
+
+    const stored = normalise(body)
+    const created = await repos.documents.create({
+      projectId,
+      title: name,
+      content: stored,
+      contentHash: hashContent(stored),
+    })
+
+    refresh()
+    return ok({ documentId: created.id, versionId: created.versionId, title: name })
+  })
+}
+
+export interface DocumentSaved {
+  readonly versionId: string
+  readonly ordinal: number
+  /** True when a session was live and the edit went into its record. */
+  readonly recordedInSession: boolean
+}
+
+/**
+ * The person edits their own document.
+ *
+ * Insert-only: this never mutates the previous version, because a changeset
+ * already pins one by hash and an edited base would silently invalidate it.
+ * The shift is not blocked while this happens — ADR-0003 §4, the document is
+ * never locked. If a run is mid-flight its changeset will fail `checkDrift`
+ * later, and the person's edit wins. That is the designed path, not an error.
+ */
+export async function saveDocument(
+  documentId: string,
+  content: string,
+): Promise<ActionResult<DocumentSaved>> {
+  return attempt(async () => {
+    const body = content.trim()
+    if (!body) {
+      return no<DocumentSaved>(
+        'invalid-input',
+        'The document would be empty. If you meant to clear it, keep a heading so there is something to work on.',
+      )
+    }
+
+    const { repos, ledger } = await appContext()
+    const document = await repos.documents.byId(documentId)
+    if (!document) return no<DocumentSaved>('not-found', "That document isn't there any more.")
+
+    const stored = normalise(body)
+    const latest = await repos.documents.latestVersion(documentId)
+    if (latest && latest.contentHash === hashContent(stored)) {
+      return no<DocumentSaved>('already-done', 'Nothing changed, so nothing was saved.')
+    }
+
+    const version = await repos.documents.addVersion({
+      documentId,
+      content: stored,
+      contentHash: hashContent(stored),
+      origin: 'human',
+    })
+
+    // A live sitting should show that the person worked on their document. This
+    // is the only way `documentEdited` occurs in production; without it the kind
+    // exists solely in fixtures and the reading has nothing to cite about the
+    // document itself.
+    let recordedInSession = false
+    const live = captureStore().current()
+    if (live) {
+      const session = await repos.sessions.byId(live.sessionId)
+      if (session && session.projectId === document.projectId) {
+        const now = Date.now()
+        const appended = await ledger.append(live.sessionId, {
+          kind: 'documentEdited',
+          observedAt: new Date(now),
+          elapsedMs: Math.max(0, now - live.startedAtMs),
+          documentId,
+          attested: { title: document.title, ordinal: version.ordinal },
+        })
+        recordedInSession = appended.ok
+      }
+    }
+
+    refresh()
+    return ok({ versionId: version.id, ordinal: version.ordinal, recordedInSession })
   })
 }
 
@@ -1064,6 +1212,18 @@ export async function recordVerdict(
 
     const { repos } = await appContext()
 
+    // Deciding after the fold has already happened would record a verdict the
+    // document does not reflect, and the version chain cannot be revised —
+    // `DocumentVersion` is insert-only. The unique index below catches a second
+    // verdict on one change; this catches a first verdict on a settled review.
+    const settled = await repos.changesets.settledFor(changeId)
+    if (settled) {
+      return no<VerdictRecorded>(
+        'already-done',
+        "These are already in your document. Edit it directly — what's there now is yours.",
+      )
+    }
+
     try {
       await repos.changesets.recordVerdict({
         changeId,
@@ -1083,5 +1243,107 @@ export async function recordVerdict(
 
     refresh()
     return ok({ changeId, verdict })
+  })
+}
+
+export interface ReviewFinished {
+  readonly versionId: string
+  readonly ordinal: number
+  readonly kept: number
+  readonly discarded: number
+}
+
+/**
+ * The person is done deciding, and what they kept becomes a new version.
+ *
+ * ── Why this is one act at the end, not one per verdict ──────────────────
+ *
+ * Review produces decisions, never documents, and the base is immutable **for
+ * the whole review** — so offsets stay valid while the person works through the
+ * changes in any order. Folding as each verdict lands would move the text under
+ * the changes not yet decided, and every offset after the first would need
+ * re-anchoring. That is the problem this design exists to avoid, not a
+ * refinement of it.
+ *
+ * Until this existed the review loop terminated without producing anything at
+ * all, and the interface said so in its own copy: "Whatever you decide here is
+ * yours to fold into the document."
+ *
+ * ── Drift is checked twice, and both are real ────────────────────────────
+ *
+ * The shift screen checks it to decide which screen to render. This checks it to
+ * decide whether to write. The window between the two is a person editing their
+ * document while looking at the report, which is neither rare nor a misuse —
+ * ADR-0003 §4 says the document is never locked, so their edit wins and this
+ * refuses.
+ */
+export async function finishReview(contractId: string): Promise<ActionResult<ReviewFinished>> {
+  return attempt(async () => {
+    const { repos } = await appContext()
+
+    const changeset = await repos.changesets.forContract(contractId)
+    if (!changeset) {
+      return no<ReviewFinished>('not-found', 'There are no changes to put into your document.')
+    }
+    if (changeset.settledAsVersionId !== null) {
+      return no<ReviewFinished>(
+        'already-done',
+        "You've already put these into your document. What's there now is yours to edit.",
+      )
+    }
+
+    const undecided = changeset.changes.filter((change) => change.verdict === null)
+    if (undecided.length > 0) {
+      const count = undecided.length === 1 ? 'one change' : `${undecided.length} changes`
+      return no<ReviewFinished>(
+        'blocked',
+        `Decide on ${count} still waiting, and Propositum will put the rest in.`,
+      )
+    }
+
+    const base = await repos.documents.version(changeset.baseVersionId)
+    if (!base) {
+      return no<ReviewFinished>('not-found', 'The version this shift worked from is gone.')
+    }
+
+    const latest = await repos.documents.latestVersion(base.documentId)
+    if (!latest) {
+      return no<ReviewFinished>('not-found', 'That document has no saved text.')
+    }
+
+    // The human's own edit always wins. Nothing is written, and nothing they
+    // decided is lost — the verdicts stay on the record.
+    const drift = checkDrift(latest.content, changeset.baseHash)
+    if (!drift.ok) {
+      return no<ReviewFinished>(
+        'blocked',
+        'You changed this document while Propositum was working, so these changes no longer line up with it. Yours is the one that counts — nothing was overwritten.',
+      )
+    }
+
+    const decisions = changeset.changes.map((change, changeIndex) => ({
+      changeIndex,
+      verdict: change.verdict?.verdict as Decision['verdict'],
+      ...(change.verdict?.editedText ? { editedText: change.verdict.editedText } : {}),
+    }))
+
+    const folded = materialise(base.content, changeset.changes, decisions)
+    const kept = decisions.filter((d) => d.verdict !== 'reject').length
+
+    const version = await repos.documents.addVersion({
+      documentId: base.documentId,
+      content: folded,
+      contentHash: hashContent(folded),
+      origin: 'accepted-changeset',
+      committedFromChangesetId: changeset.id,
+    })
+
+    refresh()
+    return ok({
+      versionId: version.id,
+      ordinal: version.ordinal,
+      kept,
+      discarded: decisions.length - kept,
+    })
   })
 }

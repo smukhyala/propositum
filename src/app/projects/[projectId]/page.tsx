@@ -35,7 +35,13 @@ import { BackLink, Button, Empty, Masthead, Section, Sheet } from '@/ui/primitiv
 import { Away, Handover, Watching } from '@/ui/sprites'
 import { Timeline } from '@/ui/timeline'
 import type { TimelineEvent } from '@/ui/timeline'
-import { approveSource, endSession, startSession } from '@/server/actions'
+import {
+  approveSource,
+  createDocument,
+  endSession,
+  saveDocument,
+  startSession,
+} from '@/server/actions'
 import { captureStore } from '@/server/capture-store'
 import { appContext } from '@/server/db'
 
@@ -64,6 +70,8 @@ const CSS = `
 .pj-label { font-size: 0.6875rem; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
 .pj-input { font: inherit; font-size: 0.9375rem; padding: 0.45rem 0.65rem; border: 1px solid var(--rule); background: var(--ground); color: var(--ink); border-radius: 3px; width: 100%; }
 .pj-input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.pj-field-wide { flex: 1 1 100%; }
+.pj-textarea { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.875rem; line-height: 1.6; resize: vertical; min-height: 9rem; }
 .pj-submit { font: inherit; font-size: 0.8125rem; line-height: 1.4; padding: 0.45rem 0.9rem; border: 1px solid var(--rule); background: var(--ground); color: var(--ink); border-radius: 3px; cursor: pointer; }
 .pj-submit:hover { border-color: var(--accent); }
 .pj-submit:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -98,6 +106,12 @@ function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : {}
 }
 
+/** Size in the person's terms. Never a character count — that is the retention
+ *  budget's unit, and reusing it here would imply the two are related. */
+function countWords(content: string): number {
+  return content.split(/\s+/).filter((word) => word.length > 0).length
+}
+
 export default async function ProjectPage({
   params,
   searchParams,
@@ -117,6 +131,12 @@ export default async function ProjectPage({
 
   const sources = await repos.projects.approvedSources(projectId)
   const granted = sources.filter((source) => source.grantState === 'granted')
+
+  // One document per project in slice 0, so `[0]` is the document rather than a
+  // choice nobody made. `createDocument` refuses a second one.
+  const documents = await repos.documents.forProject(projectId)
+  const document = documents[0] ?? null
+  const base = document ? await repos.documents.latestVersion(document.id) : null
 
   const sessions = await repos.sessions.forProject(projectId)
   const openSession = sessions.find((session) => session.phase !== 'ended') ?? null
@@ -167,6 +187,29 @@ export default async function ProjectPage({
       projectId,
       String(formData.get('origin') ?? ''),
       String(formData.get('label') ?? ''),
+    )
+    if (!result.ok) redirect(`${here}?problem=${encodeURIComponent(result.problem.message)}`)
+    redirect(here)
+  }
+
+  async function pasteDocument(formData: FormData) {
+    'use server'
+
+    const result = await createDocument(
+      projectId,
+      String(formData.get('title') ?? ''),
+      String(formData.get('content') ?? ''),
+    )
+    if (!result.ok) redirect(`${here}?problem=${encodeURIComponent(result.problem.message)}`)
+    redirect(here)
+  }
+
+  async function editDocument(formData: FormData) {
+    'use server'
+
+    const result = await saveDocument(
+      String(formData.get('documentId') ?? ''),
+      String(formData.get('content') ?? ''),
     )
     if (!result.ok) redirect(`${here}?problem=${encodeURIComponent(result.problem.message)}`)
     redirect(here)
@@ -387,7 +430,87 @@ export default async function ProjectPage({
         </form>
       </Section>
 
-      <Section title={openSession ? 'Session timeline' : 'The last session'} index={3}>
+      <Section title="Your document" index={3}>
+        {document === null ? (
+          <>
+            <Empty
+              title="There is no document in this project."
+              next="Paste in what you are working on. Propositum works on your words — it never starts from a blank page, and it never reads a file you did not hand it."
+            />
+            <form className="pj-form" action={pasteDocument}>
+              <label className="pj-field">
+                <span className="pj-label">What to call it</span>
+                <input
+                  className="pj-input"
+                  name="title"
+                  type="text"
+                  required
+                  autoComplete="off"
+                  placeholder="Northwind partnership proposal"
+                />
+              </label>
+              <label className="pj-field pj-field-wide">
+                <span className="pj-label">The text</span>
+                <textarea
+                  className="pj-input pj-textarea"
+                  name="content"
+                  required
+                  rows={12}
+                  placeholder={'## Scope\n\nWhat the partnership covers.'}
+                />
+              </label>
+              <button className="pj-submit" type="submit">
+                Save it
+              </button>
+              <p className="pj-hint">
+                Markdown. Propositum lays it out one sentence per line when it saves, so a change
+                can point at the sentence it changed &mdash; no words are altered. Every save keeps
+                the previous version, and a shift always works against the version it pinned.
+              </p>
+            </form>
+          </>
+        ) : (
+          <>
+            <div className="pj-row">
+              <div>
+                <p className="pj-name">{document.title}</p>
+                <p className="pj-origin">
+                  {base === null
+                    ? 'No text saved yet.'
+                    : `Version ${base.ordinal} · ${countWords(base.content)} words`}
+                </p>
+              </div>
+              <span className="pj-state" data-revoked="false">
+                {base === null ? 'empty' : 'yours'}
+              </span>
+            </div>
+
+            <form className="pj-form" action={editDocument}>
+              <input type="hidden" name="documentId" value={document.id} />
+              <label className="pj-field pj-field-wide">
+                <span className="pj-label">Edit it</span>
+                <textarea
+                  className="pj-input pj-textarea"
+                  name="content"
+                  required
+                  rows={14}
+                  defaultValue={base?.content ?? ''}
+                />
+              </label>
+              <button className="pj-submit" type="submit">
+                Save a new version
+              </button>
+              <p className="pj-hint">
+                Your edit always wins. Propositum never locks your document &mdash; if a shift is
+                running against an older version, its changes are refused rather than applied over
+                the top of yours.
+              </p>
+            </form>
+          </>
+        )}
+      </Section>
+
+      <Section title={openSession ? 'Session timeline' : 'The last session'} index={4}>
         {shownSession === null ? (
           <Empty
             title="No session has been started in this project."
@@ -416,7 +539,7 @@ export default async function ProjectPage({
       </Section>
 
       {earlier.length > 0 ? (
-        <Section title="Before this" index={4}>
+        <Section title="Before this" index={5}>
           <p className="pj-under" style={{ margin: 0 }}>
             <Handover size={14} title="Earlier" /> {earlier.length} earlier{' '}
             {earlier.length === 1 ? 'session' : 'sessions'} in this project. Each one starts cold:

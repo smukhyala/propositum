@@ -671,10 +671,27 @@ A named unit of prose work in a Project, always Markdown in slice 0:
 the ban on Draft/WorkingCopy tables has a replacement noun and does not cause the drift it exists to
 prevent.
 
-**The document is locked read-only for the duration of a Shift**, with "Take back control" as the
-unlock. That keeps the base genuinely immutable for the whole review, keeps refuse-on-drift a guard
-rather than a screen we must design, and avoids re-anchoring entirely. Stated cost: the user who
-opens the laptop at 6 pm to fix a typo is told no.
+**Not modelled in slice 0** *(recorded 2026-08-10)*. There is no `workingText` column. Saving an
+edit writes a new `DocumentVersion`, so the latest version *is* the working text and there is no
+unversioned state to hold. The noun stays in this vocabulary because the ban it anchors is still in
+force; add the column when an editor needs to keep text the person has not saved.
+
+**The document is never locked.** ~~Locked read-only for the duration of a Shift, with "Take back
+control" as the unlock.~~ *Corrected 2026-08-10 in favour of [ADR-0003](docs/adr/0003-artifact-versioning-ledger.md)
+§4, which this paragraph contradicted from the day both were written. The code had always followed
+the ADR — `checkDrift` is called on the shift screen and the `DriftedShift` component is fully
+built — so the lock existed only in this sentence.*
+
+The base is genuinely immutable **because a `DocumentVersion` is insert-only and trigger-guarded**,
+not because anything is held shut. A human edit mid-Shift writes a new version; the old one's bytes
+are untouched; the changeset still addresses coordinates that never move; and the fold refuses on
+drift, so the person's edit wins. Refuse-on-drift is therefore a real path the interface has to
+render, not a guard that never fires — which is what `DriftedShift` is for.
+
+The lock was the more expensive option, not the cheaper one: it needed "Take back control" designed
+*and* a release path for a sleep-killed run holding it for hours, with no live holder to ask. Stated
+cost of not locking: a person who edits at 6 pm can discard a shift's work by accident, and is told
+that is what happened rather than being told no in advance.
 
 Propositum's store is authoritative. No filesystem path, no file watcher — a watcher reads a file
 the user did not consciously hand over and is scoped by an `if` statement, which is the reasoning
@@ -682,8 +699,15 @@ that already rejected Playwright. Paste-in on creation and copy-out on any versi
 start from a document the user actually had.
 
 No `kind` discriminator, no `currentVersionId` — the current version is the greatest
-`versionNumber`. Bytes are stored exactly as written: **Propositum never reformats prose the user
-authored.**
+`versionNumber`. ~~Bytes are stored exactly as written.~~
+
+**Amended 2026-08-10: bytes are stored normalised — one sentence per line — and no words are ever
+changed.** `ProposedChange.startOffset` addresses the *normalised* base, because `diff()` and
+`checkDrift()` both normalise before they hash or index. Storing raw bytes while hashing the
+normalised form typechecks, reads fine, and fails much later as a drift refusal against a document
+nobody touched. The promise that matters is intact and is the stronger half of the original
+sentence: **Propositum never rewords prose the user authored.** Line layout is not wording; the
+schema's own docstring already said so.
 *Displaces:* Artifact · ArtifactKind · mimeType · File · Deliverable · WorkingCopy ·
 DocumentCopy · Draft (as a table) · ArtifactStore. **Not** "note" — session notes are a real,
 separate slice-0 concept.

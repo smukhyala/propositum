@@ -210,3 +210,55 @@ describe('refuse on drift', () => {
     expect(hashContent(normalise(DOC))).toBe(hashContent(normalise(normalise(DOC))))
   })
 })
+
+/**
+ * What a stored DocumentVersion owes the changeset that will pin it.
+ *
+ * `createDocument` and `saveDocument` store `normalise(content)` and hash that
+ * same string. These tests pin WHY, because the alternative — store the raw
+ * bytes, hash the normalised form — typechecks, reads fine, and fails much
+ * later as a drift refusal against a document nobody touched.
+ */
+describe('a stored version is self-consistent', () => {
+  const stored = normalise(DOC)
+  const storedHash = hashContent(stored)
+
+  it('a freshly stored document does not read as drifted', () => {
+    expect(checkDrift(stored, storedHash)).toEqual({ ok: true })
+  })
+
+  it('survives the round trip a shift makes through it', () => {
+    // Pin, propose, then check the base again — the sequence execute-run and
+    // finishReview both perform.
+    const { baseHash } = diff(stored, stored.replace('first quarter', 'Q3'), 'r')
+    expect(baseHash).toBe(storedHash)
+    expect(checkDrift(stored, baseHash).ok).toBe(true)
+  })
+
+  it('storing raw bytes while hashing normalised content would break it', () => {
+    // The trap, demonstrated rather than described. DOC has two sentences on one
+    // line, so raw and normalised genuinely differ.
+    const raw = DOC
+    expect(raw).not.toBe(stored)
+
+    // `checkDrift` normalises its input, so this specific pairing survives...
+    expect(checkDrift(raw, storedHash).ok).toBe(true)
+
+    // ...but the invariant a reader will assume — that contentHash is
+    // hashContent(content) — does not hold, and re-deriving it gets the wrong
+    // answer for a document that never moved.
+    expect(hashContent(raw)).not.toBe(storedHash)
+    expect(hashContent(stored)).toBe(storedHash)
+  })
+
+  it('offsets address the stored bytes, not the pasted ones', () => {
+    // ProposedChange.startOffset indexes the normalised base. If the stored
+    // content were raw, every offset would point into a different string.
+    const { changes } = diff(stored, stored.replace('first quarter', 'Q3'), 'r')
+    const change = changes[0]
+    expect(change).toBeDefined()
+    if (!change) return
+
+    expect(stored.slice(change.startOffset, change.endOffset)).toContain('first quarter')
+  })
+})

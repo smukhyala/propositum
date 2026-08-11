@@ -40,7 +40,7 @@ import { BackLink, Button, Empty, LogEntry, Masthead, Narrative, Section, Sheet 
 import { ChangeCard } from './diff'
 import type { ChangeVerdict, ChangeView } from './diff'
 import { Away, Done, Refused, Unknown, Wrote } from './sprites'
-import { recordVerdict } from '../server/actions'
+import { finishReview, recordVerdict } from '../server/actions'
 
 /* ── the one stylesheet ─────────────────────────────────────────────────── */
 
@@ -163,6 +163,12 @@ export interface ShiftReportProps {
   /** Where to pick up. Null when there is nothing waiting. */
   readonly resume: string | null
   readonly up: UpOneLevel
+  /** Needed by the one act that writes: the fold is addressed by contract,
+   *  because a changeset belongs to exactly one. */
+  readonly contractId: string
+  /** Already folded, on arrival. A review settles once, and reopening the page
+   *  after it has must not offer to do it again. */
+  readonly alreadyPutIn: { readonly ordinal: number } | null
 }
 
 /* ── shared parts ───────────────────────────────────────────────────────── */
@@ -356,6 +362,9 @@ export function ShiftReport(props: ShiftReportProps) {
   const [recorded, setRecorded] = useState<Readonly<Record<string, ChangeVerdict>>>({})
   const [settled, setSettled] = useState<ReadonlySet<string>>(new Set())
   const [problem, setProblem] = useState<string | null>(null)
+  const [putIn, setPutIn] = useState<{ ordinal: number; kept: number; discarded: number } | null>(
+    props.alreadyPutIn ? { ordinal: props.alreadyPutIn.ordinal, kept: -1, discarded: -1 } : null,
+  )
   const [busy, startWriting] = useTransition()
 
   const changes = useMemo(
@@ -415,6 +424,27 @@ export function ShiftReport(props: ShiftReportProps) {
     })
   }
 
+  /**
+   * The one act that changes the document.
+   *
+   * Deliberately at the end, and deliberately separate from the verdicts. The
+   * base stays immutable for the whole review so offsets remain valid while the
+   * person works through the changes in any order; folding as each verdict
+   * landed would move the text under everything not yet decided.
+   *
+   * Until this existed, the review loop recorded decisions and produced
+   * nothing, and the copy under this row admitted it: "yours to fold into the
+   * document."
+   */
+  function finish() {
+    setProblem(null)
+    startWriting(async () => {
+      const result = await finishReview(props.contractId)
+      if (result.ok) setPutIn(result.value)
+      else setProblem(result.problem.message)
+    })
+  }
+
   function settle(id: string) {
     setSettled((prev) => {
       const next = new Set(prev)
@@ -458,13 +488,14 @@ export function ShiftReport(props: ShiftReportProps) {
       <div className="ps-resume">
         <div className="ps-resume-row">
           <p>
-            {props.resume ??
-              'Nothing is waiting on Propositum. Whatever you decide here is yours to fold into the document.'}
+            {putIn !== null
+              ? 'These are in your document now. What is there is yours to edit.'
+              : (props.resume ??
+                'Nothing is waiting on Propositum. Decide on each change, then put the ones you kept into your document.')}
           </p>
-          {changes.length === 0 ? null : (
+          {changes.length === 0 || putIn !== null ? null : (
             <div className="ps-actions">
               <Button
-                variant="primary"
                 disabled={blocked || busy || undecided.length === 0}
                 onClick={() => decideAll('accept')}
                 title={
@@ -492,9 +523,39 @@ export function ShiftReport(props: ShiftReportProps) {
               >
                 Discard all of this
               </Button>
+
+              {/*
+                The only control on this screen that changes the document, and
+                the only one that is primary. It waits for every change to have
+                a decision, because a partial fold leaves the review neither
+                finished nor abandoned — and because the base has to stay still
+                while the person works through the changes in any order.
+              */}
+              <Button
+                variant="primary"
+                disabled={busy || undecided.length > 0}
+                onClick={finish}
+                title={
+                  undecided.length > 0
+                    ? `Decide on ${count(undecided.length, 'change')} first.`
+                    : 'Writes a new version of your document containing the changes you kept. Your current text is not overwritten — it stays as an earlier version.'
+                }
+              >
+                Put these into your document
+              </Button>
             </div>
           )}
         </div>
+
+        {putIn === null ? null : (
+          <p className="ps-count" role="status">
+            {putIn.kept < 0
+              ? `Saved as version ${putIn.ordinal}.`
+              : putIn.kept === 0
+                ? `You kept none of them, so version ${putIn.ordinal} reads exactly as it did before. The decisions are on the record.`
+                : `Saved as version ${putIn.ordinal} — ${count(putIn.kept, 'change')} kept, ${putIn.discarded} discarded.`}
+          </p>
+        )}
 
         {blocked && changes.length > 0 ? <p className="ps-blocked">{blockedWhy}</p> : null}
 

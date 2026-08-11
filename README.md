@@ -10,9 +10,11 @@ Propositum watches an approved work session, builds a structured reading of what
 for, and — once you've ratified an explicit agreement — continues in a constrained environment
 while you're gone. You come back to what changed, why, and what it couldn't decide for you.
 
-> **Status: pre-alpha. There is no working product yet.** The foundation is built — vocabulary,
-> research, runtime, and the experiment design. The vertical slice is not. This README describes
-> what exists, and says plainly where it doesn't.
+> **Status: pre-alpha. The slice runs end to end; no hypothesis has a number yet.** Capture,
+> reading, handoff, the gated worker, the changeset, the shift report, review and the fold into a
+> new document version are all built and wired. What is missing is evidence: `eval-scores.json` is
+> still the blank worksheet, and H1, H2 and H3 are unscored. This README says plainly where the
+> gaps are rather than rounding them up.
 
 ---
 
@@ -26,17 +28,24 @@ while you're gone. You come back to what changed, why, and what it couldn't deci
 | [`docs/PRODUCT_PRINCIPLES.md`](./docs/PRODUCT_PRINCIPLES.md) | Ten principles, each stating what it concretely forbids. |
 | [`docs/research/`](./docs/research/) | ~4,900 lines answering the questions the architecture waited on. |
 | [`docs/FOUNDING_BRIEF.md`](./docs/FOUNDING_BRIEF.md) | The originating brief, kept as history. |
-| Runtime | Next 16, TypeScript strict, Prisma + SQLite, Zod 4, Vitest. Stands up, tests pass. |
+| [`docs/adr/`](./docs/adr/) | Seven decisions, each with the option it rejected and why. |
+| Runtime | Next 16, TypeScript strict, Prisma + SQLite, Zod 4, Vitest. 336 tests. |
+| The product | Chrome MV3 capture, the reading with per-claim evidence, the editable agreement, the unbypassable gate, the worker and reviewer, the diff, the shift report, per-change accept/reject, and the fold into a new version. |
+| [`extension/`](./extension/) | The capture extension. See its README — the host grant is a step only you can do, from the side panel. |
 
-**Not built yet:** the Chrome extension, session-state inference, the handoff screen, the policy
-gate, the worker and reviewer, the diff and review UI, the shift report, the evaluation harness.
-That is most of the product.
+**Built but not yet wired**, and asserted as such in `tests/reachability.test.ts` so it cannot be
+mistaken for done: the shift-report narrative boundary (the field currently holds a stop-rule
+label), the heartbeat gap sweeper (so two of four `CaptureGap` reasons cannot occur), and the
+`ModelCallRecord` writer (so the ledger does not reconstruct model calls).
+
+**Not measured:** the harness produces H1 material and cannot yet produce H2 or H3, and both
+scenarios expect a stop — so the false-stop half of H3 has nothing to score against.
 
 Work is tracked on the [wayfinder map](https://github.com/smukhyala/propositum/issues/1).
 
 ---
 
-## The demo workflow, when it exists
+## The demo workflow
 
 1. Create a project and approve the sources Propositum may see.
 2. **Start session.** You research and draft normally.
@@ -57,12 +66,21 @@ Requires **Node ≥ 22** and npm. macOS.
 ```bash
 npm install
 cp .env.example .env          # add ANTHROPIC_API_KEY from console.anthropic.com
-npx prisma generate
-npm run dev
+npx prisma db push            # creates the file and installs the append-only guards
+npm run dev                   # serves on 3117 — the port the extension is pinned to
+npm run worker                # a second terminal; runs are drained here, not in the app
 ```
 
 `ANTHROPIC_API_KEY` is the only credential needed. SQLite is a local file; there is no cloud, no
 account, and no telemetry.
+
+**For real capture** you also need the extension loaded and its id in `.env`, and you have to grant
+each source from the side panel — a host grant needs a user gesture, so nothing else can do it.
+[`extension/README.md`](./extension/README.md) is the authoritative six-step order.
+
+Whenever the schema changes, `prisma db push` rebuilds the affected table and **silently drops its
+append-only triggers**. They are reinstalled and verified at the next app startup; restart before
+trusting the database.
 
 ```bash
 npm test              # unit + schema snapshot tests

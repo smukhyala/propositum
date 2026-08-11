@@ -33,6 +33,17 @@
   ],
   "optional_host_permissions": ["https://*/*"],
 
+  "_comment_loopback": [
+    "The app's own origin, and the ONLY entry here that is not warning-free.",
+    "A service worker fetch to http://127.0.0.1 is cross-origin, and the app",
+    "sends no CORS headers deliberately — CORS protects nothing on loopback,",
+    "which is why the transport has four controls of its own. Without this the",
+    "extension cannot reach the app at all: the health check fails, the badge",
+    "shows '!', and capture is silently OFF.",
+    "Pinned to the port in package.json's dev script; a test asserts they match."
+  ],
+  "host_permissions": ["http://127.0.0.1/*"],
+
   "_comment_key": [
     "Pinned so the extension id is stable. Without it the id changes if the repo",
     "moves, and the Origin check on the loopback transport starts rejecting our",

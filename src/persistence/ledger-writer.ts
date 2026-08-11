@@ -29,6 +29,7 @@
 import { z } from 'zod'
 import type { PrismaClient } from '@prisma/client'
 import { datamark, looksAdversarial } from '../model/untrusted'
+import { cleanUrl } from '../capture/url'
 
 /** Closed and code-owned. Adding a member is a schema change plus migration,
  *  never configuration. There is no `other`. */
@@ -119,6 +120,37 @@ export interface LedgerWriter {
   /** Emitted when an adapter's own sequence skips or goes backwards. The caller
    *  decides what to do; the writer only reports. */
   onGapSignal(listener: (signal: GapSignal) => void): void
+}
+
+/** Every key here holds a URL, wherever the event came from. */
+const URL_KEYS = ['url', 'referrer'] as const
+
+/**
+ * The door sanitises URLs too, not only page text.
+ *
+ * This used to be true of `untrustedText` and false of `attested`, so a
+ * credential or a tracking parameter in `location.href` reached the row
+ * verbatim — while `cleanUrl` sat tested and uncalled in the capture layer and
+ * `docs/SECURITY_AND_PRIVACY.md` promised a cleaned URL.
+ *
+ * Doing it here rather than in each caller is the whole point: the extension,
+ * the in-app editor and anything added later all come through `append`, so the
+ * promise cannot be bypassed by forgetting to call something.
+ */
+function cleanUrls(attested: Record<string, unknown>): Record<string, unknown> {
+  let touched = false
+  const out: Record<string, unknown> = { ...attested }
+
+  for (const key of URL_KEYS) {
+    const value = out[key]
+    if (typeof value !== 'string') continue
+
+    const cleaned = cleanUrl(value)
+    if (cleaned !== value) touched = true
+    out[key] = cleaned
+  }
+
+  return touched ? out : attested
 }
 
 export function createLedgerWriter(prisma: PrismaClient): LedgerWriter {
@@ -261,7 +293,7 @@ export function createLedgerWriter(prisma: PrismaClient): LedgerWriter {
       const marked = event.untrustedText === undefined ? undefined : datamark(event.untrustedText)
 
       return write(sessionId, event, {
-        attested: event.attested,
+        attested: cleanUrls(event.attested),
         untrusted:
           marked === undefined
             ? undefined

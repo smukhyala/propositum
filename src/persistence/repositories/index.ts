@@ -42,6 +42,7 @@ export interface Repositories {
   readonly runs: AgentRunRepository
   readonly documents: DocumentRepository
   readonly changesets: ChangesetRepository
+  readonly findings: ReviewFindingRepository
   readonly reports: ShiftReportRepository
 }
 
@@ -55,6 +56,7 @@ export function createRepositories(prisma: PrismaClient): Repositories {
     runs: agentRunRepository(prisma),
     documents: documentRepository(prisma),
     changesets: changesetRepository(prisma),
+    findings: reviewFindingRepository(prisma),
     reports: shiftReportRepository(prisma),
   }
 }
@@ -71,6 +73,17 @@ export interface ProjectRepository {
     label: string
   }): Promise<{ id: string }>
   approvedSources(projectId: string): Promise<Array<{ id: string; originPattern: string; label: string; grantState: string }>>
+  /**
+   * Chrome is authoritative about grants; this mirrors a withdrawal.
+   *
+   * Nothing wrote this for the whole build — only `'granted'` was ever set — so
+   * five UI surfaces rendered a withdrawn state that could not be reached, and
+   * a `permission_revoked` CaptureGap could never occur. A stale `granted`
+   * leaks nothing, because the extension is structurally incapable of reading a
+   * revoked origin; a state the interface can render and the system can never
+   * produce is the part worth fixing.
+   */
+  revokeSource(input: { projectId: string; originPattern: string }): Promise<number>
 }
 
 function projectRepository(prisma: PrismaClient): ProjectRepository {
@@ -92,6 +105,21 @@ function projectRepository(prisma: PrismaClient): ProjectRepository {
         where: { projectId },
         select: { id: true, originPattern: true, label: true, grantState: true },
       }),
+    revokeSource: async ({ projectId, originPattern }) => {
+      // Chrome reports the origin it withdrew, which may or may not carry the
+      // `/*` the pattern is stored with. Match on the host either way rather
+      // than silently updating nothing.
+      const host = originPattern.replace(/\/\*$/, '')
+      const { count } = await prisma.approvedSource.updateMany({
+        where: {
+          projectId,
+          grantState: 'granted',
+          OR: [{ originPattern: host }, { originPattern: `${host}/*` }],
+        },
+        data: { grantState: 'revoked' },
+      })
+      return count
+    },
   }
 }
 
@@ -461,7 +489,9 @@ function agentRunRepository(prisma: PrismaClient): AgentRunRepository {
 
 export interface DocumentRepository {
   create(input: { projectId: string; title: string; content: string; contentHash: string }): Promise<{ id: string; versionId: string }>
-  byId(id: string): Promise<{ id: string; title: string } | null>
+  /** `projectId` is included because an edit has to prove the document belongs
+   *  to the project whose session is live before it writes a ledger row. */
+  byId(id: string): Promise<{ id: string; title: string; projectId: string } | null>
   forProject(projectId: string): Promise<Array<{ id: string; title: string }>>
   /** Insert-only. A new version never mutates the previous one — an edited base
    *  would silently invalidate every changeset hash pointing at it. */
@@ -470,6 +500,9 @@ export interface DocumentRepository {
     content: string
     contentHash: string
     origin: 'human' | 'accepted-changeset'
+    /** Set for an `accepted-changeset` version. Unique, so a changeset settles
+     *  exactly once and the foreign key is the "already reviewed" flag. */
+    committedFromChangesetId?: string
   }): Promise<{ id: string; ordinal: number }>
   /** `documentId` is included because `readDocument` refuses to be pointed at a
    *  document other than the one this shift pinned, and needs it to check. */
@@ -496,12 +529,20 @@ function documentRepository(prisma: PrismaClient): DocumentRepository {
       })
       return { id: doc.id, versionId: version.id }
     },
-    byId: (id) => prisma.document.findUnique({ where: { id }, select: { id: true, title: true } }),
+    byId: (id) =>
+      prisma.document.findUnique({ where: { id }, select: { id: true, title: true, projectId: true } }),
     forProject: (projectId) =>
       prisma.document.findMany({ where: { projectId }, select: { id: true, title: true } }),
-    addVersion: async ({ documentId, content, contentHash, origin }) =>
+    addVersion: async ({ documentId, content, contentHash, origin, committedFromChangesetId }) =>
       prisma.documentVersion.create({
-        data: { documentId, ordinal: await nextOrdinal(documentId), content, contentHash, origin },
+        data: {
+          documentId,
+          ordinal: await nextOrdinal(documentId),
+          content,
+          contentHash,
+          origin,
+          ...(committedFromChangesetId === undefined ? {} : { committedFromChangesetId }),
+        },
         select: { id: true, ordinal: true },
       }),
     version: (id) =>
@@ -541,11 +582,19 @@ export interface ChangesetRepository {
     id: string
     baseVersionId: string
     baseHash: string
+    /** The version folded from this changeset, once the person finished the
+     *  review. Its absence is what "still open" means — there is no separate
+     *  status column that could disagree with the foreign key. */
+    settledAsVersionId: string | null
     changes: Array<ProposedChangeInput & { id: string; verdict: { verdict: string; editedText: string | null } | null }>
   } | null>
   /** Append-only: a verdict is recorded once. Changing your mind means the UI
    *  has to say so explicitly rather than overwriting the record. */
   recordVerdict(input: { changeId: string; verdict: 'accept' | 'reject' | 'edit'; editedText?: string }): Promise<void>
+  /** Has the review this change belongs to already been folded into a version?
+   *  Asked from the change rather than the changeset, because that is what the
+   *  verdict controls have in hand. */
+  settledFor(changeId: string): Promise<boolean>
 }
 
 function changesetRepository(prisma: PrismaClient): ChangesetRepository {
@@ -563,6 +612,7 @@ function changesetRepository(prisma: PrismaClient): ChangesetRepository {
           id: true,
           baseVersionId: true,
           baseHash: true,
+          settledAs: { select: { id: true } },
           changes: {
             orderBy: { startOffset: 'asc' },
             select: {
@@ -579,13 +629,66 @@ function changesetRepository(prisma: PrismaClient): ChangesetRepository {
           },
         },
       })
-      return row
+      if (!row) return null
+
+      const { settledAs, ...rest } = row
+      return { ...rest, settledAsVersionId: settledAs?.id ?? null }
     },
     recordVerdict: async ({ changeId, verdict, editedText }) => {
       await prisma.changeVerdict.create({
         data: { changeId, verdict, ...(editedText === undefined ? {} : { editedText }) },
       })
     },
+    settledFor: async (changeId) => {
+      const row = await prisma.proposedChange.findUnique({
+        where: { id: changeId },
+        select: { changeset: { select: { settledAs: { select: { id: true } } } } },
+      })
+      return row?.changeset.settledAs != null
+    },
+  }
+}
+
+/* ── ReviewFinding ─────────────────────────────────────────────────────── */
+
+/**
+ * Display-only, by design (ADR-0004 and boundary 5's own header).
+ *
+ * A finding cannot block a change, fail a run, or alter a verdict. Scope
+ * adherence is deterministic and already enforced by the gate, so there is
+ * nothing here for a model to adjudicate — these annotate the things
+ * determinism cannot judge, and the person decides.
+ *
+ * There is deliberately no update and no delete. A finding is a record of what
+ * the second pass said, not a mutable annotation.
+ */
+export interface ReviewFindingRepository {
+  create(input: {
+    runId: string
+    findings: ReadonlyArray<{ changeId: string | null; kind: string; detail: string }>
+  }): Promise<number>
+  forChangeset(changesetId: string): Promise<Array<{ changeId: string | null; kind: string; detail: string }>>
+}
+
+function reviewFindingRepository(prisma: PrismaClient): ReviewFindingRepository {
+  return {
+    create: async ({ runId, findings }) => {
+      if (findings.length === 0) return 0
+      const { count } = await prisma.reviewFinding.createMany({
+        data: findings.map((f) => ({
+          runId,
+          kind: f.kind,
+          detail: f.detail,
+          ...(f.changeId === null ? {} : { changeId: f.changeId }),
+        })),
+      })
+      return count
+    },
+    forChangeset: (changesetId) =>
+      prisma.reviewFinding.findMany({
+        where: { change: { changesetId } },
+        select: { changeId: true, kind: true, detail: true },
+      }),
   }
 }
 

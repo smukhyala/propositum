@@ -58,9 +58,44 @@ describe('the manifest asks for nothing frightening', () => {
     }
   })
 
-  it('grants no host access at install — every origin is requested on approval', () => {
-    expect(manifest.host_permissions).toBeUndefined()
+  it('grants no access to any WEBSITE at install — each origin is requested on approval', () => {
+    // This used to assert `host_permissions` was absent entirely, which was a
+    // proxy for the real property and became false for the right reason: the
+    // extension cannot reach the app at all without loopback access, because a
+    // service worker fetch to 127.0.0.1 is cross-origin and the app sends no
+    // CORS headers deliberately.
+    //
+    // So assert the property rather than the proxy. Loopback is our own
+    // process, not a site the person browses.
+    const hosts: string[] = manifest.host_permissions ?? []
+
+    expect(hosts).toEqual(['http://127.0.0.1/*'])
+    for (const host of hosts) {
+      expect(host).toMatch(/^http:\/\/127\.0\.0\.1/)
+    }
     expect(manifest.optional_host_permissions).toBeDefined()
+  })
+
+  it('keeps the app port pinned to the one the extension talks to', () => {
+    // The extension is buildless on purpose (ADR-0002), so this constant cannot
+    // be read from config — it is duplicated, and the duplication is only safe
+    // if something notices when it drifts. It drifted: APP_ORIGIN said 3117
+    // while `next dev` served 3000, so capture was off out of the box and the
+    // badge blamed the wrong thing.
+    const scripts = JSON.parse(readFileSync(join(repo, 'package.json'), 'utf8')).scripts as Record<
+      string,
+      string
+    >
+
+    const devPort = /-p\s+(\d+)/.exec(scripts['dev'] ?? '')?.[1]
+    const startPort = /-p\s+(\d+)/.exec(scripts['start'] ?? '')?.[1]
+    const workerOrigin = /const APP_ORIGIN = '([^']+)'/.exec(
+      readFileSync(join(repo, 'extension/src/service-worker.js'), 'utf8'),
+    )?.[1]
+
+    expect(devPort, 'the dev script must pin a port the extension can be told about').toBeDefined()
+    expect(workerOrigin).toBe(`http://127.0.0.1:${devPort}`)
+    expect(startPort, 'start and dev must agree, or a built app is unreachable').toBe(devPort)
   })
 })
 

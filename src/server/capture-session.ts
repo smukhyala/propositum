@@ -22,6 +22,9 @@
 
 import { randomBytes } from 'node:crypto'
 
+import { createNavigationClassifier } from '../capture/semantics'
+import type { NavigationClassifier } from './capture-adapter'
+
 /** Two missed heartbeats. One can be a slow flush; two means it died. */
 export const HEARTBEAT_GRACE_MS = 75_000
 
@@ -32,6 +35,16 @@ export interface LiveSession {
   lastHeartbeatMs: number
   /** Set while a gap is open, so we record one gap rather than one per poll. */
   gapOpenedAtMs: number | null
+  /**
+   * Memory of which pages this sitting has already seen, so a second visit is
+   * `returnedTo` rather than another `visited`.
+   *
+   * It lives here because the distinction is only meaningful within one
+   * sitting, and because route handlers are stateless — a classifier built per
+   * request would report every page as new forever. Dying with the session is
+   * the correct lifetime, not a limitation.
+   */
+  readonly navigation: NavigationClassifier
 }
 
 export interface CaptureSessionStore {
@@ -62,6 +75,7 @@ export function createCaptureSessionStore(): CaptureSessionStore {
         startedAtMs: nowMs,
         lastHeartbeatMs: nowMs,
         gapOpenedAtMs: null,
+        navigation: createNavigationClassifier(),
       }
       return live
     },

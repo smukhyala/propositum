@@ -29,13 +29,13 @@ import { dirname, join, relative } from 'node:path'
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), '..')
 
-function sourceFiles(dirs: string[]): string[] {
+function sourceFiles(dirs: string[], pattern = /\.tsx?$/): string[] {
   const out: string[] = []
   const walk = (d: string) => {
     for (const entry of readdirSync(d)) {
       const full = join(d, entry)
       if (statSync(full).isDirectory()) walk(full)
-      else if (/\.tsx?$/.test(entry)) out.push(full)
+      else if (pattern.test(entry)) out.push(full)
     }
   }
   for (const d of dirs) walk(join(repo, d))
@@ -43,6 +43,17 @@ function sourceFiles(dirs: string[]): string[] {
 }
 
 const PRODUCTION = sourceFiles(['src', 'scripts'])
+
+/**
+ * The extension, which this file could not see.
+ *
+ * `sourceFiles` walked only `src` and `scripts`, and only `.tsx?`. So the whole
+ * extension was invisible to every check here — which is part of why
+ * `content.js` was never registered by anything, and no test noticed while the
+ * suite stayed green. A reachability guard with a blind spot the size of the
+ * privacy-holding component is not a guard.
+ */
+const EXTENSION = sourceFiles(['extension'], /\.(js|html)$/)
 
 /**
  * Strip comments before searching.
@@ -57,11 +68,28 @@ function stripComments(source: string): string {
   return source.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/[^\n]*/g, '$1')
 }
 
-/** Files that CALL `needle` — in code, not in prose — excluding its definition. */
+/**
+ * Strip imports too, for the same reason.
+ *
+ * Found the same way the comment bug was: removing the real `cleanUrl` calls
+ * from the ledger writer left its `import { cleanUrl }` line behind, and the
+ * grep counted that as a caller while three behavioural tests went red. An
+ * unused import satisfying a reachability check is exactly the failure the
+ * comment strip exists to prevent — a file that mentions a function is not a
+ * file that runs it.
+ */
+function stripImports(source: string): string {
+  return source
+    .replace(/^\s*import\s[\s\S]*?from\s+['"][^'"]+['"]\s*;?\s*$/gm, ' ')
+    .replace(/^\s*import\s+['"][^'"]+['"]\s*;?\s*$/gm, ' ')
+}
+
+/** Files that CALL `needle` — in code, not in prose or an import — excluding
+ *  its definition. */
 function callersOf(needle: string, definedIn: string): string[] {
   return PRODUCTION.filter((f) => {
     if (relative(repo, f) === definedIn) return false
-    return stripComments(readFileSync(f, 'utf8')).includes(needle)
+    return stripImports(stripComments(readFileSync(f, 'utf8'))).includes(needle)
   }).map((f) => relative(repo, f))
 }
 
@@ -108,6 +136,175 @@ describe('the safety machinery is reachable from the product', () => {
 
   it('events reach the ledger writer rather than a repository', () => {
     expect(callersOf('createLedgerWriter', 'src/persistence/ledger-writer.ts')).not.toEqual([])
+  })
+
+  it('a person can create a document, or the whole handoff path is unreachable', () => {
+    // This one shipped broken. `documents.create` was correct, tested, and
+    // called by nothing, so `draftContract` always returned "There is no
+    // document in this project yet. Paste one in first" — pointing at an
+    // affordance that did not exist. Everything downstream of the handoff was
+    // dead code behind a refusal that read like a hint.
+    const callers = callersOf('documents.create', 'src/persistence/repositories/index.ts')
+
+    expect(callers, 'nothing creates a Document — draftContract can only ever refuse').not.toEqual(
+      [],
+    )
+  })
+
+  it('something writes a new version, or a document can never change', () => {
+    const callers = callersOf('documents.addVersion', 'src/persistence/repositories/index.ts')
+
+    expect(callers, 'nothing calls addVersion — the version chain never grows').not.toEqual([])
+  })
+
+  it('URLs are cleaned by something on the write path, not just in a test', () => {
+    // `cleanUrl` was written, tested, and called by NOTHING for the whole build,
+    // while `content.js` sent raw `location.href` and SECURITY_AND_PRIVACY.md
+    // promised a cleaned URL. A tested function is not a kept promise.
+    // The paren matters. Without it this matches the ledger writer's own
+    // `cleanUrls` helper, so gutting the helper's body leaves the guard green —
+    // caught while verifying this very test.
+    const callers = callersOf('cleanUrl(', 'src/capture/url.ts')
+
+    expect(callers, 'nothing calls cleanUrl — raw URLs reach the ledger').not.toEqual([])
+    expect(
+      callers,
+      'cleanUrl must be called at the ledger door, so no caller can bypass it',
+    ).toContain('src/persistence/ledger-writer.ts')
+  })
+
+  it('a finished review reaches the document, or the loop produces nothing', () => {
+    // `materialise` had exactly one call site — the shift page's scale-label
+    // recovery — and no code path ever wrote a version from a review. The
+    // interface admitted it: "yours to fold into the document."
+    expect(
+      callersOf('finishReview(', 'src/server/actions.ts'),
+      'nothing calls finishReview — decisions are recorded and discarded',
+    ).not.toEqual([])
+    expect(
+      callersOf("origin: 'accepted-changeset'", 'src/persistence/repositories/index.ts'),
+      'no code path writes an accepted-changeset version',
+    ).not.toEqual([])
+  })
+
+  it('the reviewer actually runs, or assumption 4 stays unanswerable', () => {
+    // `reviewBoundary` was built and tested with zero callers, and `runs.enqueue`
+    // was only ever called with role 'worker'. docs/MVP.md assumption 4 asks
+    // whether the reviewer earns its place; a reviewer that never runs makes
+    // that unanswerable rather than answered.
+    expect(callersOf('reviewBoundary(', 'src/model/boundaries/review.ts')).not.toEqual([])
+    expect(
+      callersOf("role: 'reviewer'", 'src/persistence/repositories/index.ts'),
+      'no reviewer run is ever enqueued',
+    ).not.toEqual([])
+    expect(
+      callersOf('findings.create(', 'src/persistence/repositories/index.ts'),
+      'nothing persists a ReviewFinding',
+    ).not.toEqual([])
+  })
+
+  it('the classifiers run in production, not only in their own tests', () => {
+    // 205 lines of tested classification that no production file imported. The
+    // extension re-implemented a thinner, wrong version inline instead.
+    expect(callersOf('createNavigationClassifier(', 'src/capture/semantics.ts')).not.toEqual([])
+    expect(callersOf('classifyEngagement(', 'src/capture/semantics.ts')).not.toEqual([])
+    expect(callersOf('classifySelection(', 'src/capture/semantics.ts')).not.toEqual([])
+  })
+})
+
+/**
+ * What is knowingly not wired.
+ *
+ * A guard that quietly omits what it cannot yet satisfy reads as proof of
+ * coverage it does not have. These assert the CURRENT state — unreachable — so
+ * that wiring one of them turns this file red and forces the claim to be moved
+ * up into the section above rather than left ambiguous.
+ *
+ * Each is a real gap with a real consequence, named in the map's fog.
+ */
+describe('deferred, and asserted as deferred', () => {
+  it('boundary 6 is still unwired, so the narrative is a stop-rule label', () => {
+    // `execute-run` stores `narrative: stopLabel` — a consumer label rendered
+    // where model prose belongs. Not wrong, but not what the field means.
+    expect(
+      callersOf('shiftReportBoundary(', 'src/model/boundaries/shift-report.ts'),
+      'shiftReportBoundary is wired now — move this into the section above',
+    ).toEqual([])
+  })
+
+  it('nothing polls for heartbeat silence, so that gap reason cannot occur', () => {
+    // `sweepForGap` turns silence into a `captureGap` with reason
+    // `service_worker_terminated`. With no caller, that reason is unreachable,
+    // and so is `machine_slept` — two of the four are unwritable in slice 0.
+    expect(
+      callersOf('sweepForGap(', 'src/server/gap-sweeper.ts'),
+      'the gap sweeper has a caller now — move this into the section above',
+    ).toEqual([])
+  })
+
+  it('no model call is recorded, so the ledger does not reconstruct them', () => {
+    // Acceptance bullet 11 says the full ledger reconstructs what happened.
+    // `model_call_record` has a table and append-only guards and no writer.
+    // The hook exists — `AnthropicModelClient` takes `onCall`.
+    expect(
+      callersOf('modelCallRecord.create', 'src/persistence/repositories/index.ts'),
+      'model calls are recorded now — move this into the section above',
+    ).toEqual([])
+  })
+})
+
+describe('the extension can actually capture', () => {
+  const extensionSource = (name: string) =>
+    stripComments(
+      readFileSync(
+        EXTENSION.find((f) => f.endsWith(name)) ?? join(repo, 'extension/src', name),
+        'utf8',
+      ),
+    )
+
+  it('something registers the content script, or nothing is ever injected', () => {
+    // The defect this whole ticket existed for. `content.js` was written,
+    // reviewed and shipped, and no line of code ever caused it to run: no
+    // `content_scripts` manifest block, no `registerContentScripts` call. In
+    // production the extension could emit only `switchedAway` from chrome.idle.
+    const worker = extensionSource('service-worker.js')
+
+    // The leading dot matters: `unregisterContentScripts` contains
+    // `registerContentScripts`, so the bare name stays satisfied by the cleanup
+    // path alone. Caught while verifying this test — deleting the registration
+    // left it green.
+    expect(worker, 'nothing registers content.js — the extension captures nothing').toContain(
+      '.registerContentScripts(',
+    )
+    expect(worker, 'the registration must actually name the content script').toContain(
+      'src/content.js',
+    )
+  })
+
+  it('the content script is never registered statically for all sites', () => {
+    // A `content_scripts` block would need https://*/* to cover origins chosen
+    // at runtime, which costs the "read all your data on all websites" warning
+    // and puts the injected set back under our control instead of Chrome's.
+    const manifest = JSON.parse(readFileSync(join(repo, 'extension/manifest.json'), 'utf8'))
+
+    expect(manifest.content_scripts).toBeUndefined()
+  })
+
+  it('something asks Chrome for the host permission', () => {
+    // Without a request, `optional_host_permissions` is a list nobody ever
+    // grants — and extension/README.md claimed Chrome would prompt on its own.
+    const panel = extensionSource('panel.html')
+
+    expect(panel, 'no user gesture requests a host grant, so none is ever given').toContain(
+      'permissions.request',
+    )
+  })
+
+  it('a withdrawn grant is reported, so grantState can ever be revoked', () => {
+    const worker = extensionSource('service-worker.js')
+
+    expect(worker).toContain('permissions.onRemoved')
+    expect(callersOf('revokeSource', 'src/persistence/repositories/index.ts')).not.toEqual([])
   })
 })
 
