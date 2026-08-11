@@ -71,9 +71,29 @@ A deterministic detector keeps both. The cost is that the offer can say *what it
 it means*: "you have been reading northwind.example.com — mostly Tiers", never "you are comparing
 partner tiers". Naming the work needs a model, and a model on a timer is the thing being avoided.
 
-The heuristic-gate-then-one-model-call option was considered and rejected for now — it bounds the
-exposure but does not remove it, and H1 is unscored, so there is no evidence the reading is good
-enough for naming to be worth the trade.
+~~The heuristic-gate-then-one-model-call option was considered and rejected for now.~~
+
+**Adopted the same day.** The deterministic offer read *"you have been looking into general
+intuition — across 3 sites"*, and the thing actually asked for was *"oh, you're researching world
+models"*. String arithmetic does not get there, and the gap was the difference between a feature
+that works and one that technically fires.
+
+So [`boundaries/subject.ts`](../../src/model/boundaries/subject.ts) names the thread — the seventh
+boundary, and the only one that runs with no session and no contract. Both of §2's reasons survive
+intact rather than being argued away:
+
+- **It runs only after `detectWork` has already fired**, so nothing reaches a model that has not
+  first cleared a deterministic bar, and a quiet afternoon of browsing costs nothing.
+- **Once per thread**, keyed on its terms, with an in-flight marker so two polls cannot race.
+- **It sees titles and search terms only.** Ambient capture holds no page text, so there is none to
+  send — the strongest form of the guarantee, because it does not depend on remembering to leave
+  anything out. Titles are page-authored and every one is datamarked.
+- **It cannot reach the eval harness.** Detection is in no scored scenario, so `SessionReading`
+  reproducibility is untouched.
+
+It runs in the background, never on the request path: the poll returns the deterministic offer
+immediately and the next one carries the name. The model's sentence is used only when it reports
+confidence — a confident wrong name is worse than an honest vague one.
 
 ## Why the buffer is memory and not a table
 
@@ -112,8 +132,10 @@ erase — only to forget. The stronger guarantee is the one above it: none of it
 
 ## Revisit when
 
-- **H1 has a score.** If the reading is good enough, the heuristic-gate-then-one-model-call option
-  becomes worth re-opening — it would let the offer name the work.
+- **A named thread is wrong in a way that matters.** Naming is live; what is untested is how often
+  it is right. `subject@1` is one prompt seen by one person, and the failure to watch for is a
+  confident name for the wrong subject — the one case the `confident` flag exists to prevent and
+  cannot guarantee.
 - **A false positive is observed in real use.** The thresholds are guesses, set before any real
   browsing existed. They are constants in one file for that reason.
 - **Anyone proposes writing ambient observations to disk.** That is not a tuning change; it is a
