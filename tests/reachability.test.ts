@@ -243,6 +243,17 @@ describe('deferred, and asserted as deferred', () => {
     ).toEqual([])
   })
 
+  it('nothing composes an offer, so a detected thread can only be described', () => {
+    // `composeOffer` is the model call that replaces the deleted two-member
+    // list, and the poll that would trigger it belongs to the accept path,
+    // which lands separately. Until it does, a person sees the deterministic
+    // sentence and a button, and never a proposal in Propositum's own words.
+    expect(
+      callersOf('composeOffer(', 'src/server/compose-offer.ts'),
+      'composeOffer has a caller now — move this into the section above',
+    ).toEqual([])
+  })
+
   it('nothing polls for heartbeat silence, so that gap reason cannot occur', () => {
     // `sweepForGap` turns silence into a `captureGap` with reason
     // `service_worker_terminated`. With no caller, that reason is unreachable,

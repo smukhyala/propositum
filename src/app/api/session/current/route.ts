@@ -121,8 +121,6 @@ export async function GET(request: Request) {
               ? `Looks like you're working on ${named.subject}.`
               : suggestion.sentence,
             subject: named.subject,
-            offer: named.offer,
-            offerLabel: named.offerLabel,
           }
         : { ...suggestion, thread: signature },
     })

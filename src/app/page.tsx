@@ -47,7 +47,6 @@ import { ambientStore, captureStore } from '@/server/capture-store'
 import { describeWork, signatureOf } from '@/server/ambient-store'
 import type { NamedThread } from '@/server/ambient-store'
 import { detectWork } from '@/domain/detection/detect'
-import { offerableOf } from '@/model/boundaries/subject'
 import type { WorkDetected } from '@/domain/detection/detect'
 
 import { appContext } from '@/server/db'
@@ -184,9 +183,11 @@ async function accept(treatAsNewWork: boolean): Promise<never> {
   const result = await startFromSuggestion(
     subjectOf(fresh, name),
     fresh.origins,
-    // The store keeps what the model said as a plain string; the closed list is
-    // applied here rather than trusted from memory.
-    name ? offerableOf(name.offer) : 'deep-research',
+    // ADR-0009 deleted the two-member list this argument came from. Until the
+    // accept path takes the composed WorkOffer instead, the session starts in
+    // the form that assumes nothing about what the work is: reading, not
+    // drafting. Nothing here reads the model's proposal.
+    'deep-research',
     signature,
     treatAsNewWork,
   )
@@ -362,7 +363,7 @@ export default async function Home({
             <div className="hm-acts">
               <form action={carryOn}>
                 <button className="hm-submit hm-submit-primary" type="submit">
-                  {named?.confident ? named.offerLabel : 'Set this up for me'}
+                  {'Set this up for me'}
                 </button>
               </form>
               <form action={notNow}>
