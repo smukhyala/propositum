@@ -112,15 +112,6 @@
   stop.textContent = 'Stop'
 
   /**
-   * Stop is a USER GESTURE, so it can do everything.
-   *
-   * This is the same asymmetry that bit the side panel: `sidePanel.open()`
-   * silently throws without a gesture, so calling it from an alarm did nothing
-   * for thirty seconds at a time while the app sat there having worked out the
-   * right answer. A click has no such problem — whatever the service worker
-   * needs to do to let go of this tab, it may do off the back of this.
-   */
-  /**
    * Send, and treat every way it can fail the same.
    *
    * `chrome.runtime.sendMessage` without a callback returns a promise, so the
@@ -144,6 +135,15 @@
     }
   }
 
+  /**
+   * Stop is a USER GESTURE, so it can do everything.
+   *
+   * This is the same asymmetry that bit the side panel: `sidePanel.open()`
+   * silently throws without a gesture, so calling it from an alarm did nothing
+   * for thirty seconds at a time while the app sat there having worked out the
+   * right answer. A click has no such problem — whatever the service worker
+   * needs to do to let go of this tab, it may do off the back of this.
+   */
   stop.addEventListener('click', function () {
     stop.disabled = true
     label.textContent = 'Stopping…'
