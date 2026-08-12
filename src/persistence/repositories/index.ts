@@ -30,6 +30,7 @@
  * only reads them.
  */
 
+import { randomBytes } from 'node:crypto'
 import type { PrismaClient } from '@prisma/client'
 import { guarded } from '../errors'
 
@@ -562,6 +563,29 @@ function agentRunRepository(prisma: PrismaClient): AgentRunRepository {
         select: { id: true },
       }),
 
+    /**
+     * ── The control token is minted here, and nowhere else ───────────────
+     *
+     * ADR-0010 gives a run a `controlToken` so the browser control channel can
+     * answer one question: *is this the run the extension agreed to take
+     * instructions from?* The column landed in wave 1 and **nothing ever wrote
+     * it**, which left the dispatch route's run-status check as the only thing
+     * between an arbitrary local caller and a channel that presses buttons in
+     * somebody's signed-in browser. A credential the schema describes and no
+     * code issues is worse than none, because the comment beside it reads as
+     * proof the fence exists.
+     *
+     * Minting at CLAIM is what ties the token to a lifetime. A token issued at
+     * enqueue would be valid before anything held the run and would still be
+     * valid after the run ended; issued here, it exists exactly while a process
+     * holds the claim, and `complete` and the lease sweep below both clear it.
+     * It is not an authorization — the gate still decides every action — it
+     * only answers *which run is this*.
+     *
+     * `randomBytes` rather than `randomUUID`: a UUID is an identifier that
+     * happens to be hard to guess, and this is a bearer secret. The distinction
+     * matters the day somebody logs one.
+     */
     claim: ({ leaseUntil, startedAt, claimedBy }) =>
       prisma.$transaction(async (tx) => {
         const next = await tx.agentRun.findFirst({
@@ -577,6 +601,7 @@ function agentRunRepository(prisma: PrismaClient): AgentRunRepository {
             status: 'claimed',
             leaseUntil,
             startedAt,
+            controlToken: randomBytes(32).toString('base64url'),
             ...(claimedBy === undefined ? {} : { claimedBy }),
           },
         })
@@ -590,7 +615,11 @@ function agentRunRepository(prisma: PrismaClient): AgentRunRepository {
     complete: async (id, status, endedAt, terminalReason) => {
       await prisma.agentRun.update({
         where: { id },
-        data: { status, endedAt, ...(terminalReason ? { terminalReason } : {}) },
+        // The token dies with the claim. A finished run that kept a valid
+        // credential would be a standing key to the control channel, held by
+        // nothing, revoked by nobody — and the whole point of minting it at
+        // claim is that its lifetime is the claim's.
+        data: { status, endedAt, controlToken: null, ...(terminalReason ? { terminalReason } : {}) },
       })
     },
 
@@ -599,7 +628,16 @@ function agentRunRepository(prisma: PrismaClient): AgentRunRepository {
         where: { status: { in: ['claimed', 'running'] }, leaseUntil: { lt: now } },
         // The sweep's clock is not the lid's — it may run hours after the Mac
         // slept, which is why the report says "sometime before X".
-        data: { status: 'interrupted', terminalReason: 'lease-expired', endedAt: now },
+        // Clearing the token here is the half that matters most. These are the
+        // runs whose process is GONE — the Mac slept, the worker was killed —
+        // so nothing is coming back to tidy up, and a credential left on an
+        // abandoned row is the one an attacker has time to use.
+        data: {
+          status: 'interrupted',
+          terminalReason: 'lease-expired',
+          endedAt: now,
+          controlToken: null,
+        },
       })
       return result.count
     },
