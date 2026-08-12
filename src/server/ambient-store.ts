@@ -270,7 +270,22 @@ export function createAmbientStore(): AmbientStore {
       naming.add(signature)
       attemptedNames.add(signature)
     },
+    /**
+     * Guarded on `naming.has`, for the same reason `remember` is.
+     *
+     * A call that lands after `clear()` is a call about a buffer nobody holds
+     * any more — the person accepted an offer, or declined one, and everything
+     * that was in flight is about work that has already been resolved. `remember`
+     * already drops such a result rather than writing it back. This path used
+     * to `attemptedNames.add` unconditionally, which meant a FAILED call landing
+     * after a clear re-poisoned the signature: the thread was then permanently
+     * unnameable for the lifetime of the process, and nothing said why.
+     *
+     * The failure was invisible in the ordinary way — a thread that simply never
+     * got a name reads as a thread the model was not confident about.
+     */
     finishNaming(signature) {
+      if (!naming.has(signature)) return
       naming.delete(signature)
       attemptedNames.add(signature)
     },
@@ -291,7 +306,12 @@ export function createAmbientStore(): AmbientStore {
       composing.add(signature)
       attemptedOffers.add(signature)
     },
+    /** Guarded on `composing.has`, exactly as `finishNaming` is, and it matters
+     *  more here for the reason `rememberOffer` gives: an offer says more about
+     *  a person than a name does, so a result about a buffer nobody holds any
+     *  more must leave no trace at all. */
     finishComposing(signature) {
+      if (!composing.has(signature)) return
       composing.delete(signature)
       attemptedOffers.add(signature)
     },
@@ -423,7 +443,21 @@ export function describeWork(
 
   return {
     kind: 'start-session',
-    // The site the thread ran through most, for the source that gets approved.
+    /**
+     * The FIRST site of the thread in scan order — not the most-visited one.
+     *
+     * This comment used to claim it was "the site the thread ran through most",
+     * which it has never been: `Thread.origins` is
+     * `[...new Set(members.map(p => p.origin))]` in `topics.ts`, so the order is
+     * the order pages were scanned, and nothing ranks them.
+     *
+     * Worth being exact about, because this value is not decorative — it is what
+     * the decline path snoozes, and what the snooze check then reads. Somebody
+     * pressing "Not now" silences whichever site happened to be seen first, and
+     * a reader who believed the old comment would think they had silenced the
+     * dominant one. Ranking these is a real improvement and a separate change;
+     * the comment must not describe it before it exists.
+     */
     origin: detected.origins[0] ?? '',
     origins: detected.origins,
     terms: detected.terms,

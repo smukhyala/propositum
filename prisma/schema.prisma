@@ -443,15 +443,30 @@ model ActionIntent {
   runId       String
   stepId      String?
   seq         Int
-  /// ActionKind: read-approved-source | read-document | draft-section
+  /// ActionKind. The closed set lives in src/domain/handoff/policy.ts and is
+  /// nine wide since the browser capabilities landed:
+  ///   read-approved-source | read-document | draft-section
+  ///   observe-page | navigate | click-element | type-text | press-key
+  ///   capture-screen
+  ///
+  /// Rows written before that are still valid and still carry one of the first
+  /// three — this column is append-only and describes what was proposed at the
+  /// time, not what the enum holds today.
   kind        String
   /// Why the worker proposed this. Exists BEFORE the action runs.
   reason      String
   params      Json
   authorized  Boolean
-  /// Set only when authorized=false. Deterministic rule id, never prose:
-  /// e.g. source_not_approved, action_kind_not_allowed, budget_exhausted,
-  /// unknown_action_kind.
+  /// Set only when authorized=false. Deterministic rule id, never prose. The
+  /// closed set is `RefusalRule` in src/policy/gate.ts — seventeen of them
+  /// since the gate learned to drive a browser. Examples across the range:
+  /// source_not_approved, action_kind_not_allowed, budget_exhausted,
+  /// unknown_action_kind, stale_snapshot, confirmation_required,
+  /// no_document_pinned, password_field.
+  ///
+  /// `confirmation_required` is the one worth knowing about when reading a
+  /// ledger: it is not a failure, it is the gate stopping to ask the person,
+  /// and a later intent in the same Shift carries the same proposal allowed.
   refusedRule String?
   createdAt   DateTime @default(now())
 

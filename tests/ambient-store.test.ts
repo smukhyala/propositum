@@ -285,3 +285,54 @@ describe('what the offer says', () => {
     expect(hostOf('http://127.0.0.1:3117')).toBe('127.0.0.1:3117')
   })
 })
+
+/**
+ * A call that lands after the buffer was forgotten must leave no trace.
+ *
+ * `remember` and `rememberOffer` already dropped a late SUCCESS. The finish
+ * paths did not drop a late FAILURE — they recorded the attempt unconditionally,
+ * so a signature could be marked "already tried" against a buffer that no longer
+ * existed, and every later thread with those terms was silently unnameable for
+ * the lifetime of the process.
+ *
+ * Invisible in the ordinary way: a thread that never gets a name reads exactly
+ * like a thread the model was not confident about.
+ */
+describe('a call landing after the buffer was cleared', () => {
+  it('does not mark a signature attempted once naming is forgotten', () => {
+    const store = createAmbientStore()
+    store.startNaming('parcel+rates')
+    expect(store.attemptedNaming('parcel+rates')).toBe(true)
+
+    // The person accepted an offer, or declined one. Everything in flight is
+    // now about work that has already been resolved.
+    store.clear()
+    expect(store.attemptedNaming('parcel+rates')).toBe(false)
+
+    // The call fails and lands late.
+    store.finishNaming('parcel+rates')
+
+    expect(store.attemptedNaming('parcel+rates')).toBe(false)
+    expect(store.isNaming('parcel+rates')).toBe(false)
+  })
+
+  it('does not mark a signature attempted once composing is forgotten', () => {
+    const store = createAmbientStore()
+    store.startComposing('parcel+rates')
+    store.clear()
+
+    store.finishComposing('parcel+rates')
+
+    expect(store.attemptedOffer('parcel+rates')).toBe(false)
+    expect(store.isComposing('parcel+rates')).toBe(false)
+  })
+
+  it('still records an attempt on the ordinary path, so a failure is not retried forever', () => {
+    const store = createAmbientStore()
+    store.startNaming('parcel+rates')
+    store.finishNaming('parcel+rates')
+
+    expect(store.attemptedNaming('parcel+rates')).toBe(true)
+    expect(store.isNaming('parcel+rates')).toBe(false)
+  })
+})
