@@ -30,7 +30,7 @@
  * only reads them.
  */
 
-import type { PrismaClient } from '@prisma/client'
+import type { Prisma, PrismaClient } from '@prisma/client'
 import { guarded } from '../errors'
 
 export interface Repositories {
@@ -1320,12 +1320,28 @@ function confirmationRepository(prisma: PrismaClient): ConfirmationRepository {
 /**
  * What the agent saw while acting.
  *
- * DISJOINT from ObservationEvent, which is why this is its own repository
- * rather than a method on the ledger writer. The two ledgers staying separate
- * is what keeps the published 2,000-character retention promise true: that
- * promise is about the person's own browsing, and an agent driving a browser
- * has to capture whole pages to act at all. One door writing both would make
- * the promise depend on remembering which caller it was.
+ * DISJOINT from ObservationEvent, which is why this is its own repository and
+ * its own table. The two ledgers staying separate is what keeps the published
+ * 2,000-character retention promise true: that promise is about the person's
+ * own browsing, and an agent driving a browser has to capture whole pages to
+ * act at all.
+ *
+ * ── Corrected: raw text does not arrive here ────────────────────────────
+ *
+ * This comment used to end "one door writing both would make the promise depend
+ * on remembering which caller it was", and read as an argument that the ledger
+ * writer must not touch ActionEvidence at all. That conflated two different
+ * doors and got the second one wrong.
+ *
+ * The SEQUENCING door is per-table and must stay singular: `seq` is gapless per
+ * session and ActionEvidence has no `seq`, so nothing here belongs in
+ * `append()`. The SANITISING door is per-SYSTEM and must also stay singular —
+ * ADR-0003 §35 — because a second place that turns raw page text into stored
+ * text is a second place to forget to call `datamark`.
+ *
+ * So `createLedgerWriter().appendEvidence()` is the only production caller of
+ * `create` below, and it hands over text that has ALREADY been datamarked and a
+ * URL that has already been cleaned. Two ledgers, one sanitiser.
  */
 export interface ActionEvidenceRepository {
   create(input: {
@@ -1383,9 +1399,147 @@ export interface ActionEvidenceRepository {
       }
     | null
   >
+  /**
+   * Delete rows created before `createdBefore`. The unconditional half of the
+   * retention promise.
+   *
+   * Policy — how long the window is, and when it runs — lives in
+   * `src/server/evidence-sweep.ts`. This is only the query, because a retention
+   * WINDOW written into a repository is a published promise hidden inside a
+   * data-access layer, and nobody looks for it there.
+   */
+  sweepOlderThan(createdBefore: Date): Promise<EvidenceSweepCounts>
+  /**
+   * Delete rows belonging to runs whose every ShiftOutcome is settled — the
+   * person has accepted or rejected each held production, or it already landed
+   * and admits no verdict.
+   *
+   * The normal case, and the one that matters most: once the person has decided
+   * what a Shift made, the screenshots of their authenticated session have no
+   * remaining reader, and holding them to the end of the window would be
+   * keeping them for nobody.
+   *
+   * A run with NO outcomes at all is not settled — it is unfinished, or it
+   * failed, and its evidence is the only account of what it was doing when it
+   * stopped. Those rows leave by `sweepOlderThan` instead.
+   */
+  sweepSettledRuns(): Promise<EvidenceSweepCounts>
 }
 
-function actionEvidenceRepository(prisma: PrismaClient): ActionEvidenceRepository {
+/**
+ * What one sweep pass did.
+ *
+ * `keptForConfirmation` is not an error count and not a failure. A
+ * ConfirmationRequest carries a foreign key to the exact row the person was
+ * looking at when they authorised an effect, and `confirmation_request` is
+ * append-only — so that row can never be deleted without deleting the record of
+ * a human being asked, which is the one piece of this ledger the audit trail
+ * genuinely needs. It is counted rather than silently skipped, because a
+ * retention sweep that quietly leaves rows behind is a promise with an
+ * undocumented exception, and this project already publishes the exception.
+ */
+export interface EvidenceSweepCounts {
+  readonly deleted: number
+  readonly keptForConfirmation: number
+}
+
+/**
+ * How many evidence rows one delete transaction may take.
+ *
+ * Small on purpose. This is a bound on how long SQLite's single write lock is
+ * held, not a throughput setting — see the comment inside `sweep`.
+ */
+const SWEEP_BATCH = 200
+
+/**
+ * A ShiftOutcome that is still waiting on a person.
+ *
+ * Written as data beside the sweep rather than inlined, because it is a claim
+ * about the PRODUCT — what "the person has decided" means — and it has to stay
+ * in step with `recordOutcomeVerdict` and `finishShift`. If a sixth outcome
+ * kind ever settles by some third route, this is the one place that has to
+ * learn about it, and getting it wrong is silent: an outcome that can never
+ * settle keeps a run's screenshots alive, and an outcome wrongly counted as
+ * settled deletes evidence someone was about to look at.
+ */
+const UNSETTLED: Prisma.ShiftOutcomeWhereInput = {
+  // Landed is never waiting: there is no verdict to give.
+  reversibility: { not: 'landed' },
+  OR: [
+    // The four kinds a person accepts or rejects as a whole.
+    { kind: { not: 'document-changes' }, verdict: { is: null } },
+    // Document changes are decided one ProposedChange at a time. A changeset
+    // with an undecided change is waiting; one with none — or an outcome with
+    // no changeset at all — has nothing left to ask.
+    //
+    // Spelt `{ equals: … }` rather than the shorthand deliberately.
+    // `tests/architecture.test.ts` greps for `kind: '<a ShiftOutcomeKind>'` to
+    // prove that exactly one file ASSIGNS an outcome kind, and a Prisma filter
+    // written in the shorthand is indistinguishable from an assignment to that
+    // grep. The long form says "this reads a kind" in a way both a person and
+    // the guard can tell apart from writing one.
+    {
+      kind: { equals: 'document-changes' },
+      changeset: { changes: { some: { verdict: { is: null } } } },
+    },
+  ],
+}
+
+export function actionEvidenceRepository(prisma: PrismaClient): ActionEvidenceRepository {
+  /**
+   * Delete everything matching `where` that no ConfirmationRequest points at,
+   * and count what had to stay.
+   *
+   * The count is taken BEFORE the delete and inside the same transaction. Taken
+   * after, it would race a concurrent confirmation and report a number that was
+   * never true at any single moment.
+   */
+  async function sweep(where: Prisma.ActionEvidenceWhereInput): Promise<EvidenceSweepCounts> {
+    const keptForConfirmation = await prisma.actionEvidence.count({
+      where: { ...where, requests: { some: {} } },
+    })
+
+    /**
+     * Deleted in small batches, and the batching is about the WRITE LOCK rather
+     * than about memory.
+     *
+     * SQLite permits exactly one writer. A single `deleteMany` over a week of
+     * evidence — screenshots included, which are the heaviest rows in the
+     * database — holds that lock for as long as it takes, and every concurrent
+     * `append()` from the app process is an interactive transaction with
+     * Prisma's five-second timeout. `ledger-writer.ts` documents that exact
+     * failure and serialises its own writes to avoid it; the sweep runs in a
+     * different process and cannot join that queue, so it has to be a good
+     * citizen instead. Many short transactions release the lock between
+     * batches; one long one does not.
+     *
+     * Deleting by id rather than re-running the predicate keeps each batch's
+     * work proportional to the batch and makes progress monotone — a row
+     * selected in a batch is either deleted or gone already.
+     */
+    let deleted = 0
+    for (;;) {
+      const batch = await prisma.actionEvidence.findMany({
+        where: { ...where, requests: { none: {} } },
+        select: { id: true },
+        take: SWEEP_BATCH,
+      })
+      if (batch.length === 0) break
+
+      const { count } = await prisma.actionEvidence.deleteMany({
+        where: { id: { in: batch.map((row) => row.id) } },
+      })
+      deleted += count
+
+      // A batch that deleted nothing means something else is holding these rows
+      // — a foreign key added later, most likely. Stopping is right: looping on
+      // an unchanging set is the same wedge shape the ambient buffer had.
+      if (count === 0) break
+    }
+
+    return { deleted, keptForConfirmation }
+  }
+
   return {
     create: ({ runId, intentId, kind, url, untrusted, image, truncated }) =>
       prisma.actionEvidence.create({
@@ -1416,6 +1570,45 @@ function actionEvidenceRepository(prisma: PrismaClient): ActionEvidenceRepositor
       }),
 
     byId: (id) => prisma.actionEvidence.findUnique({ where: { id } }),
+
+    sweepOlderThan: (createdBefore) => sweep({ createdAt: { lt: createdBefore } }),
+
+    /**
+     * Expressed as a relation filter rather than as an id list, and that is a
+     * correctness point rather than a tidiness one.
+     *
+     * The obvious shape — collect every settled run id, then
+     * `runId: { in: [...] }` — grows one parameter per settled run and walks
+     * into SQLite's bound-variable limit on a database that has simply been
+     * used for a few months. The failure arrives late, on the machine with the
+     * most history, in the code path whose whole job is not accumulating
+     * history.
+     *
+     * `some: {}` with `none: {…}` on the same relation is an AND: the run has
+     * outcomes, and none of them is still awaiting a person. Both halves are
+     * needed. A run with NO outcomes is not settled — it is unfinished, or it
+     * failed, and its evidence is the only account of what it was doing when it
+     * stopped; those rows leave by `sweepOlderThan` instead.
+     *
+     * ── Two kinds of settled, because there are two kinds of verdict ────
+     *
+     * `UNSETTLED` below is the honest predicate and the first version of it was
+     * wrong in the most expensive possible direction. It read *"held, and no
+     * `OutcomeVerdict`"* — which is right for four of the five outcome kinds and
+     * permanently FALSE for `document-changes`, the most common thing a Shift
+     * produces. A document outcome never receives an `OutcomeVerdict` at all:
+     * `recordOutcomeVerdict` refuses that kind outright, because its decidable
+     * units are the individual `ProposedChange`s and each carries its own
+     * `ChangeVerdict`. So the predicate matched it forever, every run that
+     * edited a document counted as unsettled forever, and rule 1 — the one
+     * documented as "the rule that fires in ordinary use" — never fired for the
+     * ordinary use. A person could accept every change in the afternoon and
+     * their screenshots would still sit there for a week.
+     *
+     * `landed` is settled the moment it is written, because there is nothing to
+     * accept about something that already happened out in the world.
+     */
+    sweepSettledRuns: () => sweep({ run: { outcomes: { some: {}, none: UNSETTLED } } }),
   }
 }
 

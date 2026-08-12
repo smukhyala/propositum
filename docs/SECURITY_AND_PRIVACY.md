@@ -71,23 +71,70 @@ That is a different kind of collection from the two above and it is kept in a di
 
 | Collected | Detail |
 |---|---|
-| The accessibility tree | the page as the browser describes it to assistive technology — text, controls, labels — **at most `SNAPSHOT_BUDGET_CHARS` per turn** |
+| The accessibility tree | the page as the browser describes it to assistive technology — text, controls, labels — **at most 60,000 characters per turn** |
 | A screenshot | **only when the tree is insufficient**, and only of the tab Propositum opened |
 | What it dispatched | which element, which kind of input, and what the browser attested about the request |
 
-This is `ActionEvidence`, and three things about it are the whole promise:
+This is `ActionEvidence`, and four things about it are the whole promise:
 
-- **`SNAPSHOT_BUDGET_CHARS` is a published product constant, not a tuning knob** — the same standing
-  as the 2,000 above. The promise is the artifact and the number is downstream of the promise
-  sentence. It exists because an accessibility tree is ten to a hundred times an article excerpt and
-  arrives every turn, so an unbounded one would quietly become the largest thing Propositum stores.
+- **60,000 characters is a published product constant, not a tuning knob** — the same standing as
+  the 2,000 above, and it is named `SNAPSHOT_BUDGET_CHARS` in the code. The promise is the artifact
+  and the number is downstream of the promise sentence. It exists because an accessibility tree is
+  ten to a hundred times an article excerpt and arrives every turn, so an unbounded one would quietly
+  become the largest thing Propositum stores.
+
+  **Thirty times larger is a real cost and this document is not going to bury it.** A run is capped
+  at 40 actions, so the ceiling is about 2.4 million characters of page text per run — where the same
+  person browsing the same sites unaided would leave 2,000 characters per source. The mitigations are
+  that it happens only under an agreement you ratified, only in a tab Propositum opened, and that it
+  is swept; none of those makes it small.
+
 - **It is a separate ledger from your browsing, and they never join.** `EXCERPT_BUDGET_CHARS`
   governs what Propositum retains about **your own browsing**; `ActionEvidence` is what the agent saw
   **while acting under an agreement you ratified**. Nothing in it is read by inference, joined to an
-  observation event, or shown on a session timeline.
-- **It is swept.** Rows are deleted once the run's outcome is settled, and unconditionally past the
-  retention window. It is the one durable table deliberately exempt from the append-only triggers,
-  because a no-`DELETE` guard and a sweep cannot both be true.
+  observation event, or shown on a session timeline. This is not a loophole around the 2,000 — it is
+  a different promise about a different thing, and it works only because it is written down here
+  rather than assumed.
+
+- **Almost all of it is kept for at most seven days, and usually far less.** Two rules, and the
+  first is the one that normally fires:
+
+  | | |
+  |---|---|
+  | **When you have decided** | once you have accepted or rejected everything a Shift produced, its evidence is deleted at the next sweep — within the hour. For a Shift that edited a document, "decided" means every proposed change has a verdict |
+  | **Seven days, regardless** | the backstop for a run that failed, was interrupted, or is waiting on a question nobody answered. `ACTION_EVIDENCE_RETENTION_DAYS = 7` |
+
+  Seven, rather than one, because a run stopped for your confirmation can be answered days later —
+  asked Friday evening, answered Monday morning — and the screen asking you to authorise an effect
+  has to be able to show you the page it is about. Seven, rather than thirty, because a week-old
+  accessibility tree of a page you were signed into answers a question nobody is asking. The sweep
+  runs in the worker process, at startup and hourly.
+
+- **One class of evidence is kept indefinitely, and this document is not going to round that down
+  to seven days.** If Propositum stopped and asked you to authorise an irreversible action, the
+  snapshot you were looking at while you decided is **never deleted** — not after you answer, not
+  after the run ends, not after the window.
+
+  Why it cannot be deleted: the question Propositum asked you is an append-only audit row that
+  points at that snapshot. Deleting the snapshot would either break that record or require editing
+  it, and the record of *what a person was shown when they authorised an irreversible effect* is the
+  single most important row in this ledger. It is also, unavoidably, the row most likely to be a
+  **screenshot of a page you were signed into** — which is the worst possible thing to keep forever,
+  and is why this is stated here in full rather than left as a footnote to a seven-day promise.
+
+  It is bounded by how rarely it happens: one snapshot per confirmation question, and a confirmation
+  question is a deliberate stop, not a routine turn. Every sweep counts these rows rather than
+  silently skipping them. Recorded as a revisit condition in
+  [ADR-0010](./adr/0010-acting-in-the-browser.md).
+
+- **It is the one durable table that can be deleted at all.** Everything else in the ledger is
+  guarded by triggers against `UPDATE` and `DELETE` alike. `ActionEvidence` keeps the guard against
+  being **rewritten** — what you were shown must stay what you were shown — and deliberately drops
+  the guard against being **removed**, because a no-`DELETE` trigger and a retention sweep cannot
+  both be true. What stands in for the missing trigger is three tests: the ORM delete exists in one
+  place, that place is reachable only through the sweep, and no raw SQL goes round it. That is
+  weaker than a trigger — it is a check on our own code rather than a refusal by the database — and
+  it is the strongest thing available once a sweep has to exist.
 
 ## Data explicitly not collected
 
@@ -142,7 +189,17 @@ Mac sleeps.
 Observation events and the action ledger are **append-only** and cannot be edited. Deleting a
 `Project` deletes its sessions, events, documents, and ledger.
 
-There is no automatic expiry in slice 0. Everything persists until you delete it.
+**One thing expires on its own: `ActionEvidence`.** *(Amended 2026-08-11 —
+[ADR-0010](./adr/0010-acting-in-the-browser.md). This section said "there is no automatic expiry.
+Everything persists until you delete it", which was true of a product that only watched. It is not
+true of one that keeps whole page trees and screenshots of your authenticated session, and a
+document that still said it would be false in the place it can least afford to be.)*
+
+| | |
+|---|---|
+| Everything else | persists until you delete it |
+| `ActionEvidence` | deleted once you have decided what the Shift produced, and in any case after **seven days** — see *Acting*, above |
+| `ActionEvidence` attached to a confirmation question | **kept indefinitely.** The one exception, argued in full above |
 
 Export is not implemented. The database is a single SQLite file you own and can copy.
 
@@ -291,11 +348,15 @@ to, whereas silent resistance looks identical to not having been attacked.
 Every action is an `ActionIntent` (reason, before) and an `ActionOutcome` (result, after), both
 append-only. Refusals are recorded too.
 
-Append-only is enforced by **three SQLite triggers per table**, reinstalled *and verified* at every
-startup — Prisma's migrations drop triggers on any table rebuild, silently, so the guard is a runtime
-invariant rather than a migration artifact. Startup **fails** if a guard is missing: a database that
-accepts an `UPDATE` on the ledger is worse than an application that will not boot, because the first
-one is silent.
+Append-only is enforced by **three SQLite triggers per table** — no `UPDATE`, no `DELETE`, and no
+`INSERT OR REPLACE`, which walks straight through the first two — reinstalled *and verified* at every
+startup, because Prisma's migrations drop triggers on any table rebuild, silently. Startup **fails**
+if a guard is missing: a database that accepts an `UPDATE` on the ledger is worse than an application
+that will not boot, because the first one is silent.
+
+**`ActionEvidence` has two of the three**, and that is the only exception in the schema. It is
+guarded against being rewritten and not against being removed, because it is the one table that is
+swept. See *Retention and deletion*.
 
 Any sentence in a reviewed draft traces back through changeset → contract → reading → claim →
 evidence → the originating observation event. Every hop is a foreign key, and no step requires a

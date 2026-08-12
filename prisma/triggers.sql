@@ -354,24 +354,47 @@ END;
 
 -- ═══════════════════════════════════════════════════════ action_evidence
 --
--- What the agent saw while acting. Guarded because a ConfirmationRequest points
--- at one of these rows as the thing the person looked at before authorising an
--- effect: a mutable snapshot means the record of what they were shown is not a
--- record of what they were shown.
+-- IMMUTABLE, BUT NOT UNDELETABLE. The one table in this file with two guards
+-- instead of three, and the missing one is deliberate.
+--
+-- Guarded against UPDATE and REPLACE because a ConfirmationRequest points at one
+-- of these rows as the thing the person looked at before authorising an effect:
+-- a mutable snapshot means the record of what they were shown is not a record of
+-- what they were shown.
+--
+-- NOT guarded against DELETE, because ActionEvidence is SWEPT. ADR-0010's
+-- retention section is explicit — "a no-DELETE trigger and a sweep cannot both
+-- be true" — and CONTEXT.md's ActionEvidence entry says the same. This file
+-- shipped with all three guards, which made the published retention promise
+-- unenforceable at the storage layer while reading, in a green test suite, as
+-- though it were enforced. Two documents and one schema disagreed and both
+-- documents were right about the half they described:
+--
+--   * wave 1 was right that the row a person was SHOWN must not change;
+--   * ADR-0010 was right that a retention promise needs a DELETE.
+--
+-- Those are compatible. Immutability is about rewriting history; retention is
+-- about how long history is kept. Only the second one needs DELETE, so only the
+-- DELETE guard goes.
+--
+-- What stands in for it: `src/server/evidence-sweep.ts` is the only production
+-- code that deletes from this table, and `tests/reachability.test.ts` asserts it
+-- runs. If a second deleter ever appears, that is the thing to argue about — not
+-- this trigger.
 
 DROP TRIGGER IF EXISTS action_evidence_no_update;
 CREATE TRIGGER action_evidence_no_update
 BEFORE UPDATE ON action_evidence
 BEGIN
-  SELECT RAISE(ABORT, 'action_evidence is append-only: UPDATE forbidden');
+  SELECT RAISE(ABORT, 'action_evidence is immutable: UPDATE forbidden');
 END;
 
+-- Removed rather than merely absent, because a database created before this
+-- change still has the old trigger and `CREATE TRIGGER IF NOT EXISTS` semantics
+-- would leave it in place. Every startup runs this file, so every startup drops
+-- it — and a sweep that silently fails on some machines and not others is worse
+-- than one that never ran anywhere.
 DROP TRIGGER IF EXISTS action_evidence_no_delete;
-CREATE TRIGGER action_evidence_no_delete
-BEFORE DELETE ON action_evidence
-BEGIN
-  SELECT RAISE(ABORT, 'action_evidence is append-only: DELETE forbidden');
-END;
 
 DROP TRIGGER IF EXISTS action_evidence_no_replace;
 CREATE TRIGGER action_evidence_no_replace

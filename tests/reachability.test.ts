@@ -361,6 +361,87 @@ describe('the safety machinery is reachable from the product', () => {
       'composeOffer has no caller — every offer degrades to the deterministic form forever',
     ).not.toEqual([])
   })
+
+  it('page text is sanitised at ONE door, and the acting path uses it', () => {
+    // Promoted out of the deferred block when the ActionEvidence writer landed.
+    //
+    // `evidence.create` is the second ledger's only writer. The assertion that
+    // matters is not merely that SOMETHING calls it — it is that the caller is
+    // the ledger writer, because that is the module that datamarks. A second
+    // caller would be a second path by which raw accessibility-tree text could
+    // reach SQLite, and it would pass every other test in this suite.
+    expect(
+      callersOf('evidence.create', 'src/persistence/repositories/index.ts'),
+      'nothing writes ActionEvidence — a confirmation has nothing to show the person',
+    ).toEqual(['src/persistence/ledger-writer.ts'])
+  })
+
+  it('the evidence sweep has a caller, or the retention promise is decoration', () => {
+    // The trap this whole file exists to remember, in its most damaging form.
+    // `sweepForGap` below is correct, tested and uncalled, and the cost of that
+    // is a gap reason nobody can produce. An uncalled RETENTION sweep costs
+    // something else: docs/SECURITY_AND_PRIVACY.md publishes a window, and a
+    // published window nothing enforces is a false statement in the document
+    // whose entire job is being true.
+    //
+    // The worker process is the wiring. It is the only long-lived process
+    // Propositum owns, and `npm run worker` is asserted to exist above.
+    expect(
+      callersOf('sweepActionEvidence(', 'src/server/evidence-sweep.ts'),
+      'nothing sweeps ActionEvidence — the published retention window is not enforced',
+    ).toContain('scripts/worker.ts')
+  })
+
+  /**
+   * The guard standing where a trigger used to stand.
+   *
+   * `action_evidence` is the one durable table with no no-DELETE trigger,
+   * because a retention sweep needs one (ADR-0010). The database therefore no
+   * longer refuses a delete here, and these three assertions are the whole of
+   * what replaced it. `docs/SECURITY_AND_PRIVACY.md` cites them, so a weaker
+   * check than the sentence describing it is itself a defect.
+   *
+   * The first version WAS weaker: it asserted the deleting FILE was the
+   * repository, which any new `actionEvidence.deleteMany` anywhere in a
+   * 1,500-line file would satisfy, and it could not see raw SQL at all.
+   */
+  describe('nothing but the sweep deletes action evidence', () => {
+    const repos = 'src/persistence/repositories/index.ts'
+
+    it('the ORM delete lives only in the repository', () => {
+      const deleters = PRODUCTION.filter((f) =>
+        /actionEvidence\.delete(Many)?\(/.test(stripImports(stripComments(readFileSync(f, 'utf8')))),
+      ).map((f) => relative(repo, f))
+
+      expect(
+        deleters,
+        'something outside the repository deletes ActionEvidence — the table has no DELETE guard',
+      ).toEqual([repos])
+    })
+
+    it('and reaching it means calling the sweep, from the sweep module only', () => {
+      // The narrowing the file-level check could not express. Both sweep
+      // methods are the repository's only route to that delete, so if the only
+      // callers are `src/server/evidence-sweep.ts`, the delete is the sweep's.
+      for (const method of ['sweepOlderThan(', 'sweepSettledRuns(']) {
+        expect(
+          callersOf(`evidence.${method}`, repos),
+          `${method} is called from somewhere other than the sweep`,
+        ).toEqual(['src/server/evidence-sweep.ts'])
+      }
+    })
+
+    it('and no raw SQL goes round the repository entirely', () => {
+      // `$executeRawUnsafe('DELETE FROM action_evidence …')` satisfies neither
+      // check above and is exactly what someone reaches for when the ORM path
+      // is inconvenient. Case-insensitive, because SQL is.
+      const raw = PRODUCTION.filter((f) =>
+        /delete\s+from\s+action_evidence/i.test(stripComments(readFileSync(f, 'utf8'))),
+      ).map((f) => relative(repo, f))
+
+      expect(raw, 'raw SQL deletes ActionEvidence, bypassing the sweep entirely').toEqual([])
+    })
+  })
 })
 
 /**
@@ -531,15 +612,6 @@ describe('deferred, and asserted as deferred', () => {
     expect(
       callersOf('confirmations.recordVerdict', repos),
       'confirmations are answerable now — move this into the section above',
-    ).toEqual([])
-  })
-
-  it('nothing records what an agent saw while acting', () => {
-    // Without this the second ledger is empty, so a ConfirmationRequest has
-    // nothing to show the person before they authorise an effect.
-    expect(
-      callersOf('evidence.create', repos),
-      'action evidence is captured now — move this into the section above',
     ).toEqual([])
   })
 
