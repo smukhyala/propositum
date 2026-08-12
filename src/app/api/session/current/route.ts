@@ -50,6 +50,21 @@ function safeOrigin(url: string): string {
   }
 }
 
+/**
+ * An `ObservationKind` as the detector's smaller vocabulary.
+ *
+ * The two that matter are `engaged` and `switchedAway`; everything else is an
+ * arrival as far as `detectPause` is concerned. Anything unrecognised falls to
+ * `navigation`, which is the conservative end: a new kind would count as
+ * activity and delay a hand-off offer rather than produce one.
+ */
+function ambientKind(kind: string): 'navigation' | 'query' | 'engagement' | 'away' {
+  if (kind === 'engaged') return 'engagement'
+  if (kind === 'switchedAway') return 'away'
+  if (kind === 'queried') return 'query'
+  return 'navigation'
+}
+
 export async function GET(request: Request) {
   if (request.headers.get(CUSTOM_HEADER) !== '1') {
     return NextResponse.json({ ok: false, reason: 'missing-custom-header' }, { status: 403 })
@@ -191,7 +206,12 @@ export async function GET(request: Request) {
       origin: url === '' ? '' : safeOrigin(url),
       url,
       title: typeof attested['title'] === 'string' ? attested['title'] : '',
-      kind: 'navigation' as const,
+      // The kind has to survive the crossing. This flattened everything to
+      // `navigation`, which threw away the one fact `detectPause` needs most:
+      // `switchedAway` is `chrome.idle` saying the person left, and without it
+      // the detector cannot tell an engagement report from a still-open tab
+      // apart from somebody actually being here.
+      kind: ambientKind(event.kind),
       ...(typeof dwell === 'number' ? { engagedMs: dwell } : {}),
     }
   })

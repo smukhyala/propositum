@@ -1,321 +1,325 @@
 /**
- * The second, higher bar: is there enough evidence to offer to DO something?
+ * Why Propositum is willing to offer to DO something, not merely to name it.
  *
- * ── Two bars, and why the second one exists ──────────────────────────────
+ * ── Two bars, and this is the higher one ─────────────────────────────────
  *
- * `detectWork` decides whether Propositum may SAY something, and its bar is
- * deliberately low — the cost of a wrong subject line is a sentence nobody
- * agrees with. Offering to do work is a different ask entirely: it spends a
- * person's attention on ratifying something, and then their sources, their
- * Chrome and their time on running it. ADR-0009 §2 sets that second bar and
- * this file is it.
+ * `detectWork` decides whether Propositum may SAY something: a thread, plus
+ * either eight minutes of reading or one search. ADR-0008 pins that bar and
+ * this file does not touch it. It is deliberately low, because the cost of a
+ * wrong subject line is a sentence nobody agrees with, and a person who
+ * disagrees scrolls past it.
  *
- * No model runs here, and none ever should. Every rule below is arithmetic
- * over the same metadata the detector already had — a cleaned URL, a title,
- * dwell, and the order things happened in. The thresholds are the ones already
- * in `detect.ts`, and like those they are guesses set before any real browsing
- * existed. Saying so is cheaper than pretending otherwise.
+ * Offering to do WORK is a different ask. It spends a person's attention on
+ * reading and ratifying an offer, and then — if they accept — their sources,
+ * their Chrome and their time on running it. So there is a second bar above the
+ * first, it is arithmetic, and it lives here.
  *
- * ── Why two groups rather than three-of-six ──────────────────────────────
+ * ── Why one-intent-and-two-investment, and not three-of-six ──────────────
  *
- * The two axes fail differently, and a single counter cannot say *one of these
- * and two of those*.
+ * Because the two groups measure different things and a single counter cannot
+ * say *one of these AND two of those*. Both halves are necessary, and each
+ * excludes a failure the other admits.
  *
- * INTENT separates pursuing from receiving. Someone who searched and then read
- * chose the subject; someone who read three pages of a site they arrived at
- * from a newsletter chose nothing. Without an intent ground, absorption alone
- * qualifies — a long feature, a forum argument, a recipe — and that is the
- * expensive false positive: it interrupts somebody reading the news and teaches
- * them the feature is noise.
+ * **Intent separates pursuing from receiving.** Somebody who searched and then
+ * read chose the subject. Somebody who read four pages of a site they arrived
+ * at from a newsletter chose nothing — the subject was handed to them. Nobody
+ * refines a search, or navigates back to a page they left, for something they
+ * were idly served. Without an intent ground, absorption alone qualifies: a
+ * long feature article, a forum argument, a recipe. That is exactly the false
+ * positive ADR-0008 names as the expensive failure, because it interrupts
+ * someone reading the news and teaches them the feature is noise.
  *
- * INVESTMENT separates "worth an offer" from "a lucky click". Depth on a page,
- * span across the thread and breadth across sites are three different
- * accidents, and needing two of them is not much to ask of real work.
+ * **Investment separates "worth an offer" from "a lucky click".** One strong
+ * ground is cheap to produce by accident. Depth on one page, span across the
+ * thread, and breadth across sites are three different accidents, and needing
+ * two of them is not much to ask of real work.
  *
- * Three-of-six admits both failures directly: `read-deeply + stayed-with-it +
- * followed-across` is the newsletter afternoon with no intent at all, and all
- * three intent grounds inside ninety seconds having read nothing is what a
- * search going badly looks like. Both are ordinary browsing.
+ * Three-of-six would admit both failures directly. It passes `read-deeply` +
+ * `stayed-with-it` + `followed-across` with no intent at all — the newsletter
+ * afternoon. And it passes all three intent grounds with no investment —
+ * somebody who searched, refined and came back inside ninety seconds having
+ * read nothing, which is what a search going badly looks like, and the worst
+ * possible moment to interrupt. Both are ordinary browsing.
  *
- * ── The sentences are the person's own facts ─────────────────────────────
+ * ── No model runs here, ever ─────────────────────────────────────────────
  *
- * Each ground carries a sentence written in the second person about something
- * that observably happened. They are rendered VERBATIM and ABOVE anything a
- * model wrote, because the order on screen is the argument: the person's own
- * facts first, the model's reading of them second. A sentence here may never
- * contain a conclusion — "you searched three different ways" is a fact,
- * "you are researching carriers" is a reading and belongs to the offer.
+ * Same discipline as `ObservationKind`: `GroundKind` is closed and code-owned.
+ * Adding a member is a change to this file, never configuration and never model
+ * output. A model composes the offer AFTER this says there is enough to offer
+ * — it never gets a say in whether there is.
+ *
+ * ── Shape ────────────────────────────────────────────────────────────────
+ *
+ * `CONTEXT.md` sketches this as `{ intent: GroundKind[], investment:
+ * GroundKind[] }`. It ships as one ordered `kinds` list plus the two `as const`
+ * groups a caller can partition by, because the consumer copy is a single block
+ * in a fixed order and two arrays would have to be re-merged to render it. The
+ * grouping is still part of the type rather than a comment — it is what
+ * `INTENT_GROUNDS` and `INVESTMENT_GROUNDS` are.
  */
 
-import { ENGAGED_MS_FOR_WORK } from './detect'
-import type { AmbientObservation, WorkDetected } from './detect'
-import { termsOf } from './topics'
-
-/** The six. Closed, and split into the two groups the sufficiency rule needs. */
-export const INTENT_GROUNDS = ['searched-then-read', 'refined-the-search', 'came-back'] as const
-export const INVESTMENT_GROUNDS = ['read-deeply', 'stayed-with-it', 'followed-across'] as const
-
-export type IntentGround = (typeof INTENT_GROUNDS)[number]
-export type InvestmentGround = (typeof INVESTMENT_GROUNDS)[number]
-export type OfferGroundKind = IntentGround | InvestmentGround
+import { FAST_DETECT } from './detect'
+import type { WorkDetected } from './detect'
+import { searchQueryOf } from './topics'
+import type { ThreadPage } from './topics'
 
 /**
- * What the detector saw, in the form the offer screen and the durable
- * `WorkOffer.grounds` column both take.
+ * Thresholds, on exactly the terms `detect.ts` sets out for its own.
  *
- * `kinds` is what code reasons about; `sentences` is what a person reads; and
- * `sufficient` is the only thing that may gate composing an offer. Keeping all
- * three on one value means the screen cannot show grounds that did not count
- * and the gate cannot count grounds the screen does not show.
+ * Divided by the same `SPEED`, from the same environment variable, read once at
+ * module load. Durations shorten under fast-detect; COUNTS do not, because
+ * dropping a count would stop testing the rule the count exists to state — that
+ * one page is reading, one search is a whim, and one site is not following
+ * anything across.
+ *
+ * These numbers are guesses, set before any real browsing existed, and nothing
+ * has yet told us which of them is wrong. They live together in one block so
+ * that tuning them is a diff rather than an excavation.
  */
+const SPEED = FAST_DETECT ? 20 : 1
+
+/** One page held their attention this long. Ninety seconds is a page read, not
+ *  a page skimmed for the one line it was opened for. */
+export const DEEP_READ_MS = (90 * 1000) / SPEED
+
+/** The thread's own span, first page to last. Fifteen minutes of returning to
+ *  the same subject is a different fact from fifteen minutes of one tab open. */
+export const SUSTAINED_MS = (15 * 60_000) / SPEED
+
+/** Distinct origins before following a subject counts as following it ACROSS.
+ *  Two is the bar a thread already had to clear to exist — see
+ *  `ORIGINS_FOR_THREAD` — so two here would be no additional evidence at all. */
+export const ORIGINS_FOR_OFFER = 3
+
+/** Distinct queries on the subject before it counts as refining rather than
+ *  asking. The second query is the evidence: it says the first answer was read
+ *  and found wanting. */
+export const QUERIES_FOR_REFINEMENT = 2
+
+/** Pages of the thread read AFTER a query, before the query counts as followed.
+ *  This is the rule `PAGES_AFTER_QUERY` named in `detect.ts` and nothing
+ *  enforced; it applies here, at the bar where offering to act is decided,
+ *  rather than at the naming bar ADR-0008 pins. */
+export const PAGES_AFTER_QUERY_FOR_OFFER = 2
+
+/**
+ * Evidence they were PURSUING this, rather than receiving it.
+ *
+ * Every member is an act of navigation a person had to choose. None of them can
+ * be produced by sitting still, which is the property that makes the group
+ * worth requiring.
+ */
+export const INTENT_GROUNDS = ['searched-then-read', 'refined-the-search', 'came-back'] as const
+
+/**
+ * Evidence enough was spent that carrying on is worth offering.
+ *
+ * Depth, span and breadth. Three different accidents, so two of them together
+ * are unlikely to be one.
+ */
+export const INVESTMENT_GROUNDS = ['read-deeply', 'stayed-with-it', 'followed-across'] as const
+
+/**
+ * Closed, code-owned, never model output — the same discipline as
+ * `ObservationKind`. There is no `other`.
+ */
+export type GroundKind = (typeof INTENT_GROUNDS)[number] | (typeof INVESTMENT_GROUNDS)[number]
+
 export interface OfferGrounds {
-  readonly kinds: readonly OfferGroundKind[]
+  readonly kinds: readonly GroundKind[]
   readonly sufficient: boolean
+  /** One consumer sentence per fired ground, in the order shown. */
   readonly sentences: readonly string[]
 }
 
-/**
- * One page held for this long is depth rather than a glance.
- *
- * A quarter of the whole-thread engagement bar. The number is a guess in
- * exactly the way `detect.ts` says its numbers are guesses; what matters is
- * that it is a THRESHOLD ON ONE PAGE, so three tabs skimmed for a minute each
- * cannot add up to it the way the thread total can.
- */
-export const READ_DEEPLY_MS = ENGAGED_MS_FOR_WORK / 4
+/** How many intent grounds must fire. */
+export const INTENT_REQUIRED = 1
+
+/** How many investment grounds must fire. */
+export const INVESTMENT_REQUIRED = 2
 
 /**
- * The thread's own span — first page to last — past which this is a sitting
- * rather than a detour.
+ * Said out loud, exactly as `describeWork` says it.
  *
- * Span, not engaged time, and the two are different on purpose: engaged time
- * already has its own ground above it. Someone who opened a page, went to a
- * meeting and came back to it twenty minutes later has stayed with the subject
- * in a way that ten unbroken minutes of reading does not capture.
+ * An offer produced under 20× thresholds must not read like one produced by
+ * real work: ninety seconds of fast-detect reading renders as the sentence
+ * "you have been at this for 15 minutes" would if the thresholds were real.
+ * Anyone shown that without the note is being told something false about their
+ * own afternoon.
  *
- * ── Why it is not simply `ENGAGED_MS_FOR_WORK` ───────────────────────────
- *
- * It was, and at that value this ground was FREE. `detectWork` already refuses
- * a thread whose engaged time is below `ENGAGED_MS_FOR_WORK` unless it contains
- * a search, and wall-clock span is by construction at least the summed engaged
- * time — so every thread that reached this function by the engagement route had
- * already satisfied it. "Two investment grounds" quietly meant one, and the
- * whole argument for two axes rests on the second one costing something.
- *
- * Doubling it is a guess in exactly the way the numbers it is derived from are
- * guesses. What is not a guess is that it has to be strictly greater than the
- * detector's own threshold, or it measures nothing.
+ * It rides on the LAST sentence rather than arriving as an extra one, so the
+ * "one sentence per fired ground" contract survives and a caller rendering the
+ * list as rows does not grow a row that names no ground.
  */
-export const STAYED_WITH_IT_MS = 2 * ENGAGED_MS_FOR_WORK
+const UNDER_TEST = FAST_DETECT
+  ? ' (fast-detect is on — thresholds are 20× shorter than normal.)'
+  : ''
 
-/** Distinct sites in one thread before breadth is itself evidence. */
-export const ORIGINS_FOR_BREADTH = 3
-
-/** Pages read after a query before the query counts as having been followed. */
-export const PAGES_AFTER_QUERY_FOR_INTENT = 2
-
-/** Minutes, as a person would say them. */
 function minutes(ms: number): string {
   const m = Math.max(1, Math.round(ms / 60_000))
   return `${m} minute${m === 1 ? '' : 's'}`
 }
 
 /** The hostname, as a person would say it. */
-function host(origin: string): string {
+function hostOf(origin: string): string {
   return origin.replace(/^https?:\/\//, '').replace(/\/$/, '')
 }
 
 /**
- * The observations that made up this thread, oldest first.
+ * The queries in this thread that were actually about this thread.
  *
- * Restricted to the thread's own pages, because every ground below is a claim
- * about ONE subject. A search for a car in another tab is not evidence that
- * somebody is pursuing a hiking trip, and the detector already worked out which
- * pages belonged together — throwing that away here would re-introduce the bug
- * `WorkDetected.urls` exists to fix.
+ * A search is only ever recognised by `searchQueryOf`, never by `ThreadPage.
+ * searched` — that field needs the extension to have labelled the navigation a
+ * query, and the extension labels any URL with a `?` a query. This half of the
+ * sufficiency rule must not be satisfiable by a question mark, so the domain
+ * decides for itself and the extension's opinion is not consulted.
+ *
+ * The search must also be ABOUT the thread. Somebody who looked up a lunch
+ * place in the middle of an afternoon of research did not refine anything; that
+ * page joined the thread on some incidental word.
+ *
+ * That test is `page.terms` against the thread's terms, and not a fresh
+ * tokenisation of the query, for a reason worth writing down: `termsOf` strips
+ * trailing site branding from the string it is given, and a bare query is not a
+ * title. `termsOf('gpt-4 vs claude', '')` returns `{gpt}` — the hyphen reads as
+ * a branding separator — and `termsOf('e-processes sequential testing', '')`
+ * returns nothing at all. Every hyphenated search would have failed this test
+ * silently. `page.terms` is built from the URL as well, where the query arrives
+ * through the path branch and is never branding-stripped.
  */
-function threadObservations(
+function pursuitOf(
   detected: WorkDetected,
-  observations: readonly AmbientObservation[],
-): AmbientObservation[] {
-  const wanted = new Set(detected.urls)
-  return observations.filter((o) => wanted.has(o.url)).sort((a, b) => a.at - b.at)
+  pages: readonly ThreadPage[],
+): { readonly queries: readonly string[]; readonly readAfterQuery: number } {
+  const subject = new Set(detected.terms)
+  const queries: string[] = []
+  let firstAt: number | null = null
+
+  for (const page of pages) {
+    const query = searchQueryOf(page.url)
+    if (query === null) continue
+
+    let onSubject = false
+    for (const word of page.terms) {
+      if (subject.has(word)) onSubject = true
+    }
+    if (!onSubject) continue
+
+    if (!queries.includes(query)) queries.push(query)
+    firstAt = firstAt === null ? page.at : Math.min(firstAt, page.at)
+  }
+
+  /**
+   * Pages of the thread READ after that first query.
+   *
+   * Three things are excluded and each is deliberate. The searches themselves,
+   * because a second query is a refinement and the ground below already
+   * notices it. Pages first seen before the query, because nothing that
+   * happened earlier was returned by it. And pages with no engagement at all,
+   * because a burst of tabs opened from a result page and closed unread is the
+   * exact accident this group exists to keep out of an offer — and because a
+   * sentence saying somebody READ four pages had better be true.
+   */
+  const after = firstAt
+  const readAfterQuery =
+    after === null
+      ? 0
+      : pages.filter(
+          (page) =>
+            searchQueryOf(page.url) === null && page.at > after && page.engagedMs > 0,
+        ).length
+
+  return { queries, readAfterQuery }
 }
 
-/** Largest engagement report per page. Reports are cumulative, so the biggest
- *  one is the answer and summing them would count the same minute repeatedly. */
-function engagedByUrl(observations: readonly AmbientObservation[]): Map<string, number> {
-  const byUrl = new Map<string, number>()
-  for (const o of observations) {
-    if (o.engagedMs === undefined) continue
-    byUrl.set(o.url, Math.max(byUrl.get(o.url) ?? 0, o.engagedMs))
-  }
-  return byUrl
+/** The page they came back to, if any — the most-returned-to one, so the
+ *  sentence names the page that best supports it. */
+function returnedTo(pages: readonly ThreadPage[]): ThreadPage | null {
+  const returns = [...pages].filter((page) => page.visits >= 2).sort((a, b) => b.visits - a.visits)
+  return returns[0] ?? null
 }
 
-/** The most informative title seen for a page. The first report often lands
- *  before the document has one at all. */
-function titleByUrl(observations: readonly AmbientObservation[]): Map<string, string> {
-  const byUrl = new Map<string, string>()
-  for (const o of observations) {
-    if (o.title !== '') byUrl.set(o.url, o.title)
-  }
-  return byUrl
+/** Longest single page read in the thread. */
+function deepestRead(pages: readonly ThreadPage[]): number {
+  let deepest = 0
+  for (const page of pages) deepest = Math.max(deepest, page.engagedMs)
+  return deepest
 }
 
 /**
- * Everything Propositum can say it saw, and whether it adds up to enough.
+ * First page to last.
  *
- * Takes `nowMs` rather than reading the clock: the domain layer is replayable,
- * and a ground that depended on when it was evaluated could not be re-derived
- * from a fixture. `tests/architecture.test.ts` enforces that.
+ * Deliberately conservative: `at` is when a page was FIRST seen, so the time
+ * spent on the last page of the thread is not counted. A span measured from the
+ * last page's dwell would be a guess about when they stopped, and this rule is
+ * about how long they have been at it, which the first sightings already say.
  */
-export function groundsFor(
-  detected: WorkDetected,
-  observations: readonly AmbientObservation[],
-  nowMs: number,
-): OfferGrounds {
-  const thread = threadObservations(detected, observations)
-  const kinds: OfferGroundKind[] = []
+function spanOf(pages: readonly ThreadPage[]): number {
+  if (pages.length === 0) return 0
+  const times = pages.map((page) => page.at)
+  return Math.max(...times) - Math.min(...times)
+}
+
+/**
+ * Is there enough here to offer to do something about it?
+ *
+ * Pure arithmetic over what was already detected. No clock — every time this
+ * needs is already on a page — so the same buffer produces the same grounds
+ * whenever it is asked, which is what makes an offer explainable afterwards.
+ */
+export function groundsFor(detected: WorkDetected, pages: readonly ThreadPage[]): OfferGrounds {
+  const { queries, readAfterQuery } = pursuitOf(detected, pages)
+  const back = returnedTo(pages)
+  const deepest = deepestRead(pages)
+  const span = spanOf(pages)
+  const origins = new Set(pages.map((page) => page.origin)).size
+
+  const kinds: GroundKind[] = []
   const sentences: string[] = []
 
-  const say = (kind: OfferGroundKind, sentence: string) => {
+  const fired = (kind: GroundKind, sentence: string) => {
     kinds.push(kind)
     sentences.push(sentence)
   }
 
-  /* ── intent ───────────────────────────────────────────────────────────── */
-
-  /**
-   * A query, then at least two pages from what it returned.
-   *
-   * "From what it returned" is approximated by "after it, in this thread" —
-   * ambient capture has no referrer and the `webNavigation` permission that
-   * would carry the transition type was given up deliberately (ADR-0002). The
-   * thread restriction is what keeps the approximation honest: the pages
-   * counted already share subject matter with the query, which is most of what
-   * "came from it" was trying to establish.
-   */
-  const queries = thread.filter((o) => o.kind === 'query')
-  const firstQuery = queries[0]
-
-  /**
-   * Every URL that was ever a query, however it arrives afterwards.
-   *
-   * Filtering on `o.kind !== 'query'` alone is not enough and the gap is not
-   * theoretical: the content script reports engagement for whichever page has
-   * focus every fifteen seconds, so sitting on a results page for half a minute
-   * produces `kind: 'engagement'` observations whose URL is the SEARCH URL.
-   * Those slipped into the count, and "you searched, then read 2 pages of what
-   * came back" was then said to somebody who had read one — halving the bar and
-   * putting a false sentence on the screen whose entire thesis is that every
-   * sentence on it is checkable.
-   */
-  const queryUrls = new Set(queries.map((o) => o.url))
-
-  if (firstQuery) {
-    const read = new Set<string>()
-    for (const o of thread) {
-      if (o.kind === 'away' || queryUrls.has(o.url)) continue
-      if (o.at >= firstQuery.at) read.add(o.url)
-    }
-    if (read.size >= PAGES_AFTER_QUERY_FOR_INTENT) {
-      say(
-        'searched-then-read',
-        `You searched, then read ${read.size} page${read.size === 1 ? '' : 's'} of what came back.`,
-      )
-    }
+  // Intent first, then investment. The order is the order of the two `as const`
+  // groups, so the block a person reads opens with why Propositum thinks they
+  // chose this — which is the part they are most likely to disagree with.
+  if (queries.length > 0 && readAfterQuery >= PAGES_AFTER_QUERY_FOR_OFFER) {
+    fired('searched-then-read', `You searched, then read ${readAfterQuery} more pages.`)
   }
 
-  /**
-   * A second query sharing terms with the first.
-   *
-   * Sharing terms, not merely being a second query: two unrelated searches are
-   * two subjects, and treating them as a refinement would let an afternoon of
-   * scattered lookups qualify as pursuit of any one of them.
-   */
-  const queryTerms = queries.map((o) => termsOf(o.title, o.url))
-  let refined = false
-  for (let i = 1; i < queryTerms.length && !refined; i += 1) {
-    const later = queryTerms[i]
-    if (!later) continue
-    for (let j = 0; j < i; j += 1) {
-      const earlier = queryTerms[j]
-      if (!earlier) continue
-      if (queries[i]?.url === queries[j]?.url) continue
-      for (const term of later) {
-        if (earlier.has(term)) {
-          refined = true
-          break
-        }
-      }
-      if (refined) break
-    }
-  }
-  if (refined) {
-    say('refined-the-search', 'You searched more than one way for the same thing.')
+  if (queries.length >= QUERIES_FOR_REFINEMENT) {
+    fired('refined-the-search', `You searched ${queries.length} different ways.`)
   }
 
-  /**
-   * A return to a site already in the thread, after having left it.
-   *
-   * Leaving matters. Two pages in a row on one site is browsing it; two pages
-   * on it with somebody else's site in between is a decision to go back, which
-   * is the only reason this is an INTENT ground rather than an investment one.
-   */
-  const order = thread.filter((o) => o.kind !== 'away')
-  let cameBackTo: AmbientObservation | null = null
-  for (let i = 1; i < order.length && cameBackTo === null; i += 1) {
-    const here = order[i]
-    if (!here) continue
-    let leftIt = false
-    for (let j = i - 1; j >= 0; j -= 1) {
-      const before = order[j]
-      if (!before) continue
-      if (before.origin !== here.origin) {
-        leftIt = true
-        continue
-      }
-      if (leftIt) cameBackTo = here
-      break
-    }
-  }
-  if (cameBackTo) {
-    const titles = titleByUrl(thread)
-    const what = titles.get(cameBackTo.url) ?? host(cameBackTo.origin)
-    say('came-back', `You went back to ${what} after leaving it.`)
+  if (back !== null) {
+    fired('came-back', `You went back to ${hostOf(back.origin)} after leaving it.`)
   }
 
-  /* ── investment ───────────────────────────────────────────────────────── */
-
-  const engaged = engagedByUrl(thread)
-  let deepest = 0
-  for (const ms of engaged.values()) deepest = Math.max(deepest, ms)
-  if (deepest >= READ_DEEPLY_MS) {
-    say('read-deeply', `You spent ${minutes(deepest)} on one page.`)
+  if (deepest >= DEEP_READ_MS) {
+    fired('read-deeply', `You spent ${minutes(deepest)} on a single page.`)
   }
 
-  const last = order[order.length - 1]
-  const span = Math.max(0, (last ? Math.max(last.at, nowMs) : nowMs) - detected.since)
-  if (span >= STAYED_WITH_IT_MS) {
-    say('stayed-with-it', `You have been at this for ${minutes(span)}.`)
+  if (span >= SUSTAINED_MS) {
+    fired('stayed-with-it', `You have been at this for ${minutes(span)}.`)
   }
 
-  if (detected.origins.length >= ORIGINS_FOR_BREADTH) {
-    say(
-      'followed-across',
-      `You followed it across ${detected.origins.length} different sites.`,
-    )
+  if (origins >= ORIGINS_FOR_OFFER) {
+    fired('followed-across', `You followed it across ${origins} sites.`)
   }
 
-  /* ── the bar ──────────────────────────────────────────────────────────── */
+  const intent = kinds.filter((kind) => (INTENT_GROUNDS as readonly GroundKind[]).includes(kind))
+  const investment = kinds.filter((kind) =>
+    (INVESTMENT_GROUNDS as readonly GroundKind[]).includes(kind),
+  )
 
-  const intent = kinds.filter((k) => (INTENT_GROUNDS as readonly string[]).includes(k)).length
-  const investment = kinds.length - intent
+  const last = sentences.length - 1
+  if (last >= 0 && UNDER_TEST !== '') sentences[last] = `${sentences[last] ?? ''}${UNDER_TEST}`
 
   return {
     kinds,
+    sufficient: intent.length >= INTENT_REQUIRED && investment.length >= INVESTMENT_REQUIRED,
     sentences,
-    sufficient: intent >= 1 && investment >= 2,
   }
 }
