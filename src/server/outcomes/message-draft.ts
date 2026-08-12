@@ -43,6 +43,6 @@ export function messageDrafts(
       detail: { forWhat: production.forWhat, text: production.text },
     }
 
-    return { body }
+    return { body, consumed: 1 }
   })
 }

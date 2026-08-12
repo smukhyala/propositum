@@ -66,6 +66,18 @@ export interface OutcomeBody {
  *  the `Changeset` that hangs off a `document-changes` outcome. */
 export interface Production {
   readonly body: OutcomeBody
+  /**
+   * How many `OutcomeProposal`s this outcome accounts for.
+   *
+   * Carried rather than re-derived, because the writers group differently and
+   * two of them drop selectively. `externalEffects` filters production by
+   * production against the ledger, so a run yielding three `landed` claims of
+   * which one is corroborated produces ONE outcome that accounts for ONE
+   * production — and a drop count re-derived from "did an external-effect
+   * outcome exist" would report zero drops in exactly the case the counter
+   * exists to expose: a model describing work as already out in the world.
+   */
+  readonly consumed: number
   readonly attach?: ((ctx: AppContext, outcomeId: string) => Promise<void>) | undefined
 }
 
@@ -173,7 +185,8 @@ export async function recordOutcomes(
   // productions rather than as outcomes, because "eleven items were dropped" is
   // the number that tells you the set is wrong; "one collection was dropped"
   // hides ten of them.
-  const dropped = input.produced.length - realised(planned, input.produced)
+  const dropped =
+    input.produced.length - planned.reduce((total, entry) => total + entry.production.consumed, 0)
 
   if (planned.length === 0) {
     // CONTEXT.md's rule, generalised from the empty changeset: a run with no
@@ -202,45 +215,6 @@ export async function recordOutcomes(
   }
 
   return { heldOutcomeIds, written: rows.length, dropped }
-}
-
-/**
- * How many of the run's productions actually made it into a row.
- *
- * Computed by re-counting what each planned outcome consumed rather than by a
- * flag on the production, because a flag would be a second place for the same
- * fact and the two would disagree on exactly the case that matters: a
- * `document-changes` outcome whose diff came out empty consumed nothing, even
- * though its writer was handed six drafted sections.
- */
-function realised(
-  planned: ReadonlyArray<{ kind: ShiftOutcomeKind }>,
-  produced: readonly OutcomeProposal[],
-): number {
-  const kinds = new Set(planned.map((entry) => entry.kind))
-  let count = 0
-
-  for (const production of produced) {
-    switch (production.kind) {
-      case 'section-prose':
-        if (kinds.has('document-changes')) count += 1
-        break
-      case 'item':
-        if (kinds.has('collection')) count += 1
-        break
-      case 'written-answer':
-        if (kinds.has('answer')) count += 1
-        break
-      case 'composed-text':
-        if (kinds.has('message-draft')) count += 1
-        break
-      case 'landed':
-        if (kinds.has('external-effect')) count += 1
-        break
-    }
-  }
-
-  return count
 }
 
 /**

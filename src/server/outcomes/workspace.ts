@@ -64,6 +64,9 @@ export interface Workspace {
 interface ContractFacts {
   readonly approvedSourceIds: readonly string[]
   readonly baseVersionId: string | null
+  /** The Output dial, as ratified. `suggestions-only` removes `draft-section`
+   *  entirely, so it removes the ability to produce document changes. */
+  readonly output: string
 }
 
 export async function loadWorkspace(ctx: AppContext, contract: ContractFacts): Promise<Workspace> {
@@ -110,29 +113,40 @@ function contextFor(title: string | undefined, content: string | undefined): str
  *
  * ── Derived from the capability, not from a wish ─────────────────────────
  *
- * A pinned base version IS the document capability: the gate grants
- * `read-document` and `draft-section` if and only if one exists, so
- * `document-changes` is expected exactly when one is pinned. That is a fact
- * about what the run can do, read off the same field the gate reads, rather than
- * a second stored intention that could disagree with it.
+ * A pinned base version and a granted `draft-section` together ARE the document
+ * capability, so `document-changes` is expected exactly when both hold. That is
+ * a fact about what the run can actually do, read off the same two fields the
+ * gate and the policy compiler read, rather than a second stored intention that
+ * could disagree with them.
  *
- * ── And `answer` when nothing is pinned, which is a guess ────────────────
+ * ── The Output dial is half of it, and leaving it out contradicted itself ─
  *
- * Said plainly because it deserves to be doubted. A shift that pins no document
- * could honestly be after a collection, a message draft, or an effect out in the
- * world, and nothing on `HandoffContract` distinguishes them — the column that
- * would, `WorkOffer.expectedKinds`, belongs to an offer that no code writes yet.
+ * `compilePolicy` deletes `draft-section` under `suggestions-only`. A shift with
+ * a pinned document and that dial set would otherwise have been handed
+ * `expects: ['document-changes']` alongside *"You may NOT draft text — this run
+ * is research only"*, in one prompt. The planner would plan drafting steps, the
+ * gate would refuse each one with `action_kind_not_allowed`, and three refusals
+ * in a row is itself a stop condition — so a self-contradicting prompt would
+ * have ended the shift early and reported it as the worker going wrong.
  *
- * `answer` is chosen as the default because it is the only one of the four that
- * is true of ALL of them: a run that collected rates has also answered a
- * question, and a run that drafted a message has too. Guessing `collection`
- * would tell a planner to build a table when it was asked for a sentence. This
- * costs a slightly vague instruction; the alternative costs a confidently wrong
- * one.
+ * ── And `answer` otherwise, which is a guess ─────────────────────────────
+ *
+ * Said plainly because it deserves to be doubted. A shift that cannot change a
+ * document could honestly be after a collection, a message draft, or an effect
+ * out in the world, and nothing on `HandoffContract` distinguishes them — the
+ * column that would, `WorkOffer.expectedKinds`, belongs to an offer that no code
+ * writes yet.
+ *
+ * `answer` is chosen because it is the only one of the four that is true of ALL
+ * of them: a run that collected rates has also answered a question, and so has
+ * one that drafted a message. Guessing `collection` would tell a planner to
+ * build a table when it was asked for a sentence. This costs a slightly vague
+ * instruction; the alternative costs a confidently wrong one.
  *
  * When the accept path starts writing offers, this should read `expectedKinds`
  * off the offer for the session and fall back to here.
  */
 export function expectedKindsOf(contract: ContractFacts): readonly ShiftOutcomeKind[] {
-  return contract.baseVersionId === null ? ['answer'] : ['document-changes']
+  const mayChangeADocument = contract.baseVersionId !== null && contract.output !== 'suggestions-only'
+  return mayChangeADocument ? ['document-changes'] : ['answer']
 }

@@ -65,6 +65,6 @@ export function answers(
       detail: { text: production.text },
     }
 
-    return { body }
+    return { body, consumed: 1 }
   })
 }

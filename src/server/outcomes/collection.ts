@@ -43,5 +43,5 @@ export function collection(
     },
   }
 
-  return { body }
+  return { body, consumed: productions.length }
 }

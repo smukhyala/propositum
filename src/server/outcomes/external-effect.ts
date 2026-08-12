@@ -60,7 +60,7 @@ export function externalEffects(
       detail: { what: production.what, where: production.where },
     }
 
-    kept.push({ body })
+    kept.push({ body, consumed: 1 })
   }
 
   return kept

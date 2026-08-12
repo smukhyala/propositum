@@ -741,6 +741,21 @@ export interface ChangesetRepository {
     outcomeId?: string | undefined
     changes: readonly ProposedChangeInput[]
   }): Promise<{ id: string }>
+  /**
+   * The changes belonging to one `document-changes` ShiftOutcome.
+   *
+   * Exists beside `forContract` rather than replacing it, and the difference
+   * matters where it is used. `forContract` returns the NEWEST changeset for a
+   * contract, which is what the review screen wants — the person is deciding on
+   * the latest proposal. The reviewer is judging ONE RUN'S OWN work, and a
+   * contract can carry more than one run (a re-accept enqueues another, a stale
+   * lease re-claims). Handing the reviewer the newest changeset would let it
+   * annotate a different run's changes and resolve its findings to their ids.
+   */
+  forOutcome(outcomeId: string): Promise<{
+    id: string
+    changes: Array<ProposedChangeInput & { id: string }>
+  } | null>
   forContract(contractId: string): Promise<{
     id: string
     baseVersionId: string
@@ -773,6 +788,27 @@ function changesetRepository(prisma: PrismaClient): ChangesetRepository {
         },
         select: { id: true },
       }),
+    forOutcome: (outcomeId) =>
+      prisma.changeset.findUnique({
+        where: { outcomeId },
+        select: {
+          id: true,
+          changes: {
+            orderBy: { startOffset: 'asc' },
+            select: {
+              id: true,
+              startOffset: true,
+              endOffset: true,
+              prefix: true,
+              exact: true,
+              suffix: true,
+              replacement: true,
+              reason: true,
+            },
+          },
+        },
+      }),
+
     forContract: async (contractId) => {
       const row = await prisma.changeset.findFirst({
         where: { contractId },

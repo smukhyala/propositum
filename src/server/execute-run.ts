@@ -290,17 +290,6 @@ async function review(
     const held = produced.filter((outcome) => outcome.reversibility === 'held')
     if (held.length === 0) return
 
-    /**
-     * The changes belonging to the `document-changes` outcome, if there is one.
-     *
-     * Read by contract rather than by outcome, because `changesets.forContract`
-     * is the accessor that already exists and the changeset kept its contract
-     * link for exactly this sort of reason. At most one `document-changes`
-     * outcome exists per run — its writer groups every drafted section into
-     * one — so there is no ambiguity to resolve here.
-     */
-    const changeset = await ctx.repos.changesets.forContract(contract.id)
-
     // Its own run row, so the second pass is visible in the ledger as a thing
     // that happened rather than folded into the worker's record.
     const run = await ctx.repos.runs.enqueue({ contractId: contract.id, role: 'reviewer' })
@@ -310,32 +299,46 @@ async function review(
     const changeIdByHandle = new Map<string, string>()
     const outcomeIdByHandle = new Map<string, string>()
 
-    const handles: ReviewedOutcome[] = held.map((outcome, index) => {
+    const handles: ReviewedOutcome[] = []
+
+    for (const [index, outcome] of held.entries()) {
       const handle = `O${index + 1}`
       outcomeIdByHandle.set(handle, outcome.id)
 
-      const changes =
-        outcome.kind === 'document-changes' && changeset
-          ? changeset.changes.map((change, position) => {
-              const changeHandle = `C${position + 1}`
-              changeIdByHandle.set(changeHandle, change.id)
-              return {
-                handle: changeHandle,
-                section: sectionTitleFor(change.exact) ?? 'the document',
-                replacement: change.replacement,
-                reason: change.reason,
-              }
-            })
-          : undefined
+      /**
+       * The changes under this outcome, looked up BY THE OUTCOME.
+       *
+       * Not `changesets.forContract`, which returns the newest changeset for the
+       * contract. A contract can carry more than one worker run — a re-accept
+       * enqueues another, a stale lease re-claims — and the reviewer is judging
+       * one run's own work. Reading the newest would let it annotate a different
+       * run's changes and then resolve its findings onto their ids, which is a
+       * mis-attribution the person has no way to notice.
+       */
+      const changeset =
+        outcome.kind === 'document-changes'
+          ? await ctx.repos.changesets.forOutcome(outcome.id)
+          : null
 
-      return {
+      const changes = changeset?.changes.map((change, position) => {
+        const changeHandle = `C${position + 1}`
+        changeIdByHandle.set(changeHandle, change.id)
+        return {
+          handle: changeHandle,
+          section: sectionTitleFor(change.exact) ?? 'the document',
+          replacement: change.replacement,
+          reason: change.reason,
+        }
+      })
+
+      handles.push({
         handle,
         headline: outcome.headline,
         reason: outcome.reason,
         summary: outcome.headline,
         ...(changes === undefined ? {} : { changes }),
-      }
-    })
+      })
+    }
 
     const judged = await deps.model.run(reviewBoundary(reviewHandlesFor(handles)), {
       objective: contract.objective,

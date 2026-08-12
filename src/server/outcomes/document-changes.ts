@@ -89,6 +89,7 @@ export function documentChanges(
 
   return {
     body,
+    consumed: productions.length,
     // Written after the outcome row exists, because `Changeset.outcomeId` points
     // at it. `contractId` stays on the changeset — the review screen finds
     // changes by contract, and the settled-once foreign key from DocumentVersion
