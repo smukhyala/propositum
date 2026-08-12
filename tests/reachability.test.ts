@@ -129,6 +129,23 @@ describe('the safety machinery is reachable from the product', () => {
     expect(callersOf('authorize(', 'src/policy/gate.ts')).not.toEqual([])
   })
 
+  it('the offer path consults the grounds, or the higher bar binds nothing', () => {
+    // `groundsFor` is the arithmetic that separates offering to DO work from
+    // offering to name it — ADR-0009 §2. If `composeOffer` stopped consulting
+    // it, every offer would be gated by `detectWork` alone — the LOW bar — and
+    // the two-group rule would exist only in its own tests, which is exactly
+    // the shape of the three defects at the top of this file.
+    //
+    // Promoted out of the deferred block when the offer boundary landed. It
+    // must consult it BEFORE recording the attempt, so a thread that has not
+    // qualified yet can still qualify later; that ordering is pinned in
+    // tests/compose-offer.test.ts rather than here.
+    expect(
+      callersOf('groundsFor(', 'src/domain/detection/grounds.ts'),
+      'nothing asks whether the grounds are sufficient — the higher bar binds nothing',
+    ).toContain('src/server/compose-offer.ts')
+  })
+
   it('the gate consults the reversibility classifier, or nothing is ever confirmed', () => {
     // The classifier is what turns "click this" into "ask them first". If the
     // gate stopped calling it, every proposal would sail through as ordinary
@@ -403,22 +420,6 @@ describe('deferred, and asserted as deferred', () => {
    * If you are here because one went red: that is the system working. Move it.
    */
   const repos = 'src/persistence/repositories/index.ts'
-
-  it('nothing asks whether the grounds are sufficient, so the higher bar binds nothing', () => {
-    // `groundsFor` is the arithmetic that separates offering to DO work from
-    // offering to name it — ADR-0009 §2. Until the offer path consults it,
-    // every offer is still gated by `detectWork` alone, which is the LOW bar,
-    // and the two-group rule exists only in this file's tests.
-    //
-    // This is the shape of the three defects at the top of this file, and the
-    // reason it is written down rather than left to be noticed: a sufficiency
-    // rule nothing calls is indistinguishable from one that was wired and is
-    // silently passing everything.
-    expect(
-      callersOf('groundsFor(', 'src/domain/detection/grounds.ts'),
-      'the offer path consults OfferGrounds now — move this into the section above',
-    ).toEqual([])
-  })
 
   it('no WorkOffer is written, so an accepted offer leaves no durable trace', () => {
     // Which also means `grounds` — the frozen record of WHY Propositum asked —

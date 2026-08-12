@@ -19,7 +19,7 @@ import { reviewBoundary, reviewHandlesFor, reviewSchema } from '../src/model/bou
 import { shiftReportBoundary } from '../src/model/boundaries/shift-report'
 import { subjectBoundary } from '../src/model/boundaries/subject'
 import { offerBoundary, offerSchema, outcomeKindsOf } from '../src/model/boundaries/offer'
-import { SHIFT_OUTCOME_KINDS } from '../src/domain/execution/outcome-kinds'
+import { SHIFT_OUTCOME_KINDS } from '../src/domain/outcome/shift-outcome'
 import { sessionReadingBoundary, handlesFor } from '../src/model/boundaries/session-reading'
 
 const sources = [

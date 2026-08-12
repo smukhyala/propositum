@@ -57,9 +57,10 @@
 import { datamark } from '../model/untrusted'
 import { offerBoundary, outcomeKindsOf } from '../model/boundaries/offer'
 import type { ModelClient } from '../model/client'
-import { PRODUCIBLE } from '../domain/execution/outcome-kinds'
+import { PRODUCIBLE } from '../domain/outcome/shift-outcome'
 import { groundsFor } from '../domain/detection/grounds'
 import { QUERY_PARAMS } from '../capture/url'
+import { threadPagesOf } from '../domain/detection/detect'
 import type { AmbientObservation, WorkDetected } from '../domain/detection/detect'
 import { signatureOf } from './ambient-store'
 import type { AmbientStore, NamedThread } from './ambient-store'
@@ -151,8 +152,15 @@ export async function composeOffer(
 ): Promise<void> {
   const signature = signatureOf(detected.terms)
 
+  // `groundsFor` reads pages, not raw observations, and the difference is
+  // load-bearing rather than cosmetic. Engagement is reported repeatedly and
+  // cumulatively, so a page is many observations; `threadPagesOf` folds them
+  // into one row per URL with dwell taken as the MAX rather than the sum, and
+  // it is the only place that also counts revisits. Handing the raw list
+  // straight to the grounds would have made `read-deeply` compare a threshold
+  // against a single report and `came-back` blind.
   const observations = store.forUrls(detected.urls, nowMs)
-  const grounds = groundsFor(detected, observations)
+  const grounds = groundsFor(detected, threadPagesOf(observations, detected, nowMs))
 
   // The bar, before the memory. See the header: recording an attempt here would
   // silence a thread that has not yet earned an offer but is about to.

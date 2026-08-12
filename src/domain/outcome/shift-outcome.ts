@@ -60,6 +60,29 @@ export const SHIFT_OUTCOME_KINDS = [
 
 export type ShiftOutcomeKind = (typeof SHIFT_OUTCOME_KINDS)[number]
 
+/**
+ * The five kinds as one line each, in the words a person would use.
+ *
+ * Handed to the offer boundary as `producible` so that the model composes an
+ * offer Propositum can actually keep. A model asked to propose work with no
+ * statement of what the machine can make will cheerfully offer to phone
+ * somebody, and the person then declines an offer that was never on the table —
+ * which teaches them the feature guesses, when in fact nobody had told it.
+ *
+ * It lives here rather than beside the offer boundary because it is a
+ * restatement of `SHIFT_OUTCOME_KINDS` for a different reader, and the two
+ * drifting apart is exactly how the model comes to promise a shape no writer
+ * exists for. Same file, same order, one entry each — so a sixth kind that
+ * arrives without a sentence is visible on sight.
+ */
+export const PRODUCIBLE: readonly string[] = [
+  'changes to a document you already have, held for you to accept or reject one at a time',
+  'a collection of things found and kept, decidable one at a time',
+  'a written answer to a question, citing what was read to support it',
+  'a message written for somebody and left unsent',
+  'something done out on a page — a form filled in, a reply sent — which cannot be taken back',
+]
+
 /** The stored kind, or `null` when it is outside the closed set. */
 export function asShiftOutcomeKind(raw: string): ShiftOutcomeKind | null {
   return (SHIFT_OUTCOME_KINDS as readonly string[]).includes(raw) ? (raw as ShiftOutcomeKind) : null

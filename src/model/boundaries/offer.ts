@@ -77,8 +77,8 @@ import { z } from 'zod'
 import type { ModelBoundary } from '../client'
 import { UNTRUSTED_CONTENT_RULE } from '../untrusted'
 import type { Datamarked } from '../untrusted'
-import { SHIFT_OUTCOME_KINDS } from '../../domain/execution/outcome-kinds'
-import type { ShiftOutcomeKind } from '../../domain/execution/outcome-kinds'
+import { SHIFT_OUTCOME_KINDS } from '../../domain/outcome/shift-outcome'
+import type { ShiftOutcomeKind } from '../../domain/outcome/shift-outcome'
 
 export interface OfferInput {
   /**

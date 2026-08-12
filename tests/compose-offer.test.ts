@@ -14,7 +14,7 @@ import { composeOffer } from '../src/server/compose-offer'
 import { nameThread } from '../src/server/name-thread'
 import { createAmbientStore, signatureOf } from '../src/server/ambient-store'
 import type { AmbientStore, NamedThread } from '../src/server/ambient-store'
-import { detectWork } from '../src/domain/detection/detect'
+import { detectWork, threadPagesOf } from '../src/domain/detection/detect'
 import type { AmbientObservation, WorkDetected } from '../src/domain/detection/detect'
 import { groundsFor } from '../src/domain/detection/grounds'
 
@@ -160,7 +160,10 @@ describe('the grounds bar is in front of the model, not behind it', () => {
 
   it('composes once the two groups are satisfied', async () => {
     const { store, detected, named, at } = loaded(strongThread())
-    const grounds = groundsFor(detected, store.forUrls(detected.urls, T0 + 20 * MINUTE))
+    const grounds = groundsFor(
+      detected,
+      threadPagesOf(store.forUrls(detected.urls, T0 + 20 * MINUTE), detected, T0 + 20 * MINUTE),
+    )
 
     expect(grounds.sufficient).toBe(true)
     expect(grounds.sentences.length).toBeGreaterThan(0)
@@ -256,111 +259,20 @@ describe('what the offer call is shown', () => {
 })
 
 /**
- * The bar itself, tested directly.
+ * The bar itself is tested in `tests/grounds.test.ts`, not here.
  *
- * `groundsFor` is arithmetic with a safety argument attached, and the argument
- * is the SPLIT rather than the count: without these, deleting the intent
- * requirement — the half of ADR-0009 that keeps Propositum out of an afternoon
- * of reading — leaves every other test in this file green.
+ * This file used to carry its own table over `groundsFor`, written against a
+ * provisional copy of `grounds.ts` that existed only so this unit could compile
+ * before the owning one landed. Both are gone: the real `groundsFor` reads
+ * `ThreadPage`s rather than raw observations, and `tests/grounds.test.ts` covers
+ * every ground firing and not firing, the sufficiency split, and the false
+ * positive that must not qualify — including the two cases this table was added
+ * to pin, that one query seen twice is not a refinement and that a results page
+ * is not one of the pages returned to.
+ *
+ * What stays here is the seam: that the bar is consulted BEFORE the model, and
+ * before the attempt is remembered.
  */
-describe('one intent ground AND two investment ones', () => {
-  const detected = (over: Partial<WorkDetected> = {}): WorkDetected => ({
-    terms: ['parcel', 'rates'],
-    origins: [CARRIER_A, CARRIER_B],
-    pages: 3,
-    searches: 0,
-    engagedMs: 9 * MINUTE,
-    since: T0,
-    focus: null,
-    titles: [],
-    urls: [],
-    because: 'followed-across-sites',
-    ...over,
-  })
-
-  it('refuses an afternoon of absorbing, however deep', () => {
-    // Three investment grounds and no intent: the newsletter afternoon. This is
-    // the false positive ADR-0008 calls the expensive one, because it
-    // interrupts somebody reading and teaches them the feature is noise.
-    const grounds = groundsFor(detected({ origins: [CARRIER_A, CARRIER_B, CARRIER_C] }), [
-      observation({ at: T0, url: `${CARRIER_A}/a`, kind: 'engagement', engagedMs: 6 * MINUTE }),
-      observation({ at: T0 + 6 * MINUTE, url: `${CARRIER_B}/b` }),
-      observation({ at: T0 + 12 * MINUTE, url: `${CARRIER_C}/c` }),
-    ])
-
-    expect(grounds.kinds).toContain('read-deeply')
-    expect(grounds.kinds).toContain('stayed-with-it')
-    expect(grounds.kinds).toContain('followed-across')
-    expect(grounds.kinds.filter((k) => k === 'searched-then-read')).toEqual([])
-    expect(grounds.sufficient).toBe(false)
-  })
-
-  it('refuses a search that is going badly, however pursued', () => {
-    // Three intent grounds inside ninety seconds having read nothing.
-    const grounds = groundsFor(detected(), [
-      observation({ at: T0, url: `${ENGINE}/find?q=parcel+rates`, kind: 'query' }),
-      observation({ at: T0 + 10_000, url: `${CARRIER_A}/a` }),
-      observation({ at: T0 + 20_000, url: `${CARRIER_B}/b` }),
-      observation({ at: T0 + 30_000, url: `${ENGINE}/find?q=parcel+rates+5kg`, kind: 'query' }),
-      observation({ at: T0 + 40_000, url: `${CARRIER_A}/a` }),
-    ])
-
-    expect(grounds.kinds).toContain('searched-then-read')
-    expect(grounds.kinds).toContain('refined-the-search')
-    expect(grounds.kinds).toContain('came-back')
-    expect(grounds.sufficient).toBe(false)
-  })
-
-  it('accepts one of each group plus one', () => {
-    const grounds = groundsFor(detected({ origins: [CARRIER_A, CARRIER_B, CARRIER_C] }), [
-      observation({ at: T0, url: `${ENGINE}/find?q=parcel+rates`, kind: 'query' }),
-      observation({ at: T0 + MINUTE, url: `${CARRIER_A}/a`, kind: 'engagement', engagedMs: 5 * MINUTE }),
-      observation({ at: T0 + 7 * MINUTE, url: `${CARRIER_B}/b` }),
-      observation({ at: T0 + 12 * MINUTE, url: `${CARRIER_C}/c` }),
-    ])
-
-    expect(grounds.sufficient).toBe(true)
-    expect(grounds.sentences).toHaveLength(grounds.kinds.length)
-  })
-
-  it('does not count a tracking parameter as a search', () => {
-    const grounds = groundsFor(detected({ origins: [CARRIER_A, CARRIER_B, CARRIER_C] }), [
-      observation({ at: T0, url: `${CARRIER_A}/a?utm_source=newsletter`, kind: 'query' }),
-      observation({ at: T0 + MINUTE, url: `${CARRIER_B}/b`, kind: 'engagement', engagedMs: 5 * MINUTE }),
-      observation({ at: T0 + 12 * MINUTE, url: `${CARRIER_C}/c` }),
-    ])
-
-    expect(grounds.kinds).not.toContain('searched-then-read')
-    expect(grounds.sufficient).toBe(false)
-  })
-
-  it('does not count the results page as one of the pages it returned', () => {
-    // A search and ONE page read is not "then read what came back". The results
-    // page is observed several times — navigation, then engagement — and
-    // counting those would halve the bar without anybody noticing.
-    const grounds = groundsFor(detected(), [
-      observation({ at: T0, url: `${ENGINE}/find?q=parcel+rates`, kind: 'query' }),
-      observation({ at: T0 + 10_000, url: `${ENGINE}/find?q=parcel+rates`, kind: 'engagement', engagedMs: 20_000 }),
-      observation({ at: T0 + MINUTE, url: `${CARRIER_A}/a` }),
-    ])
-
-    expect(grounds.kinds).not.toContain('searched-then-read')
-  })
-
-  it('does not call one search seen twice a refinement', () => {
-    // The back button returns to the results page. Saying "you searched again,
-    // narrowing what you were after" about that is not a loose bar, it is a
-    // sentence about their afternoon that is not true — and it gets frozen onto
-    // the offer they accept.
-    const grounds = groundsFor(detected(), [
-      observation({ at: T0, url: `${ENGINE}/find?q=parcel+rates`, kind: 'query' }),
-      observation({ at: T0 + MINUTE, url: `${CARRIER_A}/a` }),
-      observation({ at: T0 + 2 * MINUTE, url: `${ENGINE}/find?q=parcel+rates`, kind: 'query' }),
-    ])
-
-    expect(grounds.kinds).not.toContain('refined-the-search')
-  })
-})
 
 describe('one call per thread, including the failures', () => {
   it('does not compose twice for the same signature', async () => {

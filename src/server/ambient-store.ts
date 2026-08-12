@@ -30,7 +30,7 @@
 import { FAST_DETECT, WINDOW_MS } from '../domain/detection/detect'
 import type { AmbientObservation, PauseDetected, WorkDetected } from '../domain/detection/detect'
 import type { OfferGrounds } from '../domain/detection/grounds'
-import type { ShiftOutcomeKind } from '../domain/execution/outcome-kinds'
+import type { ShiftOutcomeKind } from '../domain/outcome/shift-outcome'
 
 /**
  * A hard ceiling independent of the window.

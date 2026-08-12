@@ -21,7 +21,7 @@
 import { describe, it, expect } from 'vitest'
 import { AnthropicModelClient } from '../src/model/anthropic'
 import { offerBoundary, outcomeKindsOf } from '../src/model/boundaries/offer'
-import { SHIFT_OUTCOME_KINDS, PRODUCIBLE } from '../src/domain/execution/outcome-kinds'
+import { SHIFT_OUTCOME_KINDS, PRODUCIBLE } from '../src/domain/outcome/shift-outcome'
 import { datamark } from '../src/model/untrusted'
 
 try {
