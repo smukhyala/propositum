@@ -37,7 +37,7 @@ import { describeOffer, describePause, describeWork, signatureOf } from '@/serve
 import { nameThread } from '@/server/name-thread'
 import { composeOffer } from '@/server/compose-offer'
 import { AnthropicModelClient } from '@/model/anthropic'
-import { detectPause, detectWork } from '@/domain/detection/detect'
+import { detectPause, detectWork, threadPagesOf } from '@/domain/detection/detect'
 import { groundsFor } from '@/domain/detection/grounds'
 
 /** An origin, or an empty string. Never throws — a malformed stored URL is a
@@ -137,7 +137,7 @@ export async function GET(request: Request) {
      * The set frozen onto the composed offer is the one that permitted it to be
      * composed, which is the set the durable `WorkOffer.grounds` column wants.
      */
-    const grounds = groundsFor(detected, observations, now)
+    const grounds = groundsFor(detected, threadPagesOf(observations, detected, now))
     const composed = ambient.offerFor(signature)
 
     /**

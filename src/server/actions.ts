@@ -44,7 +44,7 @@ import {
 } from '../model/boundaries/session-reading'
 import type { PromptEvent } from '../model/boundaries/session-reading'
 import { handoffBoundary, sourceHandlesFor } from '../model/boundaries/handoff'
-import { detectWork } from '../domain/detection/detect'
+import { detectWork, threadPagesOf } from '../domain/detection/detect'
 import { groundsFor } from '../domain/detection/grounds'
 import { matchProject, projectTerms } from '../domain/detection/match-project'
 import type { ProjectCandidate } from '../domain/detection/match-project'
@@ -1193,7 +1193,9 @@ export async function offerForThread(threadSignature: string): Promise<
     const stillThisThread = detected !== null && signatureOf(detected.terms) === thread
     const grounds =
       composed?.grounds ??
-      (stillThisThread && detected ? groundsFor(detected, observations, now).sentences : [])
+      (stillThisThread && detected
+        ? groundsFor(detected, threadPagesOf(observations, detected, now)).sentences
+        : [])
 
     const describedFor = stillThisThread && detected ? describeWork(detected, thread, named) : null
     const sentence =

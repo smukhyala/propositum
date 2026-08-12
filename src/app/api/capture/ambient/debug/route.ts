@@ -59,7 +59,7 @@
 import { NextResponse } from 'next/server'
 
 import { CUSTOM_HEADER, fromOurExtension } from '@/capture/transport'
-import { detectPause, detectWork } from '@/domain/detection/detect'
+import { detectPause, detectWork, threadPagesOf } from '@/domain/detection/detect'
 import { groundsFor } from '@/domain/detection/grounds'
 import { ambientStore, expectedOrigin } from '@/server/capture-store'
 
@@ -101,6 +101,9 @@ export async function GET(request: Request) {
     // The second bar, shown beside the first. "It detected work but did not
     // offer" is otherwise indistinguishable from "it detected nothing", and
     // those have completely different fixes.
-    grounds: detected === null ? null : groundsFor(detected, observations, now),
+    grounds:
+      detected === null
+        ? null
+        : groundsFor(detected, threadPagesOf(observations, detected, now)),
   })
 }
