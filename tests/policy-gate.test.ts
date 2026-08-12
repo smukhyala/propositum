@@ -60,7 +60,18 @@ const run: RunContext = {
   currentSnapshotId: 'snap-1',
   actionsTaken: 0,
   mutatingActionsTaken: 0,
-  confirmedRequestIds: new Set<string>(),
+  /**
+   * One confirmation the person has already given, so a proposal that
+   * legitimately needs one can still be a WELL-FORMED PERMITTED proposal in the
+   * table below.
+   *
+   * `press-key` needs this and the other kinds do not. Its target is whatever
+   * holds focus, so no snapshot describes it, so `evidenceFor` can never bind
+   * evidence to it and the classifier always escalates. That is deliberate —
+   * see the note in `gate.ts` — and it means "a press-key the gate permits" is
+   * necessarily "a press-key that was confirmed".
+   */
+  confirmedRequestIds: new Set<string>(['confirmed-1']),
   targetEvidence: harmless,
 }
 
@@ -98,7 +109,9 @@ const VALID_PARAMS: Readonly<Record<ActionKind, ActionParams>> = {
   navigate: { approvedSourceId: 'src-approved', path: '/partners' },
   'click-element': { snapshotId: 'snap-1', ref: 'e12' },
   'type-text': { snapshotId: 'snap-1', ref: 'e12', inputText: 'Acme Ltd' },
-  'press-key': { snapshotId: 'snap-1', key: 'Enter' },
+  // Carries a confirmation, because a press-key without one is never permitted:
+  // it has no ref, so nothing binds evidence to it, so it always escalates.
+  'press-key': { snapshotId: 'snap-1', key: 'Enter', confirmationId: 'confirmed-1' },
   'capture-screen': {},
 }
 
@@ -315,11 +328,33 @@ describe('the browser capabilities', () => {
     })
   })
 
-  it('permits each of the three keys it does allow', () => {
+  /**
+   * The key set is checked, and it is checked BEFORE the confirmation.
+   *
+   * Both halves matter. Each of the three keys must reach the confirmation
+   * check rather than being refused as `key_not_allowed` — otherwise the
+   * allowed set is narrower than it claims. And each must still be refused
+   * without a confirmation, because a press-key carries no ref, so nothing
+   * binds evidence to it and the classifier always escalates.
+   *
+   * Written as the pair rather than as "permits each key", which is what this
+   * assertion said while the gate was handing press-key another element's
+   * evidence: it passed because the borrowed evidence happened to be harmless.
+   */
+  it('allows each of its three keys, and still asks before any of them', () => {
     for (const key of ['Enter', 'Tab', 'Escape'] as const) {
-      expect(gate({ ...valid('press-key'), params: { snapshotId: 'snap-1', key } }).authorized).toBe(
-        true,
-      )
+      expect(gate({ ...valid('press-key'), params: { snapshotId: 'snap-1', key } }), key).toEqual({
+        authorized: false,
+        rule: 'confirmation_required',
+      })
+
+      expect(
+        gate({
+          ...valid('press-key'),
+          params: { snapshotId: 'snap-1', key, confirmationId: 'confirmed-1' },
+        }).authorized,
+        key,
+      ).toBe(true)
     }
   })
 
@@ -1025,5 +1060,47 @@ describe('compilePolicy is pure and total', () => {
     ;(mutable.allowedActionKinds as ActionKind[]).push('draft-section')
 
     expect(policy.actionKindAllowlist.has('draft-section')).toBe(false)
+  })
+})
+
+/**
+ * A proposal with no element ref must not borrow evidence about another element.
+ *
+ * `press-key` is the case: its target is whatever holds focus, so nothing in a
+ * snapshot describes it. The gate used to hand it `run.targetEvidence` anyway,
+ * which meant a keystroke could be classified from what the previous turn
+ * learned about an unrelated link — a de-escalation, in a function whose whole
+ * contract is that page-derived evidence may only ever escalate.
+ */
+describe('evidence cannot be borrowed from another element', () => {
+  const benign: ElementEvidence = {
+    ref: 'e7',
+    accessibleNameTokens: ['show', 'more'],
+    role: 'button',
+    isSubmitControl: false,
+    isInsideForm: false,
+    formHasSensitiveField: false,
+  }
+
+  it('refuses an unconfirmed press-key even when the run holds ordinary evidence', () => {
+    const policy = compilePolicy(
+      { approvedSourceIds: [], allowedActionKinds: [...ACTION_KINDS], baseVersionId: 'v' },
+      {
+        initiative: 'use-judgment',
+        progress: 'remaining-plan',
+        output: 'draft-changes',
+        interruption: 'stop-only-when-blocked',
+        timeLimitMinutes: 30,
+      },
+    )
+
+    const verdict = authorize(
+      policy,
+      { kind: 'press-key', params: { key: 'Enter', snapshotId: 's1' }, reason: 'submit', stepOrdinal: 1 },
+      { ...run, currentSnapshotId: 's1', targetEvidence: benign },
+      'i',
+    )
+
+    expect(verdict).toEqual({ authorized: false, rule: 'confirmation_required' })
   })
 })

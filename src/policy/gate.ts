@@ -370,9 +370,26 @@ function evidenceFor(params: ActionParams, run: RunContext): ElementEvidence | n
   const evidence = run.targetEvidence ?? null
   if (evidence === null || typeof evidence !== 'object') return null
 
-  // Only meaningful where the proposal names an element. `press-key` targets
-  // whatever holds focus and carries no ref, so there is nothing to bind.
-  if (params.ref === undefined) return evidence
+  // No ref means nothing to bind the evidence TO, so there is no evidence about
+  // this proposal — only evidence about some other element the run happened to
+  // look at. Returning it would be the de-escalation this function exists to
+  // prevent, and a second review caught exactly that: this line used to
+  // `return evidence`, which handed `press-key` whatever was learned about the
+  // last element with a ref. A keystroke inside a payment form would then be
+  // classified `ordinary` because the previous turn had inspected a benign link.
+  //
+  // `press-key` is the case that matters, and it is unbindable BY CONSTRUCTION:
+  // its target is whatever holds focus, which the page may move between our
+  // snapshot and our keystroke. `reversibility.ts` says so in its own comment
+  // and then never gets the chance to act on it, because the evidence it
+  // receives describes a different element entirely.
+  //
+  // So: null, which the classifier escalates. The cost is that every `press-key`
+  // asks — Tab and Escape included, which are harmless — and that cost is
+  // accepted for the same reason the unnamed-element branch accepts noise on
+  // icon buttons. The alternative is a confirmation that can be skipped by
+  // showing the gate evidence about something else.
+  if (params.ref === undefined) return null
 
   if (evidence.ref !== params.ref) return null
   if (evidence.snapshotId !== undefined && evidence.snapshotId !== params.snapshotId) return null
