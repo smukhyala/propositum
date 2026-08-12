@@ -284,12 +284,32 @@ export const workerActionBoundary: ModelBoundary<WorkerActionInput, WorkerAction
           .join('\n')
       : '\nYou have not looked at a page yet.'
 
+    /**
+     * The sentence and the pixels ship together, or neither does.
+     *
+     * A review found this claiming an attachment that did not exist:
+     * `PromptParts` was `{ system, user }`, the client sent a bare string, and
+     * a run that spent a `capture-screen` — which it only does because the tree
+     * was not enough — was told it had a picture it had not been given. The
+     * likely behaviour is the expensive one: look again, get nothing again,
+     * burn the action cap discovering the capability does not work.
+     *
+     * Both halves are now derived from the same `input.screenshot`, so the
+     * claim cannot outlive the attachment.
+     */
     const screenshot = input.screenshot
       ? '\nA screenshot of the same page is attached alongside this message.'
       : ''
 
     return {
       system: SYSTEM,
+      ...(input.screenshot === undefined
+        ? {}
+        : {
+            images: [
+              { mediaType: input.screenshot.mediaType, base64: input.screenshot.base64 },
+            ],
+          }),
       user: [
         `Objective: ${input.objective}`,
         `Done means: ${input.definitionOfDone}${guidance}`,

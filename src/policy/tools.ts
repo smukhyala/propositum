@@ -92,7 +92,7 @@
 
 import type { AuthorizedAction } from './gate'
 import type { SourceFetcher } from './fetcher'
-import { BrowserControlError, DISPATCH_TIMEOUT_MS } from '../runtime/browser-control'
+import { BrowserControlError, DISPATCH_TIMEOUT_MS, UNVERIFIED_FAILURES } from '../runtime/browser-control'
 import type { BrowserControl, PageObservation, ScreenCapture } from '../runtime/browser-control'
 
 export interface SourceText {

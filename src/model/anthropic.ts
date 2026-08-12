@@ -132,7 +132,7 @@ export class AnthropicModelClient implements ModelClient {
         stream,
         output_format: betaZodOutputFormat(boundary.schema as ZodType),
         ...(prompt.system === undefined ? {} : { system: prompt.system }),
-        messages: [{ role: 'user', content: prompt.user }],
+        messages: [{ role: 'user', content: userContent(prompt) }],
       } as Parameters<typeof this.sdk.beta.messages.parse>[0])
 
       const telemetry: CallTelemetry = {
@@ -189,4 +189,43 @@ export class AnthropicModelClient implements ModelClient {
     this.onCall?.(telemetry, failure)
     return { ok: false, failure, detail, telemetry }
   }
+}
+
+/**
+ * One user turn: the prose, plus any pictures that belong with it.
+ *
+ * ── Why images come FIRST, before the text ───────────────────────────────
+ *
+ * Anthropic's own vision guidance puts the image block ahead of the text
+ * block, and the ordering is not cosmetic — a question placed after the image
+ * is a question about something the model has already been shown. Reversed,
+ * the model reads an instruction referring to a picture it has not seen yet.
+ *
+ * ── A bare string when there are no images, deliberately ─────────────────
+ *
+ * `content` accepts either a string or an array of blocks, and the two are
+ * equivalent to the API. Keeping the string form on the overwhelmingly common
+ * path means every existing boundary produces byte-identical requests to the
+ * ones it produced before this function existed — which matters more than it
+ * sounds, because a changed request prefix is a cold prompt cache on every
+ * boundary at once.
+ *
+ * ── `base64` is the bytes, and nothing here validates them ───────────────
+ *
+ * A malformed image is the API's error to report, not ours to pre-empt. What
+ * this must never do is log or echo the data: it is pixels of a page inside
+ * somebody's signed-in browser, and the only place it belongs is the request
+ * body.
+ */
+function userContent(prompt: PromptParts): unknown {
+  const images = prompt.images ?? []
+  if (images.length === 0) return prompt.user
+
+  return [
+    ...images.map((image) => ({
+      type: 'image' as const,
+      source: { type: 'base64' as const, media_type: image.mediaType, data: image.base64 },
+    })),
+    { type: 'text' as const, text: prompt.user },
+  ]
 }

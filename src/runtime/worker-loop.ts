@@ -104,6 +104,7 @@ import {
 import type { BrowserDeps, NavigateDeps, ReadDocumentDeps, ReadSourceDeps } from '../policy/tools'
 import { historyForContract, recoverOrphanedIntents } from './history'
 import type { HistoryReader, HistoryTurn } from './history'
+import { BrowserControlError, UNVERIFIED_FAILURES } from './browser-control'
 import type { PageObservation, ScreenCapture } from './browser-control'
 import {
   PAUSING_RULES,
@@ -777,9 +778,9 @@ export async function runWorker(job: WorkerJob, deps: WorkerDeps): Promise<Worke
     } catch (error) {
       // Includes every `BrowserControlError`. A channel failure is a recorded
       // fact about one action — the intent is already committed, so the ledger
-      // says what was attempted and that it did not land — and never an
-      // exception that escapes the loop and takes the run's record with it.
-      failed = error instanceof Error ? error.message : String(error)
+      // says what was attempted — and never an exception that escapes the loop
+      // and takes the run's record with it.
+      failed = describeFailure(error)
     }
 
     // Attempted either way. An action that was authorised and dispatched counts
@@ -826,6 +827,35 @@ export async function runWorker(job: WorkerJob, deps: WorkerDeps): Promise<Worke
     const afterAction = shouldStop(progress(), job.controls.interruption, false)
     if (afterAction.halt) return finish(afterAction.rules, 'succeeded')
   }
+}
+
+/**
+ * What the ledger says about an action that did not come back cleanly.
+ *
+ * ── The distinction this exists to preserve ──────────────────────────────
+ *
+ * Every browser failure is recorded `unverified`, because CONTEXT.md is
+ * explicit that the verdict covers both *nothing happened* and *we cannot
+ * tell*. The verdict cannot separate them; the SENTENCE can, and must.
+ *
+ * `not-delivered` means the instruction expired while still queued — no
+ * browser ever saw it, and the world is unchanged. `not-reported` means it WAS
+ * delivered and never answered: it may have pressed the button, may have
+ * pressed it twice, may have done nothing. Telling somebody "it did not go
+ * through" about the second is the most damaging sentence this ledger could
+ * write, because they will act on it — retry the order, re-send the message.
+ * The opposite error only makes them check something that never happened.
+ *
+ * So the honest half of the pair says so in words, on the row the person
+ * eventually reads.
+ */
+function describeFailure(error: unknown): string {
+  const detail = error instanceof Error ? error.message : String(error)
+
+  if (error instanceof BrowserControlError && UNVERIFIED_FAILURES.has(error.failure)) {
+    return `${detail} — whether this landed is unknown.`
+  }
+  return detail
 }
 
 /**

@@ -698,6 +698,58 @@ describe('a control failure lands in the ledger', () => {
     expect(d.recorded.intents[2]).toMatchObject({ kind: 'click-element', authorized: true })
   })
 
+  it('says plainly that a delivered-but-unreported action may have landed', async () => {
+    /**
+     * The one sentence this ledger must never get wrong.
+     *
+     * `not-delivered` means the instruction expired while still queued — no
+     * browser saw it. `not-reported` means it WAS delivered and never answered:
+     * it may have pressed the button, twice, or not at all. Telling somebody
+     * "it did not go through" about the second is the damaging error, because
+     * they act on it — retry the order, re-send the message.
+     */
+    const d = deps(
+      [
+        plan('click'),
+        act({ kind: 'observe-page' }),
+        act({ kind: 'click-element', ref: 'r1', snapshotId: 'snap-1' }),
+        done(),
+      ],
+      [
+        { ok: true, observation: observed(1) },
+        { ok: false, failure: 'not-reported', detail: 'the browser never answered' },
+      ],
+    )
+
+    await runWorker(job(), d)
+
+    expect(d.recorded.outcomes[1]?.scopeVerdict).toBe('unverified')
+    expect(d.recorded.outcomes[1]?.detail).toMatch(/unknown/i)
+  })
+
+  it('does not claim uncertainty about an instruction that never left', async () => {
+    // The other half of the pair. `not-delivered` is the one negative statement
+    // the channel can actually make, and softening it into "we cannot tell"
+    // would throw away the only case where the world is knowably unchanged.
+    const d = deps(
+      [
+        plan('click'),
+        act({ kind: 'observe-page' }),
+        act({ kind: 'click-element', ref: 'r1', snapshotId: 'snap-1' }),
+        done(),
+      ],
+      [
+        { ok: true, observation: observed(1) },
+        { ok: false, failure: 'not-delivered', detail: 'still queued at expiry' },
+      ],
+    )
+
+    await runWorker(job(), d)
+
+    expect(d.recorded.outcomes[1]?.detail).toContain('still queued at expiry')
+    expect(d.recorded.outcomes[1]?.detail ?? '').not.toMatch(/unknown/i)
+  })
+
   it('refuses a browser kind when the run has no channel, rather than reporting success', async () => {
     const d = deps(
       [plan('look'), act({ kind: 'observe-page' }), done()],
@@ -709,6 +761,78 @@ describe('a control failure lands in the ledger', () => {
 
     expect(d.recorded.outcomes[0]).toMatchObject({ result: 'failed' })
     expect(d.recorded.outcomes[0]?.detail).toMatch(/no browser/i)
+  })
+})
+
+/* ── 5b. the screenshot actually reaches the model ─────────────────────── */
+
+describe('a captured screen is attached, not merely announced', () => {
+  it('sends the pixels alongside the prose on the next turn', async () => {
+    /**
+     * The defect a review found: `PromptParts` was `{ system, user }`, the
+     * client sent a bare string, and the boundary said *"a screenshot is
+     * attached"* when nothing was. A run only spends a `capture-screen` because
+     * the tree was insufficient, so the likely behaviour was to look again, get
+     * nothing again, and burn the action cap discovering it does not work.
+     */
+    const d = deps(
+      [
+        plan('look closer'),
+        act({ kind: 'observe-page' }),
+        act({ kind: 'capture-screen' }),
+        done(),
+      ],
+      [
+        { ok: true, observation: observed(1) },
+        {
+          ok: true,
+          capture: { mediaType: 'image/png', base64: 'PNGBYTES', snapshotId: 'snap-1' },
+        },
+      ],
+    )
+
+    await runWorker(job(), d)
+
+    const afterCapture = (d.model as FakeModelClient).calls[3]
+    expect(afterCapture?.images).toEqual([{ mediaType: 'image/png', base64: 'PNGBYTES' }])
+    expect(afterCapture?.user).toContain('screenshot')
+  })
+
+  it('drops the picture once a new tree arrives, because it is now of a page that is gone', async () => {
+    const d = deps(
+      [
+        plan('look closer, then move on'),
+        act({ kind: 'observe-page' }),
+        act({ kind: 'capture-screen' }),
+        act({ kind: 'navigate', approvedSourceId: 'src-orders', path: '/page/2' }),
+        done(),
+      ],
+      [
+        { ok: true, observation: observed(1) },
+        {
+          ok: true,
+          capture: { mediaType: 'image/png', base64: 'PNGBYTES', snapshotId: 'snap-1' },
+        },
+        { ok: true, observation: observed(2) },
+      ],
+    )
+
+    await runWorker(job(), d)
+
+    const afterNavigate = (d.model as FakeModelClient).calls[4]
+    expect(afterNavigate?.images).toBeUndefined()
+    expect(afterNavigate?.user).not.toContain('screenshot')
+  })
+
+  it('attaches nothing when nothing was captured', async () => {
+    const d = deps(
+      [plan('look'), act({ kind: 'observe-page' }), done()],
+      [{ ok: true, observation: observed(1) }],
+    )
+
+    await runWorker(job(), d)
+
+    expect((d.model as FakeModelClient).calls[2]?.images).toBeUndefined()
   })
 })
 

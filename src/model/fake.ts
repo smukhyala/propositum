@@ -32,6 +32,16 @@ export interface RecordedCall {
   readonly promptVersion: string
   readonly system: string | undefined
   readonly user: string
+  /**
+   * Pictures the boundary attached, if any.
+   *
+   * Recorded because a prompt that CLAIMS an attachment and sends none is a
+   * real defect this suite has already caught once — the boundary said "a
+   * screenshot is attached" while `PromptParts` had no image field at all. A
+   * fake that captured only the prose could not tell the two apart, so the
+   * assertion that fixes it would have had nothing to assert against.
+   */
+  readonly images: ReadonlyArray<{ mediaType: 'image/png'; base64: string }> | undefined
 }
 
 /**
@@ -57,6 +67,7 @@ export class FakeModelClient implements ModelClient {
       promptVersion: boundary.promptVersion,
       system: prompt.system,
       user: prompt.user,
+      images: prompt.images,
     })
 
     const reply = this.replies.shift()

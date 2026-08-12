@@ -60,6 +60,38 @@ export const NON_STREAMING_MAX_TOKENS = 21_333
 export interface PromptParts {
   readonly system?: string | undefined
   readonly user: string
+  /**
+   * Pictures that travel WITH `user`, in the same turn.
+   *
+   * ── Why this field had to exist ──────────────────────────────────────
+   *
+   * `capture-screen` is its own `ActionKind` with its own grant, and the
+   * hybrid perception model it belongs to is deliberate: the accessibility
+   * tree first, a screenshot when the tree is not enough. It only fires
+   * because a run already decided the tree was insufficient.
+   *
+   * Until this field, there was no image path at all. `PromptParts` was
+   * `{ system, user }`, the client sent `content: prompt.user` — a bare
+   * string — and a boundary that said *"a screenshot is attached"* was
+   * telling the model something untrue. The likely behaviour is the worst
+   * kind: the agent looks again, gets nothing again, and spends its action
+   * cap discovering that the capability does not work. A prompt that claims
+   * an attachment it does not send is worse than one that admits it cannot
+   * see, because only the second lets the model change strategy.
+   *
+   * ── Base64 rather than a URL, and why that is not a limitation ───────
+   *
+   * The alternative is `source: { type: 'url' }`, which asks Anthropic's
+   * servers to fetch an address. The only images this project has are pixels
+   * of a page inside somebody's signed-in browser; publishing them at a URL
+   * so a third party can fetch them is a data flow nobody agreed to. Bytes
+   * in the request body go exactly where the rest of the prompt goes.
+   *
+   * `image/png` only, and that is a deliberate narrowing rather than an
+   * oversight: it is what the browser control channel produces, and a wider
+   * union here would be a union the rest of the code cannot supply.
+   */
+  readonly images?: ReadonlyArray<{ mediaType: 'image/png'; base64: string }> | undefined
 }
 
 /**

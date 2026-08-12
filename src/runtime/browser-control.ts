@@ -117,18 +117,59 @@ export interface ScreenCapture {
  * defect to engineer around.
  */
 export type ControlFailure =
+  /**
+   * The instruction expired while still QUEUED. It never left.
+   *
+   * The strongest negative statement the channel can make: no browser ever saw
+   * this, so nothing happened. Distinguished from `not-reported` below because
+   * the two are opposite epistemic states wearing the same word "timeout", and
+   * collapsing them would lose the one case where we can honestly say the world
+   * is unchanged.
+   */
+  | 'not-delivered'
+  /**
+   * It WAS delivered, and nothing came back. **We do not know what happened.**
+   *
+   * This is the honest `unverified` case, and the loop must not report it as a
+   * failure that knows more than it does. A click that reached the browser and
+   * never reported may have pressed the button, may have pressed it twice, or
+   * may have done nothing at all — and under this project's standing "the Mac
+   * sleeps mid-run" constraint it is routine rather than exotic.
+   */
+  | 'not-reported'
+  /** A CDP operation that did not settle, reported by the extension itself.
+   *  Narrower than the two above: the browser was there and answered. */
+  | 'timed-out'
   /** No tab is attached — nothing was opened, or it was closed. */
   | 'no-tab'
   /** The attachment ended: Chrome's own infobar, the in-tab chip, or Stop. */
   | 'detached'
-  /** The instruction was accepted and nothing came back in time. */
-  | 'timeout'
   /** The ref does not resolve against the live page any more. */
   | 'element-gone'
   /** The input was delivered somewhere else — occluded, off-screen, covered. */
   | 'blocked'
   /** The channel itself failed. Says nothing about whether the effect landed. */
   | 'transport'
+
+/**
+ * The failures after which we cannot say whether the world changed.
+ *
+ * Every browser failure is recorded `unverified` — CONTEXT.md is explicit that
+ * the verdict covers both "nothing happened" and "we cannot tell". What this set
+ * changes is the SENTENCE the ledger carries, and that distinction is the whole
+ * reason `not-delivered` and `not-reported` are separate codes.
+ *
+ * Telling somebody "it did not go through" about an instruction that reached
+ * their browser and may well have pressed Send is the single most damaging
+ * thing this ledger could say, because they will act on it — retry the order,
+ * re-send the message. The reverse error is merely annoying: they check
+ * something that never happened.
+ */
+export const UNVERIFIED_FAILURES: ReadonlySet<ControlFailure> = new Set<ControlFailure>([
+  'not-reported',
+  'timed-out',
+  'transport',
+])
 
 /**
  * What came back. Three arms, and the third is not an exception.
