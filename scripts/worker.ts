@@ -18,6 +18,7 @@ import { createLedgerWriter } from '../src/persistence/ledger-writer'
 import { AnthropicModelClient } from '../src/model/anthropic'
 import { startWorkerProcess, installSignalHandlers } from '../src/runtime/worker-process'
 import { executeRun } from '../src/server/execute-run'
+import { admitRun, expireConfirmations, sweepAbandonedIntents } from '../src/server/confirmations'
 import { createPlaywrightFetcher } from '../src/policy/playwright-fetcher'
 
 try {
@@ -54,8 +55,52 @@ const fetcher = await createPlaywrightFetcher({})
 
 const handle = startWorkerProcess(
   {
-    sweepExpiredLeases: (now) => ctx.repos.runs.sweepExpiredLeases(now),
+    /**
+     * Two sweeps, not one.
+     *
+     * The lease sweep reaps orphans — runs whose worker died holding them.
+     * `expireConfirmations` reaps the other stuck state, which the lease sweep
+     * structurally cannot see: a run parked on `awaiting-confirmation` holds NO
+     * lease, on purpose, because a run waiting overnight for an answer must not
+     * be reaped as an orphan and must not hold a claim while somebody reads. So
+     * without this line a question nobody answered leaves a shift with no
+     * ending and no re-entry note, forever.
+     *
+     * It writes no `ConfirmationVerdict`. Expiry never approves.
+     */
+    sweepExpiredLeases: async (now) => {
+      const expired = await expireConfirmations(ctx, now)
+      if (expired > 0) console.log(`[worker] ${expired} unanswered question(s) timed out`)
+
+      const swept = await ctx.repos.runs.sweepExpiredLeases(now)
+
+      /**
+       * Last, and after the lease sweep on purpose.
+       *
+       * A worker killed mid-click leaves an `ActionIntent` with no
+       * `ActionOutcome`. Running this AFTER the lease sweep means the runs it
+       * abandoned are already terminal, so their stranded intents are in scope
+       * on this pass rather than the next one. Running it before would leave
+       * every crash reported as `unknown` for one extra restart.
+       */
+      const settled = await sweepAbandonedIntents(ctx)
+      if (settled > 0) console.log(`[worker] recorded ${settled} unfinished action(s) as unverified`)
+
+      return swept
+    },
     claimNext: (lease) => ctx.repos.runs.claim(lease),
+    /** The coordinator's decision, at the only point it can be honoured: a
+     *  continuation whose shift already ended never enters the loop. */
+    admit: (runId) => admitRun(ctx, runId, new Date()),
+    readRun: async (runId) => {
+      const run = await ctx.repos.runs.byId(runId)
+      if (!run) return null
+      return {
+        status: run.status,
+        claimedBy: run.claimedBy,
+        cancelRequested: run.cancelRequested,
+      }
+    },
     execute: (runId) =>
       executeRun(runId, {
         ctx,
