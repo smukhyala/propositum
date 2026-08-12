@@ -21,6 +21,7 @@
  * lives in src/capture/ and is tested there.
  */
 
+import { patternCovers } from './match-pattern.js'
 import { looksLikeSearch } from './search-url.js'
 
 const APP_ORIGIN = 'http://127.0.0.1:3117'
@@ -141,6 +142,33 @@ async function buffer(event) {
 }
 
 /**
+ * The app's own limits on one ambient POST, mirrored here.
+ *
+ * ── "Neither trusts the other" has to mean the sender is the STRICTER one ──
+ *
+ * The comment below used to say the app bounds this again and neither side
+ * trusts the other, which is the right principle. The numbers did not
+ * implement it: this side kept 200 observations and the app's schema accepts
+ * `.max(100)`, so the looser bound was the one being applied by the sender.
+ *
+ * The consequence was not a dropped batch, it was a DEADLOCK. Past 100, every
+ * flush failed Zod with a 400, the clear below only ran on `ok` or 409, and so
+ * the buffer stayed over 100 forever. Ambient detection died for the rest of
+ * that session storage's life — no offers, ever, on a machine where everything
+ * looked healthy — and the only cure was dropping session storage. A dev-server
+ * restart with a few tabs open reaches it.
+ *
+ * Titles were the same wedge by a different route: sent untruncated against
+ * `title: z.string().max(300)`.
+ *
+ * So both numbers are at or below the receiver's, and the flush no longer
+ * treats a 400 as retryable. Defence in depth is two bounds that agree about
+ * which is tighter; two that disagree is a lock.
+ */
+const AMBIENT_BATCH_MAX = 100
+const AMBIENT_TITLE_MAX = 300
+
+/**
  * Ambient observations, held separately from session events.
  *
  * A separate buffer and a separate endpoint, because they have different
@@ -151,8 +179,9 @@ async function buffer(event) {
 async function bufferAmbient(observation) {
   const { ambient = [] } = await chrome.storage.session.get(['ambient'])
   ambient.push(observation)
-  // Bounded here too. The app bounds it again; neither trusts the other.
-  await chrome.storage.session.set({ ambient: ambient.slice(-200) })
+  // Bounded here too, and never above what the app will accept. The oldest go
+  // first: recent activity is what a detection is about.
+  await chrome.storage.session.set({ ambient: ambient.slice(-AMBIENT_BATCH_MAX) })
 }
 
 async function flushAmbient() {
@@ -164,10 +193,15 @@ async function flushAmbient() {
       method: 'POST',
       headers: { 'content-type': 'application/json', [CUSTOM_HEADER]: '1' },
       body: JSON.stringify({
-        observations: ambient.map((o) => ({
+        // Already bounded by `bufferAmbient`, and bounded again here so a
+        // buffer written by an older version of this file cannot wedge a newer
+        // one on its first flush.
+        observations: ambient.slice(-AMBIENT_BATCH_MAX).map((o) => ({
           at: o.at,
           url: o.url ?? '',
-          title: o.title ?? '',
+          // Truncated to what the app's schema accepts. A long title is a page
+          // being verbose; an untruncated one was a permanently rejected batch.
+          title: (o.title ?? '').slice(0, AMBIENT_TITLE_MAX),
           /**
            * A query is a REAL query, not a question mark.
            *
@@ -179,6 +213,11 @@ async function flushAmbient() {
            * `searched-then-read` intent ground satisfiable by any URL with a
            * `?` in it, which is the ground that separates pursuing a subject
            * from having one delivered to you.
+           *
+           * `looksLikeSearch` is a hand port of `searchQueryOf` in
+           * `src/domain/detection/topics.ts`, and the two MUST agree —
+           * `tests/search-url.test.ts` runs both over the same table and fails
+           * if they ever stop agreeing.
            */
           kind:
             o.signal === 'engagement'
@@ -192,9 +231,32 @@ async function flushAmbient() {
         })),
       }),
     })
-    // 409 means a session started under us. Drop them: the ledger is now the
-    // right destination and these would be a duplicate of what it records.
+    /**
+     * What is worth keeping, and what is worth admitting is never going to be
+     * accepted.
+     *
+     * 409 means a session started under us. Drop them: the ledger is now the
+     * right destination and these would be a duplicate of what it records.
+     *
+     * 4xx means the app looked at these observations and said no. Retrying is
+     * then not resilience, it is a loop — the same bytes rejected the same way
+     * every thirty seconds, with the buffer never emptying and ambient
+     * detection dead until session storage is dropped. That is exactly the
+     * wedge the two disagreeing bounds above produced, and the bounds alone are
+     * not enough of a fix: any future validation failure would recreate it.
+     * Losing a batch of metadata costs one missed offer; a permanent wedge
+     * costs every offer after it, silently.
+     *
+     * A 5xx or a thrown fetch is the app being unavailable rather than
+     * unwilling, so those are kept — that is the case the buffer exists for.
+     */
     if (response.ok || response.status === 409) {
+      await chrome.storage.session.set({ ambient: [] })
+      return
+    }
+
+    if (response.status >= 400 && response.status < 500) {
+      console.warn('[propositum] ambient batch refused, dropping it:', response.status)
       await chrome.storage.session.set({ ambient: [] })
     }
   } catch {
@@ -609,7 +671,7 @@ async function grantState() {
 
   const sources = (session?.sources ?? []).map((source) => ({
     ...source,
-    granted: origins.some((o) => o.replace(/\/\*$/, '') === source.origin.replace(/\/\*$/, '')),
+    granted: origins.some((pattern) => patternCovers(pattern, source.origin)),
   }))
 
   return { running: session !== null, sources }

@@ -199,13 +199,45 @@
         const button = document.createElement('button')
         button.textContent = 'Allow'
         button.addEventListener('click', async () => {
-          // Must be called directly in the click handler. Awaiting anything
-          // first spends the user gesture and Chrome rejects the request.
-          const granted = await chrome.permissions.request({
-            origins: [patternFor(source.origin)],
-          })
-          if (granted) await chrome.runtime.sendMessage({ ask: 'reconcile' })
-          await render()
+          /**
+           * A refusal has to be VISIBLE, because this button has been inert.
+           *
+           * `permissions.request()` only works for something the manifest lists
+           * under `optional_host_permissions`, and this manifest has none — it
+           * takes the broad grant up front instead, because detection cannot
+           * work on sources the person has not set up yet. So the call resolved
+           * false, the row re-rendered identically, and pressing Allow did
+           * nothing at all with nothing said.
+           *
+           * Chrome is the authority here and we cannot talk it round. What we
+           * can do is stop pretending the click worked: on this screen, of all
+           * screens, silence reads as "Propositum can see it now".
+           */
+          let granted = false
+          try {
+            // Must be called directly in the click handler. Awaiting anything
+            // first spends the user gesture and Chrome rejects the request.
+            granted = await chrome.permissions.request({
+              origins: [patternFor(source.origin)],
+            })
+          } catch (error) {
+            console.warn('[propositum] host grant request refused:', error)
+          }
+
+          if (granted) {
+            await chrome.runtime.sendMessage({ ask: 'reconcile' })
+            await render()
+            return
+          }
+
+          const refused = document.createElement('div')
+          refused.className = 'off'
+          refused.style.fontSize = '12px'
+          refused.textContent =
+            'Chrome did not grant that. Propositum still cannot read this site — you can allow it ' +
+            'from Chrome’s own extension settings.'
+          left.append(refused)
+          button.disabled = true
         })
         row.append(button)
       }
