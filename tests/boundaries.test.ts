@@ -1,5 +1,5 @@
 /**
- * The six boundaries, checked against the constraints the grammar cannot hold.
+ * The eight boundaries, checked against the constraints the grammar cannot hold.
  *
  * Every assertion here exists because #3 verified that the API enforces SHAPE
  * ONLY — no `enum`, no `const`, no bounds. Anything else has to be enforced by
@@ -18,6 +18,7 @@ import { workerActionBoundary, workerActionSchema } from '../src/model/boundarie
 import { changeHandlesFor, reviewBoundary, reviewSchema } from '../src/model/boundaries/review'
 import { shiftReportBoundary } from '../src/model/boundaries/shift-report'
 import { subjectBoundary } from '../src/model/boundaries/subject'
+import { offerBoundary } from '../src/model/boundaries/offer'
 import { sessionReadingBoundary, handlesFor } from '../src/model/boundaries/session-reading'
 
 const sources = [
@@ -25,7 +26,7 @@ const sources = [
   { handle: 'S2', label: 'Northwind pricing' },
 ]
 
-describe('all seven boundaries exist and are distinct', () => {
+describe('all eight boundaries exist and are distinct', () => {
   it('covers every declared boundary name', () => {
     const declared = new Set<BoundaryName>(BOUNDARY_NAMES)
     const built = new Set<BoundaryName>([
@@ -36,6 +37,7 @@ describe('all seven boundaries exist and are distinct', () => {
       reviewBoundary(new Set(['C1'])).name,
       shiftReportBoundary.name,
       subjectBoundary.name,
+      offerBoundary.name,
     ])
 
     expect([...built].sort()).toEqual([...declared].sort())
@@ -50,9 +52,10 @@ describe('all seven boundaries exist and are distinct', () => {
       workerActionBoundary.promptVersion,
       reviewBoundary(new Set(['C1'])).promptVersion,
       shiftReportBoundary.promptVersion,
+      offerBoundary.promptVersion,
     ]
 
-    expect(new Set(versions).size).toBe(7)
+    expect(new Set(versions).size).toBe(8)
     for (const v of versions) expect(v).toMatch(/@\d+$/)
   })
 })

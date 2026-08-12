@@ -34,6 +34,7 @@ import { revalidatePath } from 'next/cache'
 import { appContext } from './db'
 import { readableCause } from './problem'
 import { ambientStore, captureStore } from './capture-store'
+import { describeWork, signatureOf } from './ambient-store'
 import { AnthropicModelClient } from '../model/anthropic'
 import type { FailureKind, ModelClient } from '../model/client'
 import { datamark } from '../model/untrusted'
@@ -43,6 +44,8 @@ import {
 } from '../model/boundaries/session-reading'
 import type { PromptEvent } from '../model/boundaries/session-reading'
 import { handoffBoundary, sourceHandlesFor } from '../model/boundaries/handoff'
+import { detectWork } from '../domain/detection/detect'
+import { groundsFor } from '../domain/detection/grounds'
 import { matchProject, projectTerms } from '../domain/detection/match-project'
 import type { ProjectCandidate } from '../domain/detection/match-project'
 import { checkDrift, hashContent, materialise } from '../domain/document/changeset'
@@ -1068,6 +1071,288 @@ export async function startFromSuggestion(
       discardedOrigins,
       leftWithdrawn,
     })
+  })
+}
+
+/* ══════════════════════════════════════════ the offer, and accepting it ══ */
+
+/**
+ * The thread signature is the ONLY thing a link carries, and this is why.
+ *
+ * ── What wave one had to fix defensively ─────────────────────────────────
+ *
+ * `/start?subject=Invoices&origins=https://attacker.example` approved a site
+ * nobody had ever visited. The fix was to intersect the requested list against
+ * the ambient buffer — correct, and still in place above as
+ * `observedOriginPatterns`. But it is a filter on a request that should never
+ * have been able to ask, and a filter is a thing somebody can later widen "just
+ * for this one caller".
+ *
+ * So the parameter is gone. A link says `?thread=<signature>` and nothing else;
+ * the subject, the offer, the grounds and the sites are all read back off the
+ * server-side buffer against that key. There is no field for an origin, so
+ * there is nothing to intersect and nothing to widen.
+ *
+ * ── Why the intersection stays anyway ────────────────────────────────────
+ *
+ * Because the two guards answer different questions, and losing either one is a
+ * different bug. Removing the parameter answers *can a link ask for a site?* —
+ * no, structurally. The intersection answers *can anything that reaches the
+ * accept path approve a site the buffer does not hold?* — no, arithmetically,
+ * whatever the caller is. The ticked-sites control below is a real caller-
+ * supplied list, and it is exactly the shape of input the intersection exists
+ * for: it can only ever NARROW the observed set, because the result is
+ * `observed ∩ ticked` and an entry that is not in `observed` contributes
+ * nothing. Belt, and braces, and they are not the same garment.
+ */
+export interface OfferedSite {
+  /** What would be stored, so what is checked and what is written are one
+   *  string. */
+  readonly pattern: string
+  /** The hostname, as a person would say it. */
+  readonly host: string
+  /**
+   * This project has this site WITHDRAWN, and accepting will leave it that way.
+   *
+   * Said before the click rather than counted after it. Wave one added the
+   * count (`WorkStarted.leftWithdrawn`) and it arrived on the next screen — so
+   * the offer still listed every site as though it were about to be approved,
+   * including one the person had deliberately switched off. A revocation
+   * outranks a match, and the list has to say so while it is still a list of
+   * what will happen.
+   */
+  readonly leftWithdrawn: boolean
+}
+
+/** Everything the offer screen renders, read off the buffer by signature. */
+export interface OfferOnScreen {
+  readonly thread: string
+  readonly subject: string
+  readonly origins: readonly OfferedSite[]
+  /** The detector's own sentences. Rendered verbatim, above the model's. */
+  readonly grounds: readonly string[]
+  /** Null when the grounds bar was not met, when composing has not finished,
+   *  or when there is no API key. The screen degrades; it does not dead-end. */
+  readonly offer: {
+    readonly title: string
+    readonly rationale: string
+    readonly outline: readonly string[]
+    readonly produces: string
+    readonly excludes: readonly string[]
+  } | null
+  /** The deterministic sentence, which is what the degraded form shows. */
+  readonly sentence: string
+  readonly because: string
+  /** Pages already seen that would be carried into the session. */
+  readonly carriedPages: number
+  /** The project this would join, if Propositum thinks it recognises the work.
+   *  Stated before the click, because a merge nobody was told about is the
+   *  expensive failure `match-project.ts` names. */
+  readonly backOn: CarriedProject | null
+}
+
+/** The words behind a signature, when nothing has named it yet. Ugly and true
+ *  beats absent — `world+models+labs` is at least recognisable. */
+function subjectFromSignature(signature: string): string {
+  return signature.split('+').filter((word) => word !== '').join(' ')
+}
+
+/**
+ * What to show for `/start?thread=…`.
+ *
+ * Everything is derived server-side. Nothing about this answer depends on
+ * anything the request said beyond which thread it is asking about, which is
+ * the property the whole shape exists for.
+ */
+export async function offerForThread(threadSignature: string): Promise<
+  ActionResult<OfferOnScreen | null>
+> {
+  return attempt(async () => {
+    const thread = threadSignature.trim()
+    if (thread === '') return ok<OfferOnScreen | null>(null)
+
+    const ambient = ambientStore()
+    const now = Date.now()
+    const patterns = [...observedOriginPatterns(thread, now)]
+    if (patterns.length === 0) return ok<OfferOnScreen | null>(null)
+
+    const named = ambient.nameFor(thread)
+    const composed = ambient.offerFor(thread)
+    const subject = (named?.subject ?? '').trim() || subjectFromSignature(thread)
+
+    /**
+     * The grounds and the sentence, recomputed from the buffer.
+     *
+     * A composed offer froze the grounds that permitted it, and those are what
+     * the durable row will hold, so they win when there is one. Without an
+     * offer the screen still owes the person the reasons, and re-deriving them
+     * is cheap arithmetic over the same observations the detector just read.
+     */
+    const observations = ambient.since(now)
+    const detected = detectWork(observations, now)
+    const stillThisThread = detected !== null && signatureOf(detected.terms) === thread
+    const grounds =
+      composed?.grounds ??
+      (stillThisThread && detected ? groundsFor(detected, observations, now).sentences : [])
+
+    const describedFor = stillThisThread && detected ? describeWork(detected, thread, named) : null
+    const sentence =
+      describedFor?.sentence ?? `You have been looking into ${subject}.`
+    const because = describedFor?.because ?? `Across ${patterns.length} sites.`
+
+    const candidate = await carryOnCandidate(subject)
+    const backOn = candidate.ok ? candidate.value : null
+
+    /**
+     * Which of these the destination has already withdrawn.
+     *
+     * Only a project being JOINED can have withdrawn anything — a project about
+     * to be created has no history to have refused with.
+     */
+    const withdrawn = new Set<string>()
+    if (backOn) {
+      const { repos } = await appContext()
+      for (const source of await repos.projects.approvedSources(backOn.projectId)) {
+        if (source.grantState !== 'granted') withdrawn.add(source.originPattern)
+      }
+    }
+
+    return ok<OfferOnScreen | null>({
+      thread,
+      subject,
+      origins: patterns.map((pattern) => ({
+        pattern,
+        host: pattern.replace(/^https?:\/\//, '').replace(/\/\*$/, ''),
+        leftWithdrawn: withdrawn.has(pattern),
+      })),
+      grounds,
+      offer: composed
+        ? {
+            title: composed.title,
+            rationale: composed.rationale,
+            outline: composed.outline,
+            produces: composed.produces,
+            excludes: composed.excludes,
+          }
+        : null,
+      sentence,
+      because,
+      carriedPages: ambient.pagesOfThread(thread).length,
+      backOn,
+    })
+  })
+}
+
+export interface OfferAccepted extends WorkStarted {
+  /** True when a composed offer was on screen and is now a durable row. False
+   *  is the degraded path, which starts the session and writes no offer —
+   *  there was nothing composed to write down. */
+  readonly offerRecorded: boolean
+}
+
+/**
+ * Saying yes.
+ *
+ * ── What this takes, and what it refuses to take ─────────────────────────
+ *
+ * A thread signature, the sites the person left ticked, and whether they said
+ * this is new work. That is all. The subject, the offer, the grounds and the
+ * set of sites Propositum may approve are read off the buffer here, server-
+ * side, keyed by the signature — see `OfferedSite` above for why that is a
+ * structural property rather than a validation step.
+ *
+ * `ticked` can only narrow. The approved set is `observed ∩ ticked`, so a site
+ * nobody browsed contributes nothing however it arrives, and a site somebody
+ * unticked is left out. Neither direction can widen what Propositum may watch.
+ *
+ * ── And what accepting still does not do ─────────────────────────────────
+ *
+ * It does not start a run. It sets the work up and stops at the agreement,
+ * where the objective is filled in from what they were doing and nothing
+ * happens until they ratify it. Removing setup friction is not the same as
+ * removing consent, and this is the line between them.
+ */
+export async function acceptWorkOffer(
+  threadSignature: string,
+  ticked: readonly string[],
+  treatAsNewWork?: boolean,
+): Promise<ActionResult<OfferAccepted>> {
+  return attempt(async () => {
+    const thread = threadSignature.trim()
+    if (thread === '') {
+      return no<OfferAccepted>(
+        'invalid-input',
+        'Propositum could not tell what this was meant to be about. Browse for a while and it will offer again.',
+      )
+    }
+
+    const ambient = ambientStore()
+    const composed = ambient.offerFor(thread)
+    const named = ambient.nameFor(thread)
+    const subject = (named?.subject ?? '').trim() || subjectFromSignature(thread)
+
+    const observed = [...observedOriginPatterns(thread, Date.now())]
+
+    // Narrowing only. Anything in `ticked` that is not in `observed` falls out
+    // of the intersection, so an added site is not filtered — it is absent.
+    const wanted = new Set<string>()
+    for (const raw of ticked) {
+      const pattern = normaliseOriginPattern(raw)
+      if (pattern !== null) wanted.add(pattern)
+    }
+    const chosen = observed.filter((pattern) => wanted.has(pattern))
+
+    if (observed.length > 0 && chosen.length === 0) {
+      return no<OfferAccepted>(
+        'invalid-input',
+        'Nothing is ticked, so there would be nothing for Propositum to watch. Leave at least one site ticked.',
+      )
+    }
+
+    /**
+     * Which skeleton the document gets.
+     *
+     * Deterministic, from the outcome kinds the offer says it expects. The
+     * model does not pick a template and never has — `expects` is a statement
+     * about the shape of the result, and this is code reading it. Without an
+     * offer, research is the honest default: nobody has said anything is being
+     * written yet.
+     */
+    const intent =
+      composed && composed.expects.includes('document-changes') ? 'draft-document' : 'deep-research'
+
+    const started = await startFromSuggestion(subject, chosen, intent, thread, treatAsNewWork)
+    if (!started.ok) return { ok: false, problem: started.problem } as const
+
+    /**
+     * The offer becomes durable at the moment it is accepted, and not before.
+     *
+     * An offer nobody answered leaves no row, by the same rule the ambient
+     * buffer lives under: a record of every guess Propositum made about what
+     * somebody was doing IS a profile. The grounds are frozen here rather than
+     * recomputed later because the buffer they came from is bounded by a
+     * thirty-minute window, and "why did it offer me this" is the first
+     * question anybody asks when an offer was wrong.
+     */
+    if (composed) {
+      const { repos } = await appContext()
+      await repos.offers.create({
+        sessionId: started.value.sessionId,
+        threadSignature: thread,
+        promptVersion: composed.promptVersion,
+        title: composed.title,
+        rationale: composed.rationale,
+        outline: composed.outline,
+        produces: composed.produces,
+        excludes: composed.excludes,
+        originPatterns: chosen,
+        expectedKinds: composed.expects,
+        grounds: { kinds: [...composed.groundKinds], sentences: [...composed.grounds] },
+      })
+    }
+
+    refresh()
+    return ok<OfferAccepted>({ ...started.value, offerRecorded: composed !== null })
   })
 }
 

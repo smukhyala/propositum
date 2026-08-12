@@ -100,55 +100,55 @@
     }
 
     offer.hidden = false
-    document.getElementById('offer-what').textContent = suggestion.sentence
-    document.getElementById('offer-why').textContent = suggestion.because
 
     const yes = document.getElementById('offer-yes')
     const no = document.getElementById('offer-no')
 
     /**
-     * The offer, in the model's words when it had any.
+     * The offer, in Propositum's own words when it has composed any.
      *
-     * `offerLabel` names the subject and the thing being offered — "Want me to
-     * draft a doc on projects you could build with world models?" Without a
-     * name it falls back to starting a session, which is true and duller.
+     * A `work-offer` carries a title — "Write up the three labs and how they
+     * differ" — which is the thing worth reading. The degraded `start-session`
+     * form carries only what was observed, which is true and duller, and is
+     * what shows for the first half-minute of every offer and for good on a
+     * machine with no API key.
      */
-    yes.textContent =
-      suggestion.kind === 'hand-off'
-        ? 'Hand it over'
-        : suggestion.offer === 'draft-document'
-          ? 'Draft a doc on this'
-          : suggestion.offer === 'deep-research'
-            ? 'Research this for me'
-            : 'Start a session here'
-
-    if (suggestion.offerLabel) {
-      document.getElementById('offer-what').textContent = suggestion.offerLabel
+    if (suggestion.kind === 'work-offer') {
+      document.getElementById('offer-what').textContent = suggestion.title
       document.getElementById('offer-why').textContent =
-        `${suggestion.sentence} ${suggestion.because}`
+        suggestion.rationale || `${suggestion.sentence} ${suggestion.because}`
+      yes.textContent = 'Show me'
+    } else {
+      document.getElementById('offer-what').textContent = suggestion.sentence
+      document.getElementById('offer-why').textContent = suggestion.because
+      yes.textContent = suggestion.kind === 'hand-off' ? 'Hand it over' : 'Start watching this'
     }
 
     yes.onclick = async () => {
-      // The app owns what happens next; this only carries the answer. Landing
-      // on a page rather than acting silently means the person sees what they
-      // agreed to — and nothing runs until they ratify the agreement there.
-      const params = new URLSearchParams({
-        subject: suggestion.subject ?? '',
-        origins: (suggestion.origins ?? [suggestion.origin]).join(','),
-        intent: suggestion.offer ?? 'deep-research',
-        thread: suggestion.thread ?? '',
-      })
+      /**
+       * The link carries the thread signature and nothing else.
+       *
+       * It used to carry the subject, the sites and the intent, which made what
+       * the app approved a function of the link rather than of what had been
+       * observed. It also dead-ended: the subject does not exist until the app
+       * has named the thread, so for the first thirty seconds of every offer
+       * this opened a page that said the link had gone stale. The signature
+       * exists from the first poll that detected anything.
+       */
       await chrome.tabs.create({
         url:
-          suggestion.kind === 'hand-off' ? `${APP}/` : `${APP}/start?${params.toString()}`,
+          suggestion.kind === 'hand-off'
+            ? `${APP}/`
+            : `${APP}/start?thread=${encodeURIComponent(suggestion.thread ?? '')}`,
       })
     }
 
     no.onclick = async () => {
+      const origin = suggestion.origin || (suggestion.origins ?? [])[0] || ''
       await fetch(`${APP}/api/capture/ambient/decline`, {
         method: 'POST',
         headers: { 'content-type': 'application/json', [HEADER]: '1' },
-        body: JSON.stringify({ origin: suggestion.origin ?? '' }),
+        body: JSON.stringify({ origin }),
       }).catch(() => {})
       await chrome.action.setBadgeText({ text: '' })
       offer.hidden = true

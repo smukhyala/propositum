@@ -21,6 +21,8 @@
  * lives in src/capture/ and is tested there.
  */
 
+import { looksLikeSearch } from './search-url.js'
+
 const APP_ORIGIN = 'http://127.0.0.1:3117'
 const HEARTBEAT_ALARM = 'propositum-heartbeat'
 const HEARTBEAT_MINUTES = 0.5
@@ -155,12 +157,24 @@ async function flushAmbient() {
           at: o.at,
           url: o.url ?? '',
           title: o.title ?? '',
+          /**
+           * A query is a REAL query, not a question mark.
+           *
+           * This used to be `o.url.includes('?')`, so a newsletter link with a
+           * tracking parameter arrived at the app labelled as a search — and
+           * the offer screen then told somebody "you searched for it, then read
+           * 4 pages" when they had searched for nothing. See search-url.js: the
+           * lie is bad on its own terms, and it also makes the
+           * `searched-then-read` intent ground satisfiable by any URL with a
+           * `?` in it, which is the ground that separates pursuing a subject
+           * from having one delivered to you.
+           */
           kind:
             o.signal === 'engagement'
               ? 'engagement'
               : o.signal === 'away'
                 ? 'away'
-                : o.url && o.url.includes('?')
+                : looksLikeSearch(o.url ?? '')
                   ? 'query'
                   : 'navigation',
           ...(typeof o.dwellMs === 'number' ? { engagedMs: o.dwellMs } : {}),
@@ -220,7 +234,19 @@ async function showSuggestionBadge() {
     await chrome.action.setTitle({ title: `${suggestion.sentence} ${suggestion.because}` })
 
     /**
-     * Actually interrupt, once, when the offer has a NAME.
+     * The current offer is stored on EVERY poll, not only when we notify.
+     *
+     * `answeredYes` reads this, and it used to be written only alongside a
+     * notification. So the badge could be advertising Thursday's thread while
+     * storage still held Tuesday's, and clicking through opened a link for work
+     * the person had stopped doing an hour ago. Writing it unconditionally
+     * costs one storage set per thirty seconds and makes "what the badge is
+     * about" and "what the click opens" the same object by construction.
+     */
+    await chrome.storage.session.set({ offer: suggestion })
+
+    /**
+     * Actually interrupt, once, when there is something worth interrupting for.
      *
      * This was `chrome.sidePanel.open()` and it never fired. That call requires
      * a USER GESTURE, and an alarm handler has none — so it threw into a catch
@@ -231,20 +257,39 @@ async function showSuggestionBadge() {
      * A notification is the only thing that can appear unprompted, which is
      * what "it pops up and says, hey, I see you're doing this" requires.
      *
-     * Once per subject. Re-notifying every thirty seconds is how a helpful
-     * thing becomes the thing you uninstall, and the badge already carries the
-     * offer for anyone who dismissed it.
+     * ── Once per THREAD, not once per subject ──────────────────────────────
+     *
+     * The suppression key used to be the subject, and the subject is a phrase a
+     * model wrote. Two different threads can be named the same thing — "world
+     * models" on Tuesday and again on Thursday — and the second one was then
+     * silently suppressed by the first: the badge appeared, no notification
+     * ever came, and the offer for genuinely new work went unmentioned. The
+     * thread signature is the identity the app itself keys everything on, and
+     * it changes when the shape of the work changes.
+     *
+     * The previous thread's key is dropped when the thread changes, so this
+     * cannot accumulate a key per subject anyone has ever looked at, and a
+     * thread genuinely returned to after an hour is allowed to interrupt again.
+     *
+     * Only a `work-offer` interrupts. The degraded form is a real offer and it
+     * keeps the badge, but "Propositum noticed you are reading about something"
+     * with no proposal attached is not worth a notification — that is the
+     * interruption people turn the feature off over.
      */
-    const key = `told:${suggestion.subject ?? ''}`
-    const already = await chrome.storage.session.get([key])
-    if (suggestion.subject && !already[key]) {
-      await chrome.storage.session.set({ [key]: true, offer: suggestion })
+    const thread = suggestion.thread ?? ''
+    const key = `told:${thread}`
+    const { toldKey: previous } = await chrome.storage.session.get(['toldKey'])
+    if (previous && previous !== key) await chrome.storage.session.remove([previous])
 
-      chrome.notifications.create(`propositum:${suggestion.subject}`, {
+    const already = await chrome.storage.session.get([key])
+    if (suggestion.kind === 'work-offer' && thread && !already[key]) {
+      await chrome.storage.session.set({ [key]: true, toldKey: key })
+
+      chrome.notifications.create(`propositum:${thread}`, {
         type: 'basic',
         iconUrl: chrome.runtime.getURL('icon.png'),
-        title: suggestion.offerLabel || `Looks like you're working on ${suggestion.subject}.`,
-        message: suggestion.because,
+        title: suggestion.title || `Looks like you're working on ${suggestion.subject}.`,
+        message: suggestion.rationale || suggestion.because,
         buttons: [{ title: 'Yes, do it' }, { title: 'Not now' }],
         requireInteraction: true,
       })
@@ -379,19 +424,34 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 /**
  * Both answers are a USER GESTURE, which is what makes them able to do things
  * the alarm cannot. Opening a tab is deliberate: the person lands on a page
- * showing the four durable things about to be created in their name, rather
- * than a toast claiming it happened.
+ * showing the durable things about to be created in their name, rather than a
+ * toast claiming it happened.
+ *
+ * ── One parameter, and it is not a decision ──────────────────────────────
+ *
+ * The link used to carry the subject, the sites and the intent, and the app
+ * approved the sites it was handed. That made approval a function of the LINK
+ * rather than of what had been observed, and a crafted one could put a site
+ * nobody had visited into `ApprovedSource` behind a single click.
+ *
+ * Now it carries the thread signature and nothing else. The app reads the
+ * subject, the offer, the grounds and the sites off its own server-side buffer
+ * against that key, so this file cannot widen anything even if it wanted to —
+ * and neither can anything that forges a link to look like this one.
+ *
+ * It also fixes a dead end. `?subject=` rendered "that link has gone stale" for
+ * the first thirty seconds of every offer, because the subject only exists once
+ * the app has named the thread, and permanently on a machine with no
+ * `ANTHROPIC_API_KEY`. `?thread=` is available from the very first poll that
+ * detected anything, so the link works whether or not a model ever ran; the
+ * page shows the composed offer when there is one and the deterministic
+ * "start watching" form when there is not.
  */
 async function answeredYes() {
   const { offer } = await chrome.storage.session.get(['offer'])
-  if (!offer) return
+  if (!offer?.thread) return
 
-  const params = new URLSearchParams({
-    subject: offer.subject ?? '',
-    origins: (offer.origins ?? [offer.origin]).filter(Boolean).join(','),
-    intent: offer.offer ?? 'deep-research',
-    thread: offer.thread ?? '',
-  })
+  const params = new URLSearchParams({ thread: offer.thread })
   await chrome.tabs.create({ url: `${APP_ORIGIN}/start?${params.toString()}` })
   await chrome.action.setBadgeText({ text: '' })
 }
@@ -399,14 +459,19 @@ async function answeredYes() {
 async function answeredNo() {
   const { offer } = await chrome.storage.session.get(['offer'])
   await chrome.action.setBadgeText({ text: '' })
-  if (!offer?.origin) return
+
+  // A `work-offer` has no single primary site — it has the thread's sites — so
+  // the first of those is what gets snoozed. Reading only `origin` meant "Not
+  // now" silently did nothing for every composed offer.
+  const origin = offer?.origin || offer?.origins?.[0]
+  if (!origin) return
 
   // Declining drops the evidence as well as snoozing, so the same detection
   // cannot immediately re-fire off the pages that produced it.
   await fetch(`${APP_ORIGIN}/api/capture/ambient/decline`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', [CUSTOM_HEADER]: '1' },
-    body: JSON.stringify({ origin: offer.origin }),
+    body: JSON.stringify({ origin }),
   }).catch(() => {})
 }
 

@@ -28,7 +28,7 @@
 
 import type { ZodType } from 'zod'
 
-/** The seven. Used as `ModelCallRecord.boundary`. */
+/** The eight. Used as `ModelCallRecord.boundary`. */
 export const BOUNDARY_NAMES = [
   'session-reading',
   'handoff',
@@ -40,6 +40,11 @@ export const BOUNDARY_NAMES = [
    *  contract — gated behind deterministic detection, sees titles only, and
    *  grants nothing. See ADR-0008 and boundaries/subject.ts. */
   'subject',
+  /** Composing what Propositum would DO about a named thread. Runs with no
+   *  session either, and behind a strictly higher bar than `subject`: the
+   *  deterministic `OfferGrounds` must be sufficient first. See ADR-0009 and
+   *  boundaries/offer.ts. */
+  'offer',
 ] as const
 export type BoundaryName = (typeof BOUNDARY_NAMES)[number]
 

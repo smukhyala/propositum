@@ -221,6 +221,39 @@ describe('the safety machinery is reachable from the product', () => {
     expect(callersOf('classifyEngagement(', 'src/capture/semantics.ts')).not.toEqual([])
     expect(callersOf('classifySelection(', 'src/capture/semantics.ts')).not.toEqual([])
   })
+
+  it('an accepted offer leaves a durable trace, or nobody can ask why it was made', () => {
+    // Moved up out of the deferred block below when `acceptWorkOffer` began
+    // writing one — which is that block working as intended.
+    //
+    // `grounds` is the load-bearing column. It is the frozen record of WHAT THE
+    // DETECTOR SAW, and it has to be frozen rather than recomputed because the
+    // ambient buffer it came from is bounded by a thirty-minute window and a
+    // 500-row cap. Without this row, "why did it offer me this" has no answer
+    // an hour later, which is exactly when somebody asks it.
+    expect(
+      callersOf('offers.create', 'src/persistence/repositories/index.ts'),
+      'nothing persists a WorkOffer — an accepted offer cannot be explained afterwards',
+    ).not.toEqual([])
+  })
+
+  it('the grounds are computed by the product, not only by their own test', () => {
+    // The second, higher bar (ADR-0009 §2). If nothing calls it, every offer is
+    // composed on `detectWork` alone — the low bar meant for deciding whether
+    // Propositum may SAY something — and the two-group rule exists only on
+    // paper.
+    expect(
+      callersOf('groundsFor(', 'src/domain/detection/grounds.ts'),
+      'nothing computes OfferGrounds — the bar for offering to act is not applied',
+    ).not.toEqual([])
+  })
+
+  it('something composes an offer, or the model half of ADR-0009 is unreachable', () => {
+    expect(
+      callersOf('composeOffer(', 'src/server/compose-offer.ts'),
+      'composeOffer has no caller — every offer degrades to the deterministic form forever',
+    ).not.toEqual([])
+  })
 })
 
 /**
@@ -316,16 +349,6 @@ describe('deferred, and asserted as deferred', () => {
    * If you are here because one went red: that is the system working. Move it.
    */
   const repos = 'src/persistence/repositories/index.ts'
-
-  it('no WorkOffer is written, so an accepted offer leaves no durable trace', () => {
-    // Which also means `grounds` — the frozen record of WHY Propositum asked —
-    // does not exist yet, and "why did it offer me this" has no answer after
-    // the ambient buffer's 30-minute window closes.
-    expect(
-      callersOf('offers.create', repos),
-      'work offers are persisted now — move this into the section above',
-    ).toEqual([])
-  })
 
   it('nothing writes a ShiftOutcome, so a Shift can still only produce a document', () => {
     // The whole point of the table is that the document path is one kind among
