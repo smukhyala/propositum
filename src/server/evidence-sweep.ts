@@ -74,10 +74,17 @@ const DAY_MS = 24 * 60 * 60 * 1000
 
 export interface EvidenceSweepDeps {
   readonly evidence: ActionEvidenceRepository
-  /** Injected so a test does not have to wait a week, and so nothing in here
-   *  calls `Date.now()` — the same rule the rest of the codebase follows. */
+  /**
+   * Injected so a test does not have to wait a week, and so nothing in here
+   * calls `Date.now()` — the same rule the rest of the codebase follows.
+   *
+   * Note what is NOT here: an override for the window. A caller-supplied
+   * `retentionDays` would make the published promise a parameter, and the first
+   * caller passing 90 to debug something would be a privacy regression that
+   * typechecks. Tests move the CLOCK instead, which is the same experiment
+   * without a second way to say how long evidence lives.
+   */
   readonly now: () => Date
-  readonly retentionDays?: number
 }
 
 export interface EvidenceSweepResult {
@@ -109,8 +116,7 @@ export interface EvidenceSweepResult {
 export async function sweepActionEvidence(
   deps: EvidenceSweepDeps,
 ): Promise<EvidenceSweepResult> {
-  const days = deps.retentionDays ?? ACTION_EVIDENCE_RETENTION_DAYS
-  const createdBefore = new Date(deps.now().getTime() - days * DAY_MS)
+  const createdBefore = new Date(deps.now().getTime() - ACTION_EVIDENCE_RETENTION_DAYS * DAY_MS)
 
   const settled = await deps.evidence.sweepSettledRuns()
   const expired = await deps.evidence.sweepOlderThan(createdBefore)

@@ -171,6 +171,36 @@ describe('an oversized tree is truncated and recorded, never refused', () => {
     expect(after.ok).toBe(true)
   })
 
+  it('refuses a run it has never heard of, rather than throwing a foreign key at a route', async () => {
+    // The mirror of `unknown-session`. Without it this is a raw Prisma
+    // exception, which a route turns into a 500 and an agent turn cannot tell
+    // apart from the database being down.
+    expect(
+      await ledger.appendEvidence({ runId: 'no-such-run', kind: 'page-snapshot', url: 'https://x.example' }),
+    ).toEqual({ ok: false, reason: 'unknown-run' })
+  })
+
+  it('stores a screenshot as its own bytes, detached from the buffer it was handed', async () => {
+    const runId = await newRun()
+    const shared = new Uint8Array([7, 8, 9])
+
+    const written = await ledger.appendEvidence({
+      runId,
+      kind: 'screen-capture',
+      url: 'https://x.example/shot',
+      image: shared,
+    })
+    expect(written.ok).toBe(true)
+    if (!written.ok) return
+
+    // The caller mutating its buffer afterwards must not change the row. A cast
+    // rather than a copy would typecheck and silently allow exactly this.
+    shared[0] = 255
+
+    const stored = await repos.evidence.byId(written.id)
+    expect(Array.from(stored?.image ?? [])).toEqual([7, 8, 9])
+  })
+
   it('sanitises and cleans at the same door the observation ledger uses', async () => {
     const runId = await newRun()
 

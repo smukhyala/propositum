@@ -164,6 +164,14 @@ export type AppendEvidenceResult =
       readonly adversarial: boolean
     }
   | { readonly ok: false; readonly reason: 'malformed'; readonly detail: string }
+  /**
+   * The mirror of `unknown-session` on the observation path, and it exists for
+   * the same reason: without it a bad `runId` becomes a raw foreign-key
+   * exception thrown out of the writer, which a route turns into a 500 and an
+   * agent turn cannot tell apart from the database being down. A refusal is a
+   * fact the caller can act on; a stack trace is not.
+   */
+  | { readonly ok: false; readonly reason: 'unknown-run' }
 
 export interface LedgerWriter {
   append(sessionId: string, event: unknown): Promise<AppendResult>
@@ -392,6 +400,9 @@ export function createLedgerWriter(prisma: PrismaClient): LedgerWriter {
 
       const { runId, intentId, kind, url, untrustedText, image } = parsed.data
 
+      const run = await prisma.agentRun.findUnique({ where: { id: runId }, select: { id: true } })
+      if (!run) return { ok: false, reason: 'unknown-run' }
+
       /**
        * BOUNDED TWICE, and neither side trusts the other.
        *
@@ -435,11 +446,14 @@ export function createLedgerWriter(prisma: PrismaClient): LedgerWriter {
                 adversarial: looksAdversarial(marked),
               },
             }),
-        // Prisma's `Bytes` is `Uint8Array<ArrayBuffer>`; Zod hands back the
-        // wider `Uint8Array<ArrayBufferLike>`. Narrowed here, at the one place
-        // that knows the buffer came from a screenshot rather than from shared
-        // memory — see the note on the repository's `image` field.
-        ...(image === undefined ? {} : { image: image as Uint8Array<ArrayBuffer> }),
+        // COPIED, not asserted. Prisma's `Bytes` is `Uint8Array<ArrayBuffer>`
+        // and Zod hands back the wider `Uint8Array<ArrayBufferLike>`, which
+        // admits `SharedArrayBuffer`. The repository's own note on this field
+        // says to convert rather than assert, and it is right: a cast would
+        // typecheck a buffer another thread can mutate while Prisma is reading
+        // it. `slice()` returns a fresh ArrayBuffer-backed copy, which costs one
+        // screenshot's worth of memory once and removes the hazard entirely.
+        ...(image === undefined ? {} : { image: image.slice() }),
         truncated,
       })
 
