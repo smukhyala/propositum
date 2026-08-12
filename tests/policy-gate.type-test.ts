@@ -61,6 +61,42 @@ compilePolicy({ ...scope, objective: statedIntent.objective }, controls)
 // @ts-expect-error — nor as part of the controls.
 compilePolicy(scope, { ...controls, guidance: statedIntent.guidance })
 
+/**
+ * Nor via the offer that proposes the work in the first place.
+ *
+ * An offer is assembled from what Propositum noticed while watching, so it
+ * carries prose about the subject — a headline, a summary of what the person
+ * seemed to be doing. That prose has page-derived spans in it by construction.
+ * The barrier ADR-0006 calls load-bearing is exactly this: no path, however
+ * convenient, from a prose-bearing object into the function that decides what
+ * the worker may touch.
+ *
+ * A future refactor that widened `compilePolicy` to "take the offer, it has
+ * everything" would be the single change that undoes the trust boundary, and it
+ * would look like tidying. This is the line that stops it compiling.
+ */
+compilePolicy(
+  // @ts-expect-error — an offer carries prose, so it cannot reach the compiler.
+  { ...scope, headline: 'Compare the partner tiers', summary: 'You read it for 11 minutes' },
+  controls,
+)
+
+/**
+ * The honest limit of the three assertions above.
+ *
+ * They rest on TypeScript's excess-property check, which fires on object
+ * LITERALS. A pre-typed variable holding the same extra fields is structurally
+ * assignable to `ContractScope` and would compile.
+ *
+ * That is not the hole it looks like, and the reason is worth writing down
+ * rather than rediscovering. The guarantee is that prose cannot INFLUENCE a
+ * permission decision, and that is a property of the function body, which reads
+ * exactly three fields and could not consult a fourth if one arrived. The
+ * compile error is what makes the rule visible at the call site — it catches
+ * the refactor that decides to "just pass the offer, it has everything" — and
+ * catching it there is the point. It was never a sandbox.
+ */
+
 // ─────────────────────────────────────────────────────────────────────────
 // 2. Authority cannot be fabricated.
 //

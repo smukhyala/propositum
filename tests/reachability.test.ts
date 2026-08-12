@@ -129,6 +129,17 @@ describe('the safety machinery is reachable from the product', () => {
     expect(callersOf('authorize(', 'src/policy/gate.ts')).not.toEqual([])
   })
 
+  it('the gate consults the reversibility classifier, or nothing is ever confirmed', () => {
+    // The classifier is what turns "click this" into "ask them first". If the
+    // gate stopped calling it, every proposal would sail through as ordinary
+    // and the confirmation pause would exist only in its own tests — which is
+    // precisely the shape of the three defects at the top of this file.
+    expect(
+      callersOf('classifyReversibility(', 'src/domain/execution/reversibility.ts'),
+      'nothing classifies reversibility — no proposal can ever require confirmation',
+    ).toContain('src/policy/gate.ts')
+  })
+
   it('append-only guards are installed by something that runs', () => {
     // These existed and were tested for a week before anything called them.
     expect(callersOf('ensureAppendOnlyGuards', 'src/persistence/append-only.ts')).not.toEqual([])
@@ -239,6 +250,45 @@ describe('deferred, and asserted as deferred', () => {
     expect(
       callersOf('sweepForGap(', 'src/server/gap-sweeper.ts'),
       'the gap sweeper has a caller now — move this into the section above',
+    ).toEqual([])
+  })
+
+  it('nothing credits pause time back, so a slow answer still eats the shift', () => {
+    // Someone asked at 09:05 who answers at noon returns to a run whose budget
+    // expired at 09:30. `deadlineFor` fixes that and nothing calls it yet.
+    expect(
+      callersOf('deadlineFor(', 'src/domain/execution/stop-conditions.ts'),
+      'deadlineFor has a caller now — move this into the section above',
+    ).toEqual([])
+  })
+
+  it('nothing distinguishes a pause from a loop, so three questions look like circles', () => {
+    // Without this filter on the refusal counter, a run that correctly asked
+    // permission three times halts with "I kept needing things the agreement
+    // does not allow" — at the exact moment the person was about to answer.
+    expect(
+      callersOf('PAUSING_RULES', 'src/domain/execution/stop-conditions.ts'),
+      'PAUSING_RULES has a caller now — move this into the section above',
+    ).toEqual([])
+  })
+
+  it('nothing reports a lost tab or an action limit, so two stop rules cannot fire', () => {
+    // `control-lost` and `action-limit` are structural and deterministic, and
+    // `evaluateStructuralStops` cannot raise either until a caller supplies
+    // `controlLost` / `actionsTaken` on RunProgress.
+    expect(
+      callersOf('controlLost', 'src/domain/execution/stop-conditions.ts'),
+      'something reports control loss now — move this into the section above',
+    ).toEqual([])
+  })
+
+  it('no run path supplies the action counts, so the two caps do not bind', () => {
+    // `EnforcedPolicy.maxActions` and `maxMutatingActions` are compiled and
+    // enforced, but `RunContext.actionsTaken` defaults to 0 when absent, so an
+    // unwired caller gets the enforcement it had before the caps existed.
+    expect(
+      callersOf('mutatingActionsTaken', 'src/policy/gate.ts'),
+      'the caps are wired now — move this into the section above',
     ).toEqual([])
   })
 

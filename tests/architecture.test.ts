@@ -83,9 +83,61 @@ describe('capabilities the brief excludes do not exist', () => {
 
     // Absence of capability is the strongest prohibition available — these are
     // not denied by a rule, they are simply not implemented.
+    //
+    // ── Read this before trusting this test ────────────────────────────────
+    //
+    // It still passes and it now MEANS LESS THAN IT USED TO. `ActionKind` has
+    // stopped enumerating effects and started enumerating mechanisms, so
+    // `click-element` can press the page's own Send button. What survives here
+    // is a statement about OUR TOOL SURFACE — we ship no code that composes a
+    // message — and no longer a statement about reachable effects.
+    //
+    // The replacement for the missing capability is a confirmation pause
+    // (`src/domain/execution/reversibility.ts`), and a pause is strictly weaker
+    // than an absence: it can be defeated by a bug in the classifier, by
+    // phrasing outside the lexicon, or by a person who has learned to click
+    // yes. Nobody should read a green run of this test as ADR-0004's guarantee
+    // surviving intact.
     for (const forbidden of ['sendMessage', 'sendEmail', 'purchase', 'publish', 'deleteFile']) {
       expect(tools).not.toContain(`export function ${forbidden}`)
     }
+  })
+})
+
+describe('the reversibility classifier stays domain code', () => {
+  /**
+   * Covered by the domain-purity block below, and asserted separately anyway.
+   *
+   * This is the file most likely to grow a model call: "ask a model whether
+   * this button is dangerous" is the obvious next idea and it is exactly wrong
+   * — a model call in the authorization path inverts "models propose,
+   * deterministic code authorizes", because the model would be deciding whether
+   * it needs permission, which is the same thing as deciding it does not. A
+   * named test is cheaper than remembering that argument.
+   */
+  const file = join(repo, 'src/domain/execution/reversibility.ts')
+
+  it('exists, so this test cannot pass by checking nothing', () => {
+    expect(readFileSync(file, 'utf8').length).toBeGreaterThan(0)
+  })
+
+  it('imports nothing from model, policy, or persistence', () => {
+    const source = readFileSync(file, 'utf8')
+    const offenders: string[] = []
+
+    for (const [, spec] of source.matchAll(/from\s+['"]([^'"]+)['"]/g)) {
+      if (/(^|\/)(app|model|persistence|policy)\//.test(spec ?? '')) offenders.push(spec ?? '')
+    }
+
+    expect(offenders).toEqual([])
+  })
+
+  it('calls no model client and reads no clock', () => {
+    const source = readFileSync(file, 'utf8')
+
+    expect(source).not.toMatch(/\bModelClient\b/)
+    expect(source).not.toMatch(/\bawait\b/)
+    expect(source).not.toMatch(/Date\.now\s*\(/)
   })
 })
 

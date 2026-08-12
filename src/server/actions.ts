@@ -46,7 +46,7 @@ import { handoffBoundary, sourceHandlesFor } from '../model/boundaries/handoff'
 import { checkDrift, hashContent, materialise } from '../domain/document/changeset'
 import type { Decision } from '../domain/document/changeset'
 import { normalise } from '../domain/document/normalise'
-import { ACTION_KINDS } from '../domain/handoff/policy'
+import { DOCUMENT_ACTION_KINDS } from '../domain/handoff/policy'
 import type { ActionKind, AutonomyControls } from '../domain/handoff/policy'
 import type { ClaimInput } from '../persistence/repositories/index'
 
@@ -1364,8 +1364,14 @@ export async function draftContract(readingId: string): Promise<ActionResult<Con
 
     /* ── persist the draft ──────────────────────────────────────────────── */
 
-    // Full capability at draft time; the Output dial removes `draft-section` at
-    // ratification. Defaults are static product constants, never model-proposed.
+    // Full DOCUMENT capability at draft time; the Output dial removes
+    // `draft-section` at ratification. Defaults are static product constants,
+    // never model-proposed.
+    //
+    // `DOCUMENT_ACTION_KINDS`, not `ACTION_KINDS`: the enum now also holds the
+    // browser-driving verbs, and a person drafting a proposal has no business
+    // granting *"Click something on the page"*. A browser handoff grants those
+    // deliberately, from the path that offers one.
     const controls = DEFAULT_CONTROLS
     const contract = await repos.contracts.createDraft({
       sessionId: reading.sessionId,
@@ -1374,7 +1380,7 @@ export async function draftContract(readingId: string): Promise<ActionResult<Con
       definitionOfDone: drafted.value.definitionOfDone,
       guidance: [],
       approvedSourceIds,
-      allowedActionKinds: [...ACTION_KINDS],
+      allowedActionKinds: [...DOCUMENT_ACTION_KINDS],
       baseVersionId: base.id,
       initiative: controls.initiative,
       progress: controls.progress,
@@ -1390,7 +1396,7 @@ export async function draftContract(readingId: string): Promise<ActionResult<Con
       definitionOfDone: drafted.value.definitionOfDone,
       suggestedTimeLimitMinutes: minutes,
       approvedSourceIds,
-      allowedActionKinds: [...ACTION_KINDS],
+      allowedActionKinds: [...DOCUMENT_ACTION_KINDS],
       documentTitle: document.title,
       quotedConstraints,
     })
@@ -1517,8 +1523,8 @@ export async function acceptContract(
     // again at run time; both agreeing is the point, not redundancy.
     const allowedActionKinds: ActionKind[] =
       controls.output === 'suggestions-only'
-        ? ACTION_KINDS.filter((k) => k !== 'draft-section')
-        : [...ACTION_KINDS]
+        ? DOCUMENT_ACTION_KINDS.filter((k) => k !== 'draft-section')
+        : [...DOCUMENT_ACTION_KINDS]
 
     const unchanged =
       draft.objective === objective &&
