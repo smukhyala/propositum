@@ -20,11 +20,41 @@ there; this directory is the thin Chrome-facing shell.
 Only origins the person approved, granted through `optional_host_permissions`
 at approval time and revocable in Chrome's own UI.
 
-It does **not** request `tabs`, `webNavigation`, `history`, or `debugger`.
-Without `tabs`, the extension is *structurally incapable* of learning that the
-person visited anything else — Chrome will not hand over the URL, the title, or
-the tab. The constraint is enforced by the browser, not by our code being
-correct. See [ADR-0002](../docs/adr/0002-observation-capture.md).
+It does **not** request `tabs`, `webNavigation` or `history`. Without `tabs`,
+the extension is *structurally incapable* of learning that the person visited
+anything else — Chrome will not hand over the URL, the title, or the tab. The
+constraint is enforced by the browser, not by our code being correct. See
+[ADR-0002](../docs/adr/0002-observation-capture.md).
+
+## What it can do — and this reverses the sentence above it
+
+It **does** request `debugger`, which ADR-0002 explicitly refused on the
+grounds that it *"would make every constraint below advisory"*.
+[ADR-0010](../docs/adr/0010-acting-in-the-browser.md) grants it anyway and
+states the price in its own opening paragraph: it is the first decision in the
+series whose net effect on safety is negative.
+
+Three things carry the weight now:
+
+- **The tab is one Propositum opened.** `chrome.debugger.attach` needs a tab
+  id, and without `tabs` the only id available is the one
+  `chrome.tabs.create` returned. `chrome.debugger.getTargets` is never called —
+  it would hand back the URL and title of every open tab, which is exactly what
+  refusing `tabs` was for. **The agent can never learn that any other tab
+  exists**, and the cost is that it cannot continue in a tab you were already
+  reading: it opens its own and navigates there itself.
+- **No `Runtime` domain, ever.** Propositum never runs a line of its own
+  JavaScript inside a page you are signed into. Clicks are synthesised at
+  coordinates, which costs robustness on purpose — an occluded element fails
+  loudly instead of being clicked through an overlay the site put there.
+- **Three ways to stop it, none of which need the app.** Chrome's own
+  attachment bar has a Cancel; the tab carries a *"Propositum is working here —
+  Stop"* chip; the side panel has the same Stop. All three detach first and
+  tell the app afterwards, so stopping works with the app closed.
+
+`tests/extension-cdp.test.ts` is the enforcement: the extension has no build
+step, so the file under review is the file Chrome runs, and a grep over it is a
+real guard rather than a proxy for one.
 
 ## What it gives up
 
