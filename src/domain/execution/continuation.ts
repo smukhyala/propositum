@@ -52,7 +52,9 @@
  * `deadlineFor` in `./stop-conditions` is a pure function of immutable
  * timestamps and recomputes to the same value after any number of restarts;
  * these are the decisions taken on top of it, and they inherit that property
- * only by never reaching for `Date.now()` themselves.
+ * only by never reaching for the clock themselves. Time arrives as a parameter,
+ * so a decision taken about an evening replays in milliseconds and never
+ * depends on when the test ran.
  */
 
 import { CONFIRMATION_EXPIRY_HOURS } from './stop-conditions'
