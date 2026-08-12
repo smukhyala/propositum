@@ -34,7 +34,7 @@
  */
 
 import type { AppContext } from '../db'
-import type { ShiftOutcomeKind } from '../../domain/execution/shift-outcome'
+import type { ShiftOutcomeKind } from '../../domain/outcome/shift-outcome'
 import { sectionsOf } from './document-changes'
 
 export interface WorkspaceSource {

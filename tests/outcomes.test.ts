@@ -273,7 +273,9 @@ describe('a shift that pins no document runs to completion', () => {
     const produced = await repos.outcomes.forRun(runId)
     expect(produced.map((o) => o.kind)).toEqual(['answer'])
     expect(produced[0]?.reversibility).toBe('held')
-    expect(produced[0]?.detail.text).toContain('Gold tier is the cheapest')
+    // `body`, because that is the key the re-entry screen's reader looks for
+    // first — see `readOutcomeDetail` in src/domain/outcome/shift-outcome.ts.
+    expect(produced[0]?.detail.body).toContain('Gold tier is the cheapest')
     expect(await repos.changesets.forContract(contractId)).toBeNull()
   })
 })

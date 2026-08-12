@@ -24,7 +24,7 @@
 
 import { z } from 'zod'
 import { MAX_PLAN_STEPS } from '../../domain/handoff/policy'
-import type { ShiftOutcomeKind } from '../../domain/execution/shift-outcome'
+import type { ShiftOutcomeKind } from '../../domain/outcome/shift-outcome'
 import type { ModelBoundary } from '../client'
 
 export interface PlanInput {

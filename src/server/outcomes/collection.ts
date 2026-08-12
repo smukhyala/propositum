@@ -26,6 +26,14 @@ import type { OutcomeBody, Production } from './index'
 
 type Item = Extract<OutcomeProposal, { kind: 'item' }>
 
+/** The item's fields as one readable line. Insertion order is the worker's, and
+ *  it is kept — a rate sheet reads in the order it was read off the page. */
+function lineOf(fields: Record<string, string>): string {
+  return Object.entries(fields)
+    .map(([key, value]) => `${key}: ${value}`)
+    .join(' · ')
+}
+
 export function collection(
   productions: readonly Item[],
   citable: ReadonlySet<string>,
@@ -38,8 +46,13 @@ export function collection(
     headline: `${productions.length} ${productions.length === 1 ? 'thing' : 'things'} collected`,
     reason: 'Found and kept while you were away.',
     citedActionIntentIds: cited,
+    // `items`, with each entry carrying `label` and `body` — the keys
+    // `readOutcomeDetail` in `src/domain/outcome/shift-outcome.ts` reads. The
+    // fields are flattened into one line here rather than left as a nested
+    // record, because the reader renders an item as a line and a record it
+    // cannot flatten would render as the label with the numbers silently gone.
     detail: {
-      items: productions.map((p) => ({ label: p.label, fields: p.fields })),
+      items: productions.map((p) => ({ label: p.label, body: lineOf(p.fields) })),
     },
   }
 

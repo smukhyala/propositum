@@ -34,7 +34,7 @@
 
 import type { AppContext } from '../db'
 import type { OutcomeProposal } from '../../runtime/worker-loop'
-import type { ShiftOutcomeKind } from '../../domain/execution/shift-outcome'
+import type { ShiftOutcomeKind } from '../../domain/outcome/shift-outcome'
 import { LANDING_ACTION_KINDS } from '../../domain/handoff/policy'
 import type { ActionKind } from '../../domain/handoff/policy'
 import type { JsonObject } from '../../persistence/repositories/index'

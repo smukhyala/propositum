@@ -40,7 +40,7 @@ import type { Datamarked } from '../model/untrusted'
 import type { ModelClient } from '../model/client'
 import { planBoundary } from '../model/boundaries/plan'
 import { workerActionBoundary } from '../model/boundaries/worker-action'
-import type { ShiftOutcomeKind } from '../domain/execution/shift-outcome'
+import type { ShiftOutcomeKind } from '../domain/outcome/shift-outcome'
 
 /**
  * What one authorized action yielded, before deterministic code decides what it

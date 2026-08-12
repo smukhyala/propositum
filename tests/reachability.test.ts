@@ -188,9 +188,13 @@ describe('the safety machinery is reachable from the product', () => {
     // `materialise` had exactly one call site — the shift page's scale-label
     // recovery — and no code path ever wrote a version from a review. The
     // interface admitted it: "yours to fold into the document."
+    //
+    // Called `finishReview` until the fold stopped being the only way a Shift
+    // could end. The assertion is the same one: the act that folds accepted
+    // changes into a version must be reachable from a screen.
     expect(
-      callersOf('finishReview(', 'src/server/actions.ts'),
-      'nothing calls finishReview — decisions are recorded and discarded',
+      callersOf('finishShift(', 'src/server/actions.ts'),
+      'nothing calls finishShift — decisions are recorded and discarded',
     ).not.toEqual([])
     expect(
       callersOf("origin: 'accepted-changeset'", 'src/persistence/repositories/index.ts'),
@@ -212,6 +216,18 @@ describe('the safety machinery is reachable from the product', () => {
       callers,
       'the outcome writers must be the only caller, so kind and reversibility have one author',
     ).toEqual(['src/server/outcomes/index.ts'])
+  })
+
+  it('a person can decide on what a Shift made, or the outcome table is decoration', () => {
+    // Moved up out of "deferred" when the re-entry screen learned to render
+    // ShiftOutcomes. Without a caller, `OutcomeVerdict` is a table nobody can
+    // write, and every held outcome that is not a document sits on the screen
+    // with no way to accept or reject it — which would also strand
+    // `finishShift`, since it refuses while anything held is undecided.
+    expect(
+      callersOf('outcomes.recordVerdict', 'src/persistence/repositories/index.ts'),
+      'nothing records an OutcomeVerdict — a production cannot be accepted or rejected',
+    ).not.toEqual([])
   })
 
   it('the reviewer actually runs, or assumption 4 stays unanswerable', () => {
@@ -372,13 +388,6 @@ describe('deferred, and asserted as deferred', () => {
       declaration?.[1]?.trim(),
       'a kind lands now — external-effect is reachable, so move this into the section above',
     ).toBe('')
-  })
-
-  it('no OutcomeVerdict is recordable, so a production cannot be accepted or rejected', () => {
-    expect(
-      callersOf('outcomes.recordVerdict', repos),
-      'outcome verdicts are recorded now — move this into the section above',
-    ).toEqual([])
   })
 
   it('the gate never stops for a person, so ConfirmationRequest cannot occur', () => {

@@ -62,7 +62,8 @@ export function answers(
       headline: opening(production.text) || 'An answer',
       reason: 'Worked out while you were away.',
       citedActionIntentIds: cited,
-      detail: { text: production.text },
+      // `body` — the key `readOutcomeDetail` reads first for an answer.
+      detail: { body: production.text },
     }
 
     return { body, consumed: 1 }

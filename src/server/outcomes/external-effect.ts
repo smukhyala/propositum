@@ -57,7 +57,20 @@ export function externalEffects(
       headline: `${production.what} — ${production.where}`,
       reason: 'This happened while you were away, outside Propositum.',
       citedActionIntentIds: [production.intentId],
-      detail: { what: production.what, where: production.where },
+      /**
+       * `where` and `whatYouCanDo`, the keys `readOutcomeDetail` reads.
+       *
+       * `whatYouCanDo` is WORDS and must stay words. The re-entry screen offers
+       * no control here — the effect is outside Propositum, so anything that
+       * offered to reverse it would be claiming a capability the product does
+       * not have. The sentence points at the place the person would have to go,
+       * which is the only true thing there is to say.
+       */
+      detail: {
+        what: production.what,
+        where: production.where,
+        whatYouCanDo: `Propositum cannot undo this. If it needs reversing, that has to happen at ${production.where}.`,
+      },
     }
 
     kept.push({ body, consumed: 1 })

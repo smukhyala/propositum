@@ -40,7 +40,11 @@ export function messageDrafts(
       headline: `${production.forWhat} — written, not sent`,
       reason: 'Drafted while you were away. Nothing was sent.',
       citedActionIntentIds: cited,
-      detail: { forWhat: production.forWhat, text: production.text },
+      // `addressedTo` and `body`, the keys `readOutcomeDetail` reads. Note what
+      // `addressedTo` is NOT: a send target. It is a label on a piece of text —
+      // the production carries no address, no channel and no recipient field,
+      // and there is nowhere to put one.
+      detail: { addressedTo: production.forWhat, body: production.text },
     }
 
     return { body, consumed: 1 }
