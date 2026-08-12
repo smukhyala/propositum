@@ -75,6 +75,9 @@ function job(over: Partial<WorkerJob> = {}): WorkerJob {
       timeLimitMinutes: 30,
     },
     documentTitle: 'Northwind proposal',
+    // A `Document` id, and note that it is NOT `ver-1`. The two being distinct
+    // is the whole point: the loop used to put the version id under this key.
+    documentId: 'doc-1',
     sections: ['Scope', 'Commercials'],
     sourceLabels: [{ id: 'src-northwind', label: 'Northwind Partners' }],
     deadlineEpochMs: 1_000_000,
@@ -95,7 +98,10 @@ function deps(replies: ScriptedReply<unknown>[], nowMs = 0): MutableDeps {
     },
     readDoc: {
       versions: {
-        byId: async () => ({ id: 'ver-1', documentId: 'ver-1', content: 'Base.', contentHash: 'h' }),
+        // `documentId` used to read `ver-1` here — the fixture had been bent to
+        // match the bug, which is why a suite this size never noticed that
+        // `read-document` had not once succeeded.
+        byId: async () => ({ id: 'ver-1', documentId: 'doc-1', content: 'Base.', contentHash: 'h' }),
       },
       baseVersionId: 'ver-1',
     },
@@ -140,6 +146,57 @@ describe('the loop commits the intent before the effect', () => {
 
     expect(d.recorded.outcomes[0]?.result).toBe('failed')
     expect(result.status).toBe('succeeded') // a failed action is not a failed run
+  })
+})
+
+describe('reading the document actually works', () => {
+  /**
+   * A regression test for a capability that had never once succeeded.
+   *
+   * The loop put `scope.baseVersionId` — a DocumentVersion id — into
+   * `params.documentId`, and `readDocument` compared that against the id of the
+   * Document the version belonged to. The two can never be equal, so every
+   * planned document read passed the gate, committed an ActionIntent, threw, and
+   * was recorded as a FAILED outcome with an `unverified` scope verdict. It cost
+   * a turn each time and read, in the ledger, as a capability that kept going
+   * wrong rather than one that had never worked.
+   *
+   * Nothing in the suite caught it because the fixture above had `documentId`
+   * set to the version id, which made the comparison pass in tests and only in
+   * tests.
+   */
+  it('records a succeeded outcome, not a failed one', async () => {
+    const d = deps([plan('read what is already written'), act({ kind: 'read-document' })])
+
+    const result = await runWorker(job(), d)
+
+    expect(d.recorded.intents[0]).toMatchObject({ kind: 'read-document', authorized: true })
+    expect(d.recorded.outcomes[0]?.result).toBe('succeeded')
+    expect(result.actionsTaken).toBe(1)
+  })
+
+  it('reads the pinned base version whatever the document id says', async () => {
+    // The version is fixed by the contract, not by anything on the proposal —
+    // so a document id that does not match cannot redirect the read, and
+    // cannot fail it either.
+    const d = deps([plan('read it'), act({ kind: 'read-document' })])
+
+    const result = await runWorker(job({ documentId: 'doc-somewhere-else' }), d)
+
+    expect(d.recorded.outcomes[0]?.result).toBe('succeeded')
+    expect(d.recorded.outcomes[0]?.detail).toContain('ver-1')
+    expect(result.actionsTaken).toBe(1)
+  })
+
+  it('is refused as document_missing when the shift has no document', async () => {
+    // The gate's requirement is intact and now reachable: with no document to
+    // read, the refusal fires instead of the key being present regardless.
+    const d = deps([plan('read it'), act({ kind: 'read-document' })])
+
+    const result = await runWorker(job({ documentId: undefined }), d)
+
+    expect(d.recorded.intents[0]?.refusedRule).toBe('document_missing')
+    expect(result.actionsTaken).toBe(0)
   })
 })
 

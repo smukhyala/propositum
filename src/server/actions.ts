@@ -305,6 +305,85 @@ function normaliseOriginPattern(raw: string): string | null {
   return `${scheme}//${host}/*`
 }
 
+/**
+ * The sites Propositum actually SAW, as the patterns an approval would store.
+ *
+ * ── What went wrong without this ─────────────────────────────────────────
+ *
+ * `startFromSuggestion` took its list of sites from its caller and approved
+ * every one of them. The caller is a page, and the page reads them off a query
+ * string, so the list was in practice whatever was in the link. A crafted link
+ * — `…/start?subject=Invoices&origins=https://attacker.example` — put an origin
+ * nobody had ever visited into `ApprovedSource` and started a session watching
+ * it, behind one click, under a heading the same link chose the words for.
+ *
+ * Local-only and needing a click, so the severity was low. The shape was not:
+ * the one-click path had no idea what had been observed, and "the suggestion
+ * came from what Propositum saw" was true of the honest path by coincidence
+ * rather than by construction.
+ *
+ * ── Why an origin cannot be laundered through this ───────────────────────
+ *
+ * The set is derived from the ambient buffer and nothing else. That buffer is
+ * filled by one route, from the extension, on origins Chrome has already
+ * granted — nothing a link can reach writes to it. So an origin the person has
+ * not been browsing is absent from the returned set no matter what the caller
+ * asks for, and approval becomes a function of observation instead of a
+ * function of the request.
+ *
+ * ── Why the comparison is on patterns, not on raw origins ────────────────
+ *
+ * `https://northwind.com`, `northwind.com` and `https://northwind.com/` all name
+ * one site and would all fail a string comparison against the buffer's
+ * `new URL(url).origin`. Normalising both sides first compares exactly the thing
+ * that would be written to `ApprovedSource.originPattern` — so what is checked
+ * and what is stored can never diverge.
+ *
+ * The one case it does not rescue is a scheme mismatch: a bare hostname means
+ * `https`, so an `http` site the person really was reading is not matched by a
+ * link that spells it without a scheme, and is discarded. Approving `https`
+ * because `http` was seen would be widening a grant on a guess, which is the
+ * opposite of what this function is for.
+ *
+ * ── The thread, and nothing wider ────────────────────────────────────────
+ *
+ * The observed set is the sites of ONE thread — the same narrowing the
+ * carry-over below does, and it must be, because the two decide the same
+ * question about the same sitting.
+ *
+ * An earlier version of this fell back to every origin in the window when no
+ * signature arrived, on the reasoning that a restarted process would have lost
+ * the thread. That reasoning was wrong twice over. `pagesOfThread` and the
+ * observations are the same in-memory store with the same lifetime, so a
+ * restart empties both and the fallback rescues nothing — while every honest
+ * caller does supply a signature, because `/api/session/current` remembers the
+ * thread before it will emit an offer at all, and both the panel and the
+ * service worker put it in the link. So the fallback was reachable only by a
+ * request that left the signature out, which is precisely the crafted link, and
+ * it handed that request every site browsed in the last half hour.
+ *
+ * No signature, or one nothing was recorded against, is therefore no sites. The
+ * carry-over already refuses to fall back for exactly this reason, and these
+ * two refusals are the same refusal.
+ */
+function observedOriginPatterns(
+  threadSignature: string | undefined,
+  nowMs: number,
+): ReadonlySet<string> {
+  const patterns = new Set<string>()
+  if (threadSignature === undefined || threadSignature === '') return patterns
+
+  const ambient = ambientStore()
+  const threadPages = ambient.pagesOfThread(threadSignature)
+  if (threadPages.length === 0) return patterns
+
+  for (const observation of ambient.forUrls(threadPages, nowMs)) {
+    const pattern = normaliseOriginPattern(observation.origin)
+    if (pattern !== null) patterns.add(pattern)
+  }
+  return patterns
+}
+
 export interface SourceApproved {
   readonly id: string
   readonly originPattern: string
@@ -575,6 +654,13 @@ export interface OfferAccepted {
  * become the approved sources, and a document is created to work in — all from
  * one answer to one question.
  *
+ * ── The one thing this does not take from its caller ─────────────────────
+ *
+ * Which sites to approve. Everything else here is the caller's to choose; that
+ * is not, because approving a source is the decision that widens what
+ * Propositum may watch. The list arrives as a suggestion and is intersected
+ * with what the ambient buffer actually holds — see `observedOriginPatterns`.
+ *
  * ── What is still a human act, and stays one ─────────────────────────────
  *
  * This starts a SESSION. It does not start a run. The person lands on the
@@ -590,6 +676,17 @@ export interface WorkStarted {
   readonly sessionId: string
   readonly documentId: string
   readonly carriedOver: number
+  /**
+   * Sites the caller asked for that Propositum had not seen, and did not
+   * approve.
+   *
+   * Counted rather than quietly skipped, for the same reason
+   * `ReadingProduced.discardedQuotes` is: a discard here means something asked
+   * Propositum to watch a site on evidence it does not have, and a number that
+   * is never zero on the honest path is the only way that would ever be
+   * noticed.
+   */
+  readonly discardedOrigins: number
 }
 
 export async function startFromSuggestion(
@@ -607,6 +704,19 @@ export async function startFromSuggestion(
 
     const { repos, ledger } = await appContext()
 
+    /**
+     * A running session is answered before anything else, and deliberately
+     * before the sites are looked at.
+     *
+     * Starting a session empties the ambient buffer, so by the time one is live
+     * there is nothing left in it — and checking the sites first would answer a
+     * second click on the same link with "Propositum has not been watching any
+     * of those sites", which is true of the buffer and useless to the person.
+     * The session they already started is the thing they need told about.
+     *
+     * Nothing is written before either check, so the order is a question of
+     * which sentence is more use, not of what gets left behind.
+     */
     const live = captureStore().current()
     if (live) {
       const running = await repos.sessions.byId(live.sessionId)
@@ -618,20 +728,60 @@ export async function startFromSuggestion(
       }
     }
 
+    /**
+     * Which of the requested sites Propositum has actually been watching.
+     *
+     * Settled before a single row is written, so a request naming nothing
+     * observed cannot leave a project, a document or an approval behind on its
+     * way to being refused. See `observedOriginPatterns` for why the caller's
+     * list is untrustworthy and what the buffer proves instead.
+     *
+     * A site that survives is stored under its normalised pattern, so the
+     * comparison that admitted it and the row that records it are the same
+     * string. Duplicates collapse — the same site named twice is one approval,
+     * not one approval and one discard.
+     */
+    const observed = observedOriginPatterns(threadSignature, Date.now())
+
+    const wanted = new Map<string, string>()
+    let discardedOrigins = 0
+    for (const origin of origins) {
+      const pattern = normaliseOriginPattern(origin)
+      if (pattern === null || !observed.has(pattern)) {
+        discardedOrigins += 1
+        continue
+      }
+      if (!wanted.has(pattern)) {
+        wanted.set(pattern, pattern.replace(/^https?:\/\//, '').replace(/\/\*$/, ''))
+      }
+    }
+
+    if (wanted.size === 0) {
+      // Says the true thing, including when it is unimpressive: Propositum has
+      // no record of this work, so it will not start watching sites on the
+      // strength of being asked to.
+      return no<WorkStarted>(
+        'invalid-input',
+        'Propositum has no record of the work this describes, so there is nothing for it to go on. Browse for a while and it will offer again.',
+      )
+    }
+
     // The thread names the project. Nobody is asked to file anything.
     const project = await repos.projects.create(name)
 
-    const sourceIds: string[] = []
-    for (const origin of origins) {
-      const pattern = normaliseOriginPattern(origin)
-      if (!pattern) continue
-      const host = pattern.replace(/^https?:\/\//, '').replace(/\/\*$/, '')
+    // Keyed by pattern rather than by the caller's spelling of the site. The
+    // carry-over below looks a source up from an OBSERVATION's origin, which is
+    // always `https://host` — so matching on what the link happened to say meant
+    // a link reading `northwind.com` approved the site and then carried none of
+    // its pages, silently.
+    const sourceByPattern = new Map<string, string>()
+    for (const [pattern, host] of wanted) {
       const source = await repos.projects.approveSource({
         projectId: project.id,
         originPattern: pattern,
         label: host,
       })
-      sourceIds.push(source.id)
+      sourceByPattern.set(pattern, source.id)
     }
 
     // Something to work in. A heading rather than an empty file, so the first
@@ -668,11 +818,11 @@ export async function startFromSuggestion(
      */
     const ambient = ambientStore()
     const threadPages = threadSignature ? ambient.pagesOfThread(threadSignature) : []
-    const sourceByOrigin = new Map(origins.map((origin, i) => [origin, sourceIds[i]]))
 
     let carriedOver = 0
     for (const observation of ambient.forUrls(threadPages, startedAtMs)) {
-      const sourceId = sourceByOrigin.get(observation.origin)
+      const pattern = normaliseOriginPattern(observation.origin)
+      const sourceId = pattern === null ? undefined : sourceByPattern.get(pattern)
       if (!sourceId) continue
 
       const appended = await ledger.append(session.id, {
@@ -692,6 +842,7 @@ export async function startFromSuggestion(
       sessionId: session.id,
       documentId: document.id,
       carriedOver,
+      discardedOrigins,
     })
   })
 }

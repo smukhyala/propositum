@@ -504,8 +504,9 @@ export interface DocumentRepository {
      *  exactly once and the foreign key is the "already reviewed" flag. */
     committedFromChangesetId?: string
   }): Promise<{ id: string; ordinal: number }>
-  /** `documentId` is included because `readDocument` refuses to be pointed at a
-   *  document other than the one this shift pinned, and needs it to check. */
+  /** `documentId` is included because a version alone does not say which
+   *  document it belongs to, and both `executeRun` and `finishReview` need to
+   *  get from the pinned base back to the document it is a version of. */
   version(id: string): Promise<{ id: string; documentId: string; content: string; contentHash: string; ordinal: number } | null>
   latestVersion(documentId: string): Promise<{ id: string; content: string; contentHash: string; ordinal: number } | null>
 }

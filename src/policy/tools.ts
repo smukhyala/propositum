@@ -113,22 +113,41 @@ export async function readApprovedSource(
   }
 }
 
+/**
+ * Read the document, meaning the version this shift is pinned to.
+ *
+ * ── Why `action.params.documentId` is not consulted at all ───────────────
+ *
+ * It used to be. This compared the param against `version.documentId` and threw
+ * when they differed, and the mismatch was described as the safeguard that kept
+ * a shift from being pointed at another document.
+ *
+ * It was not a safeguard, and it never once let a read through. The only caller
+ * put `ContractScope.baseVersionId` in that param — a `DocumentVersion` id being
+ * compared against a `Document` id, two different rows that can never be equal.
+ * So every planned document read passed the gate, committed an `ActionIntent`,
+ * threw, and was recorded as a failed `ActionOutcome` with an `unverified`
+ * scope verdict. A capability that had never succeeded looked, in the ledger,
+ * exactly like a capability that kept going wrong.
+ *
+ * Deleting the check rather than fixing the id it was fed is the stronger
+ * choice, because the check could not add anything even when correct. What is
+ * read is `deps.baseVersionId`, which comes from the ratified contract and is
+ * passed in for precisely this reason: there is no argument to this function
+ * that can move it. A param that cannot change the outcome can only ever
+ * disagree with it, and disagreeing was the whole failure.
+ *
+ * The gate still requires `documentId` on a `read-document` proposal, and that
+ * requirement now bites for real — `src/runtime/worker-loop.ts` passes the
+ * shift's actual `Document` id, so `document_missing` refuses a run that has no
+ * document instead of being unreachable.
+ */
 export async function readDocument(
-  action: AuthorizedAction<'read-document'>,
+  _action: AuthorizedAction<'read-document'>,
   deps: ReadDocumentDeps,
 ): Promise<DocumentText> {
-  // The action's documentId is checked against the pinned base rather than
-  // trusted: the gate authorised reading *the document*, and the base version
-  // is what that means for the duration of this shift.
   const version = await deps.versions.byId(deps.baseVersionId)
   if (!version) throw new Error(`base version ${deps.baseVersionId} not found`)
-
-  const requested = action.params.documentId
-  if (requested && requested !== version.documentId) {
-    throw new Error(
-      `authorized read-document for ${requested}, but this shift is pinned to ${version.documentId}`,
-    )
-  }
 
   return {
     documentId: version.documentId,

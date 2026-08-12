@@ -155,12 +155,32 @@ describe('readDocument reads the pinned base, never the live document', () => {
     expect(result.content).toBe('Base text.')
   })
 
-  it('refuses to be pointed at another document', async () => {
-    // A mid-run human edit must not silently change what the worker drafts
-    // against — the base is fixed for the whole shift.
-    await expect(
-      readDocument(token('read-document', { documentId: 'doc-other' }), deps),
-    ).rejects.toThrow(/pinned to doc-1/)
+  it('cannot be pointed at another document, because nothing it is given points anywhere', async () => {
+    /**
+     * This used to assert a throw on a mismatched `documentId`, and the throw
+     * was the defect: the only caller passed a DocumentVersion id under that
+     * key, so the comparison failed on every real run and `read-document` had
+     * never once succeeded.
+     *
+     * The property the old test was reaching for still holds, and holds more
+     * strongly than a comparison could make it hold. The version comes from
+     * `deps.baseVersionId`, which is the ratified contract's, and no argument to
+     * this function can move it. So a wrong id is not refused — it is simply
+     * not consulted, and there is nothing left to disagree about.
+     */
+    const result = await readDocument(token('read-document', { documentId: 'doc-other' }), deps)
+
+    expect(result.versionId).toBe('ver-1')
+    expect(result.documentId).toBe('doc-1')
+    expect(result.content).toBe('Base text.')
+  })
+
+  it('still fails loudly when the pinned base has gone', async () => {
+    const missing = { versions: { byId: async () => null }, baseVersionId: 'ver-gone' }
+
+    await expect(readDocument(token('read-document', { documentId: 'doc-1' }), missing)).rejects.toThrow(
+      /base version ver-gone not found/,
+    )
   })
 })
 
