@@ -454,6 +454,17 @@ describe('the worker process', () => {
   const noRuns = () => ({
     sweepExpiredLeases: vi.fn(async () => 0),
     claimNext: vi.fn(async (): Promise<{ id: string } | null> => null),
+    // `admit` and `readRun` are REQUIRED deps, not optional ones, and that is
+    // deliberate: an optional hook defaulting to "carry on" is a fence that
+    // silently is not there, which is precisely the state CONTEXT.md described
+    // for years while no column existed.
+    admit: vi.fn(async (_id: string): Promise<'proceed' | 'settled'> => 'proceed'),
+    readRun: vi.fn(
+      async (
+        _id: string,
+      ): Promise<{ status: string; claimedBy: string | null; cancelRequested: boolean } | null> =>
+        null,
+    ),
     execute: vi.fn(async (_id: string): Promise<void> => undefined),
     now: () => new Date(0),
     sleep: vi.fn(async (_ms: number): Promise<void> => undefined),

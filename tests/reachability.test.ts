@@ -376,6 +376,29 @@ describe('the safety machinery is reachable from the product', () => {
     ).toContain('src/app/api/act/next/route.ts')
   })
 
+  it('the fence is read, not just written — a halt actually stops a run', () => {
+    /**
+     * Promoted when the confirmation pause landed, and the promotion is the
+     * point rather than bookkeeping.
+     *
+     * CONTEXT.md §4 has said for months that every action boundary re-reads
+     * `status` and `claimedBy` and that a Runner which no longer holds the
+     * claim "aborts without writing". Nothing implemented it. The flag was
+     * written by the halt route and read by nobody, so a run asked to stop
+     * found out only because its next dispatch happened to fail — and a stale
+     * claim could still act, which is tolerable for a run that drafts prose and
+     * is not for one that presses buttons in a signed-in browser.
+     *
+     * The reader lives at the action boundary itself, in `recordIntent`,
+     * because a run physically cannot act without passing through it. A check
+     * the loop owns is a check the next rewrite can drop.
+     */
+    expect(
+      callersOf('cancelRequested', 'src/persistence/repositories/index.ts'),
+      'nothing reads the cancellation flag — a halt is a message nothing acts on',
+    ).not.toEqual([])
+  })
+
   it('a halt flags the run, or stopping is a message nothing reads', () => {
     // Moved up when the halt route landed. `cancelRequested` is written here and
     // the fence is still only half real: CONTEXT.md §4 requires that every
@@ -386,6 +409,52 @@ describe('the safety machinery is reachable from the product', () => {
       callersOf('runs.requestCancel', 'src/persistence/repositories/index.ts'),
       'nothing flags a run for cancellation — a halt settles sockets and stops nothing',
     ).toContain('src/app/api/act/halt/route.ts')
+  })
+
+  it('a human can answer a confirmation, or a raised request strands its run', () => {
+    /**
+     * Moved up out of the deferred block below when the confirmation screen
+     * landed — which is that block working as intended.
+     *
+     * This is the one that replaced ADR-0004's missing capability. There is no
+     * `sendMessage`, but `click-element` can press *Send*, so the prohibition
+     * is now a pause — and a pause nobody can answer is not a pause, it is a
+     * run stranded on `awaiting-confirmation` until it expires.
+     */
+    expect(
+      callersOf('confirmations.recordVerdict', 'src/persistence/repositories/index.ts'),
+      'nothing answers a confirmation — a raised request strands its run',
+    ).not.toEqual([])
+  })
+
+  it('a run can be told to stop, or the fence stays a paragraph', () => {
+    /**
+     * `cancelRequested` and `claimedBy` are described in CONTEXT.md §4 — "every
+     * action boundary re-reads `status` and `claimedBy`; a Runner that no
+     * longer holds the claim aborts without writing" — and the columns landed
+     * in the schema long after the sentence did.
+     *
+     * A browser-driving run is the first run where a stale claim can press a
+     * button on a live page, so the sentence had to stop being a sentence.
+     */
+    expect(
+      callersOf('runs.requestCancel', 'src/persistence/repositories/index.ts'),
+      'nothing flags a run for cancellation — "Take back control" cannot work',
+    ).not.toEqual([])
+  })
+
+  it('pause time is credited back, or asking permission destroys the run', () => {
+    /**
+     * Someone asked at 09:05 who answers at noon would otherwise return to a
+     * run whose thirty minutes expired at 09:30 — so every remaining proposal
+     * is refused `budget_exhausted` and the work they just approved never
+     * happens. That makes the safest behaviour the most expensive one, which is
+     * how safeguards get switched off.
+     */
+    expect(
+      callersOf('deadlineFor(', 'src/domain/execution/stop-conditions.ts'),
+      'nothing calls deadlineFor — a slow answer still eats the shift',
+    ).not.toEqual([])
   })
 
   it('something composes an offer, or the model half of ADR-0009 is unreachable', () => {
@@ -504,15 +573,6 @@ describe('deferred, and asserted as deferred', () => {
     expect(
       callersOf('sweepForGap(', 'src/server/gap-sweeper.ts'),
       'the gap sweeper has a caller now — move this into the section above',
-    ).toEqual([])
-  })
-
-  it('nothing credits pause time back, so a slow answer still eats the shift', () => {
-    // Someone asked at 09:05 who answers at noon returns to a run whose budget
-    // expired at 09:30. `deadlineFor` fixes that and nothing calls it yet.
-    expect(
-      callersOf('deadlineFor(', 'src/domain/execution/stop-conditions.ts'),
-      'deadlineFor has a caller now — move this into the section above',
     ).toEqual([])
   })
 
@@ -641,13 +701,6 @@ describe('deferred, and asserted as deferred', () => {
     ).toEqual([])
   })
 
-  it('and no human can answer one, so a raised request would strand its run', () => {
-    expect(
-      callersOf('confirmations.recordVerdict', repos),
-      'confirmations are answerable now — move this into the section above',
-    ).toEqual([])
-  })
-
   it('no worker holds the browser control, so the channel has no customer', () => {
     /**
      * The control channel is reachable from the extension's side and from
@@ -668,17 +721,6 @@ describe('deferred, and asserted as deferred', () => {
     ).toEqual([])
   })
 
-  it('nothing reads the cancellation flag, so the fence is still half a paragraph', () => {
-    // The halt route WRITES `cancelRequested` — see the section above. Nothing
-    // reads it, and nothing re-reads `claimedBy` at an action boundary, so
-    // CONTEXT.md §4's "a Runner that no longer holds the claim aborts without
-    // writing" remains a sentence. A run that has been asked to stop finds out
-    // only because its next dispatch fails.
-    expect(
-      callersOf('cancelRequested', repos),
-      'something reads the cancellation flag now — move this into the section above',
-    ).toEqual([])
-  })
 })
 
 describe('the extension can actually capture', () => {

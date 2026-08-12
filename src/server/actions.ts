@@ -33,6 +33,7 @@ import { revalidatePath } from 'next/cache'
 
 import { appContext } from './db'
 import { readableCause } from './problem'
+import { confirmRequest, haltRun, rejectRequest } from './confirmations'
 import { ambientStore, captureStore } from './capture-store'
 import { describeWork, signatureOf } from './ambient-store'
 import { AnthropicModelClient } from '../model/anthropic'
@@ -2773,5 +2774,184 @@ export async function finishShift(contractId: string): Promise<ActionResult<Shif
       },
       decided: held.length,
     })
+  })
+}
+
+/* ══════════════════════════════════════════ saying yes to one thing ══ */
+
+/**
+ * The three human answers to a paused run: yes, no, and stop.
+ *
+ * ── Why these are here and the logic is not ──────────────────────────────
+ *
+ * This file is `'use server'`, so every export becomes a callable endpoint. The
+ * worker process needs the same decisions and is a different Node process that
+ * never imports `src/server/db`, so the durable work lives in
+ * `./confirmations` and these are the human-facing skin over it.
+ *
+ * ── The verbs, which must not drift ──────────────────────────────────────
+ *
+ * The gate REFUSES · the human REJECTS · the model DECLINES · the human
+ * CONFIRMS. `ConfirmationVerdict` holds `confirmed | rejected` and never
+ * `approved`, which belongs to `ApprovedSource` and means something else
+ * entirely. A screen that used one word for rejecting a paragraph and for
+ * authorising something irreversible would be asking somebody to do the second
+ * with the control they learned on the first.
+ *
+ * ── There is no notification-side yes ────────────────────────────────────
+ *
+ * The notification has ONE button and it says *Show me*. Approving from a
+ * notification is approving without seeing what you are approving, and the
+ * entire trust story here rests on the human review being real. So these are
+ * reachable only from a screen showing the attested facts, the verbatim text
+ * and the picture.
+ */
+
+/** What the person gets back after answering. */
+export interface ConfirmationAnswered {
+  readonly requestId: string
+  /** The run that will pick the work up, or null when they said no. */
+  readonly continuationRunId: string | null
+}
+
+/**
+ * They said yes to this one thing.
+ *
+ * **One of exactly two writers of a `ConfirmationVerdict`, and this one is
+ * reached only from a human's click on a screen showing what they are
+ * authorising.** No model, no worker run and no reviewer run may reach it. That
+ * cannot be enforced by a column — the database cannot see who is holding the
+ * keyboard — so it is enforced by the writer being here and by this sentence,
+ * which the next person to want a confirmation resolved from inside a run has
+ * to delete before they can break the rule.
+ */
+export async function confirmOnePendingRequest(
+  requestId: string,
+): Promise<ActionResult<ConfirmationAnswered>> {
+  return attempt(async () => {
+    const ctx = await appContext()
+    const answered = await confirmRequest(ctx, requestId, new Date())
+
+    if (!answered.ok) {
+      if (answered.reason === 'not-found') {
+        return no<ConfirmationAnswered>('not-found', 'That question is no longer here.')
+      }
+      if (answered.reason === 'already-answered') {
+        return no<ConfirmationAnswered>('already-done', 'You have already answered this one.')
+      }
+      // Expiry never approves. A yes that arrives a day late is not converted
+      // into a yes; it is turned down, and the person is told plainly why.
+      return no<ConfirmationAnswered>(
+        'blocked',
+        'This question sat unanswered for a day, so Propositum stopped waiting. Nothing was done. Hand the work over again if you still want it.',
+      )
+    }
+
+    refresh()
+    return ok<ConfirmationAnswered>({ requestId, continuationRunId: answered.continuationRunId })
+  })
+}
+
+/**
+ * They said no.
+ *
+ * Recorded rather than dropped, because the absence of a row and a `rejected`
+ * row are identical to the gate and different in the report: one says *"you
+ * said no"*, the other says *"I asked and you never saw it"*. Nothing is
+ * enqueued — the run that asked has ended, and the thing it wanted stays
+ * refused.
+ */
+export async function rejectOnePendingRequest(
+  requestId: string,
+): Promise<ActionResult<ConfirmationAnswered>> {
+  return attempt(async () => {
+    const ctx = await appContext()
+    const answered = await rejectRequest(ctx, requestId, new Date())
+
+    if (!answered.ok) {
+      if (answered.reason === 'not-found') {
+        return no<ConfirmationAnswered>('not-found', 'That question is no longer here.')
+      }
+      return no<ConfirmationAnswered>('already-done', 'You have already answered this one.')
+    }
+
+    refresh()
+    return ok<ConfirmationAnswered>({ requestId, continuationRunId: null })
+  })
+}
+
+/** What "Take back control" reports. */
+export interface ControlTaken {
+  readonly runId: string
+  /** False when there was nothing still running to stop. */
+  readonly stopped: boolean
+  /**
+   * Actions abandoned by a run that had ALREADY ended, now recorded as
+   * unverified.
+   *
+   * ── Almost always zero, and that is correct ──────────────────────────────
+   *
+   * `settleAbandonedIntents` returns 0 for any run in `pending | claimed |
+   * running`, by a deliberate guard. So pressing this on a live run — the
+   * ordinary case — settles nothing, and `unfinished` is 0.
+   *
+   * **Do not "fix" that to make this number more interesting.** An intent with
+   * no outcome on a LIVE run is in flight, not abandoned: the worker is about
+   * to write the real outcome, `ActionOutcome.intentId` is unique, and a
+   * recovery row written first makes the worker's write throw, propagate out of
+   * the loop, and complete a healthy shift as `failed / error`. Pressing "Take
+   * back control" would be the thing that broke the run.
+   *
+   * It is non-zero in the case it was written for: a run that already ended —
+   * because Chrome's infobar Cancel or the tab overlay chip removed the
+   * capability mid-action, which detaches before any POST and does not come
+   * through here — and left an intent nobody came back to. Otherwise the
+   * startup sweep settles it once the lease expires.
+   */
+  readonly unfinished: number
+}
+
+/**
+ * Take back control — the third kill switch, and the only one that needs the
+ * app.
+ *
+ * ── Three switches, and this is the weakest on purpose ───────────────────
+ *
+ * Chrome's own infobar Cancel ends the debugger attachment and cannot be
+ * suppressed or styled by us. The tab overlay chip and the side panel Stop
+ * detach first and tell the app afterwards, so they work with the app closed,
+ * the dev server restarting, or the machine offline. This one requires the app
+ * to be up, which is exactly why it is not the only one: a stop that has to
+ * reach a server before it takes effect is not a stop.
+ *
+ * What it adds is reach. It is the switch available to somebody on the "While
+ * you were away" screen who is not looking at the tab, and it is the one that
+ * writes the durable flag the run reads at its next action boundary.
+ *
+ * ── A flag, not a kill ───────────────────────────────────────────────────
+ *
+ * Nothing here interrupts anything. `cancelRequested` is a column; the run
+ * re-reads it at every action boundary and halts itself. That is the only way
+ * to stop cleanly when the thing being stopped may be mid-navigation in
+ * somebody's real browser — and it is why the two switches that remove the
+ * capability outright exist alongside it.
+ */
+export async function takeBackControl(runId: string): Promise<ActionResult<ControlTaken>> {
+  return attempt(async () => {
+    const ctx = await appContext()
+
+    /**
+     * The same implementation `POST /api/act/halt` uses.
+     *
+     * One behaviour behind two doors: this one, and the one the tab overlay
+     * chip and the side panel Stop reach after they have already detached. Two
+     * implementations of "stop" would be two things to keep in agreement about
+     * a run that is driving somebody's browser, and they would disagree first
+     * on the part nobody looks at — flag, revoke, settle, in that order.
+     */
+    const { stopped, unfinished } = await haltRun(ctx, runId)
+
+    refresh()
+    return ok<ControlTaken>({ runId, stopped, unfinished })
   })
 }
