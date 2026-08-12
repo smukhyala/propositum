@@ -29,6 +29,17 @@ const HEARTBEAT_MINUTES = 0.5
 
 const CUSTOM_HEADER = 'x-propositum-capture'
 
+/**
+ * How long "Not now" buys, for notifications only.
+ *
+ * Mirrors `SNOOZE_MS` in `src/server/ambient-store.ts` rather than reading it.
+ * The duplication is deliberate: that one governs whether the app OFFERS, this
+ * one governs whether this file INTERRUPTS, and the notification is entirely
+ * this file's to decide. Keeping them equal is a courtesy; keeping this one at
+ * all is what makes declining mean something.
+ */
+const DECLINE_QUIET_MS = 60 * 60_000
+
 /* ── session state, which never lives in a module variable ─────────────── */
 
 /**
@@ -267,9 +278,32 @@ async function showSuggestionBadge() {
      * thread signature is the identity the app itself keys everything on, and
      * it changes when the shape of the work changes.
      *
-     * The previous thread's key is dropped when the thread changes, so this
-     * cannot accumulate a key per subject anyone has ever looked at, and a
-     * thread genuinely returned to after an hour is allowed to interrupt again.
+     * ── Keys are kept, not rotated ─────────────────────────────────────────
+     *
+     * A first version dropped the previous thread's key whenever the thread
+     * changed, to stop `chrome.storage.session` accumulating one entry per
+     * subject. It also re-armed the notification for a thread that flapped:
+     * signatures do move as a term crosses the frequency cut-off, so A → B → A
+     * across three polls deleted A's key and then notified about A a second
+     * time. The bookkeeping cost more than it saved — session storage dies with
+     * the browser and a key is a few bytes — so every told key simply stays.
+     *
+     * ── Declining buys quiet, and it has to be enforced here ───────────────
+     *
+     * "Not now" snoozes the origin server-side AND drops the observations that
+     * produced the offer. That second half re-detects as a DIFFERENT thread:
+     * different pages, different terms, different signature — so a suppression
+     * key on the signature does not survive it, and the offer people had just
+     * turned down came back about a minute later with `requireInteraction`.
+     * The old subject-keyed version hid this by accident, because the model
+     * re-named the same work identically.
+     *
+     * So the extension keeps its own quiet period. It mirrors the app's
+     * `SNOOZE_MS` rather than reading it, deliberately: this is a question
+     * about INTERRUPTING, the notification belongs to this file, and a decline
+     * that only reached the server would still leave this file free to pop up.
+     * The badge is unaffected — declining should quieten the interruption, not
+     * hide the offer from somebody who goes looking.
      *
      * Only a `work-offer` interrupts. The degraded form is a real offer and it
      * keeps the badge, but "Propositum noticed you are reading about something"
@@ -278,12 +312,13 @@ async function showSuggestionBadge() {
      */
     const thread = suggestion.thread ?? ''
     const key = `told:${thread}`
-    const { toldKey: previous } = await chrome.storage.session.get(['toldKey'])
-    if (previous && previous !== key) await chrome.storage.session.remove([previous])
+    const { [key]: alreadyTold, quietUntil = 0 } = await chrome.storage.session.get([
+      key,
+      'quietUntil',
+    ])
 
-    const already = await chrome.storage.session.get([key])
-    if (suggestion.kind === 'work-offer' && thread && !already[key]) {
-      await chrome.storage.session.set({ [key]: true, toldKey: key })
+    if (suggestion.kind === 'work-offer' && thread && !alreadyTold && Date.now() >= quietUntil) {
+      await chrome.storage.session.set({ [key]: true })
 
       chrome.notifications.create(`propositum:${thread}`, {
         type: 'basic',
@@ -459,6 +494,17 @@ async function answeredYes() {
 async function answeredNo() {
   const { offer } = await chrome.storage.session.get(['offer'])
   await chrome.action.setBadgeText({ text: '' })
+
+  /**
+   * Quiet, before anything else, and whether or not the server hears about it.
+   *
+   * Declining drops the observations that produced the offer, which re-detects
+   * as a different thread with a different signature — so the per-thread
+   * suppression key does not survive a decline and the same work came back
+   * about a minute later with `requireInteraction: true`. This is the thing
+   * that actually holds "not now": one hour, mirroring the app's `SNOOZE_MS`.
+   */
+  await chrome.storage.session.set({ quietUntil: Date.now() + DECLINE_QUIET_MS })
 
   // A `work-offer` has no single primary site — it has the thread's sites — so
   // the first of those is what gets snoozed. Reading only `origin` meant "Not

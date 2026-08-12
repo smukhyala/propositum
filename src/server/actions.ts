@@ -1143,8 +1143,6 @@ export interface OfferOnScreen {
   /** The deterministic sentence, which is what the degraded form shows. */
   readonly sentence: string
   readonly because: string
-  /** Pages already seen that would be carried into the session. */
-  readonly carriedPages: number
   /** The project this would join, if Propositum thinks it recognises the work.
    *  Stated before the click, because a merge nobody was told about is the
    *  expensive failure `match-project.ts` names. */
@@ -1239,7 +1237,6 @@ export async function offerForThread(threadSignature: string): Promise<
         : null,
       sentence,
       because,
-      carriedPages: ambient.pagesOfThread(thread).length,
       backOn,
     })
   })

@@ -63,11 +63,13 @@
  * removing consent.
  */
 
+import Link from 'next/link'
 import { redirect } from 'next/navigation'
 
 import { Sheet, Masthead, Section, Button } from '@/ui/primitives'
 import { Grounds, OfferBody, OFFER_CSS, SiteChoices } from '@/ui/offer'
 import { acceptWorkOffer, offerForThread } from '@/server/actions'
+import { captureStore } from '@/server/capture-store'
 
 export const dynamic = 'force-dynamic'
 
@@ -144,25 +146,54 @@ export default async function StartPage({
   }
 
   if (screen === null) {
+    /**
+     * Two very different reasons land here, and saying the wrong one is worse
+     * than saying nothing.
+     *
+     * `startFromSuggestion` documents at length why it answers "a session is
+     * already running" before it looks at the sites — a second click on the
+     * same notification would otherwise be told "Propositum has not been
+     * watching any of those sites", which is true of the buffer and useless to
+     * the person. That care was being thrown away one layer up: starting a
+     * session calls `clear()`, so `offerForThread` finds nothing and the screen
+     * said the link had gone stale. It had not. It had worked.
+     */
+    const live = captureStore().current()
+
     return (
       <Sheet>
         <style href="propositum-start" precedence="default">
           {CSS}
         </style>
-        <Masthead kicker="Propositum" title="Nothing to start" />
-        <Section title="That link has gone stale" index={1}>
-          <p className="st-under">
-            Propositum could not tell what this was meant to be about. What it saw is held in
-            memory for half an hour and then thrown away, so a link left until tomorrow has
-            nothing behind it. Browse for a while and it will offer again.
-          </p>
-        </Section>
+        <Masthead
+          kicker="Propositum"
+          title={live ? 'That already happened' : 'Nothing to start'}
+        />
+        {live ? (
+          <Section title="A session is already running" index={1}>
+            <p className="st-under">
+              You said yes to this once already, and Propositum is watching. End that session
+              before starting another one.
+            </p>
+            <p className="st-under">
+              <Link href={`/sessions/${live.sessionId}`}>Open the session</Link>
+            </p>
+          </Section>
+        ) : (
+          <Section title="That link has gone stale" index={1}>
+            <p className="st-under">
+              Propositum could not tell what this was meant to be about. What it saw is held in
+              memory for half an hour and then thrown away, so a link left until tomorrow has
+              nothing behind it. Browse for a while and it will offer again.
+            </p>
+          </Section>
+        )}
       </Sheet>
     )
   }
 
   const { backOn, offer, origins, subject } = screen
-  const tickable = origins.filter((site) => !site.leftWithdrawn).length
+
 
   return (
     <Sheet>
@@ -222,12 +253,12 @@ export default async function StartPage({
         <form action={go}>
           <p className="of-h3">What Propositum would watch</p>
           <p className="st-under">
-            {tickable === 1
+            {origins.length === 1
               ? 'This is the site it saw this on. Untick it and it watches nothing.'
-              : `These are the ${tickable} sites it saw this on. Untick any it should leave alone.`}
+              : `These are the ${origins.length} sites it saw this on. Untick any it should leave alone.`}
           </p>
 
-          <SiteChoices sites={origins} />
+          <SiteChoices sites={origins} {...(backOn ? { joinedProject: backOn.name } : {})} />
 
           <p className="of-h3">{backOn === null ? 'And it sets up' : 'And it carries on'}</p>
           <ul className="st-list">
@@ -252,11 +283,11 @@ export default async function StartPage({
                 </li>
               </>
             )}
-            <li>
-              A session, with the{' '}
-              {screen.carriedPages === 1 ? 'page' : `${screen.carriedPages} pages`} you have already
-              read carried into it
-            </li>
+            {/* Deliberately no number. The count depends on which sites are
+                left ticked, and the ticks change after this renders — a screen
+                whose thesis is that every sentence on it is checkable cannot
+                promise "6 pages" and then carry three. */}
+            <li>A session, with what you have already read on those sites carried into it</li>
           </ul>
 
           <p className="st-under">
