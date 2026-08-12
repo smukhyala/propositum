@@ -15,7 +15,7 @@ import { MAX_PLAN_STEPS } from '../src/domain/handoff/policy'
 import { handoffBoundary, handoffSchema, sourceHandlesFor } from '../src/model/boundaries/handoff'
 import { planBoundary, planSchema } from '../src/model/boundaries/plan'
 import { workerActionBoundary, workerActionSchema } from '../src/model/boundaries/worker-action'
-import { changeHandlesFor, reviewBoundary, reviewSchema } from '../src/model/boundaries/review'
+import { reviewBoundary, reviewHandlesFor, reviewSchema } from '../src/model/boundaries/review'
 import { shiftReportBoundary } from '../src/model/boundaries/shift-report'
 import { subjectBoundary } from '../src/model/boundaries/subject'
 import { offerBoundary, offerSchema, outcomeKindsOf } from '../src/model/boundaries/offer'
@@ -35,7 +35,7 @@ describe('all eight boundaries exist and are distinct', () => {
       handoffBoundary(new Set(['S1'])).name,
       planBoundary.name,
       workerActionBoundary.name,
-      reviewBoundary(new Set(['C1'])).name,
+      reviewBoundary(new Set(['O1'])).name,
       shiftReportBoundary.name,
       subjectBoundary.name,
       offerBoundary.name,
@@ -52,7 +52,7 @@ describe('all eight boundaries exist and are distinct', () => {
       subjectBoundary.promptVersion,
       offerBoundary.promptVersion,
       workerActionBoundary.promptVersion,
-      reviewBoundary(new Set(['C1'])).promptVersion,
+      reviewBoundary(new Set(['O1'])).promptVersion,
       shiftReportBoundary.promptVersion,
     ]
 
@@ -310,13 +310,30 @@ describe('plan is a list, never a graph', () => {
     const prompt = planBoundary.buildPrompt({
       objective: 'o',
       definitionOfDone: 'd',
-      documentTitle: 'proposal',
-      sections: ['Scope'],
+      context: ['Document: proposal', 'Sections: Scope'],
+      expects: ['document-changes'],
       availableSourceLabels: ['Northwind'],
       mayDraft: false,
     })
 
     expect(prompt.user).toMatch(/may NOT draft/)
+  })
+
+  it('says nothing about a document when the shift pins none', () => {
+    // The old prompt sent `Document: the document` on a shift that had none —
+    // a sentence about a thing that did not exist, in the one call whose job is
+    // to plan against what does.
+    const prompt = planBoundary.buildPrompt({
+      objective: 'o',
+      definitionOfDone: 'd',
+      context: [],
+      expects: ['answer'],
+      availableSourceLabels: ['Northwind'],
+      mayDraft: false,
+    })
+
+    expect(prompt.user).not.toMatch(/Document:/)
+    expect(prompt.user).toMatch(/a written answer/)
   })
 })
 
@@ -378,12 +395,28 @@ describe('worker-action keeps kind a free string', () => {
 })
 
 describe('review grants nothing', () => {
-  const changes = [{ handle: 'C1', section: 'Scope', replacement: 'x', reason: 'r' }]
-  const schema = reviewSchema(changeHandlesFor(changes))
+  const outcomes = [
+    {
+      handle: 'O1',
+      headline: '1 change to the proposal',
+      reason: 'Drafted while you were away.',
+      summary: '1 change to the proposal',
+      changes: [{ handle: 'C1', section: 'Scope', replacement: 'x', reason: 'r' }],
+    },
+  ]
+  const schema = reviewSchema(reviewHandlesFor(outcomes))
+
+  it('accepts both an outcome handle and a change handle nested under it', () => {
+    // One handle space, two levels. The nesting is what lets a finding land on
+    // the paragraph rather than on "the document" when there is a paragraph to
+    // land on, and on the whole thing when there is not.
+    expect(schema.safeParse({ findings: [{ handle: 'O1', kind: 'unclear', detail: 'd' }] }).success).toBe(true)
+    expect(schema.safeParse({ findings: [{ handle: 'C1', kind: 'unclear', detail: 'd' }] }).success).toBe(true)
+  })
 
   it('rejects a finding against a change it was not shown', () => {
     expect(
-      schema.safeParse({ findings: [{ changeHandle: 'C9', kind: 'unclear', detail: 'd' }] }).success,
+      schema.safeParse({ findings: [{ handle: 'C9', kind: 'unclear', detail: 'd' }] }).success,
     ).toBe(false)
   })
 
@@ -392,11 +425,11 @@ describe('review grants nothing', () => {
   })
 
   it('tells the reviewer not to re-check permissions, which are already deterministic', () => {
-    const prompt = reviewBoundary(changeHandlesFor(changes)).buildPrompt({
+    const prompt = reviewBoundary(reviewHandlesFor(outcomes)).buildPrompt({
       objective: 'o',
       definitionOfDone: 'd',
       guidance: [],
-      changes,
+      outcomes,
       sourcesRead: [{ label: 'Northwind', content: datamark('terms') }],
     })
 

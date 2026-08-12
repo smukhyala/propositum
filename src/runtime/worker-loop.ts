@@ -40,6 +40,55 @@ import type { Datamarked } from '../model/untrusted'
 import type { ModelClient } from '../model/client'
 import { planBoundary } from '../model/boundaries/plan'
 import { workerActionBoundary } from '../model/boundaries/worker-action'
+import type { ShiftOutcomeKind } from '../domain/outcome/shift-outcome'
+
+/**
+ * What one authorized action yielded, before deterministic code decides what it
+ * IS.
+ *
+ * ── It mirrors `ToolProposal`, and for the same reason ───────────────────
+ *
+ * A `ToolProposal` is what a model asks to do; it carries no authority, and the
+ * gate turns it into an `AuthorizedAction` or refuses it. This is the other end
+ * of the same move: it is what a tool handed back, it carries no authority
+ * either, and `src/server/outcomes/` turns it into a `ShiftOutcome` or drops it.
+ * Neither shape is persisted, and neither may name its own kind — the worker
+ * returns a SHAPE and code reads the shape.
+ *
+ * That is what stops the worker knowing what it is working on. `section-prose`
+ * does not say "Markdown heading"; `item` does not say "row of a table";
+ * `landed` does not say "form submitted on a website". Whether a `section-prose`
+ * becomes a `Changeset` against an immutable base, or is dropped because this
+ * Shift pinned no document, is a decision made in the app process from the
+ * ratified contract — where the worker cannot reach it.
+ *
+ * ── The name it shares with a table that does not exist yet ──────────────
+ *
+ * CONTEXT.md reserves `OutcomeProposal` for a TABLE: one independently decidable
+ * unit of a held outcome, the non-document sibling of `ProposedChange`. That
+ * table is not in `prisma/schema.prisma` — wave 1 landed `ShiftOutcome` and
+ * `OutcomeVerdict` and stopped there, so `OutcomeVerdict` currently addresses a
+ * whole outcome rather than a unit of one.
+ *
+ * The name is used here because the two are the same idea seen at two moments:
+ * this is the unit before it is durable, that is the unit once it is. When the
+ * table lands, the row is written FROM one of these, and the shared name will be
+ * accurate rather than confusing. Said out loud because a reader who knows
+ * CONTEXT.md will otherwise assume one of the two is a mistake.
+ */
+export type OutcomeProposal =
+  /** Prose for one named place in a structured document. */
+  | { kind: 'section-prose'; intentId: string; section: string; prose: string }
+  /** One thing found and kept, decidable on its own — a rate, a candidate, a
+   *  quotation. Fields rather than prose, because a collection is a table. */
+  | { kind: 'item'; intentId: string; label: string; fields: Record<string, string> }
+  /** A written response to a question, resting on what this run read. */
+  | { kind: 'written-answer'; intentId: string; text: string }
+  /** Text addressed to somebody, written and NOT sent. */
+  | { kind: 'composed-text'; intentId: string; forWhat: string; text: string }
+  /** Something that happened out there. The only shape that can be `landed`,
+   *  and even then only if the action behind it carried a landing kind. */
+  | { kind: 'landed'; intentId: string; what: string; where: string }
 
 export interface RunLedger {
   /** Committed BEFORE any effect. Returns the intent id. */
@@ -81,7 +130,41 @@ export interface WorkerJob {
   readonly guidance: readonly string[]
   readonly scope: ContractScope
   readonly controls: AutonomyControls
-  readonly documentTitle: string
+  /**
+   * One-line facts about what this Shift is working on, already flattened.
+   *
+   * `"Document: Q3 proposal"`, `"Sections: Overview, Pricing"`, `"Nothing is
+   * pinned to write into"` — sentences, assembled by the app process from the
+   * ratified contract and handed over as text.
+   *
+   * This replaced `documentTitle` and `sections`, and the replacement is the
+   * point of the field rather than a tidying of it. Two named document fields on
+   * the job meant the worker could always tell it was working on a document,
+   * because the shape of its own input said so — and a runtime that knows it is
+   * drafting Markdown is a runtime that will grow a second branch the day it is
+   * asked to fill in a spreadsheet or read a browser tab. A flat list of facts
+   * cannot be branched on: there is no `job.sections` to check, and inventing
+   * one means inventing a parser for a string the app process wrote.
+   *
+   * It is deliberately NOT structured. Structure here would be re-derivable —
+   * "if it has a `sections` key it is a document" — which is the same knowledge
+   * arriving through a longer path.
+   */
+  readonly context: readonly string[]
+  /**
+   * The shapes of result this contract is after.
+   *
+   * Derived by deterministic code from what the person ratified — never asked of
+   * a model, and never proposed by one. `WorkOffer.expects` holds these too, and
+   * ADR-0009 is explicit about why that is safe when proposing an `ActionKind`
+   * is not: a statement about the SHAPE OF THE RESULT grants nothing. There is
+   * no capability behind `answer` that `document-changes` lacks.
+   *
+   * The worker sees it so its plan aims at the right thing. It cannot widen it,
+   * and producing something outside it is not refused — it is dropped when the
+   * outcome writers cannot realise it, and counted.
+   */
+  readonly expects: readonly ShiftOutcomeKind[]
   /**
    * The `Document` the shift works on, or `undefined` when there is not one.
    *
@@ -98,7 +181,6 @@ export interface WorkerJob {
    * with `document_missing` rather than letting a run work on nothing.
    */
   readonly documentId: string | undefined
-  readonly sections: readonly string[]
   readonly sourceLabels: ReadonlyArray<{ id: string; label: string }>
   /** contract.acceptedAt + timeLimitMinutes. Derived, never stored, so a
    *  crash-restart loop cannot silently reset the budget. */
@@ -116,7 +198,9 @@ export interface WorkerResult {
   readonly stoppedBy: readonly StopRuleId[]
   readonly terminalReason: string | undefined
   readonly decisions: readonly DecisionRaised[]
-  readonly drafts: ReadonlyArray<{ section: string; prose: string }>
+  /** What the run yielded, in the order it yielded it. Shapes, not outcomes —
+   *  `src/server/outcomes/` decides what each one IS. */
+  readonly produced: readonly OutcomeProposal[]
   readonly refusals: number
   readonly actionsTaken: number
 }
@@ -126,7 +210,7 @@ export async function runWorker(job: WorkerJob, deps: WorkerDeps): Promise<Worke
   const mayDraft = policy.actionKindAllowlist.has('draft-section')
 
   const decisions: DecisionRaised[] = []
-  const drafts: Array<{ section: string; prose: string }> = []
+  const produced: OutcomeProposal[] = []
   const gathered: Array<{ label: string; content: Datamarked }> = []
   const history: Array<{ kind: string; summary: string; outcome: string }> = []
 
@@ -148,7 +232,7 @@ export async function runWorker(job: WorkerJob, deps: WorkerDeps): Promise<Worke
     stoppedBy: rules,
     terminalReason: rules.length ? STOP_RULES[rules[0]!].terminalReason : undefined,
     decisions,
-    drafts,
+    produced,
     refusals,
     actionsTaken,
   })
@@ -162,8 +246,8 @@ export async function runWorker(job: WorkerJob, deps: WorkerDeps): Promise<Worke
   const planned = await deps.model.run(planBoundary, {
     objective: job.objective,
     definitionOfDone: job.definitionOfDone,
-    documentTitle: job.documentTitle,
-    sections: job.sections,
+    context: job.context,
+    expects: job.expects,
     availableSourceLabels: job.sourceLabels.map((s) => s.label),
     mayDraft,
   })
@@ -291,18 +375,24 @@ export async function runWorker(job: WorkerJob, deps: WorkerDeps): Promise<Worke
     })
 
     try {
-      const outcome = await perform(verdict.action, deps, gathered, drafts)
+      // `performed`, not `outcome`. The word is banned as a column name in this
+      // codebase's vocabulary because it is ambiguous between two things a row
+      // could hold, and a local called `outcome` sitting three lines above
+      // `ledger.recordOutcome` is how the next person comes to write the column.
+      const performed = await perform(verdict.action, intentId, deps, gathered)
       actionsTaken += 1
-      consecutiveNoProgress = outcome.changedSomething ? 0 : consecutiveNoProgress + 1
+      consecutiveNoProgress = performed.changedSomething ? 0 : consecutiveNoProgress + 1
+
+      if (performed.produced !== undefined) produced.push(performed.produced)
 
       await deps.ledger.recordOutcome({
         intentId,
         result: 'succeeded',
         scopeVerdict: 'within_scope',
-        detail: outcome.summary,
-        ...(outcome.draftText === undefined ? {} : { draftText: outcome.draftText }),
+        detail: performed.summary,
+        ...(performed.draftText === undefined ? {} : { draftText: performed.draftText }),
       })
-      history.push({ kind: action.kind, summary: action.reason, outcome: outcome.summary })
+      history.push({ kind: action.kind, summary: action.reason, outcome: performed.summary })
     } catch (error) {
       consecutiveNoProgress += 1
       await deps.ledger.recordOutcome({
@@ -334,15 +424,28 @@ interface Performed {
   readonly summary: string
   readonly changedSomething: boolean
   readonly draftText?: string | undefined
+  /**
+   * What this action YIELDED, if it yielded anything.
+   *
+   * Absent for a read: reading changes nothing and produces nothing the person
+   * has to decide about. Present for anything that made a thing — and the thing
+   * is a shape, not a `ShiftOutcome`. This runtime never says what kind of
+   * result it just made, because saying so is the assumption being removed.
+   */
+  readonly produced?: OutcomeProposal | undefined
 }
 
 /** Dispatch by kind. Exhaustive over ActionKind, so adding a capability without
  *  handling it here is a type error rather than a silent no-op. */
 async function perform(
   action: AuthorizedAction,
+  /** The committed `ActionIntent` this is the effect of. It rides on the
+   *  production so provenance closes as a JOIN rather than a claim: the outcome
+   *  writers intersect these against the run's own completed intents, and an id
+   *  that is not among them is dropped. */
+  intentId: string,
   deps: WorkerDeps,
   gathered: Array<{ label: string; content: Datamarked }>,
-  drafts: Array<{ section: string; prose: string }>,
 ): Promise<Performed> {
   const kind: ActionKind = action.kind
 
@@ -365,11 +468,19 @@ async function perform(
 
     case 'draft-section': {
       const drafted = draftSection(action as AuthorizedAction<'draft-section'>)
-      drafts.push({ section: drafted.sectionPath, prose: drafted.prose })
       return {
         summary: `drafted ${drafted.sectionPath}`,
         changedSomething: true,
         draftText: drafted.prose,
+        // Prose for a named place. NOT "a change to a Markdown document" — that
+        // sentence is written in the app process, against the base version the
+        // contract pinned, and only if it pinned one.
+        produced: {
+          kind: 'section-prose',
+          intentId,
+          section: drafted.sectionPath,
+          prose: drafted.prose,
+        },
       }
     }
 
@@ -390,6 +501,16 @@ async function perform(
      * It is deliberately NOT a `default:` clause. A `default` would swallow the
      * next capability someone adds; naming all six means adding a seventh is
      * still a type error, which is the property the comment above promises.
+     *
+     * ── What this costs the outcome vocabulary, said plainly ─────────────
+     *
+     * `OutcomeProposal` has five shapes and exactly one of them is produced
+     * here: `section-prose`, from `draft-section`. `item`, `written-answer`,
+     * `composed-text` and `landed` have no producing `ActionKind` today, because
+     * every kind that exists is a read or a draft. `src/server/outcomes/`
+     * handles all five anyway, and its switch is exhaustive for the same reason
+     * this one is: the writer for a shape must exist before the capability that
+     * makes it, or the first run to produce one silently loses it.
      */
     case 'observe-page':
     case 'navigate':

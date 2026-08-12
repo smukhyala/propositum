@@ -728,8 +728,34 @@ export interface ChangesetRepository {
     contractId: string
     baseVersionId: string
     baseHash: string
+    /**
+     * The `document-changes` ShiftOutcome this changeset is the body of.
+     *
+     * OPTIONAL, and `contractId` stays beside it. Reparenting the changeset onto
+     * the outcome and dropping the contract link would be tidier and would break
+     * two things that already work: `forContract` is how the review screen finds
+     * the changes, and the settled-once foreign key from DocumentVersion depends
+     * on nothing about this row moving. So this is a link the outcome path adds,
+     * not a spine the document path is rehomed onto.
+     */
+    outcomeId?: string | undefined
     changes: readonly ProposedChangeInput[]
   }): Promise<{ id: string }>
+  /**
+   * The changes belonging to one `document-changes` ShiftOutcome.
+   *
+   * Exists beside `forContract` rather than replacing it, and the difference
+   * matters where it is used. `forContract` returns the NEWEST changeset for a
+   * contract, which is what the review screen wants — the person is deciding on
+   * the latest proposal. The reviewer is judging ONE RUN'S OWN work, and a
+   * contract can carry more than one run (a re-accept enqueues another, a stale
+   * lease re-claims). Handing the reviewer the newest changeset would let it
+   * annotate a different run's changes and resolve its findings to their ids.
+   */
+  forOutcome(outcomeId: string): Promise<{
+    id: string
+    changes: Array<ProposedChangeInput & { id: string }>
+  } | null>
   forContract(contractId: string): Promise<{
     id: string
     baseVersionId: string
@@ -751,11 +777,38 @@ export interface ChangesetRepository {
 
 function changesetRepository(prisma: PrismaClient): ChangesetRepository {
   return {
-    create: ({ contractId, baseVersionId, baseHash, changes }) =>
+    create: ({ contractId, baseVersionId, baseHash, outcomeId, changes }) =>
       prisma.changeset.create({
-        data: { contractId, baseVersionId, baseHash, changes: { create: [...changes] } },
+        data: {
+          contractId,
+          baseVersionId,
+          baseHash,
+          ...(outcomeId === undefined ? {} : { outcomeId }),
+          changes: { create: [...changes] },
+        },
         select: { id: true },
       }),
+    forOutcome: (outcomeId) =>
+      prisma.changeset.findUnique({
+        where: { outcomeId },
+        select: {
+          id: true,
+          changes: {
+            orderBy: { startOffset: 'asc' },
+            select: {
+              id: true,
+              startOffset: true,
+              endOffset: true,
+              prefix: true,
+              exact: true,
+              suffix: true,
+              replacement: true,
+              reason: true,
+            },
+          },
+        },
+      }),
+
     forContract: async (contractId) => {
       const row = await prisma.changeset.findFirst({
         where: { contractId },
@@ -814,12 +867,30 @@ function changesetRepository(prisma: PrismaClient): ChangesetRepository {
  * There is deliberately no update and no delete. A finding is a record of what
  * the second pass said, not a mutable annotation.
  */
+export interface ReviewFindingInput {
+  readonly changeId: string | null
+  /**
+   * The non-document production this annotates. AT MOST ONE of `changeId` and
+   * `outcomeId` is set, and a finding about the run as a whole sets neither —
+   * which is already how `changeId` behaves.
+   *
+   * Two nullable foreign keys where a polymorphic target would be tempting. They
+   * cost nothing here precisely BECAUSE a finding is display-only: nothing has
+   * to resolve the target in order to decide anything. The moment a finding
+   * gained teeth this shape would need revisiting, and that is an argument for
+   * keeping it toothless rather than for generalising the column.
+   */
+  readonly outcomeId?: string | null | undefined
+  readonly kind: string
+  readonly detail: string
+}
+
 export interface ReviewFindingRepository {
-  create(input: {
-    runId: string
-    findings: ReadonlyArray<{ changeId: string | null; kind: string; detail: string }>
-  }): Promise<number>
+  create(input: { runId: string; findings: readonly ReviewFindingInput[] }): Promise<number>
   forChangeset(changesetId: string): Promise<Array<{ changeId: string | null; kind: string; detail: string }>>
+  forRun(runId: string): Promise<
+    Array<{ changeId: string | null; outcomeId: string | null; kind: string; detail: string }>
+  >
 }
 
 function reviewFindingRepository(prisma: PrismaClient): ReviewFindingRepository {
@@ -832,6 +903,7 @@ function reviewFindingRepository(prisma: PrismaClient): ReviewFindingRepository 
           kind: f.kind,
           detail: f.detail,
           ...(f.changeId === null ? {} : { changeId: f.changeId }),
+          ...(f.outcomeId === null || f.outcomeId === undefined ? {} : { outcomeId: f.outcomeId }),
         })),
       })
       return count
@@ -840,6 +912,11 @@ function reviewFindingRepository(prisma: PrismaClient): ReviewFindingRepository 
       prisma.reviewFinding.findMany({
         where: { change: { changesetId } },
         select: { changeId: true, kind: true, detail: true },
+      }),
+    forRun: (runId) =>
+      prisma.reviewFinding.findMany({
+        where: { runId },
+        select: { changeId: true, outcomeId: true, kind: true, detail: true },
       }),
   }
 }

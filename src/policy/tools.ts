@@ -83,9 +83,19 @@ export interface ReadSourceDeps {
 
 export interface ReadDocumentDeps {
   readonly versions: VersionLookup
-  /** The version pinned by `ContractScope.baseVersionId`. Passed in rather than
-   *  looked up from the action, so a tool cannot be pointed at another version. */
-  readonly baseVersionId: string
+  /**
+   * The version pinned by `ContractScope.baseVersionId`. Passed in rather than
+   * looked up from the action, so a tool cannot be pointed at another version.
+   *
+   * OPTIONAL, because a Shift can pin no document at all. That case never
+   * reaches here — the gate refuses `read-document` with `no_document_pinned`
+   * before any tool runs — so the guard below is the second fence, and it names
+   * the condition rather than failing on a lookup for an empty id. A sentinel
+   * empty string would have kept the type simple and made the eventual error
+   * read as "version '' not found", which describes a corrupted pin rather than
+   * an absent one.
+   */
+  readonly baseVersionId?: string | undefined
 }
 
 /* ── the three ─────────────────────────────────────────────────────────── */
@@ -146,8 +156,13 @@ export async function readDocument(
   _action: AuthorizedAction<'read-document'>,
   deps: ReadDocumentDeps,
 ): Promise<DocumentText> {
-  const version = await deps.versions.byId(deps.baseVersionId)
-  if (!version) throw new Error(`base version ${deps.baseVersionId} not found`)
+  const base = deps.baseVersionId
+  if (base === undefined || base === '') {
+    throw new Error(`authorized read-document on a shift that pins no document (${_action.intentId})`)
+  }
+
+  const version = await deps.versions.byId(base)
+  if (!version) throw new Error(`base version ${base} not found`)
 
   return {
     documentId: version.documentId,

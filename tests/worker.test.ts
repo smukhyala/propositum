@@ -74,11 +74,15 @@ function job(over: Partial<WorkerJob> = {}): WorkerJob {
       interruption: 'stop-only-when-blocked',
       timeLimitMinutes: 30,
     },
-    documentTitle: 'Northwind proposal',
+    // One-line facts, exactly as the app process assembles them. The worker
+    // cannot tell from this that it is looking at a document rather than a
+    // spreadsheet or a browser tab, which is the property being tested by
+    // everything that does NOT branch on it.
+    context: ['Document: Northwind proposal', 'Sections: Scope, Commercials'],
+    expects: ['document-changes'],
     // A `Document` id, and note that it is NOT `ver-1`. The two being distinct
     // is the whole point: the loop used to put the version id under this key.
     documentId: 'doc-1',
-    sections: ['Scope', 'Commercials'],
     sourceLabels: [{ id: 'src-northwind', label: 'Northwind Partners' }],
     deadlineEpochMs: 1_000_000,
     ...over,
@@ -293,7 +297,7 @@ describe('a raised question is not an action', () => {
 
     expect(result.stoppedBy).toEqual([])
     expect(result.decisions).toHaveLength(1)
-    expect(result.drafts).toHaveLength(1)
+    expect(result.produced).toHaveLength(1)
   })
 })
 
@@ -310,7 +314,7 @@ describe('the dials bite', () => {
     )
 
     expect(d.recorded.intents[0]?.refusedRule).toBe('action_kind_not_allowed')
-    expect(result.drafts).toHaveLength(0)
+    expect(result.produced).toHaveLength(0)
   })
 
   it('current-step-only is honoured by the gate', async () => {

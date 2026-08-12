@@ -193,6 +193,81 @@ describe('the reversibility classifier stays domain code', () => {
   })
 })
 
+describe('one author for what a run produced', () => {
+  /**
+   * `ShiftOutcomeKind` and `Reversibility` are assigned in exactly one file.
+   *
+   * The one that would actually hurt is `reversibility`. It decides whether a
+   * person is offered a verdict at all, so a second writer is a second answer to
+   * *"can this still be undone"* — and the two would drift in the direction that
+   * eventually offers an Accept button over something that already left the
+   * building. A person who clicks Reject on a sent message and is told
+   * "rejected" has been lied to by the one screen the trust model rests on.
+   *
+   * The greps look for the ASSIGNMENT form rather than the literals. Reading a
+   * value back (`outcome.reversibility === 'held'`) is fine and happens in
+   * several places; writing one is what has a single owner.
+   */
+  const WRITER = 'src/server/outcomes/index.ts'
+  const production = tsFilesUnder(join(repo, 'src'))
+
+  const writersOf = (pattern: RegExp) =>
+    production
+      .filter((file) => pattern.test(readFileSync(file, 'utf8')))
+      .map((file) => relative(repo, file))
+
+  it('assigns a reversibility in one place only', () => {
+    expect(writersOf(/reversibility:\s*'(held|landed)'/)).toEqual([WRITER])
+  })
+
+  it('assigns a ShiftOutcomeKind in one place only', () => {
+    expect(
+      writersOf(/\bkind:\s*'(document-changes|collection|answer|message-draft|external-effect)'/),
+    ).toEqual([WRITER])
+  })
+})
+
+describe('the run spine does not know what a document is', () => {
+  /**
+   * The check that the document assumption was REMOVED rather than relocated.
+   *
+   * `execute-run.ts` used to load a version, split it on `## ` headings, and
+   * diff the worker's prose against it. Every step was correct and every step
+   * said the same thing — a run works on a document — so everything downstream
+   * inherited it. Moving that logic into `src/server/outcomes/document-changes.ts`
+   * is only worth anything if the spine genuinely cannot reach it any more, and
+   * "genuinely" is a grep rather than a promise.
+   *
+   * Comments are stripped first, and the reason is the mirror image of the one
+   * in `tests/reachability.test.ts`. There, a comment MENTIONING a call could
+   * satisfy a check it should have failed. Here, the file's own header explains
+   * that it no longer splits content on `## ` headings — and an unstripped grep
+   * would fail on the sentence describing the property it is checking, which
+   * would leave the only way to keep the test green being to stop explaining
+   * why the rule exists.
+   */
+  const source = () =>
+    readFileSync(join(repo, 'src/server/execute-run.ts'), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, ' ')
+      .replace(/(^|[^:])\/\/[^\n]*/g, '$1')
+
+  it('has no Markdown heading syntax and no heading regex', () => {
+    expect(source()).not.toMatch(/##/)
+    expect(source()).not.toMatch(/#\{2,3\}/)
+  })
+
+  it('never diffs anything', () => {
+    expect(source()).not.toMatch(/\bdiff\(/)
+  })
+
+  it('does not import Document, DocumentVersion, or anything named for one', () => {
+    // Capitalised deliberately: `ctx.repos.documents` is how the spine reaches
+    // storage and stays fine. A type called `Document` arriving here means the
+    // shape of a document has reached the file again.
+    expect(source()).not.toMatch(/\bDocument\b/)
+  })
+})
+
 describe('the domain layer stays pure', () => {
   const domainFiles = tsFilesUnder(join(repo, 'src/domain'))
 

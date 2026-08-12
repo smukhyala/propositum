@@ -343,9 +343,19 @@ export function Agreement({ draft, defaults, sourceLabels, onBack, onHandedOver 
       </Section>
 
       <Section title="What I can change" index={3}>
+        {/* A Shift that pins no document has to say so rather than name a place
+            that does not exist. The second sentence survives either way: nothing
+            lands anywhere until the person decides on it. */}
         <p className="ag-hint-tight">
-          In <strong>{draft.documentTitle}</strong>, and nowhere else. Nothing lands in the document
-          itself — Propositum proposes changes and you decide on each one when you get back.
+          {draft.documentTitle === null ? (
+            <>Nothing yet — this shift has no document under it. </>
+          ) : (
+            <>
+              In <strong>{draft.documentTitle}</strong>, and nowhere else.{' '}
+            </>
+          )}
+          Nothing lands anywhere on its own — Propositum proposes and you decide on each one when
+          you get back.
         </p>
 
         <h3 className="ag-group-head">What Propositum may do</h3>

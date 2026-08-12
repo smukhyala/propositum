@@ -202,6 +202,22 @@ describe('the safety machinery is reachable from the product', () => {
     ).not.toEqual([])
   })
 
+  it('a run records what it produced, or a Shift can still only make a document', () => {
+    // Moved up out of *deferred, and asserted as deferred* when the outcome
+    // spine landed. The table's whole point is that the document path is one
+    // kind among five; with no writer it was still the only kind, and a run that
+    // read three pages and answered a question had nowhere to say so.
+    const callers = callersOf('outcomes.create', 'src/persistence/repositories/index.ts')
+
+    expect(callers, 'nothing writes a ShiftOutcome — a run can only produce a document').not.toEqual(
+      [],
+    )
+    expect(
+      callers,
+      'the outcome writers must be the only caller, so kind and reversibility have one author',
+    ).toEqual(['src/server/outcomes/index.ts'])
+  })
+
   it('a person can decide on what a Shift made, or the outcome table is decoration', () => {
     // Moved up out of "deferred" when the re-entry screen learned to render
     // ShiftOutcomes. Without a caller, `OutcomeVerdict` is a table nobody can
@@ -414,14 +430,63 @@ describe('deferred, and asserted as deferred', () => {
     ).toEqual([])
   })
 
-  it('nothing writes a ShiftOutcome, so a Shift can still only produce a document', () => {
-    // The whole point of the table is that the document path is one kind among
-    // five. With no writer it is still the only kind, and a run that read three
-    // pages and answered a question has nowhere to say so.
+  it('an outcome-scoped ReviewFinding is written and not yet rendered', () => {
+    /**
+     * The reviewer can now annotate a whole production, not only one change.
+     *
+     * `review@2` shows it outcome handles `O1…On` with change handles nested
+     * under the `document-changes` case, and the system prompt tells it to cite
+     * the most specific handle it can. A finding that cites `O1` is stored with
+     * `outcomeId` set and `changeId` null — and the only reader on the re-entry
+     * screen is `findings.forChangeset`, which joins through `changeId` and
+     * therefore cannot see it.
+     *
+     * So those rows exist and nobody is shown them. That is a real gap with a
+     * real consequence: the second pass says something true about the set of
+     * changes as a whole, and the person never reads it. It is asserted here
+     * rather than left implicit, because a finding written and never rendered is
+     * indistinguishable in a green suite from a finding never written — which is
+     * the exact shape of every defect the section above exists to remember.
+     *
+     * The fix is on the render side and the query it needs already exists:
+     * `findings.forRun` returns `outcomeId` beside `changeId`. Wiring it turns
+     * this red.
+     */
     expect(
-      callersOf('outcomes.create', repos),
-      'shift outcomes are written now — move this into the section above',
+      callersOf('findings.forRun', repos),
+      'outcome-scoped findings are rendered now — move this into the section above',
     ).toEqual([])
+  })
+
+  it('nothing lands, so an external-effect outcome cannot occur', () => {
+    /**
+     * `LANDING_ACTION_KINDS` is EMPTY, and that is a claim rather than an
+     * oversight.
+     *
+     * `ShiftOutcomeKind` has five members and `external-effect` is the only one
+     * that is not `held` — the only one a person is offered no verdict on,
+     * because it already happened out in the world. Nothing today can produce
+     * one: every ActionKind that exists is a read or a draft, and even
+     * `click-element`, which can press a page's own Send button, is not a
+     * landing kind. Landing is about whose act put the effect into the world.
+     *
+     * So `src/server/outcomes/external-effect.ts` drops everything it is handed,
+     * by design, and the drop is the enforcement rather than a fallback. The day
+     * someone adds a landing kind this goes RED — which is the point. A mutating
+     * capability whose effects leave Propositum is not a line in a set; it is a
+     * person being shown work they cannot undo, and the claim has to move up
+     * into the reachable section deliberately rather than slip in with the enum.
+     */
+    const policy = readFileSync(join(repo, 'src/domain/handoff/policy.ts'), 'utf8')
+    const declaration = /LANDING_ACTION_KINDS[^=]*=\s*new Set<ActionKind>\(([\s\S]*?)\)\s*$/m.exec(
+      policy,
+    )
+
+    expect(declaration, 'LANDING_ACTION_KINDS is not declared the way this test reads it').not.toBeNull()
+    expect(
+      declaration?.[1]?.trim(),
+      'a kind lands now — external-effect is reachable, so move this into the section above',
+    ).toBe('')
   })
 
   it('the gate never stops for a person, so ConfirmationRequest cannot occur', () => {

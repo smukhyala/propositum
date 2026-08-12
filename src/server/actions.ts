@@ -834,7 +834,16 @@ export interface WorkStarted {
   readonly projectId: string
   readonly projectName: string
   readonly sessionId: string
-  readonly documentId: string
+  /**
+   * The project's document, if it already had one. NULL for a project this
+   * sitting just opened.
+   *
+   * It was non-null and always present, because starting work created a skeleton
+   * document whether or not the work was drafting. Nothing has ever read this
+   * field, which is itself the evidence that the eager creation was serving the
+   * schema rather than anybody's screen — see the note where it used to happen.
+   */
+  readonly documentId: string | null
   readonly carriedOver: number
   /**
    * True when this sitting joined a project that already existed, rather than
@@ -997,29 +1006,33 @@ export async function startFromSuggestion(
     }
 
     /**
-     * Something to work in — unless the project already has one.
+     * No document is created here any more, and that is the point of the change.
      *
-     * Carrying the document forward is most of what joining a project is FOR.
-     * A second sitting on the same subject that opened a fresh skeleton beside
-     * yesterday's half-written draft would have continuity in the filing and
-     * none where it matters, and slice 0 works on one document at a time, so
-     * which of the two the handoff picked would come down to insertion order.
+     * ── What this used to do, and what it cost ───────────────────────────
+     *
+     * It created a skeleton `Document` eagerly — two empty headings chosen from
+     * whether the offer said *draft-document* or *deep-research* — before anyone
+     * had agreed to draft anything. Every session was therefore pre-committed to
+     * the drafting workflow at the moment it started, in a product whose stated
+     * ambition is to have no predetermined use cases. A sitting that turned out
+     * to be a comparison, an answer or a browser errand still had a half-written
+     * proposal filed under it, with two headings nobody wrote and nobody would.
+     *
+     * ── Where it moved, and why there ────────────────────────────────────
+     *
+     * To `draftContract`, which is the first moment anything knows what the
+     * shift is FOR. The document is created there iff the contract expects
+     * `document-changes`, and its first version becomes `baseVersionId`.
+     * Otherwise the pin stays null and the gate refuses the document
+     * capabilities, which is the honest encoding of "there is no document" —
+     * rather than a document existing so the schema would let the person hand
+     * work over.
+     *
+     * The existing project's document, when there is one, is still carried
+     * forward. That is most of what joining a project is for, and it happens at
+     * the same later seam: `draftContract` takes `documents[0]`, and finds
+     * yesterday's half-written draft exactly where it left it.
      */
-    const existing = await repos.documents.forProject(project.id)
-    const skeleton = normalise(
-      intent === 'draft-document'
-        ? `# ${name}\n\n## What this is\n\n## What to do about it\n`
-        : `# ${name}\n\n## What I found\n\n## Open questions\n`,
-    )
-    const document =
-      existing[0] ??
-      (await repos.documents.create({
-        projectId: project.id,
-        title: name,
-        content: skeleton,
-        contentHash: hashContent(skeleton),
-      }))
-
     const session = await repos.sessions.start(project.id)
     const startedAtMs = Date.now()
     captureStore().start(session.id, startedAtMs)
@@ -1063,7 +1076,7 @@ export async function startFromSuggestion(
       projectId: project.id,
       projectName: project.name,
       sessionId: session.id,
-      documentId: document.id,
+      documentId: (await repos.documents.forProject(project.id))[0]?.id ?? null,
       carriedOver,
       joinedExisting: joined,
       discardedOrigins,
@@ -1598,7 +1611,14 @@ export interface ContractDrafted {
   readonly suggestedTimeLimitMinutes: number
   readonly approvedSourceIds: readonly string[]
   readonly allowedActionKinds: readonly ActionKind[]
-  readonly documentTitle: string
+  /**
+   * The document this Shift may change, or NULL when it pins none.
+   *
+   * Null is a real state now rather than an error on the way to one: a Shift
+   * that answers a question or acts in a browser has no document, and the
+   * agreement screen must say what it can change without inventing a place.
+   */
+  readonly documentTitle: string | null
   /**
    * Constraints the reading found in page text. Display-only, structurally
    * barred from the agreement — without the attribution beside them, a quoted
@@ -1639,19 +1659,61 @@ export async function draftContract(readingId: string): Promise<ActionResult<Con
     const session = await repos.sessions.byId(reading.sessionId)
     if (!session) return no<ContractDrafted>('not-found', "That session isn't there any more.")
 
-    const documents = await repos.documents.forProject(session.projectId)
-    const document = documents[0]
-    if (!document) {
-      return no<ContractDrafted>(
-        'blocked',
-        'There is no document in this project yet. Paste one in first, so Propositum has something to work on.',
-      )
-    }
+    /**
+     * The document, created here or not at all.
+     *
+     * ── Why this is the seam, and not the moment work started ────────────
+     *
+     * `startFromSuggestion` used to open a skeleton document the instant a
+     * sitting began, which pre-committed every session to the drafting workflow
+     * before anybody had chosen one. This is the first point at which anything
+     * knows what the shift is FOR, so it is the first point at which creating a
+     * document is a decision rather than a default.
+     *
+     * ── How it knows, and what it does when it does not ──────────────────
+     *
+     * From `WorkOffer.expectedKinds` for this session — the `ShiftOutcomeKind`s
+     * the offer said the work would produce. Nothing writes a `WorkOffer` yet
+     * (`tests/reachability.test.ts` asserts exactly that), so today there is
+     * never one and the fallback runs every time. The fallback is
+     * `document-changes`, which reproduces the old behaviour precisely: a
+     * document is created, its first version is pinned, and every existing
+     * drafting path works as it did.
+     *
+     * That is deliberate. The seam moves in this change; WHAT DECIDES at the
+     * seam arrives with the accept path that composes offers. Making the
+     * fallback anything else would have changed behaviour on the strength of a
+     * column no code fills.
+     */
+    const offer = await repos.offers.forSession(reading.sessionId)
+    const expectsDocument =
+      offer === null || offer.expectedKinds.length === 0
+        ? true
+        : offer.expectedKinds.includes('document-changes')
 
-    const base = await repos.documents.latestVersion(document.id)
-    if (!base) {
+    const project = await repos.projects.byId(session.projectId)
+
+    /**
+     * The project's existing document, and only if this shift is for one.
+     *
+     * `expectsDocument` gates the LOOKUP, not just the creation, and that is the
+     * whole correctness of it. Gating creation alone would mean an offer that
+     * said *answer* still pinned yesterday's draft whenever the project happened
+     * to have one — which is the normal case for a joined project, and precisely
+     * what the carry-forward above exists to produce. The offer's stated shape
+     * would be silently overridden by the presence of an old file.
+     */
+    const existing = expectsDocument ? (await repos.documents.forProject(session.projectId))[0] : undefined
+    const base = existing === undefined ? null : await repos.documents.latestVersion(existing.id)
+
+    if (existing !== undefined && base === null) {
       return no<ContractDrafted>('blocked', 'That document has no saved text yet.')
     }
+
+    // The title the handoff boundary writes an objective about. The project's
+    // own name when there is no document — the thread already chose it, and it
+    // beats inventing a document to have something to name.
+    const subject = existing?.title ?? project?.name ?? 'this work'
 
     /* ── the sources this sitting actually touched ──────────────────────── */
 
@@ -1712,7 +1774,7 @@ export async function draftContract(readingId: string): Promise<ActionResult<Con
           ...(c.confidence === null ? {} : { confidence: c.confidence }),
         })),
         sources: handled.map((s) => ({ handle: s.handle, label: s.label })),
-        documentTitle: document.title,
+        documentTitle: subject,
       },
     )
 
@@ -1749,16 +1811,65 @@ export async function draftContract(readingId: string): Promise<ActionResult<Con
         }
       })
 
+    /* ── the document, created last of all ──────────────────────────────── */
+
+    /**
+     * Written here, after every branch that can still refuse.
+     *
+     * Everything above this line can return `blocked` — no approved sources, no
+     * API key, a failed handoff call — and a document created before them would
+     * survive the refusal. Combined with the reading screen no longer disabling
+     * the button when a project has no document, that meant someone could click
+     * through, be told "Propositum saw no approved sources in this session", and
+     * have the project quietly acquire a two-heading skeleton nobody asked for.
+     *
+     * So creation is the last thing before the write it exists for. The skeleton
+     * is two empty headings named after the project the thread already named:
+     * Propositum works on the person's words and never starts from a blank page,
+     * so this is a place to put them rather than a draft of anything.
+     */
+    let pinned = base
+    let documentTitle = existing?.title ?? null
+
+    if (expectsDocument && pinned === null) {
+      const title = project?.name ?? 'Untitled'
+      const skeleton = normalise(`# ${title}\n\n## What this is\n\n## What to do about it\n`)
+      const created = await repos.documents.create({
+        projectId: session.projectId,
+        title,
+        content: skeleton,
+        contentHash: hashContent(skeleton),
+      })
+      pinned = { id: created.versionId, content: skeleton, contentHash: hashContent(skeleton), ordinal: 1 }
+      documentTitle = title
+    }
+
     /* ── persist the draft ──────────────────────────────────────────────── */
 
-    // Full DOCUMENT capability at draft time; the Output dial removes
-    // `draft-section` at ratification. Defaults are static product constants,
-    // never model-proposed.
-    //
-    // `DOCUMENT_ACTION_KINDS`, not `ACTION_KINDS`: the enum now also holds the
-    // browser-driving verbs, and a person drafting a proposal has no business
-    // granting *"Click something on the page"*. A browser handoff grants those
-    // deliberately, from the path that offers one.
+    /**
+     * The DOCUMENT capability, granted only when there is a document.
+     *
+     * `DOCUMENT_ACTION_KINDS` used to be granted unconditionally, which was
+     * harmless while every contract pinned a base and is not now. The gate
+     * refuses `read-document` and `draft-section` with `no_document_pinned`
+     * regardless — but the agreement panel builds its list from the granted
+     * kinds, so an unpinned shift would have shown *"Read the document"* and
+     * *"Draft a section"* under **What Propositum may do**, one section below
+     * its own sentence saying there is no document. A permission screen that
+     * lists a capability the gate will refuse is the screen teaching people not
+     * to read it.
+     *
+     * Not `ACTION_KINDS` either: the enum holds the browser-driving verbs now,
+     * and a person drafting a proposal has no business granting *"Click
+     * something on the page"*. A browser handoff grants those deliberately, from
+     * the path that offers one.
+     *
+     * Full document capability at draft time; the Output dial removes
+     * `draft-section` at ratification. Defaults are static product constants,
+     * never model-proposed.
+     */
+    const allowedActionKinds = pinned === null ? [] : [...DOCUMENT_ACTION_KINDS]
+
     const controls = DEFAULT_CONTROLS
     const contract = await repos.contracts.createDraft({
       sessionId: reading.sessionId,
@@ -1767,8 +1878,8 @@ export async function draftContract(readingId: string): Promise<ActionResult<Con
       definitionOfDone: drafted.value.definitionOfDone,
       guidance: [],
       approvedSourceIds,
-      allowedActionKinds: [...DOCUMENT_ACTION_KINDS],
-      baseVersionId: base.id,
+      allowedActionKinds,
+      baseVersionId: pinned === null ? null : pinned.id,
       initiative: controls.initiative,
       progress: controls.progress,
       output: controls.output,
@@ -1783,8 +1894,8 @@ export async function draftContract(readingId: string): Promise<ActionResult<Con
       definitionOfDone: drafted.value.definitionOfDone,
       suggestedTimeLimitMinutes: minutes,
       approvedSourceIds,
-      allowedActionKinds: [...DOCUMENT_ACTION_KINDS],
-      documentTitle: document.title,
+      allowedActionKinds,
+      documentTitle,
       quotedConstraints,
     })
   })
