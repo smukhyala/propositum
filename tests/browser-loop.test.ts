@@ -824,6 +824,61 @@ describe('the plan is reporting now', () => {
     expect(result.stoppedBy).toEqual([])
   })
 
+  it('stops a run that only ever asks questions', async () => {
+    /**
+     * The bound the plan used to supply by accident.
+     *
+     * Under `stop-only-when-blocked` a raised question does not halt, and the
+     * loop used to move on to the next plan step — so a model that asked
+     * something every turn ran out of steps. With no plan to run out of, the
+     * same model would ask until the deadline: thirty minutes of calls
+     * producing nothing, reported to the person as a budget they set.
+     */
+    const ask = (n: number) =>
+      act({
+        kind: 'observe-page',
+        decisionNeeded: { question: `Which one, ${n}?`, whyItMatters: 'it decides the rest' },
+      })
+
+    const d = deps([plan('have a look'), ask(1), ask(2), ask(3), ask(4)], [])
+
+    const result = await runWorker(job(), d)
+
+    expect(result.stoppedBy).toContain('no-progress')
+    expect(result.decisions).toHaveLength(3)
+    // The fourth was never asked for — the run stopped at a boundary.
+    expect((d.model as FakeModelClient).pendingReplies).toBe(1)
+  })
+
+  it('does not hold a question against a run that then does real work', async () => {
+    // The demo's centrepiece: complete the work AND raise one strategic
+    // decision. One question resets as soon as something actually happens.
+    const d = deps(
+      [
+        plan('have a look'),
+        act({
+          kind: 'observe-page',
+          decisionNeeded: { question: 'Which tier?', whyItMatters: 'the close depends on it' },
+        }),
+        act({ kind: 'navigate', approvedSourceId: 'src-orders', path: '/page/1' }),
+        act({ kind: 'navigate', approvedSourceId: 'src-orders', path: '/page/2' }),
+        act({ kind: 'navigate', approvedSourceId: 'src-orders', path: '/page/3' }),
+        done(),
+      ],
+      [
+        { ok: true, observation: observed(1) },
+        { ok: true, observation: observed(2) },
+        { ok: true, observation: observed(3) },
+      ],
+    )
+
+    const result = await runWorker(job(), d)
+
+    expect(result.stoppedBy).toEqual([])
+    expect(result.decisions).toHaveLength(1)
+    expect(result.actionsTaken).toBe(3)
+  })
+
   it('stops at the end of the plan under follow-closely, without burning refusals', async () => {
     // Initiative is what still binds a plan-shaped run, and it binds cleanly:
     // the loop ends rather than proposing off-plan three times and reporting the

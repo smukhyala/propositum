@@ -571,7 +571,30 @@ export async function runWorker(job: WorkerJob, deps: WorkerDeps): Promise<Worke
       if (effectOfRaisedQuestion(job.controls.interruption) === 'halt') {
         return finish(['decision-needed'], 'succeeded')
       }
+
+      /**
+       * A question counts as a turn that changed nothing — which it did.
+       *
+       * This is new, and it is here because the plan used to do the bounding by
+       * accident. Under `stop-only-when-blocked` a raised question does not halt,
+       * and the loop used to move on to the next plan step, so a model that
+       * asked something every single turn ran out of steps. With no plan to run
+       * out of, the same model asks questions until the DEADLINE — thirty
+       * minutes of calls producing nothing, reported as a budget the person
+       * gave it.
+       *
+       * `no-progress` already means "going in circles without changing
+       * anything", and three questions in a row is exactly that. Counting it
+       * here is the rule doing its job rather than a new bound: a question
+       * followed by real work resets the counter, so the demo's centrepiece —
+       * complete the draft AND raise one strategic decision — is untouched.
+       */
+      consecutiveNoProgress += 1
+
       history.push({ kind: 'question', summary: proposal.decisionNeeded.question, outcome: 'raised' })
+
+      const afterQuestion = shouldStop(progress(), job.controls.interruption, false)
+      if (afterQuestion.halt) return finish(afterQuestion.rules, 'succeeded')
       continue
     }
 
