@@ -214,6 +214,50 @@ describe('the safety machinery is reachable from the product', () => {
     ).not.toEqual([])
   })
 
+  /**
+   * Every threshold the detector exports is read by something.
+   *
+   * `callersOf` cannot express this on its own, and the gap let two constants
+   * sit in `detect.ts` for the whole build with no reader: `PAGES_FOR_WORK`,
+   * naming a per-origin page bar that died when threads replaced origins, and
+   * `PAGES_AFTER_QUERY`, naming a rule `detectWork` never applied. Both were
+   * described in the surrounding comments as active. A threshold nothing
+   * consults is worse than a missing one, because the comment beside it reads
+   * as proof the bar exists — which is how a reviewer concludes the detector is
+   * stricter than it is.
+   *
+   * A threshold is legitimately read inside its own file, so unlike everything
+   * above this counts a use in the DEFINING file too. What it will not accept
+   * is a constant that appears exactly once, at its own declaration.
+   */
+  it('every exported threshold in the detector is actually read', () => {
+    const detection = PRODUCTION.filter((f) =>
+      relative(repo, f).startsWith(join('src', 'domain', 'detection')),
+    )
+
+    const unread: string[] = []
+
+    for (const file of detection) {
+      const source = stripImports(stripComments(readFileSync(file, 'utf8')))
+
+      for (const [, name] of source.matchAll(/export const (\w+)\s*[:=]/g)) {
+        if (name === undefined) continue
+
+        // Everything but the declaration itself. `\b` keeps `FAST_DETECT` from
+        // being satisfied by `PROPOSITUM_FAST_DETECT`, and `PAGES_FOR_THREAD`
+        // from standing in for `PAGES_FOR_WORK`.
+        const elsewhere = source.replace(new RegExp(`export const ${name}\\s*[:=]`), ' ')
+        const readAtHome = new RegExp(`\\b${name}\\b`).test(elsewhere)
+
+        if (!readAtHome && callersOf(name, relative(repo, file)).length === 0) {
+          unread.push(`${relative(repo, file)}: ${name}`)
+        }
+      }
+    }
+
+    expect(unread, 'a threshold nothing reads is a bar that does not exist').toEqual([])
+  })
+
   it('the classifiers run in production, not only in their own tests', () => {
     // 205 lines of tested classification that no production file imported. The
     // extension re-implemented a thinner, wrong version inline instead.
@@ -316,6 +360,22 @@ describe('deferred, and asserted as deferred', () => {
    * If you are here because one went red: that is the system working. Move it.
    */
   const repos = 'src/persistence/repositories/index.ts'
+
+  it('nothing asks whether the grounds are sufficient, so the higher bar binds nothing', () => {
+    // `groundsFor` is the arithmetic that separates offering to DO work from
+    // offering to name it — ADR-0009 §2. Until the offer path consults it,
+    // every offer is still gated by `detectWork` alone, which is the LOW bar,
+    // and the two-group rule exists only in this file's tests.
+    //
+    // This is the shape of the three defects at the top of this file, and the
+    // reason it is written down rather than left to be noticed: a sufficiency
+    // rule nothing calls is indistinguishable from one that was wired and is
+    // silently passing everything.
+    expect(
+      callersOf('groundsFor(', 'src/domain/detection/grounds.ts'),
+      'the offer path consults OfferGrounds now — move this into the section above',
+    ).toEqual([])
+  })
 
   it('no WorkOffer is written, so an accepted offer leaves no durable trace', () => {
     // Which also means `grounds` — the frozen record of WHY Propositum asked —

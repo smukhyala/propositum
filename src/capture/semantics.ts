@@ -80,7 +80,7 @@ export interface SemanticEvent {
  */
 export function createNavigationClassifier() {
   const seen = new Set<string>()
-  const engaged = new Set<string>()
+  const engaged = new Map<string, number>()
 
   return {
     classify(nav: RawNavigation): SemanticEvent {
@@ -119,28 +119,31 @@ export function createNavigationClassifier() {
     },
 
     /**
-     * Has this page already been recorded as engaged in this sitting?
+     * The dwell already written down for this page in this sitting, or null.
      *
-     * Engagement is now reported repeatedly while a page is open, so without
-     * this the ledger would gain an `engaged` row every fifteen seconds for as
-     * long as someone read — a timeline of one page, forty times. The FIRST
-     * crossing of the threshold is the fact worth keeping; the rest are the
-     * same fact restated.
+     * This was a `has this page engaged` boolean, and the boolean was wrong in
+     * a way that took a whole feature down with it. Engagement is reported
+     * repeatedly while a page is open and every report carries CUMULATIVE
+     * dwell, so keeping only the first crossing meant `attested.dwellMs` was
+     * frozen at whatever it was twenty seconds in, forever. Everything reading
+     * dwell back off the ledger — `detectPause`, and so the entire hand-off
+     * offer — was reading a number that could not grow past the threshold that
+     * produced it.
      *
-     * Ambient detection is unaffected: it reads its own buffer and takes the
-     * largest report per URL, so it still sees dwell grow while this stays
-     * quiet.
+     * Remembering the VALUE rather than the fact is what lets the adapter ask
+     * "has this grown enough to be worth saying again", which is a question a
+     * boolean cannot answer.
      */
-    hasEngaged(url: string): boolean {
-      return engaged.has(url)
+    recordedDwell(url: string): number | null {
+      return engaged.get(url) ?? null
     },
 
     /** Called only once an engagement event was actually PRODUCED. Marking on
      *  the query instead would let an early below-threshold report claim the
      *  page, so the real crossing a minute later would be suppressed and the
      *  engagement never recorded at all. */
-    markEngaged(url: string): void {
-      engaged.add(url)
+    markEngaged(url: string, dwellMs: number): void {
+      engaged.set(url, dwellMs)
     },
 
     /** New session, new memory. */

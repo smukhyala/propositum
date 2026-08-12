@@ -12,7 +12,12 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import { PAGES_FOR_THREAD, findThreads, termsOf } from '../src/domain/detection/topics'
+import {
+  PAGES_FOR_THREAD,
+  findThreads,
+  searchQueryOf,
+  termsOf,
+} from '../src/domain/detection/topics'
 import type { ThreadPage } from '../src/domain/detection/topics'
 
 const T0 = 1_786_471_000_000
@@ -24,6 +29,7 @@ function page(
   engagedMinutes: number,
   searched = false,
   at = T0,
+  visits = 1,
 ): ThreadPage {
   return {
     origin,
@@ -33,6 +39,7 @@ function page(
     engagedMs: engagedMinutes * 60_000,
     at,
     searched,
+    visits,
   }
 }
 
@@ -126,6 +133,62 @@ describe('terms', () => {
     const terms = termsOf('AI in 2026 is on', 'https://x.example/a')
     expect(terms.has('2026')).toBe(false)
     expect(terms.has('in')).toBe(false)
+  })
+})
+
+/**
+ * What counts as a search, decided here rather than taken on trust.
+ *
+ * The service worker labels `kind: 'query'` on any URL carrying a `?`, so
+ * "did they search" arrives from the extension meaning "was there a question
+ * mark". That was survivable while it only made the offer copy read oddly. It
+ * is not survivable in `grounds.ts`, where a search is an intent ground and the
+ * "did they pursue this" half of the sufficiency rule would otherwise be
+ * satisfiable by a tracking parameter.
+ *
+ * The rule is structural rather than a list of search engines, so the tables
+ * below are about SHAPES: a recognised parameter, a path that names searching,
+ * and a value somebody could have typed.
+ */
+describe('what is actually a search', () => {
+  it.each([
+    ['https://www.google.com/search?q=world+models', 'world models'],
+    ['https://duckduckgo.com/?q=diffusion', 'diffusion'],
+    ['https://www.bing.com/search?q=World+Models', 'world models'],
+    ['https://www.amazon.com/s?k=usb+cable', 'usb cable'],
+    ['https://github.com/search?q=world-models&type=repositories', 'world-models'],
+    ['https://example.com/search/advanced?query=partner+tiers', 'partner tiers'],
+  ])('%s is a search for "%s"', (url, term) => {
+    expect(searchQueryOf(url)).toBe(term)
+  })
+
+  it.each([
+    // The defect this exists for: any URL with a `?` arrives labelled a query.
+    'https://shop.example.com/checkout?step=2',
+    'https://mail.example.com/mail/u/0?compose=new',
+    // `?p=` is a WordPress post id and `?s=2` is page two at least as often as
+    // either is a search, which is why both are outside the parameter list.
+    'https://blog.example.com/?p=1234',
+    'https://blog.example.com/archive?s=2',
+    // A recognised parameter on a path that names an article, not a search —
+    // a highlight or an on-page filter, which documentation viewers use.
+    'https://docs.example.com/guide/setup?q=install',
+    // A recognised parameter carrying an id rather than words.
+    'https://www.google.com/search?q=42',
+    // Nothing typed at all.
+    'https://www.google.com/search?q=',
+    'https://www.google.com/search',
+    // Not a URL. A malformed one must cost a ground, never a crash.
+    'not a url at all',
+    'https://example.com/%%%?q=broken',
+  ])('%s is not', (url) => {
+    expect(searchQueryOf(url)).toBeNull()
+  })
+
+  it('normalises so the same query twice is not a refinement', () => {
+    expect(searchQueryOf('https://www.google.com/search?q=World++Models')).toBe(
+      searchQueryOf('https://www.google.com/search?q=world+models&start=10'),
+    )
   })
 })
 

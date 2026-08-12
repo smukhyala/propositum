@@ -14,7 +14,7 @@
 import { describe, it, expect } from 'vitest'
 import { createNavigationClassifier } from '../src/capture/semantics'
 import { ENGAGEMENT_DWELL_MS, ENGAGEMENT_SCROLL_FRACTION } from '../src/capture/semantics'
-import { rawSignalSchema, toSemanticEvent } from '../src/server/capture-adapter'
+import { ENGAGEMENT_STEP_MS, rawSignalSchema, toSemanticEvent } from '../src/server/capture-adapter'
 
 const SOURCE = 'src-1'
 const AT = new Date('2026-08-10T14:00:00.000Z').toISOString()
@@ -167,15 +167,56 @@ describe('engagement is reported while the page is open, not only on unload', ()
       classifier,
     )
 
-  it('records the page once, however many reports arrive', () => {
-    // content.js now reports every 15s while the page is visible, so without
-    // this the ledger would gain a row every fifteen seconds for as long as
-    // someone read — a timeline of one page, forty times.
+  it('says nothing again until the time on the page has actually moved', () => {
+    // content.js reports every 15s while the page is visible, so without a
+    // dedupe the ledger gains a row every fifteen seconds for as long as
+    // somebody reads — a timeline of one page, forty times.
     const classifier = fresh()
 
     expect(report(classifier, ENGAGEMENT_DWELL_MS + 1)?.kind).toBe('engaged')
-    expect(report(classifier, ENGAGEMENT_DWELL_MS * 2)).toBeNull()
-    expect(report(classifier, ENGAGEMENT_DWELL_MS * 4)).toBeNull()
+    expect(report(classifier, ENGAGEMENT_DWELL_MS + 15_000)).toBeNull()
+    expect(report(classifier, ENGAGEMENT_DWELL_MS + 30_000)).toBeNull()
+  })
+
+  it('records the growing dwell, or the hand-off offer can never fire', () => {
+    /**
+     * The defect this pins. The dedupe used to drop EVERY report after the
+     * first, and every report carries CUMULATIVE dwell — so `attested.dwellMs`
+     * was frozen at the twenty seconds that produced the row, forever.
+     *
+     * `detectPause` adds that number up and needs ten minutes of it before it
+     * will offer to carry on while somebody is away. Ten minutes of reading
+     * recorded as twenty seconds never gets there, however long they read. The
+     * offer could not fire at all, and nothing was red: the old test asserted
+     * that the later reports produced nothing, which was the defect itself.
+     */
+    const classifier = fresh()
+    const dwellOf = (event: ReturnType<typeof report>) => event?.attested['dwellMs']
+
+    expect(dwellOf(report(classifier, ENGAGEMENT_DWELL_MS + 1))).toBe(ENGAGEMENT_DWELL_MS + 1)
+
+    const later = report(classifier, ENGAGEMENT_DWELL_MS + ENGAGEMENT_STEP_MS + 1)
+    expect(later?.kind).toBe('engaged')
+    expect(dwellOf(later)).toBe(ENGAGEMENT_DWELL_MS + ENGAGEMENT_STEP_MS + 1)
+
+    const later_still = report(classifier, ENGAGEMENT_DWELL_MS + ENGAGEMENT_STEP_MS * 2 + 1)
+    expect(dwellOf(later_still)).toBe(ENGAGEMENT_DWELL_MS + ENGAGEMENT_STEP_MS * 2 + 1)
+  })
+
+  it('ten minutes of reading is worth about ten minutes on the ledger', () => {
+    // The property that matters downstream, stated as the number it feeds:
+    // recorded dwell trails the truth by less than one step, so a threshold
+    // measured in minutes is reached within a step of when it really was.
+    const classifier = fresh()
+    let recorded = 0
+
+    // Every fifteen seconds for ten minutes, exactly as content.js reports.
+    for (let dwellMs = 15_000; dwellMs <= 10 * 60_000; dwellMs += 15_000) {
+      const event = report(classifier, dwellMs)
+      if (event !== null) recorded = event.attested['dwellMs'] as number
+    }
+
+    expect(10 * 60_000 - recorded).toBeLessThan(ENGAGEMENT_STEP_MS)
   })
 
   it('counts a page read without any window scroll — the container-scroll case', () => {

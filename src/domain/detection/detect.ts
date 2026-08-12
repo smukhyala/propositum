@@ -50,22 +50,34 @@
 const FAST = process.env['PROPOSITUM_FAST_DETECT'] === '1'
 const SPEED = FAST ? 20 : 1
 
-import { findThreads, termsOf } from './topics'
+import { findThreads, searchQueryOf, termsOf } from './topics'
 import type { ThreadPage } from './topics'
 
 /** The window everything is measured inside. Older observations are dropped. */
 export const WINDOW_MS = (30 * 60_000) / SPEED
 
-/** Distinct pages on one origin before it looks like work rather than a visit. */
-export const PAGES_FOR_WORK = 3
-
-/** Engaged time across the window. Engagement already required dwell + scroll,
- *  so this is time actually spent reading, not tabs left open. */
+/**
+ * Engaged time across the window. Engagement already required dwell + evidence
+ * a person was present, so this is time actually spent reading, not tabs left
+ * open.
+ *
+ * ── Two constants used to sit here and nothing read either ───────────────
+ *
+ * `PAGES_FOR_WORK = 3` counted distinct pages ON ONE ORIGIN. That rule died
+ * with per-origin detection: a thread is now the unit, and `PAGES_FOR_THREAD`
+ * in `topics.ts` holds the page bar and is genuinely enforced. Keeping a second
+ * page constant that nothing consulted meant the comments described a rule the
+ * code did not have — which is worse than having no constant, because it reads
+ * as proof the bar exists.
+ *
+ * `PAGES_AFTER_QUERY = 2` was the other. Wiring it in HERE would have raised
+ * the naming bar that ADR-0008 pins at *a thread, plus (enough reading or one
+ * search)*, and that bar is deliberately low because a wrong subject line costs
+ * a sentence. The rule it names was worth having, so it moved up rather than
+ * away: `PAGES_AFTER_QUERY_FOR_OFFER` in `grounds.ts` decides whether a search
+ * was FOLLOWED, at the higher bar where offering to do work is decided.
+ */
 export const ENGAGED_MS_FOR_WORK = (8 * 60_000) / SPEED
-
-/** A search plus this many pages is work, even below the page threshold — a
- *  query is a statement of intent in a way a third click is not. */
-export const PAGES_AFTER_QUERY = 2
 
 /** Idle this long, after real work, is a natural stopping point. */
 export const PAUSE_MS = (4 * 60_000) / SPEED
@@ -118,10 +130,13 @@ export interface WorkDetected {
  * Ambient observations to the pages a thread is built from.
  *
  * Engagement is reported cumulatively and repeatedly, so dwell is the LARGEST
- * report per URL rather than the sum — see `engagedByUrl`.
+ * report per URL rather than the sum — see `engagedByUrl`. Arrivals are counted
+ * separately, by `visitsByUrl`, and the two must not be conflated: one is a
+ * maximum and the other is a tally.
  */
 function pagesOf(observations: readonly AmbientObservation[]): ThreadPage[] {
   const dwell = engagedByUrl(observations)
+  const visits = visitsByUrl(observations)
   const byUrl = new Map<string, ThreadPage>()
 
   for (const o of observations) {
@@ -137,11 +152,58 @@ function pagesOf(observations: readonly AmbientObservation[]): ThreadPage[] {
       terms: termsOf((o.title || existing?.title) ?? '', o.url),
       engagedMs: dwell.get(o.url) ?? 0,
       at: Math.min(existing?.at ?? o.at, o.at),
-      searched: (existing?.searched ?? false) || o.kind === 'query',
+      // `kind === 'query'` is necessary and NOT sufficient. The service worker
+      // labels any URL with a `?` a query, so trusting it made `searches` — and
+      // with it the `searched-and-followed` sentence — fire on checkout pages
+      // and paginated listings. `searchQueryOf` is the domain's own test and
+      // the extension cannot widen it.
+      searched: (existing?.searched ?? false) || (o.kind === 'query' && searchQueryOf(o.url) !== null),
+      visits: visits.get(o.url) ?? 0,
     })
   }
 
   return [...byUrl.values()]
+}
+
+/**
+ * How many times each page was ARRIVED at, after having been somewhere else.
+ *
+ * A reload, or two navigation reports for the same page in a row, is not a
+ * return — it is the same arrival reported twice, and counting it would make
+ * `came-back` fire on a page that refreshes itself. So an arrival counts only
+ * when the previous navigation went somewhere else, which is exactly the fact
+ * the ground is named for: they left, and they chose to come back.
+ *
+ * Sorted by time first, because the buffer's insertion order is the order
+ * reports ARRIVED and a service worker that woke up late can deliver two
+ * sittings out of sequence.
+ *
+ * ── What this misses, and why it is the right direction to miss in ───────
+ *
+ * `content.js` sends a navigation once per DOCUMENT. A back-navigation served
+ * from bfcache runs no script, and switching to a tab that is already loaded
+ * produces nothing at all — and both of those are somebody leaving a page and
+ * choosing to come back. So `came-back` under-fires, and it will keep
+ * under-firing until the extension can report a return without a document load.
+ *
+ * That is the direction to be wrong in. A missed ground costs an offer nobody
+ * sees; a `came-back` that fired on a page nobody returned to would be an
+ * intent ground manufactured out of a reload, and ADR-0008 is explicit about
+ * which of those is the expensive failure.
+ */
+function visitsByUrl(observations: readonly AmbientObservation[]): Map<string, number> {
+  const byUrl = new Map<string, number>()
+  const arrivals = observations.filter((o) => o.kind === 'navigation' || o.kind === 'query')
+  let previous: string | null = null
+
+  for (const observation of [...arrivals].sort((a, b) => a.at - b.at)) {
+    if (observation.url !== previous) {
+      byUrl.set(observation.url, (byUrl.get(observation.url) ?? 0) + 1)
+    }
+    previous = observation.url
+  }
+
+  return byUrl
 }
 
 function inWindow(observations: readonly AmbientObservation[], now: number) {
@@ -214,6 +276,37 @@ export function detectWork(
   }
 }
 
+/**
+ * The pages a detection was made of, rebuilt from the same buffer.
+ *
+ * `WorkDetected` carries counts and URLs because it is serialised into the poll
+ * response, and a `ThreadPage` — a term set, per-page dwell, arrival counts —
+ * is neither useful nor honest on a wire (a `Set` crosses JSON as `{}`). But
+ * the stronger bar in `grounds.ts` measures exactly those per-page facts, so it
+ * needs the pages rather than the summary.
+ *
+ * Rebuilding is cheap and, more to the point, it cannot disagree with what was
+ * detected: the same function over the same observations, windowed the same
+ * way, narrowed to the URLs the thread was actually made of. Passing everything
+ * in the window instead would let a "3 origins" ground count sites the thread
+ * never ran through — the exact mistake `WorkDetected.urls` exists to prevent.
+ *
+ * `now` is required rather than optional for the same reason `detectWork` takes
+ * it. Without the window, a caller handing over an untrimmed buffer would build
+ * spans and arrival counts out of browsing the detection had already discarded
+ * — a `stayed-with-it` measured across yesterday's session, which is the sort of
+ * disagreement between two views of one buffer that nobody would think to look
+ * for.
+ */
+export function threadPagesOf(
+  observations: readonly AmbientObservation[],
+  detected: WorkDetected,
+  now: number,
+): ThreadPage[] {
+  const wanted = new Set(detected.urls)
+  return pagesOf(inWindow(observations, now)).filter((page) => wanted.has(page.url))
+}
+
 /** A natural stopping point inside a running session. */
 export interface PauseDetected {
   readonly idleForMs: number
@@ -230,6 +323,26 @@ export interface PauseDetected {
  *
  * Not a `CaptureGap`. A gap is an absence of knowledge; this is a fact we
  * observed — `switchedAway` was recorded, and nothing has happened since.
+ *
+ * ── Why an engagement report after `away` is not activity ────────────────
+ *
+ * `content.js` reports engagement every fifteen seconds for as long as a tab is
+ * VISIBLE, and it subtracts hidden time but not idle time — a page left on
+ * screen while somebody is at lunch is visible, and keeps reporting. Counting
+ * those as activity puts the idle clock back to nearly zero every time one
+ * lands, so `idleForMs` could never reach `PAUSE_MS` and the hand-off offer
+ * could not fire however long anybody was gone.
+ *
+ * The page cannot know they left. `chrome.idle` can, and says so — that is what
+ * an `away` observation IS. So the rule is: everything counts as activity,
+ * except an engagement report that arrived after the most recent `away`. A
+ * navigation after it counts, because coming back and clicking something is
+ * exactly what "they are here again" looks like.
+ *
+ * The alternative — ignoring engagement reports outright — was worse, and worse
+ * in the expensive direction: somebody six minutes into one long page has done
+ * nothing but engage, so they would be offered a hand-off while they were still
+ * reading it.
  */
 export function detectPause(
   observations: readonly AmbientObservation[],
@@ -238,7 +351,20 @@ export function detectPause(
   const recent = inWindow(observations, now)
   if (recent.length === 0) return null
 
-  const last = recent.reduce((latest, o) => (o.at > latest.at ? o : latest), recent[0]!)
+  let wentAwayAt: number | null = null
+  for (const o of recent) {
+    if (o.kind === 'away' && (wentAwayAt === null || o.at > wentAwayAt)) wentAwayAt = o.at
+  }
+
+  // With no `away` on record, every engagement report still counts: nothing has
+  // said the person left, and a page being read is a page being read.
+  const away = wentAwayAt
+  const activity = recent.filter(
+    (o) => o.kind !== 'engagement' || away === null || o.at <= away,
+  )
+  if (activity.length === 0) return null
+
+  const last = activity.reduce((latest, o) => (o.at > latest.at ? o : latest), activity[0]!)
   const idleForMs = now - last.at
   if (idleForMs < PAUSE_MS) return null
 
