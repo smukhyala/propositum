@@ -727,7 +727,32 @@ export function registerControlListeners(handlers) {
       }
 
       if (method === 'Fetch.requestPaused') {
-        await onRequestPaused(state, params, handlers)
+        /**
+         * A held request must never outlive a mistake in here.
+         *
+         * `Fetch.enable` holds EVERY request until something answers it, so an
+         * exception escaping this handler — a storage read that failed, a
+         * malformed event, anything — leaves the person looking at a tab that
+         * has stopped loading, wearing Propositum's own border, with no
+         * explanation and no way to tell it from the site being slow. That is
+         * the worst-looking failure this design can produce.
+         *
+         * Failing the request rather than continuing it, because an internal
+         * error is not evidence that a request is safe to send, and because
+         * one failed subresource is a visible, ordinary, recoverable thing
+         * whereas a hung page is not.
+         */
+        try {
+          await onRequestPaused(state, params, handlers)
+        } catch (error) {
+          console.error('[propositum] could not judge a held request:', error)
+          await chrome.debugger
+            .sendCommand({ tabId: state.tabId }, 'Fetch.failRequest', {
+              requestId: params?.requestId,
+              errorReason: 'Aborted',
+            })
+            .catch(() => {})
+        }
       }
     })()
   })
