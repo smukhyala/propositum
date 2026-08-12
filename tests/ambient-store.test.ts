@@ -14,6 +14,7 @@ import {
   describePause,
   describeWork,
   hostOf,
+  signatureOf,
 } from '../src/server/ambient-store'
 import { WINDOW_MS, detectWork } from '../src/domain/detection/detect'
 import type { AmbientObservation } from '../src/domain/detection/detect'
@@ -232,7 +233,7 @@ describe('what the offer says', () => {
     expect(detected).not.toBeNull()
     if (!detected) return
 
-    const suggestion = describeWork(detected)
+    const suggestion = describeWork(detected, signatureOf(detected.terms))
 
     expect(suggestion.sentence.toLowerCase()).toContain('world')
     expect(suggestion.sentence.toLowerCase()).toContain('models')
@@ -242,7 +243,7 @@ describe('what the offer says', () => {
     const detected = detectWork(working, T0 + 5)
     if (!detected) throw new Error('expected a detection')
 
-    expect(describeWork(detected).sentence).toContain('3 sites')
+    expect(describeWork(detected, signatureOf(detected.terms)).sentence).toContain('3 sites')
   })
 
   it('says what was seen and never what it means', () => {
@@ -251,7 +252,7 @@ describe('what the offer says', () => {
     const detected = detectWork(working, T0 + 5)
     if (!detected) throw new Error('expected a detection')
 
-    const suggestion = describeWork(detected)
+    const suggestion = describeWork(detected, signatureOf(detected.terms))
     for (const overclaim of ['researching', 'you are trying', 'you want']) {
       expect(suggestion.sentence.toLowerCase()).not.toContain(overclaim)
     }
@@ -261,7 +262,7 @@ describe('what the offer says', () => {
     const detected = detectWork(working, T0 + 5)
     if (!detected) throw new Error('expected a detection')
 
-    expect(describeWork(detected).because.length).toBeGreaterThan(0)
+    expect(describeWork(detected, signatureOf(detected.terms)).because.length).toBeGreaterThan(0)
   })
 
   it('describes a pause in the person’s terms, not the clock’s', () => {

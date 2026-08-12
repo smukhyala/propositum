@@ -327,10 +327,52 @@ export type Suggestion =
       readonly origins: readonly string[]
       /** The recurring subject words. */
       readonly terms: readonly string[]
+      /** The thread's signature. The only identifier a link may carry, and the
+       *  key the accept path reads everything else off the buffer with. */
+      readonly thread: string
+      /** Present once the subject boundary has named the thread. Absent for the
+       *  first poll or two, and absent for good when there is no API key. */
+      readonly subject?: string | undefined
       /** Rendered verbatim. Says what was seen, never what it means. */
       readonly sentence: string
       readonly because: string
       readonly detected: WorkDetected
+    }
+  /**
+   * The full offer: what Propositum would DO about what it saw, in its own
+   * words, above the deterministic grounds that permitted it to ask.
+   *
+   * `start-session` above is the DEGRADED FORM of this, not a different
+   * feature. When the grounds bar is not met, or no offer has been composed —
+   * because composing takes about fifteen seconds, or because there is no API
+   * key at all — the person still gets "you have been looking into X, across
+   * three sites" and a button that starts watching. The feature degrades to
+   * yesterday's behaviour rather than vanishing, which matters because a poll
+   * that answers `null` is indistinguishable to the extension from detection
+   * having failed.
+   */
+  | {
+      readonly kind: 'work-offer'
+      /** The signature — the ONLY thing a URL may carry. Everything else here
+       *  is read back off the server-side buffer at acceptance. */
+      readonly thread: string
+      readonly subject: string
+      readonly title: string
+      readonly rationale: string
+      readonly outline: readonly string[]
+      readonly produces: string
+      /** What it says it will NOT do. Shown on the offer screen and nowhere
+       *  else — see `src/ui/offer.tsx` for why it must never appear beside the
+       *  contract's enforced permissions. */
+      readonly excludes: readonly string[]
+      /** The deterministic grounds, rendered VERBATIM and ABOVE the model's
+       *  sentence. The person's own facts first, the model's reading second. */
+      readonly grounds: readonly string[]
+      /** Shown, each individually untickable. Code-derived from the pages the
+       *  thread ran through — never model-authored, never link-supplied. */
+      readonly origins: readonly string[]
+      readonly sentence: string
+      readonly because: string
     }
   | {
       readonly kind: 'hand-off'
@@ -361,10 +403,23 @@ export function hostOf(origin: string): string {
  * subject in a sentence a person would recognise needs a model, and that is a
  * separate decision — see ADR-0008.
  */
-export function describeWork(detected: WorkDetected): Suggestion {
-  const subject = detected.terms.slice(0, 3).join(' ')
+export function describeWork(
+  detected: WorkDetected,
+  threadSignature: string,
+  named?: NamedThread | null,
+): Suggestion {
+  const words = detected.terms.slice(0, 3).join(' ')
   const sites = detected.origins.length
   const where = sites === 1 ? hostOf(detected.origins[0] ?? '') : `${sites} sites`
+
+  const sentence =
+    named && named.confident
+      ? // Only when the model was sure. A confident wrong name is worse than an
+        // honest vague one, and the vague one is still true.
+        `Looks like you're working on ${named.subject}.`
+      : words
+        ? `You have been looking into ${words} — across ${where}.`
+        : `You have been reading across ${where}.`
 
   return {
     kind: 'start-session',
@@ -372,14 +427,53 @@ export function describeWork(detected: WorkDetected): Suggestion {
     origin: detected.origins[0] ?? '',
     origins: detected.origins,
     terms: detected.terms,
-    sentence: subject
-      ? `You have been looking into ${subject} — across ${where}.`
-      : `You have been reading across ${where}.`,
+    thread: threadSignature,
+    ...(named ? { subject: named.subject } : {}),
+    sentence,
     because:
       detected.because === 'searched-and-followed'
         ? `You searched for it, then read ${detected.pages} pages across ${where}.${UNDER_TEST}`
         : `${detected.pages} pages across ${where}, ${minutes(detected.engagedMs)} of reading.${UNDER_TEST}`,
     detected,
+  }
+}
+
+/**
+ * The offer, as the person will read it.
+ *
+ * The ordering of the fields here is the argument the screen makes. `grounds`
+ * comes off the deterministic detector and is rendered above everything the
+ * model wrote; `title` and `rationale` are the model's reading of those facts;
+ * `excludes` is the half people read hardest and is the reason the model is
+ * allowed to write prose at all.
+ *
+ * `origins` is code-derived from the pages the thread ran through. It is in the
+ * suggestion so the screen can list what it is about to approve — NOT so a
+ * caller can send it back. The accept path re-derives the same set from the
+ * buffer and never takes one from its caller; see `observedOriginPatterns`.
+ */
+export function describeOffer(
+  detected: WorkDetected,
+  threadSignature: string,
+  subject: string,
+  offer: WorkOffer,
+): Suggestion {
+  const sites = detected.origins.length
+  const where = sites === 1 ? hostOf(detected.origins[0] ?? '') : `${sites} sites`
+
+  return {
+    kind: 'work-offer',
+    thread: threadSignature,
+    subject,
+    title: offer.title,
+    rationale: offer.rationale,
+    outline: offer.outline,
+    produces: offer.produces,
+    excludes: offer.excludes,
+    grounds: offer.grounds.sentences,
+    origins: detected.origins,
+    sentence: `Looks like you're working on ${subject}.`,
+    because: `${detected.pages} pages across ${where}, ${minutes(detected.engagedMs)} of reading.${UNDER_TEST}`,
   }
 }
 

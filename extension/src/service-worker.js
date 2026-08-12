@@ -21,11 +21,25 @@
  * lives in src/capture/ and is tested there.
  */
 
+import { patternCovers } from './match-pattern.js'
+import { looksLikeSearch } from './search-url.js'
+
 const APP_ORIGIN = 'http://127.0.0.1:3117'
 const HEARTBEAT_ALARM = 'propositum-heartbeat'
 const HEARTBEAT_MINUTES = 0.5
 
 const CUSTOM_HEADER = 'x-propositum-capture'
+
+/**
+ * How long "Not now" buys, for notifications only.
+ *
+ * Mirrors `SNOOZE_MS` in `src/server/ambient-store.ts` rather than reading it.
+ * The duplication is deliberate: that one governs whether the app OFFERS, this
+ * one governs whether this file INTERRUPTS, and the notification is entirely
+ * this file's to decide. Keeping them equal is a courtesy; keeping this one at
+ * all is what makes declining mean something.
+ */
+const DECLINE_QUIET_MS = 60 * 60_000
 
 /* ── session state, which never lives in a module variable ─────────────── */
 
@@ -128,6 +142,33 @@ async function buffer(event) {
 }
 
 /**
+ * The app's own limits on one ambient POST, mirrored here.
+ *
+ * ── "Neither trusts the other" has to mean the sender is the STRICTER one ──
+ *
+ * The comment below used to say the app bounds this again and neither side
+ * trusts the other, which is the right principle. The numbers did not
+ * implement it: this side kept 200 observations and the app's schema accepts
+ * `.max(100)`, so the looser bound was the one being applied by the sender.
+ *
+ * The consequence was not a dropped batch, it was a DEADLOCK. Past 100, every
+ * flush failed Zod with a 400, the clear below only ran on `ok` or 409, and so
+ * the buffer stayed over 100 forever. Ambient detection died for the rest of
+ * that session storage's life — no offers, ever, on a machine where everything
+ * looked healthy — and the only cure was dropping session storage. A dev-server
+ * restart with a few tabs open reaches it.
+ *
+ * Titles were the same wedge by a different route: sent untruncated against
+ * `title: z.string().max(300)`.
+ *
+ * So both numbers are at or below the receiver's, and the flush no longer
+ * treats a 400 as retryable. Defence in depth is two bounds that agree about
+ * which is tighter; two that disagree is a lock.
+ */
+const AMBIENT_BATCH_MAX = 100
+const AMBIENT_TITLE_MAX = 300
+
+/**
  * Ambient observations, held separately from session events.
  *
  * A separate buffer and a separate endpoint, because they have different
@@ -138,8 +179,9 @@ async function buffer(event) {
 async function bufferAmbient(observation) {
   const { ambient = [] } = await chrome.storage.session.get(['ambient'])
   ambient.push(observation)
-  // Bounded here too. The app bounds it again; neither trusts the other.
-  await chrome.storage.session.set({ ambient: ambient.slice(-200) })
+  // Bounded here too, and never above what the app will accept. The oldest go
+  // first: recent activity is what a detection is about.
+  await chrome.storage.session.set({ ambient: ambient.slice(-AMBIENT_BATCH_MAX) })
 }
 
 async function flushAmbient() {
@@ -151,25 +193,70 @@ async function flushAmbient() {
       method: 'POST',
       headers: { 'content-type': 'application/json', [CUSTOM_HEADER]: '1' },
       body: JSON.stringify({
-        observations: ambient.map((o) => ({
+        // Already bounded by `bufferAmbient`, and bounded again here so a
+        // buffer written by an older version of this file cannot wedge a newer
+        // one on its first flush.
+        observations: ambient.slice(-AMBIENT_BATCH_MAX).map((o) => ({
           at: o.at,
           url: o.url ?? '',
-          title: o.title ?? '',
+          // Truncated to what the app's schema accepts. A long title is a page
+          // being verbose; an untruncated one was a permanently rejected batch.
+          title: (o.title ?? '').slice(0, AMBIENT_TITLE_MAX),
+          /**
+           * A query is a REAL query, not a question mark.
+           *
+           * This used to be `o.url.includes('?')`, so a newsletter link with a
+           * tracking parameter arrived at the app labelled as a search — and
+           * the offer screen then told somebody "you searched for it, then read
+           * 4 pages" when they had searched for nothing. See search-url.js: the
+           * lie is bad on its own terms, and it also makes the
+           * `searched-then-read` intent ground satisfiable by any URL with a
+           * `?` in it, which is the ground that separates pursuing a subject
+           * from having one delivered to you.
+           *
+           * `looksLikeSearch` is a hand port of `searchQueryOf` in
+           * `src/domain/detection/topics.ts`, and the two MUST agree —
+           * `tests/search-url.test.ts` runs both over the same table and fails
+           * if they ever stop agreeing.
+           */
           kind:
             o.signal === 'engagement'
               ? 'engagement'
               : o.signal === 'away'
                 ? 'away'
-                : o.url && o.url.includes('?')
+                : looksLikeSearch(o.url ?? '')
                   ? 'query'
                   : 'navigation',
           ...(typeof o.dwellMs === 'number' ? { engagedMs: o.dwellMs } : {}),
         })),
       }),
     })
-    // 409 means a session started under us. Drop them: the ledger is now the
-    // right destination and these would be a duplicate of what it records.
+    /**
+     * What is worth keeping, and what is worth admitting is never going to be
+     * accepted.
+     *
+     * 409 means a session started under us. Drop them: the ledger is now the
+     * right destination and these would be a duplicate of what it records.
+     *
+     * 4xx means the app looked at these observations and said no. Retrying is
+     * then not resilience, it is a loop — the same bytes rejected the same way
+     * every thirty seconds, with the buffer never emptying and ambient
+     * detection dead until session storage is dropped. That is exactly the
+     * wedge the two disagreeing bounds above produced, and the bounds alone are
+     * not enough of a fix: any future validation failure would recreate it.
+     * Losing a batch of metadata costs one missed offer; a permanent wedge
+     * costs every offer after it, silently.
+     *
+     * A 5xx or a thrown fetch is the app being unavailable rather than
+     * unwilling, so those are kept — that is the case the buffer exists for.
+     */
     if (response.ok || response.status === 409) {
+      await chrome.storage.session.set({ ambient: [] })
+      return
+    }
+
+    if (response.status >= 400 && response.status < 500) {
+      console.warn('[propositum] ambient batch refused, dropping it:', response.status)
       await chrome.storage.session.set({ ambient: [] })
     }
   } catch {
@@ -220,7 +307,19 @@ async function showSuggestionBadge() {
     await chrome.action.setTitle({ title: `${suggestion.sentence} ${suggestion.because}` })
 
     /**
-     * Actually interrupt, once, when the offer has a NAME.
+     * The current offer is stored on EVERY poll, not only when we notify.
+     *
+     * `answeredYes` reads this, and it used to be written only alongside a
+     * notification. So the badge could be advertising Thursday's thread while
+     * storage still held Tuesday's, and clicking through opened a link for work
+     * the person had stopped doing an hour ago. Writing it unconditionally
+     * costs one storage set per thirty seconds and makes "what the badge is
+     * about" and "what the click opens" the same object by construction.
+     */
+    await chrome.storage.session.set({ offer: suggestion })
+
+    /**
+     * Actually interrupt, once, when there is something worth interrupting for.
      *
      * This was `chrome.sidePanel.open()` and it never fired. That call requires
      * a USER GESTURE, and an alarm handler has none — so it threw into a catch
@@ -231,20 +330,63 @@ async function showSuggestionBadge() {
      * A notification is the only thing that can appear unprompted, which is
      * what "it pops up and says, hey, I see you're doing this" requires.
      *
-     * Once per subject. Re-notifying every thirty seconds is how a helpful
-     * thing becomes the thing you uninstall, and the badge already carries the
-     * offer for anyone who dismissed it.
+     * ── Once per THREAD, not once per subject ──────────────────────────────
+     *
+     * The suppression key used to be the subject, and the subject is a phrase a
+     * model wrote. Two different threads can be named the same thing — "world
+     * models" on Tuesday and again on Thursday — and the second one was then
+     * silently suppressed by the first: the badge appeared, no notification
+     * ever came, and the offer for genuinely new work went unmentioned. The
+     * thread signature is the identity the app itself keys everything on, and
+     * it changes when the shape of the work changes.
+     *
+     * ── Keys are kept, not rotated ─────────────────────────────────────────
+     *
+     * A first version dropped the previous thread's key whenever the thread
+     * changed, to stop `chrome.storage.session` accumulating one entry per
+     * subject. It also re-armed the notification for a thread that flapped:
+     * signatures do move as a term crosses the frequency cut-off, so A → B → A
+     * across three polls deleted A's key and then notified about A a second
+     * time. The bookkeeping cost more than it saved — session storage dies with
+     * the browser and a key is a few bytes — so every told key simply stays.
+     *
+     * ── Declining buys quiet, and it has to be enforced here ───────────────
+     *
+     * "Not now" snoozes the origin server-side AND drops the observations that
+     * produced the offer. That second half re-detects as a DIFFERENT thread:
+     * different pages, different terms, different signature — so a suppression
+     * key on the signature does not survive it, and the offer people had just
+     * turned down came back about a minute later with `requireInteraction`.
+     * The old subject-keyed version hid this by accident, because the model
+     * re-named the same work identically.
+     *
+     * So the extension keeps its own quiet period. It mirrors the app's
+     * `SNOOZE_MS` rather than reading it, deliberately: this is a question
+     * about INTERRUPTING, the notification belongs to this file, and a decline
+     * that only reached the server would still leave this file free to pop up.
+     * The badge is unaffected — declining should quieten the interruption, not
+     * hide the offer from somebody who goes looking.
+     *
+     * Only a `work-offer` interrupts. The degraded form is a real offer and it
+     * keeps the badge, but "Propositum noticed you are reading about something"
+     * with no proposal attached is not worth a notification — that is the
+     * interruption people turn the feature off over.
      */
-    const key = `told:${suggestion.subject ?? ''}`
-    const already = await chrome.storage.session.get([key])
-    if (suggestion.subject && !already[key]) {
-      await chrome.storage.session.set({ [key]: true, offer: suggestion })
+    const thread = suggestion.thread ?? ''
+    const key = `told:${thread}`
+    const { [key]: alreadyTold, quietUntil = 0 } = await chrome.storage.session.get([
+      key,
+      'quietUntil',
+    ])
 
-      chrome.notifications.create(`propositum:${suggestion.subject}`, {
+    if (suggestion.kind === 'work-offer' && thread && !alreadyTold && Date.now() >= quietUntil) {
+      await chrome.storage.session.set({ [key]: true })
+
+      chrome.notifications.create(`propositum:${thread}`, {
         type: 'basic',
         iconUrl: chrome.runtime.getURL('icon.png'),
-        title: suggestion.offerLabel || `Looks like you're working on ${suggestion.subject}.`,
-        message: suggestion.because,
+        title: suggestion.title || `Looks like you're working on ${suggestion.subject}.`,
+        message: suggestion.rationale || suggestion.because,
         buttons: [{ title: 'Yes, do it' }, { title: 'Not now' }],
         requireInteraction: true,
       })
@@ -379,19 +521,34 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 /**
  * Both answers are a USER GESTURE, which is what makes them able to do things
  * the alarm cannot. Opening a tab is deliberate: the person lands on a page
- * showing the four durable things about to be created in their name, rather
- * than a toast claiming it happened.
+ * showing the durable things about to be created in their name, rather than a
+ * toast claiming it happened.
+ *
+ * ── One parameter, and it is not a decision ──────────────────────────────
+ *
+ * The link used to carry the subject, the sites and the intent, and the app
+ * approved the sites it was handed. That made approval a function of the LINK
+ * rather than of what had been observed, and a crafted one could put a site
+ * nobody had visited into `ApprovedSource` behind a single click.
+ *
+ * Now it carries the thread signature and nothing else. The app reads the
+ * subject, the offer, the grounds and the sites off its own server-side buffer
+ * against that key, so this file cannot widen anything even if it wanted to —
+ * and neither can anything that forges a link to look like this one.
+ *
+ * It also fixes a dead end. `?subject=` rendered "that link has gone stale" for
+ * the first thirty seconds of every offer, because the subject only exists once
+ * the app has named the thread, and permanently on a machine with no
+ * `ANTHROPIC_API_KEY`. `?thread=` is available from the very first poll that
+ * detected anything, so the link works whether or not a model ever ran; the
+ * page shows the composed offer when there is one and the deterministic
+ * "start watching" form when there is not.
  */
 async function answeredYes() {
   const { offer } = await chrome.storage.session.get(['offer'])
-  if (!offer) return
+  if (!offer?.thread) return
 
-  const params = new URLSearchParams({
-    subject: offer.subject ?? '',
-    origins: (offer.origins ?? [offer.origin]).filter(Boolean).join(','),
-    intent: offer.offer ?? 'deep-research',
-    thread: offer.thread ?? '',
-  })
+  const params = new URLSearchParams({ thread: offer.thread })
   await chrome.tabs.create({ url: `${APP_ORIGIN}/start?${params.toString()}` })
   await chrome.action.setBadgeText({ text: '' })
 }
@@ -399,14 +556,30 @@ async function answeredYes() {
 async function answeredNo() {
   const { offer } = await chrome.storage.session.get(['offer'])
   await chrome.action.setBadgeText({ text: '' })
-  if (!offer?.origin) return
+
+  /**
+   * Quiet, before anything else, and whether or not the server hears about it.
+   *
+   * Declining drops the observations that produced the offer, which re-detects
+   * as a different thread with a different signature — so the per-thread
+   * suppression key does not survive a decline and the same work came back
+   * about a minute later with `requireInteraction: true`. This is the thing
+   * that actually holds "not now": one hour, mirroring the app's `SNOOZE_MS`.
+   */
+  await chrome.storage.session.set({ quietUntil: Date.now() + DECLINE_QUIET_MS })
+
+  // A `work-offer` has no single primary site — it has the thread's sites — so
+  // the first of those is what gets snoozed. Reading only `origin` meant "Not
+  // now" silently did nothing for every composed offer.
+  const origin = offer?.origin || offer?.origins?.[0]
+  if (!origin) return
 
   // Declining drops the evidence as well as snoozing, so the same detection
   // cannot immediately re-fire off the pages that produced it.
   await fetch(`${APP_ORIGIN}/api/capture/ambient/decline`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', [CUSTOM_HEADER]: '1' },
-    body: JSON.stringify({ origin: offer.origin }),
+    body: JSON.stringify({ origin }),
   }).catch(() => {})
 }
 
@@ -498,7 +671,7 @@ async function grantState() {
 
   const sources = (session?.sources ?? []).map((source) => ({
     ...source,
-    granted: origins.some((o) => o.replace(/\/\*$/, '') === source.origin.replace(/\/\*$/, '')),
+    granted: origins.some((pattern) => patternCovers(pattern, source.origin)),
   }))
 
   return { running: session !== null, sources }

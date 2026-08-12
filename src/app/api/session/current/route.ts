@@ -33,10 +33,12 @@ import { NextResponse } from 'next/server'
 import { CUSTOM_HEADER, fromOurExtension } from '@/capture/transport'
 import { appContext } from '@/server/db'
 import { ambientStore, captureStore, expectedOrigin } from '@/server/capture-store'
-import { describePause, describeWork, signatureOf } from '@/server/ambient-store'
+import { describeOffer, describePause, describeWork, signatureOf } from '@/server/ambient-store'
 import { nameThread } from '@/server/name-thread'
+import { composeOffer } from '@/server/compose-offer'
 import { AnthropicModelClient } from '@/model/anthropic'
-import { detectPause, detectWork } from '@/domain/detection/detect'
+import { detectPause, detectWork, threadPagesOf } from '@/domain/detection/detect'
+import { groundsFor } from '@/domain/detection/grounds'
 
 /** An origin, or an empty string. Never throws — a malformed stored URL is a
  *  ledger curiosity, not a reason to fail a poll the extension depends on. */
@@ -100,17 +102,20 @@ export async function GET(request: Request) {
   if (!live) {
     const ambient = ambientStore()
     const now = Date.now()
-    const detected = detectWork(ambient.since(now), now)
+    const observations = ambient.since(now)
+    const detected = detectWork(observations, now)
 
     if (!detected || ambient.isSnoozed(detected.origins[0] ?? '', now)) {
       return NextResponse.json({ ok: true, session: null, suggestion: null })
     }
 
-    const suggestion = describeWork(detected)
     const signature = signatureOf(detected.terms)
 
     // Pin which pages this thread was made of, so accepting later carries the
-    // thread and not everything that happened to be on the same sites.
+    // thread and not everything that happened to be on the same sites. Done
+    // before anything can be returned, because the signature is now the ONLY
+    // thing the accept link carries and a thread nothing was recorded against
+    // approves nothing at all.
     ambient.rememberThread(signature, detected.urls)
 
     const named = ambient.nameFor(signature)
@@ -123,22 +128,46 @@ export async function GET(request: Request) {
       void nameThread(ambient, new AnthropicModelClient({ apiKey }), detected)
     }
 
-    return NextResponse.json({
-      ok: true,
-      session: null,
-      suggestion: named
-        ? {
-            ...suggestion,
-            thread: signature,
-            // Only overwrite the sentence when the model was sure. A confident
-            // wrong name is worse than an honest vague one.
-            sentence: named.confident
-              ? `Looks like you're working on ${named.subject}.`
-              : suggestion.sentence,
-            subject: named.subject,
-          }
-        : { ...suggestion, thread: signature },
-    })
+    const composed = ambient.offerFor(signature)
+
+    /**
+     * Composing needs a CONFIDENT name first.
+     *
+     * The subject boundary runs on titles and produces the two or three words
+     * the offer is about; asking the offer boundary to invent that as well
+     * would be one call doing two jobs.
+     *
+     * `confident: false` means the pages did not agree on a subject, and
+     * `describeWork` already refuses to put an unsure name in a sentence for
+     * exactly that reason. Composing on one would undo that at the next step:
+     * `describeOffer` reads the offer's own `confident` flag, but the SUBJECT
+     * it is about would already be a guess nobody flagged. A hedge that
+     * survives one screen and not the next is not a hedge.
+     *
+     * The second, higher bar — `OfferGrounds.sufficient` — is checked inside
+     * `composeOffer` rather than here, so the one function in the codebase that
+     * can turn observation into a proposal to act carries its own gate. A guard
+     * that lives only in its caller is a guard the next caller will not have.
+     */
+    if (!composed && named?.confident && apiKey) {
+      void composeOffer(ambient, new AnthropicModelClient({ apiKey }), detected, named, now)
+    }
+
+    /**
+     * The full offer when there is one; the degraded form otherwise.
+     *
+     * "Otherwise" covers three ordinary cases and they all matter: the grounds
+     * bar is not met, composing has not finished yet (about fifteen seconds),
+     * or there is no `ANTHROPIC_API_KEY` at all and there never will be one.
+     * The last of those used to be a dead end — the extension linked to a page
+     * that could not render — and it is now simply yesterday's behaviour.
+     */
+    const suggestion =
+      composed && named
+        ? describeOffer(detected, signature, named.subject, composed)
+        : describeWork(detected, signature, named)
+
+    return NextResponse.json({ ok: true, session: null, suggestion })
   }
 
   const { repos } = await appContext()

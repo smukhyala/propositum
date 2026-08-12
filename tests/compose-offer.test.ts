@@ -160,10 +160,8 @@ describe('the grounds bar is in front of the model, not behind it', () => {
 
   it('composes once the two groups are satisfied', async () => {
     const { store, detected, named, at } = loaded(strongThread())
-    const grounds = groundsFor(
-      detected,
-      threadPagesOf(store.forUrls(detected.urls, T0 + 20 * MINUTE), detected, T0 + 20 * MINUTE),
-    )
+    const at20 = T0 + 20 * MINUTE
+    const grounds = groundsFor(detected, threadPagesOf(store.since(at20), detected, at20))
 
     expect(grounds.sufficient).toBe(true)
     expect(grounds.sentences.length).toBeGreaterThan(0)
@@ -259,20 +257,16 @@ describe('what the offer call is shown', () => {
 })
 
 /**
- * The bar itself is tested in `tests/grounds.test.ts`, not here.
+ * The bar itself is tested in `tests/grounds.test.ts`.
  *
- * This file used to carry its own table over `groundsFor`, written against a
- * provisional copy of `grounds.ts` that existed only so this unit could compile
- * before the owning one landed. Both are gone: the real `groundsFor` reads
- * `ThreadPage`s rather than raw observations, and `tests/grounds.test.ts` covers
- * every ground firing and not firing, the sufficiency split, and the false
- * positive that must not qualify — including the two cases this table was added
- * to pin, that one query seen twice is not a refinement and that a results page
- * is not one of the pages returned to.
- *
- * What stays here is the seam: that the bar is consulted BEFORE the model, and
- * before the attempt is remembered.
+ * This file used to re-test it here, against a `groundsFor` that took raw
+ * observations. The version that survived takes the thread's own `ThreadPage`s
+ * — per-page dwell, arrival counts, term sets — because that is what the rules
+ * actually measure, and the duplicate block was asserting the same product
+ * behaviour through a signature that no longer exists. One home for the
+ * split-not-count argument is the right number.
  */
+
 
 describe('one call per thread, including the failures', () => {
   it('does not compose twice for the same signature', async () => {

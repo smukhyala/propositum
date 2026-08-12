@@ -274,10 +274,12 @@ export default async function Home({
   const ambient = ambientStore()
   const nowMs = Date.now()
   const detected = live ? null : detectWork(ambient.since(nowMs), nowMs)
-  const offer =
-    detected && !ambient.isSnoozed(detected.origins[0] ?? '', nowMs) ? describeWork(detected) : null
-
   const named = detected ? ambient.nameFor(signatureOf(detected.terms)) : null
+  const offer =
+    detected && !ambient.isSnoozed(detected.origins[0] ?? '', nowMs)
+      ? describeWork(detected, signatureOf(detected.terms), named)
+      : null
+
   const subject = detected ? subjectOf(detected, named) : ''
 
   // Only asked when there is something to ask about, so the ordinary quiet

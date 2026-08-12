@@ -83,6 +83,31 @@ function whenSeen(run) {
 let seenAt = Date.now()
 
 /**
+ * Has this page ever actually been looked at?
+ *
+ * ── The overnight background tab, reported as attention ──────────────────
+ *
+ * `whenSeen` gates the navigation signal, but the `pagehide` listener below is
+ * registered at module scope and fired unconditionally. So a tab opened in the
+ * background from a middle-click and never looked at reported, on close, a
+ * dwell of `Date.now() - seenAt` measured from MODULE LOAD — hours of it.
+ *
+ * The hidden-time subtraction did not save it: `hiddenSince` is only ever set
+ * by a `visibilitychange` event, and a tab that starts hidden and stays hidden
+ * never fires one. So the correction was zero and the figure was full wall
+ * clock.
+ *
+ * That lands in the ambient path, which has no engagement threshold of its own
+ * and takes the LARGEST report per URL — so one such tab becomes the most
+ * confident-looking evidence in the buffer, for a page nobody read. `Dwell`
+ * is the input to two of the three investment grounds.
+ *
+ * A page that was never seen now reports nothing at all, which is what
+ * `whenSeen`'s own comment already promised.
+ */
+let wasSeen = false
+
+/**
  * Everything goes to the worker, which decides where it belongs.
  *
  * This script does not know whether a session is running, and must not — a
@@ -104,6 +129,7 @@ function readableExcerpt() {
 
 whenSeen(() => {
   seenAt = Date.now()
+  wasSeen = true
 
   send({
     signal: 'navigation',
@@ -222,6 +248,10 @@ function engagedMs() {
 }
 
 function reportEngagement() {
+  // Never seen, never read. See `wasSeen`: this is the guard that stops a
+  // background tab's `pagehide` reporting hours of imaginary attention.
+  if (!wasSeen) return
+
   send({
     signal: 'engagement',
     at: new Date().toISOString(),
