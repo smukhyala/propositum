@@ -249,10 +249,17 @@ recorded again. Treat it as settled unless H1 ablation specifically implicates i
 [ADR-0010](docs/adr/0010-acting-in-the-browser.md))*. `EXCERPT_BUDGET_CHARS` is a promise about what
 Propositum retains from a person's **own browsing**. An agent acting under a ratified contract reads
 whole accessibility trees, which are ten to a hundred times larger, and keeps them as ActionEvidence
-under a second published constant, `SNAPSHOT_BUDGET_CHARS`. The two ledgers are disjoint — nothing in
-ActionEvidence is read by inference, joined to an ObservationEvent, or rendered on a session
-timeline, and it is swept. Without that distinction written down, the published sentence above
-becomes false the day an agent ships, silently, in the documents whose entire job is being true.
+under a second published constant, `SNAPSHOT_BUDGET_CHARS = 60_000`. The two ledgers are disjoint —
+nothing in ActionEvidence is read by inference, joined to an ObservationEvent, or rendered on a
+session timeline, and it is swept within seven days. Without that distinction written down, the
+published sentence above becomes false the day an agent ships, silently, in the documents whose
+entire job is being true.
+
+Both budgets live in `src/model/untrusted.ts` and are selected **by name** at the one `datamark()`
+call site — `{ budget: 'excerpt' | 'snapshot' }`, never by a number. A numeric parameter would make
+the budget a caller's decision, which is exactly what "a product constant, not an adapter tuning
+knob" denies, and a third budget could then be invented at a call site with no doc change. One
+construction site, one brand, two published promises.
 
 *Displaces:* TrustTier · Trust · trustLevel · sanitized · safe · clean · page-derived (as a
 stored value) · provenance (in the trust sense) · full-text capture · page scrape.
@@ -958,10 +965,12 @@ free-text sibling.
 *Displaces:* BrowserCommand · CDPCall · Command · ToolCall · instruction · script · keystroke batch.
 **Consumer:** internal — a dispatch never appears in "what I did"; its ActionIntent does.
 
-### ActionEvidence — *table, deliberately unguarded*
+### ActionEvidence — *table, immutable but not undeletable*
 What the agent perceived at one action boundary: the accessibility tree as text, bounded by
-`SNAPSHOT_BUDGET_CHARS`, and a screenshot only when the tree was insufficient. Untrusted by
-construction — every accessible name in it is page-authored.
+`SNAPSHOT_BUDGET_CHARS` (60,000 — thirty times the excerpt budget, and stated in
+`docs/SECURITY_AND_PRIVACY.md` as its own published promise), and a screenshot only when the tree was
+insufficient. Untrusted by construction — every accessible name in it is page-authored, so it goes
+through the same `datamark()` and the same brand as an article excerpt; only the budget differs.
 
 **It is not the observation ledger and never joins to it.** `EXCERPT_BUDGET_CHARS` governs what
 Propositum retains about a person's **own browsing**; `ActionEvidence` is what the agent saw **while
@@ -969,10 +978,20 @@ acting under a ratified contract**. The two ledgers stay disjoint, which is a st
 than a new claim, and it is the reason the published 2,000-character promise stays true after an
 agent starts reading whole page trees.
 
-**Deliberately unguarded** in ADR-0003's sense, and it is the only durable table that is: it is
-**swept** — the startup sweep deletes rows belonging to a settled ShiftOutcome and rows past the
-retention window — and a no-`DELETE` trigger and a sweep cannot both be true. Nothing in the
-ShiftReport renders from it, so nothing depends on it surviving.
+**Two guards, not three, and it is the only durable table with fewer than three.** *(Corrected
+2026-08-11: this said "deliberately unguarded", and the schema shipped with all three triggers, so
+the sentence was wrong in one direction and the code was wrong in the other. The reconciliation is
+that these are two different properties. `no_update` and `no_replace` stay, because a
+ConfirmationRequest points at the row a person was **shown** and a rewritable row is not a record of
+what they were shown. `no_delete` goes, because ActionEvidence is **swept** and a no-`DELETE` trigger
+and a sweep cannot both be true. Immutability is about rewriting history; retention is about how long
+history is kept.)*
+
+The sweep — `src/server/evidence-sweep.ts`, run by the worker process at startup and hourly —
+deletes rows belonging to a run whose every ShiftOutcome is settled, and rows past
+`ACTION_EVIDENCE_RETENTION_DAYS = 7` regardless. One exception, published rather than left to be
+discovered: a row a ConfirmationRequest points at is kept as long as the question is, and counted.
+Nothing in the ShiftReport renders from any of it, so nothing depends on it surviving.
 *Checked against the banned words:* not `Evidence` (that is claim→event), not `execution trace`, not
 `context window`, not `screen recording` — it is per-action, not continuous.
 *Displaces:* Evidence (in the perception sense) · snapshot · observation (in the run) · trace ·

@@ -394,6 +394,51 @@ describe('the safety machinery is reachable from the product', () => {
       'composeOffer has no caller — every offer degrades to the deterministic form forever',
     ).not.toEqual([])
   })
+
+  it('page text is sanitised at ONE door, and the acting path uses it', () => {
+    // Promoted out of the deferred block when the ActionEvidence writer landed.
+    //
+    // `evidence.create` is the second ledger's only writer. The assertion that
+    // matters is not merely that SOMETHING calls it — it is that the caller is
+    // the ledger writer, because that is the module that datamarks. A second
+    // caller would be a second path by which raw accessibility-tree text could
+    // reach SQLite, and it would pass every other test in this suite.
+    expect(
+      callersOf('evidence.create', 'src/persistence/repositories/index.ts'),
+      'nothing writes ActionEvidence — a confirmation has nothing to show the person',
+    ).toEqual(['src/persistence/ledger-writer.ts'])
+  })
+
+  it('the evidence sweep has a caller, or the retention promise is decoration', () => {
+    // The trap this whole file exists to remember, in its most damaging form.
+    // `sweepForGap` below is correct, tested and uncalled, and the cost of that
+    // is a gap reason nobody can produce. An uncalled RETENTION sweep costs
+    // something else: docs/SECURITY_AND_PRIVACY.md publishes a window, and a
+    // published window nothing enforces is a false statement in the document
+    // whose entire job is being true.
+    //
+    // The worker process is the wiring. It is the only long-lived process
+    // Propositum owns, and `npm run worker` is asserted to exist above.
+    expect(
+      callersOf('sweepActionEvidence(', 'src/server/evidence-sweep.ts'),
+      'nothing sweeps ActionEvidence — the published retention window is not enforced',
+    ).toContain('scripts/worker.ts')
+  })
+
+  it('nothing else deletes action evidence, now that the DELETE guard is gone', () => {
+    // `action_evidence` is the one durable table with no no-DELETE trigger,
+    // because a sweep needs one (ADR-0010). That makes the trigger's job this
+    // test's job: the sweep is the only production deleter, and a second one
+    // would be an unguarded delete on a table the database no longer protects.
+    const deleters = PRODUCTION.filter((f) =>
+      /actionEvidence\.delete(Many)?\(/.test(stripImports(stripComments(readFileSync(f, 'utf8')))),
+    ).map((f) => relative(repo, f))
+
+    expect(
+      deleters,
+      'something other than the sweep deletes ActionEvidence — the table has no DELETE guard',
+    ).toEqual(['src/persistence/repositories/index.ts'])
+  })
 })
 
 /**
@@ -564,15 +609,6 @@ describe('deferred, and asserted as deferred', () => {
     expect(
       callersOf('confirmations.recordVerdict', repos),
       'confirmations are answerable now — move this into the section above',
-    ).toEqual([])
-  })
-
-  it('nothing records what an agent saw while acting', () => {
-    // Without this the second ledger is empty, so a ConfirmationRequest has
-    // nothing to show the person before they authorise an effect.
-    expect(
-      callersOf('evidence.create', repos),
-      'action evidence is captured now — move this into the section above',
     ).toEqual([])
   })
 

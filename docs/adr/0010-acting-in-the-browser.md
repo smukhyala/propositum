@@ -295,10 +295,31 @@ They are two ledgers and they stay disjoint, which is a standing rule and not a 
 `ActionEvidence` is ever read by inference, joined to an `ObservationEvent`, or rendered on a session
 timeline. It is bounded by its own published constant, `SNAPSHOT_BUDGET_CHARS`, declared in
 `docs/SECURITY_AND_PRIVACY.md` with the same framing as the first — a product constant, not a
-tuning knob — and it is **swept**: the startup sweep that reaps expired leases deletes every
-`ActionEvidence` row belonging to a settled `ShiftOutcome`, and every row past the retention window
-regardless. `ActionEvidence` is therefore the one durable table that is deliberately **unguarded**
-by ADR-0003's triggers, because a no-`DELETE` trigger and a sweep cannot both be true.
+tuning knob — and it is **swept**: the worker process deletes every `ActionEvidence` row belonging to
+a settled `ShiftOutcome`, and every row past the retention window regardless.
+
+**Corrected in place, 2026-08-11.** This paragraph ended *"`ActionEvidence` is therefore the one
+durable table that is deliberately **unguarded** by ADR-0003's triggers"*, and the schema shipped
+with all three triggers on it. Both halves were wrong, and the reconciliation is that immutability
+and retention are different properties of the same row:
+
+| Guard | Kept? | Why |
+|---|---|---|
+| `no_update` | **kept** | a `ConfirmationRequest` points at the row the person was **shown**. A rewritable row is not a record of what they were shown |
+| `no_replace` | **kept** | `INSERT OR REPLACE` walks through a no-`UPDATE`/no-`DELETE` pair, so removing it would reopen `no_update` by the back door |
+| `no_delete` | **dropped** | a no-`DELETE` trigger and a sweep cannot both be true. This half of the original sentence stands |
+
+So it is the one durable table with **two** guards rather than three, not the one with none. Because
+the database no longer refuses a `DELETE` here, `tests/reachability.test.ts` takes over the trigger's
+job: the sweep must have a caller, and it must be the only code in the repository that deletes from
+this table.
+
+The published numbers are `SNAPSHOT_BUDGET_CHARS = 60_000` and
+`ACTION_EVIDENCE_RETENTION_DAYS = 7`, both argued where they are declared and both restated in
+`docs/SECURITY_AND_PRIVACY.md` in the register a person can read without opening the code. Seven days
+is a ceiling rather than a normal lifetime: a settled Shift's evidence goes within the hour, and the
+week exists for the case this ADR created — a run stopped for a confirmation that is answered after
+a weekend.
 
 ## Risks, recorded rather than buried
 

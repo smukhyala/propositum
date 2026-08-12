@@ -19,6 +19,7 @@ import { AnthropicModelClient } from '../src/model/anthropic'
 import { startWorkerProcess, installSignalHandlers } from '../src/runtime/worker-process'
 import { executeRun } from '../src/server/execute-run'
 import { createPlaywrightFetcher } from '../src/policy/playwright-fetcher'
+import { sweepActionEvidence } from '../src/server/evidence-sweep'
 
 try {
   process.loadEnvFile('.env')
@@ -51,6 +52,49 @@ const ctx = {
  * sources, so this fetcher is never handed an unrestricted one.
  */
 const fetcher = await createPlaywrightFetcher({})
+
+/**
+ * The ActionEvidence retention sweep, wired to something that actually runs.
+ *
+ * The worker process is the natural home: it is the only long-lived process
+ * Propositum owns, it is already where the orphaned-lease sweep happens, and it
+ * is the process that CREATED these rows in the first place.
+ *
+ * On startup AND on an interval, and both halves are needed. Startup alone
+ * would mean a worker left running for a fortnight never sweeps again, so the
+ * published window would hold on a machine that restarts and quietly not hold
+ * on one that does not — the worst shape a privacy promise can take, because
+ * the failure is invisible on the machine you are testing on. The interval
+ * alone would mean evidence from a crashed previous life waits an hour.
+ *
+ * `unref` so a pending timer cannot keep the process alive after ctrl-c. A
+ * retention sweep is not a reason to refuse to exit.
+ *
+ * This is deliberately NOT wired into `startWorkerProcess`'s deps. That
+ * interface is a run-draining loop; retention is a different concern with a
+ * different clock, and threading it through would have coupled two things whose
+ * only relationship is that they happen in the same process.
+ */
+const SWEEP_INTERVAL_MS = 60 * 60 * 1000
+
+async function sweepEvidence(): Promise<void> {
+  try {
+    const result = await sweepActionEvidence({ evidence: ctx.repos.evidence, now: () => new Date() })
+    if (result.deleted > 0) {
+      console.log(
+        `[worker] swept ${result.deleted} action evidence row(s) — ` +
+          `${result.settled.deleted} settled, ${result.expired.deleted} past the window`,
+      )
+    }
+  } catch (error) {
+    // A failed sweep is not a failed worker. Runs must keep draining, and the
+    // next pass is an hour away.
+    console.error(`[worker] evidence sweep failed: ${error instanceof Error ? error.message : String(error)}`)
+  }
+}
+
+await sweepEvidence()
+setInterval(() => void sweepEvidence(), SWEEP_INTERVAL_MS).unref()
 
 const handle = startWorkerProcess(
   {
