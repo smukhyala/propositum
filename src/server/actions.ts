@@ -48,6 +48,7 @@ import type { ProjectCandidate } from '../domain/detection/match-project'
 import { checkDrift, hashContent, materialise } from '../domain/document/changeset'
 import type { Decision } from '../domain/document/changeset'
 import { normalise } from '../domain/document/normalise'
+import { isDecidable } from '../domain/outcome/shift-outcome'
 import { DOCUMENT_ACTION_KINDS } from '../domain/handoff/policy'
 import type { ActionKind, AutonomyControls } from '../domain/handoff/policy'
 import type { ClaimInput } from '../persistence/repositories/index'
@@ -2038,11 +2039,124 @@ export async function recordVerdict(
   })
 }
 
-export interface ReviewFinished {
-  readonly versionId: string
-  readonly ordinal: number
-  readonly kept: number
-  readonly discarded: number
+export interface OutcomeVerdictRecorded {
+  readonly outcomeId: string
+  readonly verdict: 'accept' | 'reject' | 'edit'
+}
+
+/**
+ * The person decides on one whole thing a Shift produced.
+ *
+ * ── This refuses on a landed outcome, and the refusal is the point ───────
+ *
+ * `reversibility` is checked BEFORE anything else — before the kind, before the
+ * shape of the input, before the unique index gets a chance to have an opinion.
+ * A `landed` outcome is already outside Propositum: a form was submitted, a
+ * message was sent. There is no verdict to record, and recording one would put
+ * a row in the database saying a person rejected something that had already
+ * happened.
+ *
+ * The interface renders no control at all for these (`src/ui/outcome.tsx`), so
+ * on the honest path this branch is unreachable. It exists because interfaces
+ * drift and servers do not: some future refactor that reintroduces a Reject
+ * button beside a sent message must produce a refusal a person can read, not a
+ * silent write. ADR-0009 calls this out as two mechanisms for one truth and
+ * argues for it on exactly these grounds — the one screen the trust model rests
+ * on must not be able to tell somebody their sent message was rejected.
+ *
+ * ── And on a document outcome, for a different reason ────────────────────
+ *
+ * A `document-changes` outcome's decidable units are its ProposedChanges, each
+ * addressed by offsets into an immutable base and each carrying its own
+ * ChangeVerdict. A whole-outcome verdict beside them would be a second decision
+ * surface over one thing, and the fold has no way to read it. The two verdict
+ * tables are deliberately separate; this is the line between them, enforced.
+ *
+ * Only a human writes one of these. No model, worker run or reviewer run may,
+ * and there is no column that could record otherwise.
+ */
+export async function recordOutcomeVerdict(
+  outcomeId: string,
+  verdict: 'accept' | 'reject' | 'edit',
+  editedText?: string,
+): Promise<ActionResult<OutcomeVerdictRecorded>> {
+  return attempt(async () => {
+    const { repos } = await appContext()
+
+    const shiftOutcome = await repos.outcomes.byId(outcomeId)
+    if (!shiftOutcome) {
+      return no<OutcomeVerdictRecorded>('not-found', "That isn't there any more.")
+    }
+
+    // First, and deliberately before the input is even looked at.
+    if (!isDecidable(shiftOutcome.reversibility)) {
+      return no<OutcomeVerdictRecorded>(
+        'blocked',
+        'This already happened, outside Propositum. There is nothing here to accept or reject — Propositum cannot undo it, and it will not pretend it can.',
+      )
+    }
+
+    if (shiftOutcome.kind === 'document-changes') {
+      return no<OutcomeVerdictRecorded>(
+        'blocked',
+        'These are changes to your document. Decide on each one where it appears, below.',
+      )
+    }
+
+    if (verdict !== 'accept' && verdict !== 'reject' && verdict !== 'edit') {
+      return no<OutcomeVerdictRecorded>('invalid-input', 'Choose accept, reject, or edit.')
+    }
+
+    const clean = editedText?.trim()
+    if (verdict === 'edit' && !clean) {
+      return no<OutcomeVerdictRecorded>('invalid-input', 'Write what it should say instead.')
+    }
+    if (verdict !== 'edit' && clean) {
+      return no<OutcomeVerdictRecorded>(
+        'invalid-input',
+        'Replacement text only goes with an edit. Choose Edit to keep it.',
+      )
+    }
+
+    try {
+      await repos.outcomes.recordVerdict({
+        outcomeId,
+        verdict,
+        ...(verdict === 'edit' && clean ? { editedText: clean } : {}),
+      })
+    } catch (error) {
+      // One verdict per outcome, enforced by a unique index — the same shape
+      // ChangeVerdict uses, for the same reason. Changing your mind is a thing
+      // the interface has to say out loud rather than something a second silent
+      // write papers over.
+      const message = error instanceof Error ? error.message : String(error)
+      if (/unique|P2002/i.test(message)) {
+        return no<OutcomeVerdictRecorded>('already-done', "You've already decided on this.")
+      }
+      throw error
+    }
+
+    refresh()
+    return ok({ outcomeId, verdict })
+  })
+}
+
+export interface ShiftFinished {
+  /**
+   * The version the kept changes became, when this Shift produced document
+   * changes. `null` when it did not — a Shift that answered a question or
+   * collected a list writes nothing here, and saying so with an absence is
+   * truer than inventing a version number for it.
+   */
+  readonly document: {
+    readonly versionId: string
+    readonly ordinal: number
+    readonly kept: number
+    readonly discarded: number
+  } | null
+  /** Held outcomes that carried a decision when this finished. Counted so the
+   *  screen can say what the act covered without re-reading anything. */
+  readonly decided: number
 }
 
 /**
@@ -2061,6 +2175,29 @@ export interface ReviewFinished {
  * all, and the interface said so in its own copy: "Whatever you decide here is
  * yours to fold into the document."
  *
+ * ── What generalising this did NOT change ────────────────────────────────
+ *
+ * This used to be `finishReview` and used to assume that finishing a Shift and
+ * folding a changeset were the same act. They are not, now that a run can
+ * answer a question or collect a list without touching a document. So this
+ * refuses while anything HELD is still undecided — a change or a whole outcome,
+ * the two verdict tables counted together because the person cannot tell them
+ * apart and should not have to — and then folds the document changes if there
+ * are any.
+ *
+ * The fold below is byte-for-byte the code that was here before: the same drift
+ * check against the same immutable base, the same `materialise`, the same
+ * `committedFromChangesetId` that IS the already-reviewed flag by virtue of
+ * being unique. Nothing about the document path was made conditional on the
+ * outcome rows, and a Shift that produced a changeset and no `ShiftOutcome` —
+ * which is every Shift that has ever run — takes exactly the path it took
+ * before. That was the hard requirement of this change and it is worth stating
+ * where the code is rather than in a commit message.
+ *
+ * A `landed` outcome records nothing here. It has no verdict to fold and
+ * nothing waiting on it; it was reported, and reporting is finished the moment
+ * the person has read it.
+ *
  * ── Drift is checked twice, and both are real ────────────────────────────
  *
  * The shift screen checks it to decide which screen to render. This checks it to
@@ -2069,45 +2206,78 @@ export interface ReviewFinished {
  * ADR-0003 §4 says the document is never locked, so their edit wins and this
  * refuses.
  */
-export async function finishReview(contractId: string): Promise<ActionResult<ReviewFinished>> {
+export async function finishShift(contractId: string): Promise<ActionResult<ShiftFinished>> {
   return attempt(async () => {
     const { repos } = await appContext()
 
     const changeset = await repos.changesets.forContract(contractId)
-    if (!changeset) {
-      return no<ReviewFinished>('not-found', 'There are no changes to put into your document.')
+    const outcomes = await repos.outcomes.forContract(contractId)
+
+    // Held, and decidable as a whole. The document outcome is excluded because
+    // its decidable units are the changes, which are counted separately below —
+    // counting it twice would make a fully-decided review refuse itself.
+    const held = outcomes.filter(
+      (shiftOutcome) =>
+        isDecidable(shiftOutcome.reversibility) && shiftOutcome.kind !== 'document-changes',
+    )
+    const undecidedOutcomes = held.filter((shiftOutcome) => shiftOutcome.verdict === null)
+
+    if (!changeset && outcomes.length === 0) {
+      // The old copy — "there are no changes to put into your document" — was
+      // true when a document was the only thing a Shift could produce. It reads
+      // as a document problem, and this case is not one.
+      return no<ShiftFinished>('not-found', 'There is nothing waiting on you.')
     }
-    if (changeset.settledAsVersionId !== null) {
-      return no<ReviewFinished>(
+    if (changeset && changeset.settledAsVersionId !== null) {
+      return no<ShiftFinished>(
         'already-done',
         "You've already put these into your document. What's there now is yours to edit.",
       )
     }
 
-    const undecided = changeset.changes.filter((change) => change.verdict === null)
-    if (undecided.length > 0) {
-      const count = undecided.length === 1 ? 'one change' : `${undecided.length} changes`
-      return no<ReviewFinished>(
+    const undecidedChanges = (changeset?.changes ?? []).filter((change) => change.verdict === null)
+    const waiting = undecidedChanges.length + undecidedOutcomes.length
+    if (waiting > 0) {
+      // Said in changes when only changes are waiting, because that is what the
+      // person is looking at. Said in things when the two are mixed, because
+      // "3 changes" would be a miscount of a set that is not all changes.
+      if (undecidedOutcomes.length === 0) {
+        const count = waiting === 1 ? 'one change' : `${waiting} changes`
+        return no<ShiftFinished>(
+          'blocked',
+          `Decide on ${count} still waiting, and Propositum will put the rest in.`,
+        )
+      }
+      const count = waiting === 1 ? 'one thing' : `${waiting} things`
+      return no<ShiftFinished>(
         'blocked',
-        `Decide on ${count} still waiting, and Propositum will put the rest in.`,
+        `Decide on ${count} still waiting, and Propositum will finish up.`,
       )
+    }
+
+    if (!changeset) {
+      // Everything held has a decision, and none of it was document-shaped.
+      // Nothing is written: the verdicts already are the durable record, and a
+      // version chain has nothing to grow from.
+      refresh()
+      return ok<ShiftFinished>({ document: null, decided: held.length })
     }
 
     const base = await repos.documents.version(changeset.baseVersionId)
     if (!base) {
-      return no<ReviewFinished>('not-found', 'The version this shift worked from is gone.')
+      return no<ShiftFinished>('not-found', 'The version this shift worked from is gone.')
     }
 
     const latest = await repos.documents.latestVersion(base.documentId)
     if (!latest) {
-      return no<ReviewFinished>('not-found', 'That document has no saved text.')
+      return no<ShiftFinished>('not-found', 'That document has no saved text.')
     }
 
     // The human's own edit always wins. Nothing is written, and nothing they
     // decided is lost — the verdicts stay on the record.
     const drift = checkDrift(latest.content, changeset.baseHash)
     if (!drift.ok) {
-      return no<ReviewFinished>(
+      return no<ShiftFinished>(
         'blocked',
         'You changed this document while Propositum was working, so these changes no longer line up with it. Yours is the one that counts — nothing was overwritten.',
       )
@@ -2131,11 +2301,14 @@ export async function finishReview(contractId: string): Promise<ActionResult<Rev
     })
 
     refresh()
-    return ok({
-      versionId: version.id,
-      ordinal: version.ordinal,
-      kept,
-      discarded: decisions.length - kept,
+    return ok<ShiftFinished>({
+      document: {
+        versionId: version.id,
+        ordinal: version.ordinal,
+        kept,
+        discarded: decisions.length - kept,
+      },
+      decided: held.length,
     })
   })
 }

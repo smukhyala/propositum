@@ -11,10 +11,23 @@
  *
  * So the order here is fixed, deliberate, and stated once:
  *
- *   narrative → what I need from you → the changes → what I did →
+ *   narrative → what I need from you → what I made → the changes → what I did →
  *   what I didn't do, and why → what I missed → resume
  *
  * Re-entry finding 1. Do not reorder without reading it.
+ *
+ * ── Where "What I made" sits, and why it is above the changes ────────────
+ *
+ * It is the one-minute list. A Shift now produces a `ShiftOutcome` — five kinds
+ * of thing, of which document changes are one — and the person coming back
+ * needs to know what was made before they can judge any single piece of it. The
+ * changes stay below because they are the review surface for exactly one of
+ * those kinds, and a person whose Shift answered a question should not have to
+ * scroll past a document review that has nothing in it.
+ *
+ * It sits BELOW "what I need from you" for the reason that section is first at
+ * all: an open question can invalidate everything under it, so it goes above
+ * everything it could invalidate.
  *
  * ── Two screens, because a drifted shift is a different note ─────────────
  *
@@ -39,8 +52,10 @@ import { motion, useReducedMotion } from 'motion/react'
 import { BackLink, Button, Empty, LogEntry, Masthead, Narrative, Section, Sheet } from './primitives'
 import { ChangeCard } from './diff'
 import type { ChangeVerdict, ChangeView } from './diff'
+import { WhatIMade } from './outcome'
+import type { OutcomeVerdict, OutcomeView } from './outcome'
 import { Away, Done, Refused, Unknown, Wrote } from './sprites'
-import { finishReview, recordVerdict } from '../server/actions'
+import { finishShift, recordOutcomeVerdict, recordVerdict } from '../server/actions'
 
 /* ── the one stylesheet ─────────────────────────────────────────────────── */
 
@@ -152,6 +167,14 @@ export interface ShiftReportProps {
   /** "6 of 9 steps · 1 decision for you". Counted from rows, never a summary. */
   readonly tally: string
   readonly decisions: readonly DecisionView[]
+  /**
+   * Everything this Shift produced, oldest first.
+   *
+   * Read off `ShiftOutcome` rows and empty for every Shift that ran before that
+   * table had a writer — which is why the section renders nothing at all when
+   * this is empty, rather than reporting an absence it cannot know about.
+   */
+  readonly made: readonly OutcomeView[]
   readonly changes: readonly ChangeView[]
   /** What to say when Propositum proposed no text at all — a designed-for
    *  outcome under "Research only — don't write", not a failure. */
@@ -360,11 +383,12 @@ function Decisions({
 
 export function ShiftReport(props: ShiftReportProps) {
   const [recorded, setRecorded] = useState<Readonly<Record<string, ChangeVerdict>>>({})
+  const [decidedOutcomes, setDecidedOutcomes] = useState<Readonly<Record<string, OutcomeVerdict>>>({})
   const [settled, setSettled] = useState<ReadonlySet<string>>(new Set())
   const [problem, setProblem] = useState<string | null>(null)
-  const [putIn, setPutIn] = useState<{ ordinal: number; kept: number; discarded: number } | null>(
-    props.alreadyPutIn ? { ordinal: props.alreadyPutIn.ordinal, kept: -1, discarded: -1 } : null,
-  )
+  const [finished, setFinished] = useState<
+    { ordinal: number; kept: number; discarded: number } | 'no-document' | null
+  >(props.alreadyPutIn ? { ordinal: props.alreadyPutIn.ordinal, kept: -1, discarded: -1 } : null)
   const [busy, startWriting] = useTransition()
 
   const changes = useMemo(
@@ -376,9 +400,59 @@ export function ShiftReport(props: ShiftReportProps) {
     [props.changes, recorded],
   )
 
+  const made = useMemo(
+    () =>
+      props.made.map((outcome) => ({
+        ...outcome,
+        verdict: decidedOutcomes[outcome.id] ?? outcome.verdict,
+      })),
+    [props.made, decidedOutcomes],
+  )
+
   const undecided = changes.filter((c) => c.verdict === null)
+  /**
+   * Outcomes still waiting on a decision.
+   *
+   * A landed outcome is never in this set, and it is filtered by the same test
+   * the card and the server use: `landed` means it already happened, so there
+   * is nothing to wait for. Counting one here would leave the person unable to
+   * finish and unable to see why.
+   *
+   * The document outcome is excluded too — its decidable units are the changes,
+   * which `undecided` already counts.
+   */
+  const undecidedMade = made.filter(
+    (o) => !o.landed && o.kind !== 'document-changes' && o.verdict === null,
+  )
   const places = new Set(changes.map((c) => c.where ?? '')).size
   const openQuestions = props.decisions.filter((d) => !settled.has(d.id))
+
+  /**
+   * Does the document review belong on this screen at all?
+   *
+   * Shown whenever there are changes, and whenever a run said it produced
+   * document changes. Shown for a Shift with no outcome rows too — that is
+   * every Shift recorded before the table had a writer, and its empty state is
+   * a sentence somebody wrote for a real situation. Hidden only when the run
+   * plainly produced something that was not a document, because "Propositum
+   * proposed no text" under an answer it did propose reads as a failure.
+   */
+  const showChanges =
+    changes.length > 0 ||
+    made.length === 0 ||
+    made.some((outcome) => outcome.kind === 'document-changes')
+
+  /**
+   * The two verdict tables, counted as one number for the person.
+   *
+   * They are separate tables for good reasons that are all about offsets and
+   * folds and none of which the person has any business knowing. What they see
+   * is a note with things on it waiting to be decided, and one honest count of
+   * how many are left.
+   */
+  const stillWaiting = undecided.length + undecidedMade.length
+  const somethingToFinish = changes.length > 0 || made.some((outcome) => !outcome.landed)
+  const waitingNoun = undecidedMade.length === 0 && made.length === 0 ? 'change' : 'thing'
 
   /**
    * Re-entry finding 2, the interaction bug the prototype caught: *Accept all*
@@ -425,7 +499,24 @@ export function ShiftReport(props: ShiftReportProps) {
   }
 
   /**
-   * The one act that changes the document.
+   * One whole thing a Shift made, decided.
+   *
+   * There is no "accept all" over these on purpose. A change is one span of
+   * prose among several in one document; an outcome is a whole production, and
+   * a batch control over five different things a run made would be asking
+   * somebody to agree with an afternoon's work in one click.
+   */
+  function decideOutcome(id: string, verdict: OutcomeVerdict, editedText?: string) {
+    setProblem(null)
+    startWriting(async () => {
+      const result = await recordOutcomeVerdict(id, verdict, editedText)
+      if (result.ok) setDecidedOutcomes((prev) => ({ ...prev, [id]: verdict }))
+      else setProblem(result.problem.message)
+    })
+  }
+
+  /**
+   * The one act that changes the document — when there is a document.
    *
    * Deliberately at the end, and deliberately separate from the verdicts. The
    * base stays immutable for the whole review so offsets remain valid while the
@@ -435,12 +526,17 @@ export function ShiftReport(props: ShiftReportProps) {
    * Until this existed, the review loop recorded decisions and produced
    * nothing, and the copy under this row admitted it: "yours to fold into the
    * document."
+   *
+   * When the Shift produced no document changes this writes nothing, and the
+   * copy under the row says so rather than implying a version appeared
+   * somewhere. The decisions above are already the durable record; this is the
+   * person saying they are done, and the server checking that they are.
    */
   function finish() {
     setProblem(null)
     startWriting(async () => {
-      const result = await finishReview(props.contractId)
-      if (result.ok) setPutIn(result.value)
+      const result = await finishShift(props.contractId)
+      if (result.ok) setFinished(result.value.document ?? 'no-document')
       else setProblem(result.problem.message)
     })
   }
@@ -464,21 +560,25 @@ export function ShiftReport(props: ShiftReportProps) {
 
       <Decisions decisions={props.decisions} settled={settled} onSettle={settle} />
 
-      <Section
-        title={
-          changes.length === 0
-            ? 'The changes'
-            : `The changes — ${count(changes.length, 'change')} · ${count(places, 'place')}`
-        }
-      >
-        {changes.length === 0 ? (
-          <Empty title="Propositum proposed no text." next={props.noChangesNext} />
-        ) : (
-          changes.map((change, i) => (
-            <ChangeCard key={change.id} change={change} index={i} busy={busy} onDecide={decide} />
-          ))
-        )}
-      </Section>
+      <WhatIMade outcomes={made} busy={busy} onDecide={decideOutcome} />
+
+      {showChanges ? (
+        <Section
+          title={
+            changes.length === 0
+              ? 'The changes'
+              : `The changes — ${count(changes.length, 'change')} · ${count(places, 'place')}`
+          }
+        >
+          {changes.length === 0 ? (
+            <Empty title="Propositum proposed no text." next={props.noChangesNext} />
+          ) : (
+            changes.map((change, i) => (
+              <ChangeCard key={change.id} change={change} index={i} busy={busy} onDecide={decide} />
+            ))
+          )}
+        </Section>
+      ) : null}
 
       <WhatIDid rows={props.did} />
       <WhatIDidnt rows={props.didnt} />
@@ -488,82 +588,96 @@ export function ShiftReport(props: ShiftReportProps) {
       <div className="ps-resume">
         <div className="ps-resume-row">
           <p>
-            {putIn !== null
-              ? 'These are in your document now. What is there is yours to edit.'
-              : (props.resume ??
-                'Nothing is waiting on Propositum. Decide on each change, then put the ones you kept into your document.')}
+            {finished === 'no-document'
+              ? 'Everything here has a decision on it. Nothing was written anywhere — what you decided is the record.'
+              : finished !== null
+                ? 'These are in your document now. What is there is yours to edit.'
+                : (props.resume ??
+                  'Nothing is waiting on Propositum. Decide on each change, then put the ones you kept into your document.')}
           </p>
-          {changes.length === 0 || putIn !== null ? null : (
+          {somethingToFinish && finished === null ? (
             <div className="ps-actions">
-              <Button
-                disabled={blocked || busy || undecided.length === 0}
-                onClick={() => decideAll('accept')}
-                title={
-                  blocked
-                    ? blockedWhy
-                    : undecided.length === 0
-                      ? 'Every change already has a decision on it.'
-                      : 'Records an acceptance against every change still undecided.'
-                }
-              >
-                Accept all
-              </Button>
-              {/* Re-entry finding 3: there was no "none of this applies any
-                  more" action, and after a drifted or misjudged shift that is
-                  the one a person reaches for. Rejecting is recorded, not
-                  erased — the reasons survive, which is what H3 needs. */}
-              <Button
-                disabled={busy || undecided.length === 0}
-                onClick={() => decideAll('reject')}
-                title={
-                  undecided.length === 0
-                    ? 'Every change already has a decision on it.'
-                    : 'Records a rejection against every change still undecided. Nothing in your document changes.'
-                }
-              >
-                Discard all of this
-              </Button>
+              {changes.length === 0 ? null : (
+                <>
+                  <Button
+                    disabled={blocked || busy || undecided.length === 0}
+                    onClick={() => decideAll('accept')}
+                    title={
+                      blocked
+                        ? blockedWhy
+                        : undecided.length === 0
+                          ? 'Every change already has a decision on it.'
+                          : 'Records an acceptance against every change still undecided.'
+                    }
+                  >
+                    Accept all
+                  </Button>
+                  {/* Re-entry finding 3: there was no "none of this applies any
+                      more" action, and after a drifted or misjudged shift that is
+                      the one a person reaches for. Rejecting is recorded, not
+                      erased — the reasons survive, which is what H3 needs. */}
+                  <Button
+                    disabled={busy || undecided.length === 0}
+                    onClick={() => decideAll('reject')}
+                    title={
+                      undecided.length === 0
+                        ? 'Every change already has a decision on it.'
+                        : 'Records a rejection against every change still undecided. Nothing in your document changes.'
+                    }
+                  >
+                    Discard all of this
+                  </Button>
+                </>
+              )}
 
               {/*
                 The only control on this screen that changes the document, and
-                the only one that is primary. It waits for every change to have
-                a decision, because a partial fold leaves the review neither
-                finished nor abandoned — and because the base has to stay still
+                the only one that is primary. It waits for everything still held
+                to have a decision on it — a partial fold leaves the review
+                neither finished nor abandoned, and the base has to stay still
                 while the person works through the changes in any order.
+
+                Its label follows what it will actually do. With document
+                changes it writes a version; without them it writes nothing and
+                says so, because a button reading "put these into your document"
+                over a Shift that produced no document text would be naming an
+                act that cannot happen.
               */}
               <Button
                 variant="primary"
-                disabled={busy || undecided.length > 0}
+                disabled={busy || stillWaiting > 0}
                 onClick={finish}
                 title={
-                  undecided.length > 0
-                    ? `Decide on ${count(undecided.length, 'change')} first.`
-                    : 'Writes a new version of your document containing the changes you kept. Your current text is not overwritten — it stays as an earlier version.'
+                  stillWaiting > 0
+                    ? `Decide on ${count(stillWaiting, waitingNoun)} first.`
+                    : changes.length > 0
+                      ? 'Writes a new version of your document containing the changes you kept. Your current text is not overwritten — it stays as an earlier version.'
+                      : 'Closes this off. Nothing is written — your decisions above are already on the record.'
                 }
               >
-                Put these into your document
+                {changes.length > 0 ? 'Put these into your document' : "I'm done here"}
               </Button>
             </div>
-          )}
+          ) : null}
         </div>
 
-        {putIn === null ? null : (
+        {finished === null || finished === 'no-document' ? null : (
           <p className="ps-count" role="status">
-            {putIn.kept < 0
-              ? `Saved as version ${putIn.ordinal}.`
-              : putIn.kept === 0
-                ? `You kept none of them, so version ${putIn.ordinal} reads exactly as it did before. The decisions are on the record.`
-                : `Saved as version ${putIn.ordinal} — ${count(putIn.kept, 'change')} kept, ${putIn.discarded} discarded.`}
+            {finished.kept < 0
+              ? `Saved as version ${finished.ordinal}.`
+              : finished.kept === 0
+                ? `You kept none of them, so version ${finished.ordinal} reads exactly as it did before. The decisions are on the record.`
+                : `Saved as version ${finished.ordinal} — ${count(finished.kept, 'change')} kept, ${finished.discarded} discarded.`}
           </p>
         )}
 
         {blocked && changes.length > 0 ? <p className="ps-blocked">{blockedWhy}</p> : null}
 
-        {changes.length === 0 ? null : (
+        {!somethingToFinish ? null : (
           <p className="ps-count" role="status">
-            {undecided.length === 0
-              ? 'Every change has a decision on it.'
-              : `${count(undecided.length, 'change')} still undecided.`}
+            {stillWaiting === 0
+              ? 'Everything here has a decision on it.'
+              : `${count(stillWaiting, waitingNoun)} still undecided.`}
           </p>
         )}
 
@@ -587,6 +701,15 @@ export interface DriftedShiftProps {
   readonly decisions: readonly DecisionView[]
   /** How many proposals were set aside. Said as a number, not shown as a diff. */
   readonly setAside: number
+  /**
+   * Everything else this Shift made, which the drift did not touch.
+   *
+   * The caller drops the document outcome before it gets here — its changes are
+   * the thing that was set aside — and what is left is decidable exactly as it
+   * would be on the ordinary note. Nothing about an answer or a collection is
+   * addressed by offsets into a version, so nothing about them moved.
+   */
+  readonly made: readonly OutcomeView[]
   readonly did: readonly LogRow[]
   readonly didnt: readonly LogRow[]
   readonly missed: readonly LogRow[]
@@ -612,6 +735,24 @@ export interface DriftedShiftProps {
  * happened, why none of it can be applied, and a way to hand over again.
  */
 export function DriftedShift(props: DriftedShiftProps) {
+  const [decidedOutcomes, setDecidedOutcomes] = useState<Readonly<Record<string, OutcomeVerdict>>>({})
+  const [problem, setProblem] = useState<string | null>(null)
+  const [busy, startWriting] = useTransition()
+
+  const made = props.made.map((outcome) => ({
+    ...outcome,
+    verdict: decidedOutcomes[outcome.id] ?? outcome.verdict,
+  }))
+
+  function decideOutcome(id: string, verdict: OutcomeVerdict, editedText?: string) {
+    setProblem(null)
+    startWriting(async () => {
+      const result = await recordOutcomeVerdict(id, verdict, editedText)
+      if (result.ok) setDecidedOutcomes((prev) => ({ ...prev, [id]: verdict }))
+      else setProblem(result.problem.message)
+    })
+  }
+
   return (
     <Sheet>
       <Styles />
@@ -646,6 +787,13 @@ export function DriftedShift(props: DriftedShiftProps) {
       {/* The rest of the note still stands: the work happened, and the person is
           owed the same account of it as on any other shift. */}
       <Decisions decisions={props.decisions} />
+
+      <WhatIMade outcomes={made} busy={busy} onDecide={decideOutcome} />
+      {problem === null ? null : (
+        <p className="ps-problem" role="status">
+          {problem}
+        </p>
+      )}
 
       <WhatIDid rows={props.did} />
       <WhatIDidnt rows={props.didnt} />
