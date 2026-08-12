@@ -37,6 +37,7 @@ import { loadWorkspace } from '../src/server/outcomes/workspace'
 import { FakeModelClient } from '../src/model/fake'
 import { fixtureFetcher } from '../src/policy/fetcher'
 import { hashContent } from '../src/domain/document/changeset'
+import { readOutcomeDetail } from '../src/domain/outcome/shift-outcome'
 import { normalise } from '../src/domain/document/normalise'
 import type { AppContext } from '../src/server/db'
 
@@ -378,7 +379,77 @@ describe('a citation is a join, not a claim', () => {
   })
 })
 
-/* ── 4. the spine, grepped ──────────────────────────────────────────────── */
+/* ── 4. what the writers store is what the screen reads ─────────────────── */
+
+describe('the detail payload is the shape the re-entry screen reads', () => {
+  /**
+   * The seam between the unit that WRITES `ShiftOutcome.detail` and the unit
+   * that renders it.
+   *
+   * `readOutcomeDetail` is deliberately tolerant — it degrades to a headline and
+   * a reason rather than throwing, so a payload it does not recognise cannot
+   * take down the one screen a person comes back to when a run went badly. That
+   * tolerance is exactly why a mismatch here would be invisible: the screen
+   * would render, the card would be blank below the headline, and nothing would
+   * fail. So the writers are checked against the reader directly.
+   */
+  const detailOf = async (produced: Parameters<typeof recordOutcomes>[1]['produced']) => {
+    const { contractId } = await acceptedContract(true)
+    const runId = await run(contractId, [...DRAFTS, NO_FINDINGS])
+    const contract = await repos.contracts.byId(contractId)
+    if (!contract) throw new Error('no contract')
+
+    await recordOutcomes(ctx, {
+      run: { id: runId },
+      contract: { id: contractId },
+      workspace: await loadWorkspace(ctx, contract),
+      produced,
+    })
+
+    const rows = await repos.outcomes.forRun(runId)
+    return rows.filter((o) => o.kind !== 'document-changes').map((o) => readOutcomeDetail(o.detail))
+  }
+
+  it('renders a collection as lines, keeping the numbers', async () => {
+    const [collected] = await detailOf([
+      {
+        kind: 'item',
+        intentId: 'x',
+        label: 'Fabrikam',
+        fields: { 'under 5kg': '£3.95', 'next day': 'yes' },
+      },
+    ])
+
+    // The label and the fields both survive. An item that arrived as a record
+    // the reader could not flatten would render as the carrier's name with the
+    // price silently gone.
+    expect(collected?.items).toEqual(['Fabrikam — under 5kg: £3.95 · next day: yes'])
+  })
+
+  it('renders an answer as a body', async () => {
+    const [answered] = await detailOf([
+      { kind: 'written-answer', intentId: 'x', text: 'Fabrikam is cheapest under 5kg.' },
+    ])
+
+    expect(answered?.body).toBe('Fabrikam is cheapest under 5kg.')
+  })
+
+  it('renders a message draft with who it is for, and nothing that could send it', async () => {
+    const [drafted] = await detailOf([
+      {
+        kind: 'composed-text',
+        intentId: 'x',
+        forWhat: 'a reply to Northwind about the rate',
+        text: 'Thanks — could you confirm the under-5kg price?',
+      },
+    ])
+
+    expect(drafted?.addressedTo).toBe('a reply to Northwind about the rate')
+    expect(drafted?.body).toContain('confirm the under-5kg price')
+  })
+})
+
+/* ── 5. the spine, grepped ──────────────────────────────────────────────── */
 
 describe('the run spine carries no document knowledge', () => {
   /**
