@@ -561,15 +561,31 @@ const CONTROL_KEYS = [
   'controlledRunId',
   'approvedOrigins',
   'snapshot',
-  'inFlightIntentId',
   'indicatorAliveAt',
   'indicatorGraceUntil',
   'actionWindow',
   'mainFrameId',
 ]
 
+/**
+ * The command in flight, which is deliberately NOT one of the control keys.
+ *
+ * It belongs to the command, not to the tab, and conflating the two orphaned
+ * an intent: a failed `chrome.debugger.attach` — DevTools already open on the
+ * tab, another extension holding it, the tab closed under us — ran
+ * `clearControlState()` in its clean-up, which took `inFlightIntentId` with
+ * it. The caller's own catch then found nothing in flight and reported
+ * nothing, and the app was left with an ActionIntent that never received an
+ * ActionOutcome: indistinguishable from a crash, and shown to the person as
+ * `unknown` when we knew exactly what happened.
+ *
+ * Giving up a tab and giving up on a command are different events. Only the
+ * code that reports the command may clear this.
+ */
+const IN_FLIGHT_KEY = 'inFlightIntentId'
+
 export async function controlState() {
-  const state = await chrome.storage.session.get(CONTROL_KEYS)
+  const state = await chrome.storage.session.get([...CONTROL_KEYS, IN_FLIGHT_KEY])
   return {
     tabId: typeof state.controlledTabId === 'number' ? state.controlledTabId : null,
     runId: typeof state.controlledRunId === 'string' ? state.controlledRunId : null,
@@ -601,10 +617,35 @@ async function send(tabId, method, params) {
   if (state.tabId === null || state.tabId !== tabId) {
     throw new ControlLost('the tab Propositum opened is no longer under control')
   }
-  return chrome.debugger.sendCommand({ tabId }, method, params ?? {})
+
+  /**
+   * A CDP command that never settles, and why it needs its own failure.
+   *
+   * `chrome.debugger.sendCommand` can simply not come back — a renderer that
+   * has stopped responding, a beforeunload dialog nothing will dismiss, a
+   * navigation that hangs. Without a ceiling, the poll loop parks here
+   * forever: no report, no halt, the person's tab held open by `Fetch.enable`,
+   * and an intent that stays in flight until somebody restarts Chrome.
+   *
+   * `timed-out` is the extension's word and only the extension's. The app's
+   * dispatch expiry says `not-delivered` when the row never left and
+   * `not-reported` when it did — an honest distinction about whether the
+   * command reached a browser. This one says something different and narrower:
+   * it reached a browser, the browser accepted it, and the browser did not
+   * finish.
+   */
+  const ceiling = new Promise((_resolve, reject) => {
+    setTimeout(() => reject(new TimedOut(`${method} did not come back`)), CDP_CEILING_MS)
+  })
+
+  return Promise.race([chrome.debugger.sendCommand({ tabId }, method, params ?? {}), ceiling])
 }
 
+/** How long one CDP command may take before it is called a non-answer. */
+export const CDP_CEILING_MS = 20_000
+
 export class ControlLost extends Error {}
+export class TimedOut extends Error {}
 
 /**
  * Lifecycle and request events, kept where the worker can be woken for them.
@@ -1122,6 +1163,9 @@ export async function performCommand(command, handlers) {
         failure: 'stale-snapshot',
         detail: 'the page changed since Propositum last looked at it',
       }
+    }
+    if (error instanceof TimedOut) {
+      return { ok: false, failure: 'timed-out', detail: error.message }
     }
     if (error instanceof ControlLost) {
       return { ok: false, failure: 'control-lost', detail: error.message }

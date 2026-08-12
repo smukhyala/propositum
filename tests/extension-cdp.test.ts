@@ -344,6 +344,131 @@ describe('the working-here marker is load-bearing, not decorative', () => {
   })
 })
 
+describe('one command, one outcome, and one poll', () => {
+  const worker = CODE.find(({ name }) => name === 'service-worker.js')?.code ?? ''
+  const cdp = CODE.find(({ name }) => name === 'cdp.js')?.code ?? ''
+
+  it('refuses a command it has already answered', () => {
+    /**
+     * A re-delivery guard, not a retry guard. For a browser action "delivered
+     * twice" and "clicked twice" are the same sentence and there is no undo
+     * for the second. The app's dispatch table has its own guarantee about
+     * this; two mechanisms with different failure modes, neither trusting the
+     * other, is the whole design.
+     */
+    expect(worker).toContain('alreadyReported')
+    expect(worker).toContain('rememberReported')
+    expect(worker).toContain('reportedIntents')
+  })
+
+  it('holds the run id from the moment the tab exists, not from a later lookup', () => {
+    /**
+     * `GET /api/act/next` returns no run id, and `POST /api/act/halt` needs
+     * one. Stopping is the thing that has to work when the app is unreachable,
+     * so the id cannot be fetched at the moment it is wanted — it is written
+     * beside `controlledTabId` in the same `set`, so a controlled tab with no
+     * run id is not a reachable state.
+     */
+    expect(cdp).toContain('controlledRunId')
+    expect(worker).toContain('postHalt')
+
+    const open = cdp.slice(cdp.indexOf('export async function openControlledTab'))
+    const claim = open.slice(0, open.indexOf('Page.enable'))
+
+    expect(claim, 'the run id is not claimed alongside the tab').toContain('controlledRunId')
+    expect(claim, 'the tab id is not claimed alongside the run id').toContain('controlledTabId')
+  })
+
+  it('keeps the in-flight intent out of the tab’s own state', () => {
+    /**
+     * Giving up a tab and giving up on a command are different events. While
+     * `inFlightIntentId` was one of `CONTROL_KEYS`, a failed
+     * `chrome.debugger.attach` cleared it in its own clean-up and the caller's
+     * catch then found nothing to report — leaving an ActionIntent with no
+     * ActionOutcome, which is indistinguishable from a crash.
+     */
+    const keys = cdp.slice(cdp.indexOf('const CONTROL_KEYS'), cdp.indexOf('const IN_FLIGHT_KEY'))
+
+    expect(keys).toContain('controlledTabId')
+    expect(keys, 'the in-flight intent is tab state again — a failed attach will orphan it').not.toContain(
+      'inFlightIntentId',
+    )
+  })
+
+  it('holds the poll lease for as long as the command takes', () => {
+    // A turn is up to 25s of long poll PLUS the whole command. Refreshing only
+    // between turns lets the lease lapse mid-command, the alarm claim it, and
+    // two loops consume the same queue.
+    expect(worker).toContain('keepLease')
+    expect(worker).toContain('setInterval')
+  })
+
+  it('has a word for a browser command that never comes back', () => {
+    // `not-delivered` and `not-reported` are the app's, and they are about
+    // whether a command reached a browser. `timed-out` is this side's, and it
+    // is narrower: it arrived, it was accepted, and it did not finish.
+    expect(cdp).toContain("failure: 'timed-out'")
+    expect(cdp).toContain('CDP_CEILING_MS')
+  })
+})
+
+describe('the capture path this file also owns', () => {
+  const worker = CODE.find(({ name }) => name === 'service-worker.js')?.code ?? ''
+
+  it('matches an approved source by pattern, never by prefix', () => {
+    /**
+     * `origin.startsWith(s.origin)` said yes to
+     * `https://mail.google.com.attacker.example` for an approved
+     * `https://mail.google.com`. Harmless while content scripts ran only on
+     * specifically granted origins; reachable the moment the manifest went
+     * broad, because the lookalike host then runs the capture script itself.
+     */
+    expect(worker, 'the approved-source check is a prefix test again').not.toMatch(
+      /origin\.startsWith\(s\.origin\)/,
+    )
+    expect(worker).toContain('patternCovers(s.origin, origin)')
+  })
+
+  it('answers a notification from the notification, not from shared state', () => {
+    /**
+     * Notifications are `requireInteraction: true` and outlive the poll that
+     * raised them. Reading a single mutable `offer` key meant pressing Yes on
+     * an old one opened — and approved the sites of — whichever thread the
+     * badge had moved on to.
+     */
+    expect(worker).toContain('function threadOf(')
+    expect(worker).toContain('answeredYes(id)')
+    expect(worker).toContain('answeredNo(id)')
+    expect(worker, 'a single mutable current-offer key is back').not.toMatch(
+      /storage\.session\.get\(\['offer'\]\)/,
+    )
+  })
+
+  it('never guesses an ambient kind, so a selection cannot become an arrival', () => {
+    /**
+     * `detect.ts` counts `navigation` and `query` as ARRIVALS, and arrivals
+     * feed the `came-back` and `refined-the-search` intent grounds — one of
+     * which is required before Propositum may offer to do work at all. A
+     * fall-through default meant every text selection was an arrival, so
+     * selecting a sentence on a page you were already looking at manufactured
+     * the permission to act.
+     */
+    expect(worker).toContain('function ambientKindOf(')
+    expect(worker, 'the kind mapping has a fall-through again').not.toMatch(
+      /o\.signal === 'away'\s*\?\s*'away'\s*:/,
+    )
+  })
+
+  it('never clears a buffer it did not send', () => {
+    // `set({ ambient: [] })` after a successful POST discards everything that
+    // arrived during the fetch. With a content script on every https page,
+    // that window is not short enough — and what is lost is the dwell signal
+    // the offer grounds are computed from.
+    expect(worker).toContain('withStorage')
+    expect(worker).toContain('returnAmbient')
+  })
+})
+
 describe('the accessibility tree, flattened', () => {
   const node = (
     id: string,

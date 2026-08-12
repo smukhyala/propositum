@@ -157,12 +157,55 @@ async function verifyReachable() {
   }
 }
 
+/* ── one discipline for touching session storage ───────────────────────── */
+
+/**
+ * Serialise every read-modify-write over `chrome.storage.session`.
+ *
+ * ── The bug this closes, which was silent and non-deterministic ──────────
+ *
+ * `get` then `set` is two awaits with a gap in the middle, and the gap is a
+ * scheduling point. Two `onMessage` handlers that interleave there both read
+ * the same array, both push one item, and the second `set` wins — so one
+ * observation is gone, with nothing logged and nothing to notice.
+ *
+ * It was survivable while content scripts ran on a handful of granted origins.
+ * Since the manifest went broad (ADR-0008) `content.js` runs on every https
+ * page and each tab reports engagement every fifteen seconds, so with a few
+ * tabs open the interleave is routine rather than exotic. What is lost is
+ * precisely the dwell and visit signal the offer grounds are computed from,
+ * which means the arithmetic that decides whether Propositum may offer to DO
+ * work is running on a quietly incomplete record.
+ *
+ * The acting path adds more concurrent writers still — the controlled tab id,
+ * the snapshot ref map, the set of intents already reported — and every one of
+ * them has the same shape. Two disciplines in one file is how you get a third,
+ * so everything goes through here.
+ *
+ * A promise chain rather than a lock: it serialises within one worker
+ * instance, which is where the interleave happens. It does NOT survive worker
+ * death, and it does not need to — a dead worker has no concurrent handlers.
+ */
+let storageQueue = Promise.resolve()
+
+function withStorage(work) {
+  const done = storageQueue.then(work, work)
+  // The queue itself must never reject, or every later caller inherits it.
+  storageQueue = done.then(
+    () => undefined,
+    () => undefined,
+  )
+  return done
+}
+
 /* ── buffering, because the worker dies mid-flush ──────────────────────── */
 
 async function buffer(event) {
-  const { pending = [] } = await chrome.storage.session.get(['pending'])
-  pending.push({ ...event, sourceSeq: pending.length })
-  await chrome.storage.session.set({ pending })
+  await withStorage(async () => {
+    const { pending = [] } = await chrome.storage.session.get(['pending'])
+    pending.push({ ...event, sourceSeq: pending.length })
+    await chrome.storage.session.set({ pending })
+  })
 }
 
 /**
@@ -200,16 +243,105 @@ const AMBIENT_TITLE_MAX = 300
  * per-item where each belongs, which is exactly the kind of branch that
  * eventually sends page text to the wrong place.
  */
+/**
+ * What kind of ambient observation a raw signal is, or null for "none".
+ *
+ * ── A selection is not an arrival, and calling it one broke a ground ─────
+ *
+ * The mapping used to special-case `engagement` and `away` and let everything
+ * else fall through to `looksLikeSearch(url) ? 'query' : 'navigation'`.
+ * `content.js` also emits `signal: 'selection'`, so every selection arrived at
+ * the app labelled as somebody NAVIGATING to the page.
+ *
+ * `detect.ts` counts `navigation` and `query` as arrivals and dedupes only
+ * against the immediately preceding URL. So: read A, visit B, switch back to
+ * the tab showing A — which fires no navigation — and select a sentence. That
+ * selection lands as an arrival at A whose predecessor is B, `visits(A)`
+ * becomes two, and `returnedTo` fires. The offer then tells somebody they
+ * "came back to" a page they never re-navigated to. On a results page the same
+ * selection counts as an extra query instead.
+ *
+ * That is not a cosmetic mislabel. `came-back` and `refined-the-search` are
+ * INTENT grounds, and an offer to actually DO work requires one — so a
+ * manufactured arrival manufactures the permission to act. And
+ * `selectionchange` fires repeatedly while dragging, so one paragraph produced
+ * several of them.
+ *
+ * It is the same failure as `url.includes('?')` meaning "searched": a signal
+ * relabelled as a stronger one on the way past. So this is an exhaustive map
+ * with **no fall-through**. A signal kind nothing here recognises is dropped,
+ * not guessed at — because the guess is always toward the kind that reads as
+ * more intentional.
+ *
+ * A selection is dropped rather than remapped to `engagement`: the ambient
+ * record already carries dwell and scroll for that page from `reportEngagement`,
+ * so a selection minus its text (stripped before it ever reaches here) adds
+ * nothing the app does not already have.
+ */
+function ambientKindOf(signal, url) {
+  if (signal === 'engagement') return 'engagement'
+  if (signal === 'away') return 'away'
+  if (signal === 'navigation') return looksLikeSearch(url) ? 'query' : 'navigation'
+  return null
+}
+
 async function bufferAmbient(observation) {
-  const { ambient = [] } = await chrome.storage.session.get(['ambient'])
-  ambient.push(observation)
-  // Bounded here too, and never above what the app will accept. The oldest go
-  // first: recent activity is what a detection is about.
-  await chrome.storage.session.set({ ambient: ambient.slice(-AMBIENT_BATCH_MAX) })
+  if (ambientKindOf(observation?.signal, observation?.url ?? '') === null) return
+
+  await withStorage(async () => {
+    const { ambient = [] } = await chrome.storage.session.get(['ambient'])
+    ambient.push(observation)
+    // Bounded here too, and never above what the app will accept. The oldest go
+    // first: recent activity is what a detection is about.
+    await chrome.storage.session.set({ ambient: ambient.slice(-AMBIENT_BATCH_MAX) })
+  })
+}
+
+/**
+ * Put a batch back after the app turned out to be unavailable.
+ *
+ * In front of whatever arrived while it was away, because these are older, and
+ * re-bounded because the buffer may have filled behind them.
+ */
+async function returnAmbient(batch) {
+  await withStorage(async () => {
+    const { ambient = [] } = await chrome.storage.session.get(['ambient'])
+    await chrome.storage.session.set({
+      ambient: [...batch, ...ambient].slice(-AMBIENT_BATCH_MAX),
+    })
+  })
 }
 
 async function flushAmbient() {
-  const { ambient = [] } = await chrome.storage.session.get(['ambient'])
+  /**
+   * Take the batch and clear the buffer in one go, BEFORE sending.
+   *
+   * The obvious order — send, then `set({ ambient: [] })` on success — throws
+   * away everything that arrived during the fetch. On loopback that window is
+   * short; with a content script on every https page and engagement reports
+   * every fifteen seconds it is not short enough, and what is lost is
+   * indistinguishable from the person not having read anything.
+   *
+   * Taking first means concurrent appends land in a fresh buffer that nothing
+   * is about to clear, and the only thing at risk is the batch in flight —
+   * which is put back if the app turns out to be unavailable.
+   */
+  const ambient = await withStorage(async () => {
+    const { ambient: held = [] } = await chrome.storage.session.get(['ambient'])
+    if (held.length === 0) return []
+
+    // A buffer written by an older build of this file can hold signals this
+    // one has no truthful kind for — `selection`, most of all. Dropping them
+    // on the way out means a version skew costs a few observations rather than
+    // a batch the schema will refuse.
+    const batch = held
+      .filter((o) => ambientKindOf(o?.signal, o?.url ?? '') !== null)
+      .slice(-AMBIENT_BATCH_MAX)
+
+    await chrome.storage.session.set({ ambient: [] })
+    return batch
+  })
+
   if (ambient.length === 0) return
 
   try {
@@ -242,15 +374,13 @@ async function flushAmbient() {
            * `src/domain/detection/topics.ts`, and the two MUST agree —
            * `tests/search-url.test.ts` runs both over the same table and fails
            * if they ever stop agreeing.
+           *
+           * The classification itself lives in `ambientKindOf`, which is also
+           * what `bufferAmbient` consults to decide whether a signal belongs in
+           * this buffer at all. One author for "what kind is this", so a signal
+           * cannot be refused entry by one rule and relabelled by another.
            */
-          kind:
-            o.signal === 'engagement'
-              ? 'engagement'
-              : o.signal === 'away'
-                ? 'away'
-                : looksLikeSearch(o.url ?? '')
-                  ? 'query'
-                  : 'navigation',
+          kind: ambientKindOf(o.signal, o.url ?? ''),
           ...(typeof o.dwellMs === 'number' ? { engagedMs: o.dwellMs } : {}),
         })),
       }),
@@ -272,19 +402,20 @@ async function flushAmbient() {
      * costs every offer after it, silently.
      *
      * A 5xx or a thrown fetch is the app being unavailable rather than
-     * unwilling, so those are kept — that is the case the buffer exists for.
+     * unwilling, so those go back in the buffer — that is the case it exists
+     * for. Everything else is already gone from it, because the batch was
+     * taken before the send.
      */
-    if (response.ok || response.status === 409) {
-      await chrome.storage.session.set({ ambient: [] })
-      return
-    }
+    if (response.ok || response.status === 409) return
 
     if (response.status >= 400 && response.status < 500) {
       console.warn('[propositum] ambient batch refused, dropping it:', response.status)
-      await chrome.storage.session.set({ ambient: [] })
+      return
     }
+
+    await returnAmbient(ambient)
   } catch {
-    /* the app is down; keep them until the window ages them out */
+    await returnAmbient(ambient)
   }
 }
 
@@ -292,16 +423,29 @@ async function flush() {
   const session = await loadSession()
   if (!session) return
 
-  const { pending = [] } = await chrome.storage.session.get(['pending'])
+  // Taken before the send, for the reason `flushAmbient` gives at length: a
+  // clear-on-success discards everything buffered during the fetch, and these
+  // are the events the ledger is built from.
+  const pending = await withStorage(async () => {
+    const { pending: held = [] } = await chrome.storage.session.get(['pending'])
+    if (held.length === 0) return []
+
+    await chrome.storage.session.set({ pending: [] })
+    return held
+  })
+
   if (pending.length === 0) return
 
   try {
     await post('/api/capture/events', { events: pending }, session)
-    await chrome.storage.session.set({ pending: [] })
   } catch (error) {
-    // Keep the buffer. The app records a gap if the disconnection outlasts it;
+    // Put them back. The app records a gap if the disconnection outlasts it;
     // dropping events silently would be the one unrecoverable mistake.
     console.warn('[propositum] flush failed, keeping buffer:', error)
+    await withStorage(async () => {
+      const { pending: arrived = [] } = await chrome.storage.session.get(['pending'])
+      await chrome.storage.session.set({ pending: [...pending, ...arrived] })
+    })
   }
 }
 
@@ -330,21 +474,38 @@ async function showSuggestionBadge() {
       return
     }
 
+    const thread = suggestion.thread ?? ''
+
     await chrome.action.setBadgeText({ text: '•' })
     await chrome.action.setBadgeBackgroundColor({ color: '#7c6cf0' })
     await chrome.action.setTitle({ title: `${suggestion.sentence} ${suggestion.because}` })
 
     /**
-     * The current offer is stored on EVERY poll, not only when we notify.
+     * The offer is stored UNDER ITS THREAD, not as "the current offer".
      *
-     * `answeredYes` reads this, and it used to be written only alongside a
-     * notification. So the badge could be advertising Thursday's thread while
-     * storage still held Tuesday's, and clicking through opened a link for work
-     * the person had stopped doing an hour ago. Writing it unconditionally
-     * costs one storage set per thirty seconds and makes "what the badge is
-     * about" and "what the click opens" the same object by construction.
+     * ── An answer applied to a target that moved underneath it ───────────
+     *
+     * There used to be one `offer` key, rewritten on every thirty-second poll,
+     * and `answeredYes` / `answeredNo` read it. Notifications are
+     * `requireInteraction: true`, so they sit there until somebody answers.
+     *
+     * Leave one unanswered, let a later poll advertise a different thread, and
+     * pressing **Yes** on the first notification opened `/start` for the
+     * SECOND thread and approved the second thread's sites. "Not now" on the
+     * first snoozed the second's origin. The person answered a question about
+     * one piece of work and got another — and the sites half of that is a
+     * permission decision taken on their behalf about something they were not
+     * looking at.
+     *
+     * It is the same shape as a stale element ref: an answer resolved against
+     * mutable shared state that moved between the question and the answer. The
+     * fix is the same in kind — resolve against something that identifies the
+     * thing itself. The notification id already carries the thread
+     * (`propositum:${thread}`), so it is the key, and each thread's offer is
+     * stored under its own name. A key is a few bytes and session storage dies
+     * with the browser, which is the same trade the `told:` keys already make.
      */
-    await chrome.storage.session.set({ offer: suggestion })
+    if (thread) await chrome.storage.session.set({ [`offer:${thread}`]: suggestion })
 
     /**
      * Actually interrupt, once, when there is something worth interrupting for.
@@ -400,7 +561,6 @@ async function showSuggestionBadge() {
      * with no proposal attached is not worth a notification — that is the
      * interruption people turn the feature off over.
      */
-    const thread = suggestion.thread ?? ''
     const key = `told:${thread}`
     const { [key]: alreadyTold, quietUntil = 0 } = await chrome.storage.session.get([
       key,
@@ -514,12 +674,56 @@ function actFetch(path, init) {
  * quiet, which is right: they have nothing to add.
  */
 async function reportInFlight(body) {
-  const { inFlightIntentId } = await chrome.storage.session.get(['inFlightIntentId'])
-  if (typeof inFlightIntentId !== 'string') return false
+  const intentId = await withStorage(async () => {
+    const { inFlightIntentId } = await chrome.storage.session.get(['inFlightIntentId'])
+    if (typeof inFlightIntentId !== 'string') return null
 
-  await chrome.storage.session.remove(['inFlightIntentId'])
-  await postReport(inFlightIntentId, body)
+    await chrome.storage.session.remove(['inFlightIntentId'])
+    await rememberReported(inFlightIntentId)
+    return inFlightIntentId
+  })
+
+  if (intentId === null) return false
+
+  await postReport(intentId, body)
   return true
+}
+
+/**
+ * Intents this extension has already answered.
+ *
+ * ── Two mechanisms, neither trusting the other ───────────────────────────
+ *
+ * The app's side of this had a real bug: the poll handed out a run's OLDEST
+ * queued row rather than the one it was awaiting, so a live page could have
+ * been sent an orphaned command — a click meant for a page that is no longer
+ * there. That is fixed on their side.
+ *
+ * This is the other side of the same hazard, and it exists precisely because
+ * the fix is on their side. A command that arrives twice is a click that
+ * happens twice, and for a browser action "delivered twice" and "did it twice"
+ * are the same sentence. Refusing an intent this file has already answered
+ * costs a set lookup and does not depend on the app being correct.
+ *
+ * Bounded, and the bound is the reason it is safe to keep at all: a session's
+ * worth of ids is a few kilobytes, and the oldest go first because a command
+ * two hundred intents ago is not one the app is about to re-issue.
+ */
+const REPORTED_INTENT_CAP = 200
+
+async function rememberReported(intentId) {
+  const { reportedIntents = [] } = await chrome.storage.session.get(['reportedIntents'])
+  if (reportedIntents.includes(intentId)) return
+
+  reportedIntents.push(intentId)
+  await chrome.storage.session.set({
+    reportedIntents: reportedIntents.slice(-REPORTED_INTENT_CAP),
+  })
+}
+
+async function alreadyReported(intentId) {
+  const { reportedIntents = [] } = await chrome.storage.session.get(['reportedIntents'])
+  return reportedIntents.includes(intentId)
 }
 
 /**
@@ -802,15 +1006,28 @@ const controlHandlers = {
  * touch is one it created, so there is nothing to click in until it has
  * opened one and gone somewhere.
  *
- * ── Where the approved origins come from ─────────────────────────────────
+ * ── Where the run id and the approved origins come from ──────────────────
  *
- * The command envelope is `{ intentId, kind, params }` and this file has no
- * other channel, so the run's identity and its approved sources travel in
- * `params`. Read tolerantly from either spelling, because the pin is on the
- * envelope and not on what is inside it.
+ * `GET /api/act/next` returns `{ intentId, kind, params }` and nothing else —
+ * no run id. But `POST /api/act/halt` takes one, and stopping is the thing
+ * that must work when everything else does not, so the id cannot be looked up
+ * at the moment it is needed.
  *
- * When the app sends none, the set is seeded with the origin of the URL it
- * asked us to open. That is sound rather than a shortcut: the app gated that
+ * **The decision: the run id arrives with the command that opens the tab, and
+ * is stored beside `controlledTabId` for the life of the attachment.** The
+ * first command of a run is always `navigate` — it has to be, since the only
+ * tab Propositum may touch is one it created — so there is exactly one moment
+ * where it can be handed over, and it is the same moment the tab comes into
+ * existence. The two are written in the same `set`, so a controlled tab with
+ * no run id attached is not a state this file can be in.
+ *
+ * That is deliberately the opposite of asking the app who is running when a
+ * halt is needed. The app is exactly what may be unreachable then.
+ *
+ * The approved sources ride along the same way. Both are read tolerantly from
+ * either spelling — the pin is on the envelope, not on what is inside it. When
+ * the app sends no origins, the set is seeded with the origin of the URL it
+ * asked us to open: sound rather than a shortcut, because the app gated that
  * navigation before dispatching it, so the destination is app-attested. What
  * it is NOT is a widening — the extension can only ever narrow from what the
  * app told it.
@@ -845,6 +1062,20 @@ async function ensureControlledTab(command) {
 }
 
 async function runCommand(command) {
+  /**
+   * A command answered once is never run again.
+   *
+   * Not a retry guard — a re-delivery guard. For a browser action "delivered
+   * twice" and "clicked twice" are the same sentence, and there is no undo for
+   * the second one. Silence is the right answer: reporting again would be the
+   * duplicate this exists to prevent, and the app already has an outcome for
+   * this intent.
+   */
+  if (await alreadyReported(command.intentId)) {
+    console.warn('[propositum] refusing a command already answered:', command.intentId)
+    return
+  }
+
   await chrome.storage.session.set({ inFlightIntentId: command.intentId })
 
   try {
@@ -906,15 +1137,31 @@ async function pollOnce() {
 async function pollForWork() {
   if (!(await claimPollLease())) return
 
+  /**
+   * Refresh the lease WHILE the loop runs, not between turns.
+   *
+   * Refreshing only after `pollOnce` returns is not enough, and the arithmetic
+   * is not close. One turn is up to 25 seconds of long poll PLUS the whole
+   * command: a click that triggers a slow navigation adds `SETTLE_CEILING_MS`
+   * and an accessibility snapshot on top. A 22-second poll that returns such a
+   * command comfortably exceeds the 35-second lease, the heartbeat alarm finds
+   * it expired and claims it, and there are two loops consuming
+   * `/api/act/next` and writing the same in-flight intent — the exact thing
+   * the lease exists to make impossible.
+   *
+   * A timer rather than a check, because the loop is parked inside an `await`
+   * for almost all of its life and has nowhere to put a check.
+   */
+  const keepLease = setInterval(() => {
+    void chrome.storage.session.set({ pollLeaseUntil: Date.now() + POLL_LEASE_MS })
+  }, Math.floor(POLL_LEASE_MS / 3))
+
   try {
     for (;;) {
       if ((await pollOnce()) === 'stop') return
-
-      // Refresh the lease rather than re-taking it: this loop still holds it,
-      // and letting it lapse mid-loop would let the alarm start a second one.
-      await chrome.storage.session.set({ pollLeaseUntil: Date.now() + POLL_LEASE_MS })
     }
   } finally {
+    clearInterval(keepLease)
     await releasePollLease()
   }
 }
@@ -1117,19 +1364,57 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return sendResponse({ ok: true, ambient: true })
     }
 
-    // A session IS running. Full capture, but only on approved sources — the
-    // sender is the least trustworthy input this file receives, and the app
-    // checks again against its own grant list before anything is stored.
+    /**
+     * A session IS running. Full capture — but only on approved sources.
+     *
+     * ── Why this is `patternCovers` and not `startsWith` ─────────────────
+     *
+     * It was `origin.startsWith(s.origin)`, which is the oldest allowlist bug
+     * there is: with `https://mail.google.com` approved, a page at
+     * `https://mail.google.com.attacker.example` matches. That was
+     * theoretical while `optional_host_permissions` meant content scripts ran
+     * only on specifically granted origins. It stopped being theoretical when
+     * the manifest went broad (ADR-0008): `content.js` now runs on every https
+     * page, so an attacker-registered lookalike host **executes the capture
+     * script**, prefix-matches here, and gets its full 2,000-character excerpt
+     * and every selection buffered as approved-source capture.
+     *
+     * The server re-matches and files those as `unattributed`, so nothing
+     * reaches the ledger. That backstop is not the answer: this is where the
+     * promise is stated, this is the layer the privacy argument is written
+     * about, and a boundary that fails open while a second one quietly catches
+     * it is a boundary that will be relied on the day the second one moves.
+     *
+     * `patternCovers` is the tested predicate — `tests/match-pattern.test.ts`
+     * — and it is exact on the host, anchors `*.` on a dot, and answers no to
+     * anything it cannot parse. `cdp.js` makes the identical argument for the
+     * acting path's origin check; there is no reason for the two to differ.
+     */
     const origin = sender.origin ?? ''
-    const approved = session.sources.some((s) => origin.startsWith(s.origin))
+    const approved = session.sources.some((s) => patternCovers(s.origin, origin))
     if (!approved) {
-      // Approved-source capture is off here, but the person may still be
-      // working somewhere they have not set up. That is what ambient is for.
-      const { text, ...metadataOnly } = message.signal ?? {}
-      void text
-
-      await bufferAmbient({ ...metadataOnly, at: Date.now() })
-      return sendResponse({ ok: true, ambient: true })
+      /**
+       * Not an approved source, and NOT buffered as ambient either.
+       *
+       * This branch used to buffer, on the reasoning that the person may be
+       * working somewhere they have not set up. The reasoning is right and the
+       * mechanism does not exist: `/api/capture/ambient` returns 409
+       * unconditionally while a session is live, and 409 is read here as "the
+       * ledger has these now, drop them". The ledger does not have them — the
+       * events route never saw them, because this is exactly the branch that
+       * decided not to send them there.
+       *
+       * So every one of these was buffered and then discarded for the whole
+       * life of every session. Buffering them was not a feature that
+       * half-worked; it was a cost with no benefit, and the honest version is
+       * to say so here rather than leave the appearance of coverage.
+       *
+       * Making it work is the app's call, not this file's: it means the
+       * ambient route accepting observations during a session, which is a
+       * decision about whether Propositum may notice a SECOND piece of work
+       * while it is already watching one.
+       */
+      return sendResponse({ ok: true, ambient: false, reason: 'session-scoped' })
     }
 
     // No `approvedSourceId` and no `kind`. The app decides both: which source
@@ -1173,17 +1458,41 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
  * page shows the composed offer when there is one and the deterministic
  * "start watching" form when there is not.
  */
-async function answeredYes() {
-  const { offer } = await chrome.storage.session.get(['offer'])
-  if (!offer?.thread) return
+/**
+ * Which thread a notification was about — read off the notification itself.
+ *
+ * The id is minted as `propositum:${thread}` and Chrome hands it straight back
+ * to the answer handlers, so it is an identity that cannot have moved between
+ * the question and the answer. See the storage comment in
+ * `showSuggestionBadge` for what reading a mutable "current offer" instead
+ * used to do.
+ */
+function threadOf(notificationId) {
+  const prefix = 'propositum:'
+  if (!notificationId.startsWith(prefix)) return null
 
-  const params = new URLSearchParams({ thread: offer.thread })
+  const thread = notificationId.slice(prefix.length)
+  return thread.length > 0 ? thread : null
+}
+
+async function offerFor(thread) {
+  const key = `offer:${thread}`
+  const stored = await chrome.storage.session.get([key])
+  return stored[key] ?? null
+}
+
+async function answeredYes(notificationId) {
+  const thread = threadOf(notificationId)
+  if (thread === null) return
+
+  const params = new URLSearchParams({ thread })
   await chrome.tabs.create({ url: `${APP_ORIGIN}/start?${params.toString()}` })
   await chrome.action.setBadgeText({ text: '' })
 }
 
-async function answeredNo() {
-  const { offer } = await chrome.storage.session.get(['offer'])
+async function answeredNo(notificationId) {
+  const thread = threadOf(notificationId)
+  const offer = thread === null ? null : await offerFor(thread)
   await chrome.action.setBadgeText({ text: '' })
 
   /**
@@ -1215,14 +1524,14 @@ async function answeredNo() {
 chrome.notifications.onButtonClicked.addListener(async (id, index) => {
   if (!id.startsWith('propositum:')) return
   chrome.notifications.clear(id)
-  await (index === 0 ? answeredYes() : answeredNo())
+  await (index === 0 ? answeredYes(id) : answeredNo(id))
 })
 
 // Clicking the body, rather than a button, means "tell me more" — same as yes.
 chrome.notifications.onClicked.addListener(async (id) => {
   if (!id.startsWith('propositum:')) return
   chrome.notifications.clear(id)
-  await answeredYes()
+  await answeredYes(id)
 })
 
 /* ── host grants, and the content scripts that follow from them ────────── */
