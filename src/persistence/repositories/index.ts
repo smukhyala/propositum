@@ -67,6 +67,15 @@ export interface ProjectRepository {
   create(name: string): Promise<{ id: string; name: string }>
   byId(id: string): Promise<{ id: string; name: string } | null>
   list(): Promise<Array<{ id: string; name: string }>>
+  /**
+   * The person corrects the name Propositum gave it.
+   *
+   * Nothing about a project is append-only — it holds no inference and carries
+   * no provenance, so a name is just a name and an UPDATE is the honest shape.
+   * Auto-naming is only acceptable if it is correctable, and this is where the
+   * correction lands.
+   */
+  rename(id: string, name: string): Promise<void>
   approveSource(input: {
     projectId: string
     originPattern: string
@@ -89,6 +98,9 @@ export interface ProjectRepository {
 function projectRepository(prisma: PrismaClient): ProjectRepository {
   return {
     create: (name) => prisma.project.create({ data: { name }, select: { id: true, name: true } }),
+    rename: async (id, name) => {
+      await prisma.project.update({ where: { id }, data: { name } })
+    },
     byId: (id) => prisma.project.findUnique({ where: { id }, select: { id: true, name: true } }),
     list: () => prisma.project.findMany({ select: { id: true, name: true }, orderBy: { createdAt: 'desc' } }),
     approveSource: ({ projectId, originPattern, label }) =>
@@ -136,6 +148,21 @@ export interface WorkSessionRepository {
   markAway(id: string): Promise<void>
   markObserving(id: string): Promise<void>
   end(id: string, endedAt: Date): Promise<void>
+  /**
+   * The sitting was filed under the wrong subject; move it.
+   *
+   * `projectId` is not a lifecycle field, so this is not one of the explicit
+   * transitions above and deliberately does not go through `setPhase` — where
+   * the work is filed and how far through it is are unrelated questions, and a
+   * setter that could change both would eventually change both by accident.
+   *
+   * The sitting's ObservationEvents keep pointing at the ApprovedSources of the
+   * project they were recorded under; the ledger is append-only and rewriting
+   * history to tidy a filing decision is exactly what append-only is for
+   * refusing. The caller carries those origins across as approvals on the
+   * destination instead, so what Propositum may see is right going forward.
+   */
+  refile(id: string, projectId: string): Promise<void>
 }
 
 function workSessionRepository(prisma: PrismaClient): WorkSessionRepository {
@@ -159,6 +186,9 @@ function workSessionRepository(prisma: PrismaClient): WorkSessionRepository {
       }),
     markAway: (id) => setPhase(id, 'away'),
     markObserving: (id) => setPhase(id, 'observing'),
+    refile: async (id, projectId) => {
+      await prisma.workSession.update({ where: { id }, data: { projectId } })
+    },
     end: async (id, endedAt) => {
       await prisma.workSession.update({ where: { id }, data: { phase: 'ended', endedAt } })
     },

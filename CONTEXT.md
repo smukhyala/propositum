@@ -32,10 +32,24 @@ this document is provisional; where a term's shape depends on a later ticket, it
 ## 1. Observation
 
 ### Project — *table*
-The single durable workspace the user creates explicitly (`id`, `name`, `createdAt`). Owns
+The single durable workspace (`id`, `name`, `createdAt`). Owns
 every ApprovedSource, Document and WorkSession. No objective, no status, **no free-text
 description** — a description that inference reads is a project goal in disguise and would
 silently pre-answer whether the human declares what they are working on.
+
+~~The user creates it explicitly.~~ **Amended 2026-08-11: nobody creates a project.** The
+detector finds a thread, a model names the subject, and accepting the offer creates the project
+under that name — there is no form, and `createProject` is not a server action. The schema is
+unchanged; what went is the human act of filing. Two corrections make that defensible and are
+therefore part of the term, not decoration: the name is editable, and a sitting can be moved to
+another project or split out into its own. Rows are mutable for exactly this reason — a Project
+holds no inference and carries no provenance, so nothing here is append-only.
+
+**Filing is deterministic.** `matchProject` compares the subject's words to each existing
+project's, and joins only on at least two shared words covering 0.6 of the smaller set. A model
+naming the match would be a model deciding where someone's work is filed. The thresholds are
+guesses set before real data, tuned toward splitting: a false split is one click, a false merge
+silently inherits the wrong sources and the wrong document.
 *Displaces:* Workspace · Space · Folder · Board · Account · Client · ProjectGoal.
 **Consumer:** Project.
 
@@ -976,6 +990,11 @@ Recorded so they are found deliberately rather than discovered.
 - **There is no cross-session continuity.** The objective does not survive a session, and the
   brief's Project "goals" is deliberately unmodelled. A second session starts cold — which the
   product's own shift-change metaphor implies otherwise.
+  *Partly addressed 2026-08-11.* `matchProject` joins a new sitting to the project it recognises,
+  so the approved sources and the document survive a session. **The objective still does not, and
+  must not**: a stale objective inherited quietly by the next sitting is worse than a cold read,
+  because nothing on screen would say it had been. What carries forward is where the work lives,
+  never what Propositum thinks it is for.
 - **Locking the document for the duration of a Shift is an untested product cost.** It buys a
   genuinely immutable base, and it tells the user who opens their laptop at 6pm to fix a typo *no*.
 - **`guidance` is unenforceable prose beside enforced fields**, held honest only by a UI label.

@@ -308,6 +308,77 @@ describe('the extension can actually capture', () => {
   })
 })
 
+describe('a project nobody created can still be corrected', () => {
+  /**
+   * Propositum names the project and decides which one a sitting goes under.
+   * Both are guesses. If either correction is unreachable, the guess is not a
+   * helpful default — it is a decision imposed on someone about their own work
+   * with no way back, and the case for automatic filing collapses.
+   *
+   * These are the same class of defect as `documents.create`: correct, tested,
+   * and called by nothing, behind an interface that implied otherwise.
+   */
+  it('something renames a project, or the name Propositum chose is permanent', () => {
+    const callers = callersOf('projects.rename', 'src/persistence/repositories/index.ts')
+
+    expect(callers, 'nothing renames a project — an auto-chosen name cannot be fixed').not.toEqual(
+      [],
+    )
+  })
+
+  it('something re-files a sitting, or a wrong merge cannot be undone', () => {
+    const callers = callersOf('sessions.refile', 'src/persistence/repositories/index.ts')
+
+    expect(
+      callers,
+      'nothing moves a sitting between projects — "no, this is new work" has nowhere to go',
+    ).not.toEqual([])
+  })
+
+  it('a merge is told to the person, or it is exactly the silent failure', () => {
+    // `joinedExisting` was added, documented as "the screen it lands on says
+    // so", and read by nothing — both accept paths redirected to the same
+    // place whether or not Propositum had just filed the work under an older
+    // subject. A flag with no reader is a decision taken in silence.
+    const readers = callersOf('joinedExisting', 'src/server/actions.ts')
+
+    expect(
+      readers,
+      'nothing reads joinedExisting — a sitting can be merged with nothing said',
+    ).not.toEqual([])
+
+    // ...and the screen they land on must actually render it.
+    const session = readFileSync(join(repo, 'src/app/sessions/[sessionId]/page.tsx'), 'utf8')
+    expect(session, 'the landing screen never states a filing decision').toContain('filed')
+  })
+
+  it('carrying sources across never re-grants a withdrawn one', () => {
+    // `approveSource` upserts `grantState: 'granted'`, so both the join path
+    // and the re-file path could resurrect a permission the person had
+    // deliberately withdrawn in Chrome — a human act undone by a convenience,
+    // on screens that promise Propositum will not ask again.
+    const actions = readFileSync(join(repo, 'src/server/actions.ts'), 'utf8')
+    const guards = actions.match(/grantState !== 'granted'/g) ?? []
+
+    expect(
+      guards.length,
+      'both the join path and the re-file path must skip a withdrawn source',
+    ).toBeGreaterThanOrEqual(2)
+  })
+
+  it('nothing a person clicks creates a project directly', () => {
+    // `createProject` stopped being a server action on purpose. A `'use server'`
+    // module exports only async functions, so re-exporting it is all it takes to
+    // put the form back — and the form is the setup step this whole change
+    // removed.
+    const actions = readFileSync(join(repo, 'src/server/actions.ts'), 'utf8')
+
+    expect(actions, 'createProject is exported again — a person can file work by hand').not.toMatch(
+      /export\s+async\s+function\s+createProject\b/,
+    )
+  })
+})
+
 describe('page-derived prose cannot reach the drafted agreement', () => {
   it('draftContract filters constraint claims before the handoff call', () => {
     // ADR-0006's structural barrier covers `guidance` only, because the schema
