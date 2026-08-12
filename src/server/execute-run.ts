@@ -301,6 +301,20 @@ async function review(
 
     const handles: ReviewedOutcome[] = []
 
+    /**
+     * One counter for every change handle in the prompt, not one per outcome.
+     *
+     * A per-outcome counter would restart at `C1` under each outcome, and two
+     * outcomes each holding a `C1` would put the same handle in the set twice —
+     * so the map would keep whichever was written last and every finding citing
+     * `C1` would resolve onto that one. One run holds at most one
+     * `document-changes` outcome today, because its writer groups every drafted
+     * section into one, so the collision is currently unreachable. It is a
+     * counter rather than a comment because the thing keeping it unreachable is
+     * a grouping decision in a different file.
+     */
+    let changeHandles = 0
+
     for (const [index, outcome] of held.entries()) {
       const handle = `O${index + 1}`
       outcomeIdByHandle.set(handle, outcome.id)
@@ -320,8 +334,9 @@ async function review(
           ? await ctx.repos.changesets.forOutcome(outcome.id)
           : null
 
-      const changes = changeset?.changes.map((change, position) => {
-        const changeHandle = `C${position + 1}`
+      const changes = changeset?.changes.map((change) => {
+        changeHandles += 1
+        const changeHandle = `C${changeHandles}`
         changeIdByHandle.set(changeHandle, change.id)
         return {
           handle: changeHandle,
