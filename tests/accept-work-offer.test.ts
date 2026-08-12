@@ -290,6 +290,51 @@ describe('an accepted offer becomes durable, and a declined one leaves nothing',
     expect(result.value.carriedOver).toBe(3)
   })
 
+  it('carries one row per page, however many times the page was reported', async () => {
+    /**
+     * The content script reports engagement for the focused page every fifteen
+     * seconds, so a page read for five minutes is about twenty observations of
+     * one URL. That is right for the buffer, which takes the largest dwell
+     * report, and wrong for the ledger: each one used to become an
+     * `ObservationEvent` saying "opened this page", so accepting wrote twenty
+     * "opened" rows for one page, seconds apart. An end-to-end run of four
+     * pages produced forty events, and the timeline read as somebody
+     * frantically reopening the same tab.
+     */
+    const signature = watched()
+    const store = stores.ambientStore()
+    const now = Date.now()
+
+    for (let i = 0; i < 8; i += 1) {
+      store.record(
+        {
+          at: now + i * 1_000,
+          origin: NORTHWIND,
+          url: `${NORTHWIND}/partners`,
+          title: 'Northwind partners',
+          kind: 'engagement',
+          engagedMs: (i + 1) * 15_000,
+        },
+        now,
+      )
+    }
+
+    const result = await actions.acceptWorkOffer(signature, [NORTHWIND, CONTOSO])
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+
+    // Three distinct pages, whatever the report count.
+    expect(result.value.carriedOver).toBe(3)
+
+    const { db: handle } = await db.appContext()
+    const events = await handle.prisma.observationEvent.findMany({
+      where: { sessionId: result.value.sessionId },
+      select: { attested: true },
+    })
+    const urls = events.map((e) => (e.attested as Record<string, unknown>)['url'])
+    expect(new Set(urls).size).toBe(urls.length)
+  })
+
   it('starts a session and writes no offer row when nothing was composed', async () => {
     const signature = watched()
 

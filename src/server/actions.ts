@@ -1043,18 +1043,75 @@ export async function startFromSuggestion(
     const ambient = ambientStore()
     const threadPages = threadSignature ? ambient.pagesOfThread(threadSignature) : []
 
-    let carriedOver = 0
+    /**
+     * One row per PAGE, not one per observation.
+     *
+     * ── What carrying every observation actually produced ────────────────
+     *
+     * The content script reports engagement for whichever page has focus every
+     * fifteen seconds, and every report is a separate row in the ambient
+     * buffer. So a page read for five minutes is about twenty observations of
+     * one URL — which is exactly right for the buffer, because `engagedByUrl`
+     * takes the largest report and needs them all.
+     *
+     * It is exactly wrong for the ledger. This loop turned each one into an
+     * `ObservationEvent` saying "opened this page", so accepting an offer wrote
+     * twenty "opened" rows for one page, in a row, seconds apart. An end-to-end
+     * run of four pages produced forty events. The timeline reads as somebody
+     * frantically reopening the same tab, the `SessionReading` is built from
+     * that, and neither is what happened.
+     *
+     * So the pages are collapsed first, and the collapse keeps the two facts
+     * worth keeping: the EARLIEST time, because that is when they arrived, and
+     * whether the page was ever a query, because that is what decides the kind.
+     * The title is taken from whichever report had one — the first report often
+     * lands before the document has a title at all.
+     *
+     * Dwell is deliberately NOT carried across. An `engaged` row means the
+     * dwell-and-scroll bar was cleared inside a session somebody started, and
+     * manufacturing one here from ambient metadata would put a claim about
+     * attention into a ledger that is supposed to hold only what was observed
+     * under the ordinary rules.
+     */
+    interface CarriedPage {
+      readonly url: string
+      title: string
+      at: number
+      searched: boolean
+      readonly sourceId: string
+    }
+
+    const byUrl = new Map<string, CarriedPage>()
     for (const observation of ambient.forUrls(threadPages, startedAtMs)) {
       const pattern = normaliseOriginPattern(observation.origin)
       const sourceId = pattern === null ? undefined : sourceByPattern.get(pattern)
       if (!sourceId) continue
 
+      const existing = byUrl.get(observation.url)
+      if (!existing) {
+        byUrl.set(observation.url, {
+          url: observation.url,
+          title: observation.title,
+          at: observation.at,
+          searched: observation.kind === 'query',
+          sourceId,
+        })
+        continue
+      }
+
+      existing.at = Math.min(existing.at, observation.at)
+      existing.searched = existing.searched || observation.kind === 'query'
+      if (existing.title === '') existing.title = observation.title
+    }
+
+    let carriedOver = 0
+    for (const page of [...byUrl.values()].sort((a, b) => a.at - b.at)) {
       const appended = await ledger.append(session.id, {
-        kind: observation.kind === 'query' ? 'queried' : 'visited',
-        observedAt: new Date(observation.at),
+        kind: page.searched ? 'queried' : 'visited',
+        observedAt: new Date(page.at),
         elapsedMs: 0,
-        approvedSourceId: sourceId,
-        attested: { url: observation.url, title: observation.title, ambient: true },
+        approvedSourceId: page.sourceId,
+        attested: { url: page.url, title: page.title, ambient: true },
       })
       if (appended.ok) carriedOver += 1
     }
