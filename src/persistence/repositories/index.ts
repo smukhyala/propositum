@@ -1011,6 +1011,23 @@ export interface ShiftOutcomeRepository {
     outcomes: readonly ShiftOutcomeInput[]
   }): Promise<Array<{ id: string; ordinal: number }>>
   forRun(runId: string): Promise<StoredShiftOutcome[]>
+  /**
+   * Everything one Shift produced, across every run under its contract.
+   *
+   * A Shift is addressed by contract everywhere a person can see it — the
+   * re-entry note is a route on the contract id, and the fold is too — while an
+   * outcome hangs off a run, and a contract has a worker run and possibly a
+   * reviewer run. Without this, both the screen and the fold would have to
+   * fetch the runs first and then loop, and two callers doing that separately
+   * is two chances to miss the reviewer's rows.
+   *
+   * Ordered oldest run first, then by the ordinal the writer assigned, so "the
+   * third thing it made" is a stable phrase across a re-read.
+   */
+  forContract(contractId: string): Promise<StoredShiftOutcome[]>
+  /** One outcome, for the write path that must check `reversibility` before it
+   *  will record a verdict against it. */
+  byId(id: string): Promise<StoredShiftOutcome | null>
   /** Append-only, exactly as ChangeVerdict is: a verdict is recorded once, and
    *  changing your mind has to be something the interface does visibly. */
   recordVerdict(input: {
@@ -1022,6 +1039,38 @@ export interface ShiftOutcomeRepository {
 
 function shiftOutcomeRepository(prisma: PrismaClient): ShiftOutcomeRepository {
   const asStrings = (value: unknown): string[] => (Array.isArray(value) ? (value as string[]) : [])
+
+  // One column list for every reader here, so a field added to the row cannot
+  // appear on one screen and not another.
+  const FIELDS = {
+    id: true,
+    ordinal: true,
+    kind: true,
+    reversibility: true,
+    headline: true,
+    reason: true,
+    citedActionIntentIds: true,
+    detail: true,
+    createdAt: true,
+    verdict: { select: { verdict: true, editedText: true } },
+  } as const
+
+  const shape = (row: {
+    id: string
+    ordinal: number
+    kind: string
+    reversibility: string
+    headline: string
+    reason: string
+    citedActionIntentIds: unknown
+    detail: unknown
+    createdAt: Date
+    verdict: { verdict: string; editedText: string | null } | null
+  }): StoredShiftOutcome => ({
+    ...row,
+    citedActionIntentIds: asStrings(row.citedActionIntentIds),
+    detail: (row.detail ?? {}) as JsonObject,
+  })
 
   return {
     create: ({ runId, outcomes }) =>
@@ -1061,24 +1110,23 @@ function shiftOutcomeRepository(prisma: PrismaClient): ShiftOutcomeRepository {
       const rows = await prisma.shiftOutcome.findMany({
         where: { runId },
         orderBy: { ordinal: 'asc' },
-        select: {
-          id: true,
-          ordinal: true,
-          kind: true,
-          reversibility: true,
-          headline: true,
-          reason: true,
-          citedActionIntentIds: true,
-          detail: true,
-          createdAt: true,
-          verdict: { select: { verdict: true, editedText: true } },
-        },
+        select: FIELDS,
       })
-      return rows.map((row) => ({
-        ...row,
-        citedActionIntentIds: asStrings(row.citedActionIntentIds),
-        detail: (row.detail ?? {}) as JsonObject,
-      }))
+      return rows.map(shape)
+    },
+
+    forContract: async (contractId) => {
+      const rows = await prisma.shiftOutcome.findMany({
+        where: { run: { contractId } },
+        orderBy: [{ run: { createdAt: 'asc' } }, { ordinal: 'asc' }],
+        select: FIELDS,
+      })
+      return rows.map(shape)
+    },
+
+    byId: async (id) => {
+      const row = await prisma.shiftOutcome.findUnique({ where: { id }, select: FIELDS })
+      return row === null ? null : shape(row)
     },
 
     recordVerdict: async ({ outcomeId, verdict, editedText }) => {
