@@ -33,7 +33,7 @@ import { revalidatePath } from 'next/cache'
 
 import { appContext } from './db'
 import { readableCause } from './problem'
-import { confirmRequest, rejectRequest, settleAbandonedIntents } from './confirmations'
+import { confirmRequest, haltRun, rejectRequest } from './confirmations'
 import { ambientStore, captureStore } from './capture-store'
 import { describeWork, signatureOf } from './ambient-store'
 import { AnthropicModelClient } from '../model/anthropic'
@@ -2885,7 +2885,29 @@ export interface ControlTaken {
   readonly runId: string
   /** False when there was nothing still running to stop. */
   readonly stopped: boolean
-  /** Actions that were in flight and have now been recorded as unverified. */
+  /**
+   * Actions abandoned by a run that had ALREADY ended, now recorded as
+   * unverified.
+   *
+   * ── Almost always zero, and that is correct ──────────────────────────────
+   *
+   * `settleAbandonedIntents` returns 0 for any run in `pending | claimed |
+   * running`, by a deliberate guard. So pressing this on a live run — the
+   * ordinary case — settles nothing, and `unfinished` is 0.
+   *
+   * **Do not "fix" that to make this number more interesting.** An intent with
+   * no outcome on a LIVE run is in flight, not abandoned: the worker is about
+   * to write the real outcome, `ActionOutcome.intentId` is unique, and a
+   * recovery row written first makes the worker's write throw, propagate out of
+   * the loop, and complete a healthy shift as `failed / error`. Pressing "Take
+   * back control" would be the thing that broke the run.
+   *
+   * It is non-zero in the case it was written for: a run that already ended —
+   * because Chrome's infobar Cancel or the tab overlay chip removed the
+   * capability mid-action, which detaches before any POST and does not come
+   * through here — and left an intent nobody came back to. Otherwise the
+   * startup sweep settles it once the lease expires.
+   */
   readonly unfinished: number
 }
 
@@ -2918,23 +2940,16 @@ export async function takeBackControl(runId: string): Promise<ActionResult<Contr
   return attempt(async () => {
     const ctx = await appContext()
 
-    const stopped = await ctx.repos.runs.requestCancel(runId)
-
     /**
-     * Settle anything left in flight, here, in the app.
+     * The same implementation `POST /api/act/halt` uses.
      *
-     * ADR-0007 says halts land at the next action boundary so that an
-     * abandoned action never leaves an intent with no outcome. A person
-     * pressing this while an action is in flight — or having already detached
-     * the debugger from the tab, which happens BEFORE any POST — can produce
-     * exactly that state. The property is preserved by moving the writer: not
-     * the worker, which may be gone, but the app, on the person's own return.
-     *
-     * It writes `observedBy: 'recovery'` with `scopeVerdict: 'unverified'` — it
-     * may only record what it can prove, and it cannot prove the click landed
-     * or that it did not.
+     * One behaviour behind two doors: this one, and the one the tab overlay
+     * chip and the side panel Stop reach after they have already detached. Two
+     * implementations of "stop" would be two things to keep in agreement about
+     * a run that is driving somebody's browser, and they would disagree first
+     * on the part nobody looks at — flag, revoke, settle, in that order.
      */
-    const unfinished = await settleAbandonedIntents(ctx, runId)
+    const { stopped, unfinished } = await haltRun(ctx, runId)
 
     refresh()
     return ok<ControlTaken>({ runId, stopped, unfinished })

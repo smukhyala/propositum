@@ -147,6 +147,70 @@ export async function creditedDeadlineFor(
   })
 }
 
+/* ── what the gate is allowed to know about a yes ───────────────────────── */
+
+/**
+ * Which `ConfirmationRequest` ids on this contract carry a `confirmed` verdict.
+ *
+ * This is the half of the loop that makes a yes mean anything. `authorize()`
+ * refuses `confirmation_required` when `params.confirmationId` is absent from
+ * `RunContext.confirmedRequestIds`, and until something fills that set, a
+ * person's yes buys a continuation that asks the identical question again —
+ * which fails safe and reads as *"Propositum ignored my answer"*.
+ *
+ * ── Read the two rules before wiring this up ─────────────────────────────
+ *
+ * **A model may never supply a confirmation id.** A model that could name one
+ * could confirm its own action, and that is a GRANT — the exact thing
+ * "models propose, deterministic code authorizes" forbids. The id must be
+ * injected by deterministic code, matched against the refused intent the
+ * continuation is picking up. ADR-0007's asymmetry is precise here: a model may
+ * always decline, because declining withholds; it may never assert that it has
+ * permission.
+ *
+ * **Scoped to the CONTRACT, not the run.** A confirmation is answered against
+ * the run that asked, and honoured by a different run — the continuation. So a
+ * run-scoped query would return the empty set for the only run that needs it.
+ * The contract is the right boundary because a Shift is one contract, and a
+ * yes given inside a Shift belongs to that Shift and to nothing else.
+ *
+ * Only `confirmed` counts. `rejected` and absent are indistinguishable to the
+ * gate on purpose: all three mean "not permitted", and a set that included
+ * rejections would turn a no into a yes.
+ */
+export async function confirmedRequestIdsFor(
+  ctx: ConfirmationContext,
+  contractId: string,
+): Promise<ReadonlySet<string>> {
+  const rows = await ctx.db.prisma.confirmationRequest.findMany({
+    where: { run: { contractId }, verdict: { verdict: 'confirmed' } },
+    select: { id: true },
+  })
+
+  const ids = new Set<string>()
+  for (const row of rows) ids.add(row.id)
+  return ids
+}
+
+/**
+ * The confirmed request covering one refused intent, if the person said yes.
+ *
+ * The deterministic injection point. A continuation rebuilds from the ledger,
+ * finds the intent its predecessor was refused on, and asks this whether a
+ * human authorised it — then puts the id into `params.confirmationId` itself.
+ * Nothing a model returns is consulted at any step.
+ */
+export async function confirmationForIntent(
+  ctx: ConfirmationContext,
+  intentId: string,
+): Promise<string | null> {
+  const row = await ctx.db.prisma.confirmationRequest.findUnique({
+    where: { intentId },
+    select: { id: true, verdict: { select: { verdict: true } } },
+  })
+  return row?.verdict?.verdict === 'confirmed' ? row.id : null
+}
+
 /* ── what the person is answering ───────────────────────────────────────── */
 
 /** The attested and page-authored halves of one request, kept apart. */
@@ -428,14 +492,17 @@ export async function confirmRequest(
    * second mechanism for reviving a row that has already ended, and would put
    * two runs' actions under one `AgentRun` in an append-only ledger.
    *
-   * The control token is minted fresh. A continuation drives the browser, and
-   * reusing the paused run's token would mean a credential outliving the run it
-   * was issued to — which is how a stale worker comes to hold a live one.
+   * It is enqueued WITHOUT a control token, and that is deliberate. A
+   * continuation drives the browser and will need one, but it is minted at the
+   * claim — by the process that takes the run — not here. A credential written
+   * onto a `pending` row would sit there unused for as long as the queue is
+   * long, would survive the claim moving between processes, and would be held
+   * by a row nobody is driving. That is the stale-claim hazard `claimedBy`
+   * exists to close, wearing different clothes.
    */
   const continuation = await ctx.repos.runs.enqueue({
     contractId: request.run.contractId,
     role: 'worker',
-    controlToken: globalThis.crypto.randomUUID(),
     resumesRunId: request.runId,
   })
 
@@ -575,9 +642,18 @@ export async function admitRun(
   // Completed as `interrupted`, not `failed`. Nothing went wrong: a bound the
   // person set was reached before their answer arrived, and a `failed` run
   // would put an error where an explanation belongs.
+  //
+  // The control token goes with it. This run was claimed a moment ago and so
+  // holds a live browser credential; it is about to never act, and a token on a
+  // run that will not act is a token nothing will ever revoke.
   await ctx.db.prisma.agentRun.update({
     where: { id: runId },
-    data: { status: 'interrupted', terminalReason: admission.terminalReason, endedAt: now },
+    data: {
+      status: 'interrupted',
+      terminalReason: admission.terminalReason,
+      endedAt: now,
+      controlToken: null,
+    },
   })
 
   await noteInReport(ctx, run.contractId, admission.report)
@@ -606,24 +682,46 @@ export async function admitRun(
  * Returns how many runs it settled, so a caller can log it.
  */
 export async function expireConfirmations(ctx: ConfirmationContext, now: Date): Promise<number> {
+  /**
+   * Bounded IN THE QUERY, and by both terms.
+   *
+   * A first version selected every unanswered request ever and filtered in
+   * JavaScript — the same pattern this file criticises a hundred lines below on
+   * `oldestPendingConfirmation`, and worse here, because the set only ever
+   * grows: a request nobody answered stays unanswered forever and came back in
+   * every result, every five minutes, for the life of the database.
+   *
+   * The status filter belongs in the query for the same reason. Only a run
+   * still parked on the question is in scope: a run that already ended for
+   * another reason keeps the reason it ended for, and a question expiring
+   * afterwards does not retell the story of why it stopped.
+   */
+  const expiredBefore = new Date(now.getTime() - CONFIRMATION_EXPIRY_HOURS * 3_600_000)
+
   const open = await ctx.db.prisma.confirmationRequest.findMany({
-    where: { verdict: { is: null } },
-    select: { id: true, runId: true, createdAt: true, run: { select: { contractId: true, status: true } } },
+    where: {
+      verdict: { is: null },
+      // `lte`, matching `confirmationHasExpired`'s `>=`: a request expires at
+      // the instant the day is up, not one tick later.
+      createdAt: { lte: expiredBefore },
+      run: { status: 'awaiting-confirmation' },
+    },
+    select: { id: true, runId: true, run: { select: { contractId: true } } },
   })
 
   let settled = 0
   for (const request of open) {
-    if (!confirmationHasExpired({ requestedAtEpochMs: request.createdAt.getTime(), nowEpochMs: now.getTime() })) {
-      continue
-    }
-    // Only a run still parked on the question. A run that already ended for
-    // another reason keeps the reason it ended for — the question expiring
-    // afterwards does not retell the story of why it stopped.
-    if (request.run.status !== 'awaiting-confirmation') continue
-
     await ctx.db.prisma.agentRun.update({
       where: { id: request.runId },
-      data: { status: 'interrupted', terminalReason: CONFIRMATION_EXPIRED, endedAt: now },
+      data: {
+        status: 'interrupted',
+        terminalReason: CONFIRMATION_EXPIRED,
+        endedAt: now,
+        // Belt and braces: `complete` already cleared it when the run parked on
+        // the question. Writing it again costs nothing and means this path does
+        // not depend on remembering that the earlier one did.
+        controlToken: null,
+      },
     })
     await noteInReport(ctx, request.run.contractId, CONFIRMATION_EXPIRED_REPORT)
     settled += 1
@@ -700,19 +798,121 @@ export async function settleAbandonedIntents(
     select: { id: true },
   })
 
+  let settled = 0
   for (const intent of abandoned) {
+    if (await recordRecoveryOutcome(ctx, intent.id)) settled += 1
+  }
+
+  return settled
+}
+
+/**
+ * Write one recovery outcome, and treat "already settled" as success.
+ *
+ * ── Four writers, one unique column ──────────────────────────────────────
+ *
+ * `ActionOutcome.intentId` is `@unique`, and four different paths select
+ * "authorized intents with no outcome" and write to them: the fenced-run
+ * handler in `executeRun`, `haltRun`, the five-minute `sweepAbandonedIntents`,
+ * and the continuation's own recovery pass. Any two of them overlapping on one
+ * row gives a P2002. Inside a server action that is contained by `attempt()`;
+ * inside the worker's sweep it would have ended the sweep, and — before the
+ * guard in `startWorkerProcess` — the worker with it.
+ *
+ * A P2002 here means somebody else recorded an outcome for this intent between
+ * the select and the insert. That is not a failure: the property these
+ * functions exist to hold is "an abandoned action never leaves an intent with
+ * no outcome", and it is held either way. So the row is left as whoever won
+ * wrote it — a second, contradicting recovery row is neither possible nor
+ * wanted — and this reports that nothing new was written.
+ *
+ * Returns whether THIS call wrote the row, so the counts callers report stay
+ * honest rather than counting other people's work.
+ */
+async function recordRecoveryOutcome(
+  ctx: ConfirmationContext,
+  intentId: string,
+): Promise<boolean> {
+  try {
     await ctx.db.prisma.actionOutcome.create({
       data: {
-        intentId: intent.id,
+        intentId,
         result: 'failed',
         scopeVerdict: 'unverified',
         detail: 'Propositum stopped before it could see what happened.',
         observedBy: 'recovery',
       },
     })
+    return true
+  } catch (error) {
+    // Narrow, so a real write failure still surfaces. Prisma reports a unique
+    // violation as P2002; the append-only trigger's own message is checked too,
+    // because `action_outcome_no_replace` turns an INSERT OR REPLACE into a
+    // raw SQLite error rather than a Prisma code.
+    const code = (error as { code?: unknown }).code
+    const message = error instanceof Error ? error.message : String(error)
+    if (code === 'P2002' || message.includes('UNIQUE constraint failed')) return false
+    throw error
   }
+}
 
-  return abandoned.length
+/** What a halt did. `stopped` is false when there was nothing left to stop. */
+export interface Halted {
+  readonly stopped: boolean
+  /** Actions that were in flight and are now recorded as unverified. */
+  readonly unfinished: number
+}
+
+/**
+ * Stop this run, from the app side. ONE implementation, two doors.
+ *
+ * ── The two doors ────────────────────────────────────────────────────────
+ *
+ * "Take back control" on the shift screen calls it, and so should
+ * `POST /api/act/halt` — the endpoint the tab overlay chip and the side panel
+ * Stop reach after they have already detached. They are the same act with
+ * different reach, and two implementations of "stop" would be two things to
+ * keep in agreement about a run that is driving somebody's browser.
+ *
+ * ── Detach first, POST second, and why that is not an ADR-0007 violation ──
+ *
+ * The extension detaches the debugger BEFORE telling the app, so stopping works
+ * with the app closed, the dev server restarting, or the machine offline. A
+ * stop that has to reach a server before it takes effect is not a stop. That
+ * detach can land mid-action, which reads like a straight violation of
+ * ADR-0007's "halts land at the next action boundary".
+ *
+ * It is not, because **detaching is not a halt.** A halt is a decision the run
+ * makes and then acts on; detaching is the REMOVAL OF THE CAPABILITY the run
+ * was using, and it has to work precisely when the run cannot be trusted to
+ * make decisions. The property ADR-0007 protects is that an abandoned action
+ * never leaves an intent with no outcome — and that is preserved by moving the
+ * writer, which is the third step below.
+ *
+ * ── Three steps, in this order ───────────────────────────────────────────
+ *
+ * 1. **Flag it.** `cancelRequested` is a column, not a kill. The run re-reads
+ *    it at its next action boundary and halts itself, which is the only way to
+ *    stop cleanly when the thing being stopped may be mid-navigation.
+ * 2. **Revoke the credential.** The app-side half of removing the capability:
+ *    the run may not be reachable, but the control channel it drives through
+ *    checks this token, and a revoked token cannot be un-revoked by a worker
+ *    that did not notice it was stopped.
+ * 3. **Settle what was left in flight** — but only if the run is already
+ *    terminal. `settleAbandonedIntents` refuses a live run for good reason: a
+ *    recovery row over an in-flight intent makes the worker's real write throw
+ *    on a unique key and turns a clean stop into a failed shift.
+ */
+export async function haltRun(ctx: ConfirmationContext, runId: string): Promise<Halted> {
+  const stopped = await ctx.repos.runs.requestCancel(runId)
+
+  // Revoked whether or not there was anything to flag. A run that already ended
+  // should not be holding one either, and this is cheap.
+  await ctx.repos.runs.clearControlToken(runId)
+
+  const unfinished = await settleAbandonedIntents(ctx, runId)
+
+  return { stopped, unfinished }
 }
 
 /**
@@ -739,19 +939,12 @@ export async function sweepAbandonedIntents(ctx: ConfirmationContext): Promise<n
     select: { id: true },
   })
 
+  let settled = 0
   for (const intent of stranded) {
-    await ctx.db.prisma.actionOutcome.create({
-      data: {
-        intentId: intent.id,
-        result: 'failed',
-        scopeVerdict: 'unverified',
-        detail: 'Propositum stopped before it could see what happened.',
-        observedBy: 'recovery',
-      },
-    })
+    if (await recordRecoveryOutcome(ctx, intent.id)) settled += 1
   }
 
-  return stranded.length
+  return settled
 }
 
 /* ── what the extension asks about ──────────────────────────────────────── */

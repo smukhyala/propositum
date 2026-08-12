@@ -135,12 +135,26 @@ export interface WorkerProcessDeps {
    * therefore nothing to race.
    */
   sweepExpiredLeases(now: Date): Promise<number>
-  /** Claim the oldest pending run, or null. `claimedBy` is written so the fence
-   *  below has something to compare against. */
+  /**
+   * Claim the oldest pending run, or null.
+   *
+   * `claimedBy` is written so the fence below has something to compare against,
+   * and `controlToken` is minted here — at the claim, not at the enqueue.
+   *
+   * The token answers exactly one question for the browser control channel: is
+   * this the run the extension agreed to take instructions from. It is not an
+   * authorization; the gate still decides every action. But it is the only
+   * thing between an arbitrary local caller and the endpoint that drives
+   * somebody's real Chrome, and a credential minted before anybody was driving
+   * — sitting on a `pending` row, surviving a claim moving between processes —
+   * is the same stale-claim hazard `claimedBy` exists to close. A token that
+   * outlives its run is a dead worker still holding the keys.
+   */
   claimNext(lease: {
     leaseUntil: Date
     startedAt: Date
     claimedBy: string
+    controlToken: string
   }): Promise<{ id: string } | null>
   /**
    * Decide whether this run enters the loop, settling it if not.
@@ -203,6 +217,19 @@ const DEFAULT_SWEEP_EVERY_MS = 5 * 60_000
 function defaultWorkerId(): string {
   const pid = typeof process === 'undefined' ? 0 : process.pid
   return `worker-${pid}-${Math.random().toString(36).slice(2, 10)}`
+}
+
+/**
+ * The per-claim browser credential.
+ *
+ * `randomUUID` rather than `Math.random`, and the distinction matters here in a
+ * way it does not for the worker id: an id only has to be UNIQUE, so that two
+ * processes cannot mistake each other; a token has to be UNGUESSABLE, because
+ * the thing it stands between is a local caller and somebody's authenticated
+ * session. `Math.random` is not a CSPRNG and never has been.
+ */
+function mintControlToken(): string {
+  return globalThis.crypto.randomUUID()
 }
 
 export interface WorkerProcessHandle {
@@ -280,10 +307,31 @@ export function startWorkerProcess(
     }
   }
 
+  /**
+   * A sweep that throws must not take the worker with it.
+   *
+   * `admit` and `execute` below are both wrapped, and this was not — an
+   * asymmetry that read as an oversight because it was one. The sweep closure
+   * now does a great deal more than reap leases: it expires confirmations and
+   * settles abandoned intents, row by row, against a SQLite file the Next
+   * process is also writing. A transient busy-file error there would reject
+   * `done` and end the loop, and the visible symptom is a worker that has
+   * silently stopped claiming runs until somebody notices and restarts it.
+   *
+   * A failed sweep costs one interval. A dead worker costs every run after it.
+   */
+  async function sweep(when: Date, note: string): Promise<void> {
+    try {
+      const reaped = await deps.sweepExpiredLeases(when)
+      if (reaped > 0) log(`${note}: ${reaped} run(s)`)
+    } catch (error) {
+      log(`sweep failed, carrying on: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+
   const done = (async () => {
     let lastSweptAtMs = deps.now().getTime()
-    const swept = await deps.sweepExpiredLeases(deps.now())
-    if (swept > 0) log(`swept ${swept} orphaned run(s) from a previous life`)
+    await sweep(deps.now(), 'swept orphans from a previous life')
 
     let runsCompleted = 0
 
@@ -295,6 +343,11 @@ export function startWorkerProcess(
         leaseUntil: new Date(now.getTime() + leaseMs),
         startedAt: now,
         claimedBy: workerId,
+        // A fresh secret per claim. Never derived from the worker id or the run
+        // id: both are guessable by anything that can read the database, and
+        // the whole value of the token is that a local caller which has neither
+        // cannot produce it.
+        controlToken: mintControlToken(),
       })
 
       if (!claimed) {
@@ -308,8 +361,7 @@ export function startWorkerProcess(
          */
         if (now.getTime() - lastSweptAtMs >= sweepEveryMs) {
           lastSweptAtMs = now.getTime()
-          const reaped = await deps.sweepExpiredLeases(now)
-          if (reaped > 0) log(`swept ${reaped} run(s) while idle`)
+          await sweep(now, 'swept while idle')
         }
 
         await deps.sleep(idlePollMs)

@@ -299,7 +299,16 @@ export async function executeRun(runId: string, deps: ExecuteDeps): Promise<void
       if (error.fenceReason === 'cancel-requested') {
         await ctx.db.prisma.agentRun.update({
           where: { id: runId },
-          data: { status: 'interrupted', terminalReason: 'cancelled', endedAt: new Date(deps.now()) },
+          data: {
+            status: 'interrupted',
+            terminalReason: 'cancelled',
+            endedAt: new Date(deps.now()),
+            // The browser credential dies with the run. `haltRun` already
+            // revoked it on the app side; doing it again here means the
+            // property holds even for a stop that never went through the app —
+            // Chrome's own infobar Cancel, which is not ours to intercept.
+            controlToken: null,
+          },
         })
       }
 

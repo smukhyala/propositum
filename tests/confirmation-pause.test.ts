@@ -40,8 +40,11 @@ import {
   admitRun,
   confirmationView,
   confirmRequest,
+  confirmationForIntent,
+  confirmedRequestIdsFor,
   creditedDeadlineFor,
   expireConfirmations,
+  haltRun,
   oldestPendingConfirmation,
   rejectRequest,
   settleAbandonedIntents,
@@ -270,9 +273,16 @@ describe('the continuation is a new run', () => {
     expect(continuation?.status).toBe('pending')
     expect(continuation?.resumesRunId).toBe(paused.runId)
     expect(continuation?.contractId).toBe(paused.contractId)
-    // It drives the browser, so it holds a control token — a fresh one. Reusing
-    // the paused run's would outlive the run it was issued to.
-    expect(continuation?.controlToken).toBeTruthy()
+    /**
+     * It will drive the browser and it does NOT hold a credential yet.
+     *
+     * The control token is minted at the CLAIM, by the process that takes the
+     * run. A token written onto a `pending` row would sit unused for as long as
+     * the queue is long and would survive the claim moving between processes —
+     * a credential held by a row nobody is driving, which is the stale-claim
+     * hazard `claimedBy` exists to close, wearing different clothes.
+     */
+    expect(continuation?.controlToken).toBeNull()
 
     // The paused run is untouched. Its ledger is closed.
     const original = await repos.runs.byId(paused.runId)
@@ -790,6 +800,207 @@ describe('taking back control', () => {
   })
 })
 
+/* ═══════════════════════ what the gate is told about a yes ══ */
+
+describe('a yes reaches the gate', () => {
+  it('lists the confirmed ids for the contract, and only the confirmed ones', async () => {
+    const yes = await pausedShift({
+      acceptedAt: new Date('2025-10-01T09:00:00Z'),
+      askedAt: new Date('2025-10-01T09:05:00Z'),
+    })
+    await confirmRequest(ctx, yes.requestId, new Date('2025-10-01T09:10:00Z'))
+
+    const ids = await confirmedRequestIdsFor(ctx, yes.contractId)
+    expect(ids.has(yes.requestId)).toBe(true)
+
+    // Without this, `RunContext.confirmedRequestIds` stays empty, the
+    // continuation proposes the same click, and the gate refuses it
+    // `confirmation_required` again — the person's yes buying a run that
+    // re-asks. It fails safe and it reads as "you ignored my answer".
+    const no = await pausedShift({
+      acceptedAt: new Date('2025-10-02T09:00:00Z'),
+      askedAt: new Date('2025-10-02T09:05:00Z'),
+    })
+    await rejectRequest(ctx, no.requestId, new Date('2025-10-02T09:10:00Z'))
+    expect((await confirmedRequestIdsFor(ctx, no.contractId)).has(no.requestId)).toBe(false)
+
+    // Unanswered is indistinguishable from rejected here, on purpose: all three
+    // states mean "not permitted", and a set that included rejections would
+    // turn a no into a yes.
+    const open = await pausedShift({
+      acceptedAt: new Date('2025-10-03T09:00:00Z'),
+      askedAt: new Date('2025-10-03T09:05:00Z'),
+    })
+    expect((await confirmedRequestIdsFor(ctx, open.contractId)).has(open.requestId)).toBe(false)
+  })
+
+  it('names the confirmation covering one refused intent, deterministically', async () => {
+    const paused = await pausedShift({
+      acceptedAt: new Date('2025-10-04T09:00:00Z'),
+      askedAt: new Date('2025-10-04T09:05:00Z'),
+    })
+
+    // Before the answer: nothing. There is no id a continuation could inject,
+    // which is the correct state — and no id a model could name either.
+    expect(await confirmationForIntent(ctx, paused.refusedIntentId)).toBeNull()
+
+    await confirmRequest(ctx, paused.requestId, new Date('2025-10-04T09:10:00Z'))
+
+    // After: the id, found by walking from the refused intent rather than by
+    // asking anything to remember it. A model that could name a confirmation
+    // id could confirm its own action, which is a grant.
+    expect(await confirmationForIntent(ctx, paused.refusedIntentId)).toBe(paused.requestId)
+  })
+
+  it('does not name a rejected confirmation', async () => {
+    const paused = await pausedShift({
+      acceptedAt: new Date('2025-10-05T09:00:00Z'),
+      askedAt: new Date('2025-10-05T09:05:00Z'),
+    })
+    await rejectRequest(ctx, paused.requestId, new Date('2025-10-05T09:10:00Z'))
+
+    expect(await confirmationForIntent(ctx, paused.refusedIntentId)).toBeNull()
+  })
+})
+
+/* ══════════════════════════ the browser credential, minted and revoked ══ */
+
+describe('the control token lives exactly as long as the claim', () => {
+  /** A pending run, and the claim that takes it. */
+  async function claimedRun(): Promise<{ runId: string; token: string }> {
+    const sessionId = (await repos.sessions.start(projectId)).id
+    const reading = await repos.readings.create({ sessionId, throughSeq: 0, claims: [] })
+    const contract = await repos.contracts.createDraft({
+      sessionId,
+      readingId: reading.id,
+      objective: 'Anything.',
+      definitionOfDone: 'Done.',
+      guidance: [],
+      approvedSourceIds: [],
+      allowedActionKinds: ['click-element'],
+      baseVersionId: null,
+      initiative: 'use-judgment',
+      progress: 'remaining-plan',
+      output: 'draft-changes',
+      interruption: 'stop-when-uncertain',
+      timeLimitMinutes: 30,
+    })
+    const enqueued = await repos.runs.enqueue({ contractId: contract.id, role: 'worker' })
+
+    // A pending run holds nothing. This is the assertion that stops somebody
+    // minting at enqueue for convenience.
+    expect((await repos.runs.byId(enqueued.id))?.controlToken).toBeNull()
+
+    // `claim` takes the OLDEST pending run, and the tests above leave some
+    // behind. Drain until ours comes up rather than assuming it is first —
+    // asserting on queue position would make this file depend on the order the
+    // rest of it happened to run in.
+    await claimUntil(enqueued.id, `token-${enqueued.id}`)
+
+    const run = await repos.runs.byId(enqueued.id)
+    expect(run?.controlToken).toBe(`token-${enqueued.id}`)
+
+    return { runId: enqueued.id, token: run?.controlToken ?? '' }
+  }
+
+  async function claimUntil(runId: string, controlToken: string): Promise<void> {
+    for (let attempt = 0; attempt < 200; attempt += 1) {
+      const claimed = await repos.runs.claim({
+        leaseUntil: new Date(Date.now() + 60_000),
+        startedAt: new Date(),
+        claimedBy: 'worker-under-test',
+        controlToken,
+      })
+      if (!claimed) throw new Error('the queue emptied before the run came up')
+      if (claimed.id === runId) return
+      // Someone else's leftover. Complete it so the queue moves on — and note
+      // that completing revokes ITS token, which is the property under test.
+      await repos.runs.complete(claimed.id, 'succeeded', new Date())
+    }
+    throw new Error('never reached the run under test')
+  }
+
+  it('is minted at the claim and revoked when the run completes', async () => {
+    const { runId } = await claimedRun()
+    await repos.runs.complete(runId, 'succeeded', new Date())
+
+    // The credential dies with the run. A token that outlives the run it was
+    // issued to is a dead worker still holding the keys to a live browser.
+    expect((await repos.runs.byId(runId))?.controlToken).toBeNull()
+  })
+
+  it('is revoked when a run parks on a question, not only when it fails', async () => {
+    const { runId } = await claimedRun()
+    await repos.runs.complete(runId, 'awaiting-confirmation', new Date())
+
+    // `awaiting-confirmation` is terminal FOR THIS RUN and is not a failure —
+    // and a run parked overnight while somebody reads must not still be able to
+    // drive a browser. The continuation mints its own at its own claim.
+    expect((await repos.runs.byId(runId))?.controlToken).toBeNull()
+  })
+
+  it('is revoked when the lease sweep reaps an orphan', async () => {
+    const { runId } = await claimedRun()
+    await repos.runs.renewLease(runId, new Date(Date.now() - 60_000))
+
+    await repos.runs.sweepExpiredLeases(new Date())
+
+    // The whole reason to reap is that the worker is no longer trusted to be
+    // driving. Leaving its credential behind would reap the claim and not the
+    // capability.
+    expect((await repos.runs.byId(runId))?.controlToken).toBeNull()
+  })
+
+  it('is revoked by a halt, along with the flag the fence reads', async () => {
+    const { runId } = await claimedRun()
+
+    const halted = await haltRun(ctx, runId)
+    expect(halted.stopped).toBe(true)
+
+    const run = await repos.runs.byId(runId)
+    // Flag, revoke, settle — in that order, behind one implementation shared
+    // with `POST /api/act/halt`.
+    expect(run?.cancelRequested).toBe(true)
+    expect(run?.controlToken).toBeNull()
+    // The run is still live, so nothing in flight is settled early: a recovery
+    // row over an in-flight intent turns a clean stop into a failed shift.
+    expect(halted.unfinished).toBe(0)
+  })
+
+  it('is revoked when an answer arrives after the deadline', async () => {
+    const acceptedAt = new Date('2025-12-01T09:00:00Z')
+    const paused = await pausedShift({
+      acceptedAt,
+      askedAt: new Date('2025-12-01T09:05:00Z'),
+      timeLimitMinutes: 30,
+    })
+    const answeredAt = new Date('2025-12-01T18:00:00Z')
+
+    const answered = await confirmRequest(ctx, paused.requestId, answeredAt)
+    if (!answered.ok || answered.continuationRunId === null) throw new Error('expected a run')
+
+    await claimUntil(answered.continuationRunId, 'token-late')
+    expect((await repos.runs.byId(answered.continuationRunId))?.controlToken).toBe('token-late')
+
+    expect(await admitRun(ctx, answered.continuationRunId, answeredAt)).toBe('settled')
+
+    // Claimed a moment ago, so it holds a live credential — and it is about to
+    // never act. A token on a run that will not act is a token nothing will
+    // ever revoke.
+    const run = await repos.runs.byId(answered.continuationRunId)
+    expect(run?.controlToken).toBeNull()
+  })
+
+  it('is revoked when a question times out', async () => {
+    const askedAt = new Date('2025-11-01T09:05:00Z')
+    const paused = await pausedShift({ acceptedAt: new Date('2025-11-01T09:00:00Z'), askedAt })
+
+    await expireConfirmations(ctx, new Date(askedAt.getTime() + 25 * HOUR))
+
+    expect((await repos.runs.byId(paused.runId))?.controlToken).toBeNull()
+  })
+})
+
 /* ═══════════════════════════════ the ways this was got wrong once ══ */
 
 describe('the near-misses, kept red', () => {
@@ -926,6 +1137,86 @@ describe('the near-misses, kept red', () => {
     // questions enough to hide every answerable one, forever and invisibly.
     const found = await oldestPendingConfirmation(ctx, Date.parse('2026-01-05T09:06:00Z'))
     expect(found?.requestId).toBe(fresh.requestId)
+  })
+
+  it('settles an abandoned intent idempotently, however many writers race', async () => {
+    const paused = await pausedShift({
+      acceptedAt: new Date('2025-09-01T09:00:00Z'),
+      askedAt: new Date('2025-09-01T09:05:00Z'),
+    })
+
+    const abandoned = await db.prisma.actionIntent.create({
+      data: {
+        runId: paused.runId,
+        seq: 2,
+        kind: 'click-element',
+        reason: 'Nobody came back to this.',
+        params: {},
+        authorized: true,
+      },
+      select: { id: true },
+    })
+
+    // Four paths select "authorized intents with no outcome" and write to them:
+    // the fenced-run handler, `haltRun`, the five-minute sweep, and the
+    // continuation's own recovery pass. `ActionOutcome.intentId` is unique, so
+    // two overlapping gives P2002 — fatal inside a sweep.
+    const [first, second, third] = await Promise.all([
+      settleAbandonedIntents(ctx, paused.runId),
+      sweepAbandonedIntents(ctx),
+      settleAbandonedIntents(ctx, paused.runId),
+    ])
+
+    // Exactly one of them wrote it, and none of them threw.
+    expect(first + second + third).toBeGreaterThanOrEqual(1)
+
+    const outcome = await db.prisma.actionOutcome.findUniqueOrThrow({
+      where: { intentId: abandoned.id },
+    })
+    expect(outcome.observedBy).toBe('recovery')
+
+    // And a fourth pass over the settled row reports honestly that it wrote
+    // nothing, rather than counting somebody else's work.
+    expect(await settleAbandonedIntents(ctx, paused.runId)).toBe(0)
+  })
+
+  it('keeps sweeping after a sweep throws', async () => {
+    let calls = 0
+    let handle: ReturnType<typeof startWorkerProcess>
+    let clock = 0
+
+    const deps = {
+      sweepExpiredLeases: vi.fn(async () => {
+        calls += 1
+        if (calls >= 3) handle.stop()
+        // The sweep now expires confirmations and settles intents row by row
+        // against a file the Next process is also writing. A transient busy
+        // error there used to reject `done` and end the loop — a worker that
+        // has silently stopped claiming runs until somebody restarts it.
+        throw new Error('database is locked')
+      }),
+      claimNext: vi.fn(async (): Promise<{ id: string } | null> => null),
+      admit: vi.fn(async (): Promise<'proceed' | 'settled'> => 'proceed'),
+      readRun: vi.fn(
+        async (): Promise<{
+          status: string
+          claimedBy: string | null
+          cancelRequested: boolean
+        } | null> => null,
+      ),
+      execute: vi.fn(async (): Promise<void> => undefined),
+      now: () => new Date((clock += 10 * MINUTE)),
+      sleep: vi.fn(async (ms: number) => {
+        await new Promise((resolve) => setTimeout(resolve, ms))
+      }),
+    }
+
+    handle = startWorkerProcess(deps, { idlePollMs: 1, sweepEveryMs: MINUTE })
+    const { runsCompleted } = await handle.done
+
+    // A failed sweep costs one interval. A dead worker costs every run after it.
+    expect(calls).toBeGreaterThanOrEqual(3)
+    expect(runsCompleted).toBe(0)
   })
 
   it('sweeps again while idle, so a question does not wait for a restart', async () => {
