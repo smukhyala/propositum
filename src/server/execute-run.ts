@@ -110,7 +110,21 @@ export async function executeRun(runId: string, deps: ExecuteDeps): Promise<void
     return
   }
 
-  const version = await ctx.repos.documents.version(contract.baseVersionId)
+  // `HandoffContract.baseVersionId` is nullable now, because a Shift that acts
+  // in a browser pins no document. This runner is the DOCUMENT runner — it
+  // diffs prose against an immutable base and its whole shape assumes one — so
+  // it refuses rather than inventing an empty base and drafting against it.
+  //
+  // Nothing writes a null yet, so this branch is unreachable today. It is here
+  // rather than as an `as string`, because the unit that starts writing nulls
+  // should find a refusal to replace, not a cast that already lied for it.
+  const baseVersionId = contract.baseVersionId
+  if (baseVersionId === null) {
+    await ctx.repos.runs.complete(runId, 'failed', new Date(deps.now()), 'error')
+    return
+  }
+
+  const version = await ctx.repos.documents.version(baseVersionId)
   const document = version ? await ctx.repos.documents.byId(version.documentId) : null
 
   const sources = await ctx.db.prisma.approvedSource.findMany({
@@ -131,7 +145,7 @@ export async function executeRun(runId: string, deps: ExecuteDeps): Promise<void
     scope: {
       approvedSourceIds: contract.approvedSourceIds,
       allowedActionKinds: contract.allowedActionKinds as ActionKind[],
-      baseVersionId: contract.baseVersionId,
+      baseVersionId,
     },
     controls: {
       initiative: contract.initiative as 'follow-closely' | 'use-judgment',
@@ -164,7 +178,7 @@ export async function executeRun(runId: string, deps: ExecuteDeps): Promise<void
           },
         },
       },
-      readDoc: { versions: { byId: (id) => ctx.repos.documents.version(id) }, baseVersionId: contract.baseVersionId },
+      readDoc: { versions: { byId: (id) => ctx.repos.documents.version(id) }, baseVersionId },
       now: deps.now,
       renewLease: (id) => ctx.repos.runs.renewLease(id, new Date(deps.now() + 60_000)),
     })

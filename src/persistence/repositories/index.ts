@@ -44,6 +44,11 @@ export interface Repositories {
   readonly changesets: ChangesetRepository
   readonly findings: ReviewFindingRepository
   readonly reports: ShiftReportRepository
+  readonly offers: WorkOfferRepository
+  readonly outcomes: ShiftOutcomeRepository
+  readonly confirmations: ConfirmationRepository
+  readonly evidence: ActionEvidenceRepository
+  readonly dispatches: ActionDispatchRepository
 }
 
 export function createRepositories(prisma: PrismaClient): Repositories {
@@ -58,8 +63,23 @@ export function createRepositories(prisma: PrismaClient): Repositories {
     changesets: changesetRepository(prisma),
     findings: reviewFindingRepository(prisma),
     reports: shiftReportRepository(prisma),
+    offers: workOfferRepository(prisma),
+    outcomes: shiftOutcomeRepository(prisma),
+    confirmations: confirmationRepository(prisma),
+    evidence: actionEvidenceRepository(prisma),
+    dispatches: actionDispatchRepository(prisma),
   }
 }
+
+/**
+ * Canonical JSON, as this file writes it.
+ *
+ * `unknown` will not go into a Prisma `Json` column and widening the column
+ * type to make it fit is how an untyped payload spreads. Every Json write below
+ * either casts at the Prisma boundary — the same move `ledger-writer.ts` makes
+ * for `attested` — or names its element type.
+ */
+export type JsonObject = Record<string, unknown>
 
 /* ── Project ───────────────────────────────────────────────────────────── */
 
@@ -321,7 +341,15 @@ export interface ContractInput {
   readonly guidance: readonly string[]
   readonly approvedSourceIds: readonly string[]
   readonly allowedActionKinds: readonly string[]
-  readonly baseVersionId: string
+  /**
+   * NULL when this Shift pins no document.
+   *
+   * It was required for as long as every Shift was a document Shift. A Shift
+   * that acts in a browser and answers a question has no base to pin, and
+   * forcing one would mean the person inventing a document so the schema would
+   * let them hand work over.
+   */
+  readonly baseVersionId: string | null
   readonly initiative: string
   readonly progress: string
   readonly output: string
@@ -413,30 +441,98 @@ function handoffContractRepository(prisma: PrismaClient): HandoffContractReposit
 /* ── AgentRun — the queue the worker drains ────────────────────────────── */
 
 export interface AgentRunRepository {
-  enqueue(input: { contractId: string; role: 'worker' | 'reviewer' }): Promise<{ id: string }>
+  enqueue(input: {
+    contractId: string
+    role: 'worker' | 'reviewer'
+    /** Issued only to a run that will drive the browser. A run that will not
+     *  should not hold a credential it cannot use. */
+    controlToken?: string
+    /** The run this one continues, after a ConfirmationRequest was confirmed. */
+    resumesRunId?: string
+  }): Promise<{ id: string }>
   /**
    * Claim the oldest pending run, atomically.
    *
    * Read-then-write inside `$transaction`, which Prisma opens with
    * BEGIN IMMEDIATE (verified, ADR-0001) — a deferred BEGIN would fail with
    * SQLITE_BUSY_SNAPSHOT, which the busy timeout does NOT retry.
+   *
+   * `claimedBy` is optional because the existing worker does not pass one and
+   * making it required would break the only caller there is. That is a
+   * migration, not a design: the fence CONTEXT.md describes — "every action
+   * boundary re-reads `status` and `claimedBy`" — cannot close until whoever
+   * claims says who they are.
    */
-  claim(input: { leaseUntil: Date; startedAt: Date }): Promise<{ id: string; contractId: string; role: string } | null>
+  claim(input: {
+    leaseUntil: Date
+    startedAt: Date
+    claimedBy?: string
+  }): Promise<{ id: string; contractId: string; role: string } | null>
   renewLease(id: string, leaseUntil: Date): Promise<void>
-  complete(id: string, status: 'succeeded' | 'failed', endedAt: Date, terminalReason?: string): Promise<void>
+  /**
+   * Write this run's terminal status.
+   *
+   * WIDENED, deliberately, to include `awaiting-confirmation`. The alternative
+   * — a separate `pauseForConfirmation` method — reads better and is wrong,
+   * because it implies the run is still alive and it is not. A run that stopped
+   * for a confirmation has ended: it holds no lease, the sweep must not reap it
+   * as an orphan, and if the person confirms, a SUCCESSOR run carrying
+   * `resumesRunId` picks the work up. Keeping the pause out of `complete` would
+   * mean two methods writing `endedAt` for the same reason and one of them
+   * pretending otherwise.
+   *
+   * `awaiting-confirmation` is not a failure and takes no `terminalReason` —
+   * there is nothing terminal to explain. The ConfirmationRequest is the
+   * explanation.
+   */
+  complete(
+    id: string,
+    status: 'succeeded' | 'failed' | 'awaiting-confirmation',
+    endedAt: Date,
+    terminalReason?: string,
+  ): Promise<void>
   /** Node never kills its children regardless of `detached`, so orphans are the
    *  default rather than the edge case. This is how they are reaped. */
   sweepExpiredLeases(now: Date): Promise<number>
-  byId(id: string): Promise<{ id: string; status: string; contractId: string; progressStep: number } | null>
+  byId(id: string): Promise<{
+    id: string
+    status: string
+    contractId: string
+    progressStep: number
+    /** The fence, finally readable. A run that no longer holds the claim must
+     *  abort without writing rather than press a button on a live page. */
+    claimedBy: string | null
+    cancelRequested: boolean
+    controlToken: string | null
+    resumesRunId: string | null
+  } | null>
   advanceProgress(id: string, step: number): Promise<void>
+  /**
+   * The person asked this run to stop.
+   *
+   * A flag, not a kill. Nothing here interrupts anything: the run reads it at
+   * its next action boundary and halts itself, which is the only way to stop
+   * cleanly when the thing being stopped may be mid-navigation in a real
+   * browser. Returns whether a row was actually flagged, so a caller can tell
+   * "asked" from "there was nothing left to ask".
+   */
+  requestCancel(id: string): Promise<boolean>
 }
 
 function agentRunRepository(prisma: PrismaClient): AgentRunRepository {
   return {
-    enqueue: ({ contractId, role }) =>
-      prisma.agentRun.create({ data: { contractId, role }, select: { id: true } }),
+    enqueue: ({ contractId, role, controlToken, resumesRunId }) =>
+      prisma.agentRun.create({
+        data: {
+          contractId,
+          role,
+          ...(controlToken === undefined ? {} : { controlToken }),
+          ...(resumesRunId === undefined ? {} : { resumesRunId }),
+        },
+        select: { id: true },
+      }),
 
-    claim: ({ leaseUntil, startedAt }) =>
+    claim: ({ leaseUntil, startedAt, claimedBy }) =>
       prisma.$transaction(async (tx) => {
         const next = await tx.agentRun.findFirst({
           where: { status: 'pending' },
@@ -447,7 +543,12 @@ function agentRunRepository(prisma: PrismaClient): AgentRunRepository {
 
         await tx.agentRun.update({
           where: { id: next.id },
-          data: { status: 'claimed', leaseUntil, startedAt },
+          data: {
+            status: 'claimed',
+            leaseUntil,
+            startedAt,
+            ...(claimedBy === undefined ? {} : { claimedBy }),
+          },
         })
         return next
       }),
@@ -476,11 +577,31 @@ function agentRunRepository(prisma: PrismaClient): AgentRunRepository {
     byId: (id) =>
       prisma.agentRun.findUnique({
         where: { id },
-        select: { id: true, status: true, contractId: true, progressStep: true },
+        select: {
+          id: true,
+          status: true,
+          contractId: true,
+          progressStep: true,
+          claimedBy: true,
+          cancelRequested: true,
+          controlToken: true,
+          resumesRunId: true,
+        },
       }),
 
     advanceProgress: async (id, step) => {
       await prisma.agentRun.update({ where: { id }, data: { progressStep: step, status: 'running' } })
+    },
+
+    requestCancel: async (id) => {
+      // Scoped to a run that could still act. Flagging a run that already ended
+      // would make "cancel requested" appear on a finished shift report and
+      // read as though the person stopped something that had already stopped.
+      const { count } = await prisma.agentRun.updateMany({
+        where: { id, status: { in: ['pending', 'claimed', 'running'] } },
+        data: { cancelRequested: true },
+      })
+      return count === 1
     },
   }
 }
@@ -734,5 +855,532 @@ function shiftReportRepository(prisma: PrismaClient): ShiftReportRepository {
           },
         },
       }),
+  }
+}
+
+/* ── WorkOffer ─────────────────────────────────────────────────────────── */
+
+/**
+ * The offer, written only once the person said yes.
+ *
+ * There is deliberately no `draft`, no `decline` and no `list`. An offer nobody
+ * accepted has no row, by the rule ADR-0008 already applies to ambient
+ * observations: a durable record of every guess Propositum made about what
+ * someone was doing IS a profile, and the whole reason the ambient buffer lives
+ * in memory is that it refuses to become one. Declining must cost nothing and
+ * leave nothing, and a repository that could write a declined offer would make
+ * that a convention rather than a fact.
+ */
+export interface WorkOfferInput {
+  readonly sessionId: string
+  readonly threadSignature: string
+  readonly promptVersion: string
+  readonly title: string
+  readonly rationale: string
+  /** OfferOutline — ordered one-line intentions. Display only, never PlanSteps. */
+  readonly outline: readonly string[]
+  readonly produces: string
+  readonly excludes: readonly string[]
+  /** CODE-DERIVED from the pages the thread ran through. The caller owns that
+   *  being true; this is the only field here that reaches a scope decision, so
+   *  it is the only one worth being strict about. */
+  readonly originPatterns: readonly string[]
+  /** ShiftOutcomeKind[], already coerced against the closed set by the caller. */
+  readonly expectedKinds: readonly string[]
+  /** OfferGrounds — what the detector saw, frozen at acceptance because the
+   *  buffer it came from will not hold the answer an hour later. */
+  readonly grounds: JsonObject
+}
+
+export interface WorkOfferRepository {
+  create(input: WorkOfferInput): Promise<{ id: string }>
+  forSession(sessionId: string): Promise<
+    | (Omit<WorkOfferInput, 'outline' | 'excludes' | 'originPatterns' | 'expectedKinds'> & {
+        id: string
+        outline: string[]
+        excludes: string[]
+        originPatterns: string[]
+        expectedKinds: string[]
+        createdAt: Date
+      })
+    | null
+  >
+}
+
+function workOfferRepository(prisma: PrismaClient): WorkOfferRepository {
+  const asStrings = (value: unknown): string[] => (Array.isArray(value) ? (value as string[]) : [])
+
+  return {
+    create: (input) =>
+      prisma.workOffer.create({
+        data: {
+          sessionId: input.sessionId,
+          threadSignature: input.threadSignature,
+          promptVersion: input.promptVersion,
+          title: input.title,
+          rationale: input.rationale,
+          outline: [...input.outline],
+          produces: input.produces,
+          excludes: [...input.excludes],
+          originPatterns: [...input.originPatterns],
+          expectedKinds: [...input.expectedKinds],
+          grounds: input.grounds as object,
+        },
+        select: { id: true },
+      }),
+    forSession: async (sessionId) => {
+      const row = await prisma.workOffer.findUnique({ where: { sessionId } })
+      if (!row) return null
+      return {
+        ...row,
+        outline: asStrings(row.outline),
+        excludes: asStrings(row.excludes),
+        originPatterns: asStrings(row.originPatterns),
+        expectedKinds: asStrings(row.expectedKinds),
+        grounds: (row.grounds ?? {}) as JsonObject,
+      }
+    },
+  }
+}
+
+/* ── ShiftOutcome ──────────────────────────────────────────────────────── */
+
+export interface ShiftOutcomeInput {
+  /** ShiftOutcomeKind, decided by deterministic code. A production matching no
+   *  kind never reaches here — the caller drops it and counts it. */
+  readonly kind: string
+  /** held | landed. Code-assigned. `landed` means there is no verdict to offer. */
+  readonly reversibility: string
+  readonly headline: string
+  readonly reason: string
+  /** Already intersected with this run's completed ActionIntents by the caller.
+   *  A join, not a claim — this stores what survived the intersection. */
+  readonly citedActionIntentIds: readonly string[]
+  readonly detail: JsonObject
+}
+
+export interface StoredShiftOutcome extends Omit<ShiftOutcomeInput, 'citedActionIntentIds'> {
+  readonly id: string
+  readonly ordinal: number
+  readonly citedActionIntentIds: string[]
+  readonly verdict: { verdict: string; editedText: string | null } | null
+  readonly createdAt: Date
+}
+
+export interface ShiftOutcomeRepository {
+  /**
+   * Write a run's productions in one go.
+   *
+   * Ordinals are assigned HERE, inside one transaction, rather than by the
+   * caller. `@@unique([runId, ordinal])` is what makes "the third thing it did"
+   * a stable phrase in a report, and a caller counting rows it read a moment
+   * ago cannot keep that promise while anything else is writing.
+   */
+  create(input: {
+    runId: string
+    outcomes: readonly ShiftOutcomeInput[]
+  }): Promise<Array<{ id: string; ordinal: number }>>
+  forRun(runId: string): Promise<StoredShiftOutcome[]>
+  /** Append-only, exactly as ChangeVerdict is: a verdict is recorded once, and
+   *  changing your mind has to be something the interface does visibly. */
+  recordVerdict(input: {
+    outcomeId: string
+    verdict: 'accept' | 'reject' | 'edit'
+    editedText?: string
+  }): Promise<void>
+}
+
+function shiftOutcomeRepository(prisma: PrismaClient): ShiftOutcomeRepository {
+  const asStrings = (value: unknown): string[] => (Array.isArray(value) ? (value as string[]) : [])
+
+  return {
+    create: ({ runId, outcomes }) =>
+      prisma.$transaction(async (tx) => {
+        const last = await tx.shiftOutcome.findFirst({
+          where: { runId },
+          orderBy: { ordinal: 'desc' },
+          select: { ordinal: true },
+        })
+
+        // One at a time rather than `createMany`, because SQLite's createMany
+        // returns a count and nothing else — and the caller needs the ids, to
+        // attach a Changeset to the `document-changes` one.
+        const written: Array<{ id: string; ordinal: number }> = []
+        let ordinal = (last?.ordinal ?? 0) + 1
+        for (const shiftOutcome of outcomes) {
+          const row = await tx.shiftOutcome.create({
+            data: {
+              runId,
+              ordinal,
+              kind: shiftOutcome.kind,
+              reversibility: shiftOutcome.reversibility,
+              headline: shiftOutcome.headline,
+              reason: shiftOutcome.reason,
+              citedActionIntentIds: [...shiftOutcome.citedActionIntentIds],
+              detail: shiftOutcome.detail as object,
+            },
+            select: { id: true, ordinal: true },
+          })
+          written.push(row)
+          ordinal += 1
+        }
+        return written
+      }),
+
+    forRun: async (runId) => {
+      const rows = await prisma.shiftOutcome.findMany({
+        where: { runId },
+        orderBy: { ordinal: 'asc' },
+        select: {
+          id: true,
+          ordinal: true,
+          kind: true,
+          reversibility: true,
+          headline: true,
+          reason: true,
+          citedActionIntentIds: true,
+          detail: true,
+          createdAt: true,
+          verdict: { select: { verdict: true, editedText: true } },
+        },
+      })
+      return rows.map((row) => ({
+        ...row,
+        citedActionIntentIds: asStrings(row.citedActionIntentIds),
+        detail: (row.detail ?? {}) as JsonObject,
+      }))
+    },
+
+    recordVerdict: async ({ outcomeId, verdict, editedText }) => {
+      await prisma.outcomeVerdict.create({
+        data: { outcomeId, verdict, ...(editedText === undefined ? {} : { editedText }) },
+      })
+    },
+  }
+}
+
+/* ── ConfirmationRequest and its verdict ───────────────────────────────── */
+
+/**
+ * The gate stopped and asked the person.
+ *
+ * Request and verdict share one repository because they are one interaction,
+ * and splitting them would leave "is it still pending" belonging to neither.
+ * That question is answered by the ABSENCE of a verdict row — there is no
+ * status column that could disagree with it, the same shape
+ * `Changeset.settledAs` already uses.
+ */
+export interface ConfirmationRepository {
+  create(input: {
+    runId: string
+    /** The REFUSED intent that produced this. Unique — one intent, one request. */
+    intentId: string
+    /** Code-generated from attested facts. Never model prose. */
+    summary: string
+    evidenceId?: string
+  }): Promise<{ id: string }>
+  /** Requests this run raised that nobody has answered yet. */
+  pendingForRun(runId: string): Promise<
+    Array<{
+      id: string
+      intentId: string
+      summary: string
+      evidenceId: string | null
+      createdAt: Date
+    }>
+  >
+  byId(id: string): Promise<
+    | {
+        id: string
+        runId: string
+        intentId: string
+        summary: string
+        evidenceId: string | null
+        verdict: string | null
+      }
+    | null
+  >
+  /**
+   * ONLY A HUMAN CALLS THIS. No model, worker run or reviewer run may.
+   *
+   * That cannot be enforced by a column — the database cannot see who is
+   * holding the keyboard — so it is enforced by there being exactly one caller,
+   * in the app process, acting on a request the person is looking at. Saying so
+   * here is the point: whoever next wants a confirmation resolved from inside a
+   * run has to delete this sentence before they can break the rule.
+   */
+  recordVerdict(input: {
+    requestId: string
+    verdict: 'confirmed' | 'rejected'
+    decidedAt: Date
+  }): Promise<void>
+}
+
+function confirmationRepository(prisma: PrismaClient): ConfirmationRepository {
+  return {
+    create: ({ runId, intentId, summary, evidenceId }) =>
+      prisma.confirmationRequest.create({
+        data: {
+          runId,
+          intentId,
+          summary,
+          ...(evidenceId === undefined ? {} : { evidenceId }),
+        },
+        select: { id: true },
+      }),
+
+    pendingForRun: (runId) =>
+      prisma.confirmationRequest.findMany({
+        where: { runId, verdict: { is: null } },
+        orderBy: { createdAt: 'asc' },
+        select: { id: true, intentId: true, summary: true, evidenceId: true, createdAt: true },
+      }),
+
+    byId: async (id) => {
+      const row = await prisma.confirmationRequest.findUnique({
+        where: { id },
+        select: {
+          id: true,
+          runId: true,
+          intentId: true,
+          summary: true,
+          evidenceId: true,
+          verdict: { select: { verdict: true } },
+        },
+      })
+      if (!row) return null
+
+      const { verdict, ...rest } = row
+      return { ...rest, verdict: verdict?.verdict ?? null }
+    },
+
+    recordVerdict: async ({ requestId, verdict, decidedAt }) => {
+      await prisma.confirmationVerdict.create({ data: { requestId, verdict, decidedAt } })
+    },
+  }
+}
+
+/* ── ActionEvidence ────────────────────────────────────────────────────── */
+
+/**
+ * What the agent saw while acting.
+ *
+ * DISJOINT from ObservationEvent, which is why this is its own repository
+ * rather than a method on the ledger writer. The two ledgers staying separate
+ * is what keeps the published 2,000-character retention promise true: that
+ * promise is about the person's own browsing, and an agent driving a browser
+ * has to capture whole pages to act at all. One door writing both would make
+ * the promise depend on remembering which caller it was.
+ */
+export interface ActionEvidenceRepository {
+  create(input: {
+    runId: string
+    intentId?: string
+    /** page-snapshot | screen-capture */
+    kind: string
+    /** Browser-attested. Chrome said this is where the tab is; the page did not. */
+    url: string
+    /** Page-authored. Sanitised and bounded by the caller, never interpolated raw. */
+    untrusted?: JsonObject
+    /**
+     * The buffer type parameter is spelled out because Prisma's `Bytes` is
+     * `Uint8Array<ArrayBuffer>` and a bare `Uint8Array` is
+     * `Uint8Array<ArrayBufferLike>`, which includes `SharedArrayBuffer` and
+     * does not assign. Writing it here rather than casting at the boundary
+     * keeps the mismatch where a caller can see it — a screenshot arriving over
+     * the control channel is an ordinary `Uint8Array` and satisfies this; a
+     * Node `Buffer` does not, and should be converted rather than asserted.
+     */
+    image?: Uint8Array<ArrayBuffer>
+    truncated?: boolean
+  }): Promise<{ id: string }>
+  /**
+   * Metadata for one run, WITHOUT the images.
+   *
+   * A run that drove a browser for half an hour holds megabytes of screen
+   * captures, and every caller that wants a list wants a list. Loading the
+   * bytes to render "12 pages seen" is the kind of default that only becomes
+   * visible once there is real data in the table.
+   */
+  forRun(runId: string): Promise<
+    Array<{
+      id: string
+      intentId: string | null
+      kind: string
+      url: string
+      truncated: boolean
+      createdAt: Date
+    }>
+  >
+  /** The whole row, image included — for rendering the one thing the person
+   *  asked to look at. */
+  byId(id: string): Promise<
+    | {
+        id: string
+        runId: string
+        intentId: string | null
+        kind: string
+        url: string
+        untrusted: unknown
+        image: Uint8Array | null
+        truncated: boolean
+        createdAt: Date
+      }
+    | null
+  >
+}
+
+function actionEvidenceRepository(prisma: PrismaClient): ActionEvidenceRepository {
+  return {
+    create: ({ runId, intentId, kind, url, untrusted, image, truncated }) =>
+      prisma.actionEvidence.create({
+        data: {
+          runId,
+          kind,
+          url,
+          ...(intentId === undefined ? {} : { intentId }),
+          ...(untrusted === undefined ? {} : { untrusted: untrusted as object }),
+          ...(image === undefined ? {} : { image }),
+          ...(truncated === undefined ? {} : { truncated }),
+        },
+        select: { id: true },
+      }),
+
+    forRun: (runId) =>
+      prisma.actionEvidence.findMany({
+        where: { runId },
+        orderBy: { createdAt: 'asc' },
+        select: {
+          id: true,
+          intentId: true,
+          kind: true,
+          url: true,
+          truncated: true,
+          createdAt: true,
+        },
+      }),
+
+    byId: (id) => prisma.actionEvidence.findUnique({ where: { id } }),
+  }
+}
+
+/* ── ActionDispatch — the queue the browser control channel drains ─────── */
+
+/**
+ * One instruction handed to the browser.
+ *
+ * MUTABLE, and the claim is the reason. This plays the role for the control
+ * channel that AgentRun plays for runs: the queue is a status column and one
+ * guarded conditional UPDATE, not new infrastructure.
+ *
+ * None of it is evidence. The append-only record of what was attempted is the
+ * ActionIntent, committed before the dispatch exists, so a dispatch that is
+ * redelivered, lost or abandoned changes nothing about what the audit trail
+ * says was authorised.
+ */
+export interface ActionDispatchRepository {
+  /**
+   * IDEMPOTENT on `intentId`.
+   *
+   * Re-enqueueing an already-delivered dispatch returns the existing row and
+   * does NOT reset its status. For a browser action "deliver twice" means
+   * "click twice", and a worker retrying after a transport error whose answer
+   * it never saw is the ordinary case rather than the exotic one.
+   *
+   * Implemented as insert-then-catch rather than `upsert` with an empty
+   * `update`. Prisma only emits a native `INSERT … ON CONFLICT` for an upsert
+   * it can prove is a single statement, and an empty update does not qualify —
+   * it falls back to read-then-write, which under concurrency raises P2002
+   * instead of returning the row, which is precisely the case this method
+   * exists to make impossible.
+   */
+  enqueue(input: {
+    runId: string
+    intentId: string
+    kind: string
+    params: JsonObject
+  }): Promise<{ id: string; status: string }>
+  /** The oldest undelivered instruction for this run. A read — it wins nothing. */
+  nextQueued(
+    runId: string,
+  ): Promise<{ id: string; intentId: string; kind: string; params: unknown } | null>
+  /**
+   * The guarded claim: a conditional UPDATE `queued → delivered` that reports
+   * whether it won.
+   *
+   * `updateMany` with the expected status in the WHERE, rather than a
+   * read-then-write, so the check and the write are one statement and there is
+   * no window between them at all. Two callers that both read the same row from
+   * `nextQueued` will both call this and exactly one gets `true`; the loser must
+   * not deliver. Returning a boolean rather than throwing is deliberate —
+   * losing this race is a normal outcome, not an error.
+   */
+  claim(input: { id: string; deliveredAt: Date }): Promise<boolean>
+  /** The channel reported back. `delivered → reported`, guarded the same way. */
+  report(input: { id: string; reportedAt: Date }): Promise<boolean>
+  /**
+   * Give up on an instruction that was never delivered.
+   *
+   * Deliberately refuses to abandon a DELIVERED dispatch. Once the instruction
+   * is with the browser we do not know whether it ran, and a row saying
+   * `abandoned` over an effect that landed is worse than one saying `delivered`
+   * over an effect that did not — the first reads as "nothing happened".
+   */
+  abandon(id: string): Promise<boolean>
+}
+
+function actionDispatchRepository(prisma: PrismaClient): ActionDispatchRepository {
+  return {
+    enqueue: async ({ runId, intentId, kind, params }) => {
+      try {
+        return await prisma.actionDispatch.create({
+          data: { runId, intentId, kind, params: params as object },
+          select: { id: true, status: true },
+        })
+      } catch (error) {
+        // P2002 on `intentId` means the dispatch already exists, which is the
+        // retry this method is for. Anything else is a real failure and must
+        // not be swallowed — an enqueue that quietly returns a row it did not
+        // write would let a worker believe an instruction is on its way.
+        const code = (error as { code?: string } | null)?.code
+        if (code !== 'P2002') throw error
+
+        return prisma.actionDispatch.findUniqueOrThrow({
+          where: { intentId },
+          select: { id: true, status: true },
+        })
+      }
+    },
+
+    nextQueued: (runId) =>
+      prisma.actionDispatch.findFirst({
+        where: { runId, status: 'queued' },
+        orderBy: { createdAt: 'asc' },
+        select: { id: true, intentId: true, kind: true, params: true },
+      }),
+
+    claim: async ({ id, deliveredAt }) => {
+      const { count } = await prisma.actionDispatch.updateMany({
+        where: { id, status: 'queued' },
+        data: { status: 'delivered', deliveredAt },
+      })
+      return count === 1
+    },
+
+    report: async ({ id, reportedAt }) => {
+      const { count } = await prisma.actionDispatch.updateMany({
+        where: { id, status: 'delivered' },
+        data: { status: 'reported', reportedAt },
+      })
+      return count === 1
+    },
+
+    abandon: async (id) => {
+      const { count } = await prisma.actionDispatch.updateMany({
+        where: { id, status: 'queued' },
+        data: { status: 'abandoned' },
+      })
+      return count === 1
+    },
   }
 }
