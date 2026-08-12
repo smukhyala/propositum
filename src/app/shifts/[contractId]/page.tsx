@@ -377,8 +377,10 @@ export default async function ShiftPage({ params }: { params: Promise<{ contract
         verdict === 'accept' || verdict === 'reject' || verdict === 'edit' ? verdict : null,
       // Only the document outcome points at the review below, and only when
       // there is one to point at. A count of nothing would read as a promise
-      // the rest of the page does not keep.
-      changeCount: kind === 'document-changes' ? changes.length : null,
+      // the rest of the page does not keep — and a run can say it produced
+      // document changes while its changeset failed to write, which is exactly
+      // when "0 changes below" would appear.
+      changeCount: kind === 'document-changes' && changes.length > 0 ? changes.length : null,
     }
   })
 
@@ -539,6 +541,12 @@ export default async function ShiftPage({ params }: { params: Promise<{ contract
     (shiftOutcome) => shiftOutcome.kind !== 'document-changes',
   )
 
+  /** The same list, minus what already happened. "Pick up at…" has to name
+   *  something a person can act on, and a landed outcome is a report. */
+  const waitingBesidesTheDocument = madeBesidesTheDocument.filter(
+    (shiftOutcome) => !shiftOutcome.landed,
+  )
+
   if (changeset && !drift.ok) {
     return (
       <DriftedShift
@@ -593,7 +601,7 @@ export default async function ShiftPage({ params }: { params: Promise<{ contract
       resume={
         changes.length > 0
           ? `Pick up at ${changes[0]?.where ?? 'the top of the document'}, where the first change is waiting.`
-          : madeBesidesTheDocument.length > 0
+          : waitingBesidesTheDocument.length > 0
             ? 'Pick up at what Propositum made, above.'
             : null
       }

@@ -2131,6 +2131,13 @@ export async function recordOutcomeVerdict(
       // write papers over.
       const message = error instanceof Error ? error.message : String(error)
       if (/unique|P2002/i.test(message)) {
+        // Refreshed even though nothing was written, and BECAUSE nothing was
+        // written. Reaching here means the durable record holds a verdict the
+        // screen does not know about — a second tab, or a decision made and
+        // then the page left open — so the screen is the stale half. Without
+        // this it goes on offering Accept and Reject over something already
+        // decided, and every further click produces the same sentence.
+        refresh()
         return no<OutcomeVerdictRecorded>('already-done', "You've already decided on this.")
       }
       throw error

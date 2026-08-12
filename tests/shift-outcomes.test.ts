@@ -514,9 +514,20 @@ describe('the five kinds, and the reading that renders them', () => {
     expect(readOutcomeDetail(null).items).toEqual([])
     expect(readOutcomeDetail('nonsense').body).toBeNull()
     expect(readOutcomeDetail({ items: 'not a list' }).items).toEqual([])
-    expect(readOutcomeDetail({ items: [null, 3, {}, '  '] }).items).toEqual([])
+    expect(readOutcomeDetail({ items: [null, {}, '  '] }).items).toEqual([])
     expect(readOutcomeDetail({ items: [{ label: 'A', body: 'B' }] }).items).toEqual(['A — B'])
     expect(readOutcomeDetail({ to: 'Northwind' }).addressedTo).toBe('Northwind')
+  })
+
+  it('keeps a collected number instead of dropping it', () => {
+    // A rate is as likely to arrive as a number as it is as a sentence, and a
+    // list that quietly lost its prices would say "it collected nothing" —
+    // which is a different sentence, and a much worse one.
+    expect(readOutcomeDetail({ items: [3.95, 4.2] }).items).toEqual(['3.95', '4.2'])
+    expect(readOutcomeDetail({ items: [{ label: 'Fabrikam', value: 3.95 }] }).items).toEqual([
+      'Fabrikam — 3.95',
+    ])
+    expect(readOutcomeDetail({ items: [Number.NaN, Number.POSITIVE_INFINITY] }).items).toEqual([])
   })
 
   it('leaves an unrecognised kind decidable rather than stranding it', async () => {

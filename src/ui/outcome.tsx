@@ -225,7 +225,7 @@ export function OutcomeCard({ outcome, index, busy = false, onDecide }: OutcomeC
               </ul>
               {outcome.items.length > ITEM_LIMIT ? (
                 <p className="po-more">
-                  and {count(outcome.items.length - ITEM_LIMIT, 'more')}, kept with the rest.
+                  and {outcome.items.length - ITEM_LIMIT} more, kept with the rest.
                 </p>
               ) : null}
             </>

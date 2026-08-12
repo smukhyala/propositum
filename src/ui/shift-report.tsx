@@ -452,7 +452,18 @@ export function ShiftReport(props: ShiftReportProps) {
    */
   const stillWaiting = undecided.length + undecidedMade.length
   const somethingToFinish = changes.length > 0 || made.some((outcome) => !outcome.landed)
-  const waitingNoun = undecidedMade.length === 0 && made.length === 0 ? 'change' : 'thing'
+  /**
+   * Said in changes when changes are all that is waiting, and in things when
+   * they are not.
+   *
+   * Keyed off what is UNDECIDED rather than off what exists, and the difference
+   * matters as soon as the run path writes a `document-changes` row for every
+   * document Shift: keyed off existence, an ordinary document review with three
+   * changes left would read "3 things", while the server refusing the same
+   * finish would say "3 changes". Two numbers with two nouns for one state is
+   * how a person starts wondering which of them is counting something else.
+   */
+  const waitingNoun = undecidedMade.length === 0 ? 'change' : 'thing'
 
   /**
    * Re-entry finding 2, the interaction bug the prototype caught: *Accept all*

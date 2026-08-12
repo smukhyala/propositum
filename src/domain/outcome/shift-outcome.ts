@@ -21,8 +21,14 @@
  * as a reviewable proposal. A row whose reversibility is a value this code has
  * never heard of is a row we know nothing about, and the honest thing to do
  * with a thing we know nothing about is to report it rather than offer to undo
- * it. `asReversibility` therefore returns `null` for anything that is not
- * exactly `held`, and every caller reads "not `held`" as "no verdict".
+ * it.
+ *
+ * So the only question anyone may ask about reversibility is `isDecidable`,
+ * which answers it as `=== 'held'`. There is deliberately no function that
+ * narrows the column to a two-member union: such a function has three possible
+ * answers, and the third — "I do not recognise this" — is the one a caller
+ * forgets to handle, at which point the unrecognised row falls into whichever
+ * branch was written first. One question, one boolean, deny by default.
  *
  * **An unrecognised `kind` stays decidable.** This is the opposite direction
  * and it is deliberate, because the failure is the opposite. `kind` chooses the
@@ -54,18 +60,9 @@ export const SHIFT_OUTCOME_KINDS = [
 
 export type ShiftOutcomeKind = (typeof SHIFT_OUTCOME_KINDS)[number]
 
-export const REVERSIBILITIES = ['held', 'landed'] as const
-
-export type Reversibility = (typeof REVERSIBILITIES)[number]
-
 /** The stored kind, or `null` when it is outside the closed set. */
 export function asShiftOutcomeKind(raw: string): ShiftOutcomeKind | null {
   return (SHIFT_OUTCOME_KINDS as readonly string[]).includes(raw) ? (raw as ShiftOutcomeKind) : null
-}
-
-/** The stored reversibility, or `null` when it is outside the closed set. */
-export function asReversibility(raw: string): Reversibility | null {
-  return (REVERSIBILITIES as readonly string[]).includes(raw) ? (raw as Reversibility) : null
 }
 
 /**
@@ -115,10 +112,28 @@ const EMPTY: OutcomeDetail = {
   whatYouCanDo: null,
 }
 
+/**
+ * One JSON scalar, as something a person can read.
+ *
+ * Numbers and booleans are kept rather than discarded, and that is the whole
+ * reason this is a function. A collected rate is as likely to arrive as
+ * `{ label: 'Fabrikam', value: 3.95 }` as it is to arrive as a sentence, and a
+ * reader that took only strings would show the carrier's name with the price
+ * silently gone — or, for a bare array of numbers, an empty list. An empty list
+ * is indistinguishable from "it collected nothing", which is a different
+ * sentence and a much worse one.
+ */
+function scalarText(value: unknown): string | null {
+  if (typeof value === 'string') return value.trim() === '' ? null : value.trim()
+  if (typeof value === 'number') return Number.isFinite(value) ? String(value) : null
+  if (typeof value === 'boolean') return String(value)
+  return null
+}
+
 function textAt(source: Record<string, unknown>, keys: readonly string[]): string | null {
   for (const key of keys) {
-    const value = source[key]
-    if (typeof value === 'string' && value.trim() !== '') return value.trim()
+    const text = scalarText(source[key])
+    if (text !== null) return text
   }
   return null
 }
@@ -126,14 +141,14 @@ function textAt(source: Record<string, unknown>, keys: readonly string[]): strin
 /**
  * One item of a `collection`, as a line.
  *
- * Objects are flattened rather than rejected. A collected rate is plausibly
- * `{ label, body }` and plausibly a bare string, and a reader that accepted
- * only one of those would silently render an empty list for the other — an
- * empty list being indistinguishable from "it collected nothing", which is a
- * different and much worse sentence.
+ * Objects are flattened rather than rejected, for the same reason `scalarText`
+ * keeps numbers: a collected rate is plausibly `{ label, value }` and plausibly
+ * a bare string, and a reader that accepted only one of those would render an
+ * empty list for the other.
  */
 function itemLine(value: unknown): string | null {
-  if (typeof value === 'string') return value.trim() === '' ? null : value.trim()
+  const scalar = scalarText(value)
+  if (scalar !== null) return scalar
   if (typeof value !== 'object' || value === null) return null
 
   const record = value as Record<string, unknown>
