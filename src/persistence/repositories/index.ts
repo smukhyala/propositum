@@ -1320,12 +1320,28 @@ function confirmationRepository(prisma: PrismaClient): ConfirmationRepository {
 /**
  * What the agent saw while acting.
  *
- * DISJOINT from ObservationEvent, which is why this is its own repository
- * rather than a method on the ledger writer. The two ledgers staying separate
- * is what keeps the published 2,000-character retention promise true: that
- * promise is about the person's own browsing, and an agent driving a browser
- * has to capture whole pages to act at all. One door writing both would make
- * the promise depend on remembering which caller it was.
+ * DISJOINT from ObservationEvent, which is why this is its own repository and
+ * its own table. The two ledgers staying separate is what keeps the published
+ * 2,000-character retention promise true: that promise is about the person's
+ * own browsing, and an agent driving a browser has to capture whole pages to
+ * act at all.
+ *
+ * ── Corrected: raw text does not arrive here ────────────────────────────
+ *
+ * This comment used to end "one door writing both would make the promise depend
+ * on remembering which caller it was", and read as an argument that the ledger
+ * writer must not touch ActionEvidence at all. That conflated two different
+ * doors and got the second one wrong.
+ *
+ * The SEQUENCING door is per-table and must stay singular: `seq` is gapless per
+ * session and ActionEvidence has no `seq`, so nothing here belongs in
+ * `append()`. The SANITISING door is per-SYSTEM and must also stay singular —
+ * ADR-0003 §35 — because a second place that turns raw page text into stored
+ * text is a second place to forget to call `datamark`.
+ *
+ * So `createLedgerWriter().appendEvidence()` is the only production caller of
+ * `create` below, and it hands over text that has ALREADY been datamarked and a
+ * URL that has already been cleaned. Two ledgers, one sanitiser.
  */
 export interface ActionEvidenceRepository {
   create(input: {
@@ -1383,9 +1399,74 @@ export interface ActionEvidenceRepository {
       }
     | null
   >
+  /**
+   * Delete rows created before `createdBefore`. The unconditional half of the
+   * retention promise.
+   *
+   * Policy — how long the window is, and when it runs — lives in
+   * `src/server/evidence-sweep.ts`. This is only the query, because a retention
+   * WINDOW written into a repository is a published promise hidden inside a
+   * data-access layer, and nobody looks for it there.
+   */
+  sweepOlderThan(createdBefore: Date): Promise<EvidenceSweepCounts>
+  /**
+   * Delete rows belonging to runs whose every ShiftOutcome is settled — the
+   * person has accepted or rejected each held production, or it already landed
+   * and admits no verdict.
+   *
+   * The normal case, and the one that matters most: once the person has decided
+   * what a Shift made, the screenshots of their authenticated session have no
+   * remaining reader, and holding them to the end of the window would be
+   * keeping them for nobody.
+   *
+   * A run with NO outcomes at all is not settled — it is unfinished, or it
+   * failed, and its evidence is the only account of what it was doing when it
+   * stopped. Those rows leave by `sweepOlderThan` instead.
+   */
+  sweepSettledRuns(): Promise<EvidenceSweepCounts>
 }
 
-function actionEvidenceRepository(prisma: PrismaClient): ActionEvidenceRepository {
+/**
+ * What one sweep pass did.
+ *
+ * `keptForConfirmation` is not an error count and not a failure. A
+ * ConfirmationRequest carries a foreign key to the exact row the person was
+ * looking at when they authorised an effect, and `confirmation_request` is
+ * append-only — so that row can never be deleted without deleting the record of
+ * a human being asked, which is the one piece of this ledger the audit trail
+ * genuinely needs. It is counted rather than silently skipped, because a
+ * retention sweep that quietly leaves rows behind is a promise with an
+ * undocumented exception, and this project already publishes the exception.
+ */
+export interface EvidenceSweepCounts {
+  readonly deleted: number
+  readonly keptForConfirmation: number
+}
+
+export function actionEvidenceRepository(prisma: PrismaClient): ActionEvidenceRepository {
+  /**
+   * Delete everything matching `where` that no ConfirmationRequest points at,
+   * and count what had to stay.
+   *
+   * The count is taken BEFORE the delete and inside the same transaction. Taken
+   * after, it would race a concurrent confirmation and report a number that was
+   * never true at any single moment.
+   */
+  async function sweep(where: {
+    runId?: { in: string[] }
+    createdAt?: { lt: Date }
+  }): Promise<EvidenceSweepCounts> {
+    return prisma.$transaction(async (tx) => {
+      const keptForConfirmation = await tx.actionEvidence.count({
+        where: { ...where, requests: { some: {} } },
+      })
+      const { count } = await tx.actionEvidence.deleteMany({
+        where: { ...where, requests: { none: {} } },
+      })
+      return { deleted: count, keptForConfirmation }
+    })
+  }
+
   return {
     create: ({ runId, intentId, kind, url, untrusted, image, truncated }) =>
       prisma.actionEvidence.create({
@@ -1416,6 +1497,30 @@ function actionEvidenceRepository(prisma: PrismaClient): ActionEvidenceRepositor
       }),
 
     byId: (id) => prisma.actionEvidence.findUnique({ where: { id } }),
+
+    sweepOlderThan: (createdBefore) => sweep({ createdAt: { lt: createdBefore } }),
+
+    sweepSettledRuns: async () => {
+      // A run is settled when it has outcomes and none of them is still
+      // awaiting a person. `landed` admits no verdict at all — there is nothing
+      // to accept about something that already happened out in the world — so
+      // it counts as settled the moment it is written.
+      const unsettled = await prisma.shiftOutcome.findMany({
+        where: { verdict: { is: null }, reversibility: { not: 'landed' } },
+        select: { runId: true },
+        distinct: ['runId'],
+      })
+      const blocked = new Set(unsettled.map((o) => o.runId))
+
+      const withOutcomes = await prisma.shiftOutcome.findMany({
+        select: { runId: true },
+        distinct: ['runId'],
+      })
+      const settled = withOutcomes.map((o) => o.runId).filter((id) => !blocked.has(id))
+
+      if (settled.length === 0) return { deleted: 0, keptForConfirmation: 0 }
+      return sweep({ runId: { in: settled } })
+    },
   }
 }
 

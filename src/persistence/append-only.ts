@@ -93,8 +93,29 @@ export const REQUIRED_GUARDS: ReadonlyArray<readonly [string, string]> = [
   ['confirmation_verdict_no_update', 'confirmation_verdict'],
   ['confirmation_verdict_no_delete', 'confirmation_verdict'],
   ['confirmation_verdict_no_replace', 'confirmation_verdict'],
+  /**
+   * `action_evidence` has TWO guards, not three, and `action_evidence_no_delete`
+   * is absent on purpose.
+   *
+   * This is the only entry in this list that needs an argument, so here it is.
+   * ActionEvidence is the one durable table that is SWEPT: ADR-0010's retention
+   * section states plainly that "a no-DELETE trigger and a sweep cannot both be
+   * true", and CONTEXT.md's ActionEvidence entry says the same. The trigger
+   * shipped anyway, which made a published retention promise unenforceable at
+   * the storage layer while a green suite read as though it were enforced.
+   *
+   * The two remaining guards carry the whole of what append-only was protecting
+   * here: a ConfirmationRequest points at one of these rows as the thing the
+   * person was looking at when they authorised an effect, and a row that can be
+   * rewritten is not a record of what they were shown. Immutability is about
+   * rewriting history. Retention is about how long history is kept. Only the
+   * second needs DELETE.
+   *
+   * `prisma/triggers.sql` still DROPs the old trigger every startup, so a
+   * database created before this change is corrected rather than left with a
+   * sweep that fails on one machine and works on another.
+   */
   ['action_evidence_no_update', 'action_evidence'],
-  ['action_evidence_no_delete', 'action_evidence'],
   ['action_evidence_no_replace', 'action_evidence'],
 ] as const
 

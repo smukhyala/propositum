@@ -24,11 +24,28 @@
  * A hole indistinguishable from inactivity makes inference confidently report a
  * lull that never happened. That is the H1 corruption hardest to notice,
  * because nothing looks wrong.
+ *
+ * ── Two ledgers, one sanitiser ──────────────────────────────────────────
+ *
+ * `appendEvidence` writes the OTHER ledger — ActionEvidence, what an agent saw
+ * while acting under a ratified contract. It is a different table with a
+ * different lifetime, and nothing joins the two (ADR-0010).
+ *
+ * It lives here anyway, and the reason is the paragraph above about sanitising
+ * at the door rather than at the caller. The alternative was a second module
+ * that also calls `datamark`, and two sanitising paths is one more than can be
+ * verified by reading a single file. So: two ledgers, two tables, two published
+ * budgets — and exactly one place where raw page text becomes stored text.
+ *
+ * What does NOT carry over is sequencing. ActionEvidence has no `seq`, no
+ * gaplessness requirement and no replay, so `appendEvidence` does not go
+ * through the serialising queue that `append` needs.
  */
 
 import { z } from 'zod'
 import type { PrismaClient } from '@prisma/client'
 import { datamark, looksAdversarial } from '../model/untrusted'
+import { actionEvidenceRepository } from './repositories/index'
 import { cleanUrl } from '../capture/url'
 
 /** Closed and code-owned. Adding a member is a schema change plus migration,
@@ -108,8 +125,63 @@ export interface GapSignal {
   readonly gotSourceSeq: number
 }
 
+/**
+ * Closed and code-owned, exactly as OBSERVATION_KINDS is. There is no `other`:
+ * a third way of perceiving a page is a schema change and an ADR paragraph,
+ * never a string a caller invents.
+ */
+export const EVIDENCE_KINDS = ['page-snapshot', 'screen-capture'] as const
+export type EvidenceKind = (typeof EVIDENCE_KINDS)[number]
+
+/**
+ * One thing the agent perceived at one action boundary.
+ *
+ * `untrustedText` is RAW. Same rule as `IncomingEvent.untrustedText` and for
+ * the same reason — the door sanitises, so no caller has to remember to.
+ */
+export const incomingEvidenceSchema = z.object({
+  runId: z.string().min(1),
+  intentId: z.string().min(1).optional(),
+  kind: z.enum(EVIDENCE_KINDS),
+  /** Browser-attested. Chrome said this is where the tab is; the page did not.
+   *  Cleaned on the way in, like every other URL that crosses this door. */
+  url: z.string(),
+  /** RAW accessibility tree, as text. Never pre-datamarked. */
+  untrustedText: z.string().optional(),
+  image: z.instanceof(Uint8Array).optional(),
+})
+
+export type IncomingEvidence = z.input<typeof incomingEvidenceSchema>
+
+export type AppendEvidenceResult =
+  | {
+      readonly ok: true
+      readonly id: string
+      /** True when SNAPSHOT_BUDGET_CHARS cut the tree short. Stored on the row
+       *  too: a truncated tree that reads as complete is how an agent concludes
+       *  a button does not exist. */
+      readonly truncated: boolean
+      readonly adversarial: boolean
+    }
+  | { readonly ok: false; readonly reason: 'malformed'; readonly detail: string }
+
 export interface LedgerWriter {
   append(sessionId: string, event: unknown): Promise<AppendResult>
+  /**
+   * The ActionEvidence door.
+   *
+   * NEVER REJECTS FOR SIZE, and that is the load-bearing sentence. An oversized
+   * tree is truncated, marked `truncated`, and written. A rejection here would
+   * be a rejection the sender must handle, and the wave-2 ambient defect is
+   * exactly what that looks like when the sender handles it by retrying: the
+   * extension buffered 200 observations against a route that accepted 100,
+   * every flush failed, the buffer was cleared only on success, and ambient
+   * capture died permanently for the life of that session storage.
+   *
+   * So the only refusal below is `malformed` — a shape this writer cannot
+   * interpret at all — and size is never a shape.
+   */
+  appendEvidence(evidence: unknown): Promise<AppendEvidenceResult>
   recordGap(input: {
     sessionId: string
     reason: CaptureGapReason
@@ -156,6 +228,7 @@ function cleanUrls(attested: Record<string, unknown>): Record<string, unknown> {
 export function createLedgerWriter(prisma: PrismaClient): LedgerWriter {
   const listeners: Array<(signal: GapSignal) => void> = []
   const lastSourceSeq = new Map<string, number>()
+  const evidence = actionEvidenceRepository(prisma)
 
   /**
    * In-process serialisation. Not belt-and-braces — required.
@@ -303,6 +376,79 @@ export function createLedgerWriter(prisma: PrismaClient): LedgerWriter {
                 adversarial: looksAdversarial(marked),
               },
       })
+    },
+
+    async appendEvidence(raw) {
+      const parsed = incomingEvidenceSchema.safeParse(raw)
+      if (!parsed.success) {
+        return {
+          ok: false,
+          reason: 'malformed',
+          detail: parsed.error.issues
+            .map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`)
+            .join('; '),
+        }
+      }
+
+      const { runId, intentId, kind, url, untrustedText, image } = parsed.data
+
+      /**
+       * BOUNDED TWICE, and neither side trusts the other.
+       *
+       * The extension bounds the tree before it leaves the browser — a node cap
+       * and a character budget — and this bounds it again on the way into the
+       * ledger. Same posture the ambient buffer takes, for the same reason: the
+       * sender is the least trustworthy component in the system and the app
+       * cannot verify what it was told about a page it never saw.
+       *
+       * What the ambient path got WRONG, and what this must not repeat: the two
+       * bounds disagreed about which was tighter, so the sender's was looser,
+       * every flush failed validation, and the buffer cleared only on success.
+       * One overflow wedged ambient capture permanently. The principle was
+       * right; the arithmetic deadlocked it.
+       *
+       * Two rules follow, and both are enforced here rather than remembered:
+       *
+       *   1. The sender's bound is AT OR BELOW this one. The extension's
+       *      character budget is set from SNAPSHOT_BUDGET_CHARS with headroom,
+       *      so in the normal case this truncation never fires.
+       *   2. Oversized evidence is TRUNCATED AND RECORDED, never refused. There
+       *      is no size on which this returns `ok: false`, so there is nothing
+       *      for a sender to retry forever. `truncated` on the row is how the
+       *      overflow is counted instead — and it is the same flag an agent
+       *      reads before concluding that a control does not exist.
+       */
+      const marked = untrustedText === undefined ? undefined : datamark(untrustedText, { budget: 'snapshot' })
+      const truncated = marked?.removed.includes('truncated-to-snapshot-budget') ?? false
+
+      const row = await evidence.create({
+        runId,
+        ...(intentId === undefined ? {} : { intentId }),
+        kind,
+        url: cleanUrl(url),
+        ...(marked === undefined
+          ? {}
+          : {
+              untrusted: {
+                text: marked.sanitized,
+                removed: marked.removed,
+                adversarial: looksAdversarial(marked),
+              },
+            }),
+        // Prisma's `Bytes` is `Uint8Array<ArrayBuffer>`; Zod hands back the
+        // wider `Uint8Array<ArrayBufferLike>`. Narrowed here, at the one place
+        // that knows the buffer came from a screenshot rather than from shared
+        // memory — see the note on the repository's `image` field.
+        ...(image === undefined ? {} : { image: image as Uint8Array<ArrayBuffer> }),
+        truncated,
+      })
+
+      return {
+        ok: true,
+        id: row.id,
+        truncated,
+        adversarial: marked !== undefined && looksAdversarial(marked),
+      }
     },
 
     recordGap({ sessionId, reason, startedAtElapsedMs, endedAtElapsedMs, observedAt }) {
