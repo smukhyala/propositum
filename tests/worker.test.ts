@@ -59,6 +59,10 @@ const PAGES = {
 function job(over: Partial<WorkerJob> = {}): WorkerJob {
   return {
     runId: 'run-1',
+    // The unit of history and of both caps. A confirmation pause ends one run
+    // and starts another under the same contract, so anything counted per run
+    // would reset every time somebody was asked a question.
+    contractId: 'contract-1',
     objective: 'Draft the Northwind proposal',
     definitionOfDone: 'Commercials and Close drafted',
     guidance: [],

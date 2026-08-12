@@ -1,7 +1,49 @@
 /**
  * The worker loop.
  *
- *   claim → plan → propose → GATE → act → record → check stops → repeat
+ *   claim → rebuild history from the ledger → repeat:
+ *     should I stop?  → finish
+ *     one action, or a question, or done
+ *     authorize (pure)
+ *     refused? → record the intent, count it, carry on
+ *     record the intent (committed BEFORE the effect)
+ *     perform — and the tool hands back THE NEW PAGE
+ *     record the outcome, advance to the snapshot it returned
+ *
+ * ── What changed: the plan stopped authorizing ───────────────────────────
+ *
+ * This loop used to be a `for` over `PlanStep`s. One step, one turn, one action,
+ * and when the list ran out the run was over. That was coherent while a step was
+ * a row the gate could compare against — and it is incoherent for an agent that
+ * looks at a page and then decides, because *the list was written before it
+ * looked*. ADR-0010 §6 demotes the plan from authorizing to REPORTING: the steps
+ * are still written down, still rendered in the shift report, and cited by
+ * nothing.
+ *
+ * Two things ADR-0004 leaned on had to be replaced rather than reassured away:
+ *
+ *   **Blast radius.** `MAX_PLAN_STEPS = 12` bounded it on the reasoning that one
+ *   step was one action. With no authorizing plan that bound evaporates, so it
+ *   is replaced by two counters read straight off durable rows —
+ *   `MAX_ACTIONS_PER_RUN` so a loop ends, and `MAX_MUTATING_ACTIONS_PER_RUN`
+ *   because forty page reads and forty changes out in the world are different
+ *   categories of event. The second is the one people care about.
+ *
+ *   **The Progress dial.** *A step is now the interval between two mutating
+ *   actions*, so `current-step-only` compiles to `maxMutatingActions = 1` —
+ *   "make at most one change out there, then come back to me". That is a
+ *   set-membership test over a counter the ledger already supports, which is
+ *   what CONTEXT.md requires of a dial: name the deterministic check or it is
+ *   theatre.
+ *
+ * **The Initiative dial is what still ends a plan-shaped run.** Inside the plan
+ * the loop supplies a code-owned `stepOrdinal`; past the end of it there is no
+ * ordinal, so `follow-closely` refuses to continue and `use-judgment` carries
+ * on. That is the honest reading of *follow the plan closely* when there is no
+ * plan left to follow, and it is why a drafting run behaves exactly as it did
+ * before while a browser run keeps going. The ordinal is never model-proposed:
+ * it is this loop's own counter, so a model naming a step can only match it or
+ * be refused, never widen it.
  *
  * ── Every action is committed before it happens ──────────────────────────
  *
@@ -12,7 +54,9 @@
  * That ordering is also why a halt lands at the next action boundary and never
  * mid-action: abandoning an authorised action in flight leaves an intent with
  * no outcome, indistinguishable from a crash, and the person is told `unknown`
- * when we know exactly what happened.
+ * when we know exactly what happened. What is new is that the `unknown` no
+ * longer has to be permanent — `recoverOrphanedIntents` writes the recovery
+ * outcome before a continuation acts, so the gap becomes a recorded fact.
  *
  * ── Refusals are recorded, not thrown ────────────────────────────────────
  *
@@ -21,25 +65,59 @@
  * loop continues — refusals are evidence about H3, and three in a row is itself
  * a stop condition.
  *
+ * **Except for the ones in `PAUSING_RULES`.** `confirmation_required` is the
+ * gate working exactly as designed: the worker proposed something irreversible
+ * and we stopped to ask. Counting it toward `refusal-loop` would make a run that
+ * correctly asked permission three times look like one going in circles, halt it
+ * at the precise moment the person was about to answer, and report the halt as
+ * *"I kept needing things the agreement does not allow"* — which is both wrong
+ * and discouraging about a behaviour we want more of.
+ *
+ * ── The model has three terminals, and only one is a proposal ────────────
+ *
+ * An action goes to the gate. A `decisionNeeded` and a `done` do not: both are
+ * the model DECLINING to continue, which ADR-0007 says is always safe because
+ * declining withholds. `done` in particular is a stop and not a grant — it can
+ * end a run early and can never extend one.
+ *
  * ── No clock ─────────────────────────────────────────────────────────────
  *
  * `now()` is injected. A 40-minute fixture replays in milliseconds, and a
  * budget decision never depends on when the test ran.
  */
 
-import { compilePolicy } from '../domain/handoff/policy'
+import { compilePolicy, MUTATING_ACTION_KINDS } from '../domain/handoff/policy'
 import type { ActionKind, AutonomyControls, ContractScope } from '../domain/handoff/policy'
 import { authorize } from '../policy/gate'
 import type { AuthorizedAction, RunContext, ToolProposal } from '../policy/gate'
-import { draftSection, readApprovedSource, readDocument } from '../policy/tools'
-import type { ReadDocumentDeps, ReadSourceDeps } from '../policy/tools'
-import { STOP_RULES, effectOfRaisedQuestion, shouldStop } from '../domain/execution/stop-conditions'
+import {
+  captureScreen,
+  clickElement,
+  draftSection,
+  navigateTo,
+  observePage,
+  pressKey,
+  readApprovedSource,
+  readDocument,
+  typeText,
+} from '../policy/tools'
+import type { BrowserDeps, NavigateDeps, ReadDocumentDeps, ReadSourceDeps } from '../policy/tools'
+import { historyForContract, recoverOrphanedIntents } from './history'
+import type { HistoryReader, HistoryTurn } from './history'
+import type { PageObservation, ScreenCapture } from './browser-control'
+import {
+  PAUSING_RULES,
+  STOP_RULES,
+  effectOfRaisedQuestion,
+  shouldStop,
+} from '../domain/execution/stop-conditions'
 import type { StopRuleId } from '../domain/execution/stop-conditions'
-import { datamark } from '../model/untrusted'
+import { datamark, SNAPSHOT_BUDGET_CHARS } from '../model/untrusted'
 import type { Datamarked } from '../model/untrusted'
 import type { ModelClient } from '../model/client'
 import { planBoundary } from '../model/boundaries/plan'
 import { workerActionBoundary } from '../model/boundaries/worker-action'
+import type { PageForModel } from '../model/boundaries/worker-action'
 import type { ShiftOutcomeKind } from '../domain/outcome/shift-outcome'
 
 /**
@@ -108,6 +186,15 @@ export interface RunLedger {
     scopeVerdict: 'within_scope' | 'out_of_scope' | 'unverified'
     detail?: string | undefined
     draftText?: string | undefined
+    /**
+     * Who saw this. Absent means the authorising run saw it itself, which is
+     * the only thing the loop below ever writes.
+     *
+     * It exists on this interface so `recoverOrphanedIntents` can write
+     * `'recovery'` through the same door rather than reaching for a second
+     * writer — one outcome table, one way in.
+     */
+    observedBy?: string | undefined
   }): Promise<void>
   recordSteps(runId: string, steps: ReadonlyArray<{ ordinal: number; intent: string }>): Promise<string[]>
   advanceProgress(runId: string, step: number): Promise<void>
@@ -118,6 +205,30 @@ export interface WorkerDeps {
   readonly ledger: RunLedger
   readonly readSource: ReadSourceDeps
   readonly readDoc: ReadDocumentDeps
+  /**
+   * The channel to the person's real Chrome, when this run has one.
+   *
+   * OPTIONAL, and its absence is not a gap. A drafting contract grants only
+   * `DOCUMENT_ACTION_KINDS`, so the gate refuses every browser kind with
+   * `action_kind_not_allowed` long before a tool is reached, and a run that
+   * cannot propose a browser action has no use for a channel. Wiring one
+   * unconditionally would mean every drafting run held a handle to a debugger
+   * attachment it never uses, which is a capability granted by tidiness.
+   *
+   * If a browser kind is somehow authorized without one, `perform` records a
+   * failed outcome saying so rather than throwing past the ledger.
+   */
+  readonly browser?: BrowserDeps | undefined
+  /**
+   * Where the run reads what has already happened under this contract.
+   *
+   * Optional so that a caller with nothing to resume — and every existing test —
+   * gets an empty history rather than a required dependency it cannot supply.
+   * Absent means "this contract has done nothing", which is true of a first run
+   * and is the safe direction anyway: the caps start from zero either way, and
+   * supplying real counts can only make them bind sooner.
+   */
+  readonly history?: HistoryReader | undefined
   /** Injected. Never Date.now() inside the loop. */
   readonly now: () => number
   readonly renewLease?: ((runId: string) => Promise<void>) | undefined
@@ -125,6 +236,12 @@ export interface WorkerDeps {
 
 export interface WorkerJob {
   readonly runId: string
+  /**
+   * The contract this run works under. The unit of history, of the two caps, and
+   * of a confirmation pause — see `./history.ts` for why it is the contract and
+   * not the run.
+   */
+  readonly contractId: string
   readonly objective: string
   readonly definitionOfDone: string
   readonly guidance: readonly string[]
@@ -203,6 +320,20 @@ export interface WorkerResult {
   readonly produced: readonly OutcomeProposal[]
   readonly refusals: number
   readonly actionsTaken: number
+  /**
+   * What the model said when it declared itself finished, if it did.
+   *
+   * `undefined` when the run ended any other way — a stop rule, a cap, the end
+   * of a plan under `follow-closely`. It is model prose about model work, so it
+   * is reported and never acted on: nothing downstream branches on it, and it
+   * cannot become an outcome. It exists so that a run which finished cleanly can
+   * say what it did in its own words rather than leaving the report blank.
+   */
+  readonly summary: string | undefined
+  /** Authorized intents this run found already dangling and recorded a recovery
+   *  outcome for. Reported so a caller can see the sweep did something, rather
+   *  than having to diff the ledger to find out. */
+  readonly recovered: number
 }
 
 export async function runWorker(job: WorkerJob, deps: WorkerDeps): Promise<WorkerResult> {
@@ -212,19 +343,57 @@ export async function runWorker(job: WorkerJob, deps: WorkerDeps): Promise<Worke
   const decisions: DecisionRaised[] = []
   const produced: OutcomeProposal[] = []
   const gathered: Array<{ label: string; content: Datamarked }> = []
-  const history: Array<{ kind: string; summary: string; outcome: string }> = []
+
+  /* ── what this contract has already done ────────────────────────────── */
+
+  /**
+   * The rebuild, and then the recovery, in that order and before anything acts.
+   *
+   * The order is the whole point. A continuation that acted first would be
+   * writing new rows on top of an intent whose fate was still unrecorded, and
+   * the two would then be untangleable: an `ActionIntent` with no outcome
+   * followed by more work looks exactly like an action still in flight. Writing
+   * the recovery outcome first draws a line — everything before it is settled,
+   * however unsatisfyingly, and everything after it belongs to this run.
+   */
+  const rebuilt = deps.history
+    ? await historyForContract(job.contractId, { ledger: deps.history }, {
+        mutatingKinds: MUTATING_ACTION_KINDS as ReadonlySet<string>,
+      })
+    : { turns: [] as HistoryTurn[], actionsTaken: 0, mutatingActionsTaken: 0, orphanedIntentIds: [] }
+
+  const recovered = await recoverOrphanedIntents(rebuilt.orphanedIntentIds, deps.ledger)
+
+  const history: HistoryTurn[] = [...rebuilt.turns]
 
   let seq = 0
   let refusals = 0
-  let actionsTaken = 0
+  let actionsTaken = rebuilt.actionsTaken
+  let mutatingActionsTaken = rebuilt.mutatingActionsTaken
   let consecutiveNoProgress = 0
   let consecutiveRefusals = 0
+  let summary: string | undefined
+
+  /**
+   * The page the run last saw, and the snapshot the gate will accept a ref
+   * against.
+   *
+   * There is exactly one writer for each — the `perform` result below — and that
+   * is what makes "the model only ever acts on what it just saw" hold. See the
+   * header of `src/policy/tools.ts`: because every acting tool returns the page
+   * it produced, a snapshot id has no other source, so a stale one cannot be
+   * obtained rather than merely being refused.
+   */
+  let page: PageObservation | null = null
+  let screenshot: ScreenCapture | null = null
 
   const progress = () => ({
     nowEpochMs: deps.now(),
     deadlineEpochMs: job.deadlineEpochMs,
     consecutiveNoProgress,
     consecutiveRefusals,
+    actionsTaken,
+    maxActions: policy.maxActions,
   })
 
   const finish = (rules: readonly StopRuleId[], status: 'succeeded' | 'failed'): WorkerResult => ({
@@ -235,13 +404,15 @@ export async function runWorker(job: WorkerJob, deps: WorkerDeps): Promise<Worke
     produced,
     refusals,
     actionsTaken,
+    summary,
+    recovered,
   })
 
   // Budget can already be gone before we plan — check before spending a call.
   const preflight = shouldStop(progress(), job.controls.interruption, false)
   if (preflight.halt) return finish(preflight.rules, 'succeeded')
 
-  /* ── plan ───────────────────────────────────────────────────────────── */
+  /* ── the plan, which reports and does not authorize ─────────────────── */
 
   const planned = await deps.model.run(planBoundary, {
     objective: job.objective,
@@ -254,19 +425,41 @@ export async function runWorker(job: WorkerJob, deps: WorkerDeps): Promise<Worke
 
   if (!planned.ok) return finish([], 'failed')
 
-  const stepIds = await deps.ledger.recordSteps(
+  const steps = planned.value.steps
+
+  // The rows are still written, because the shift report renders them as what
+  // the run said it intended. Nothing reads the ids back onto an intent any
+  // more — see `stepIdFor` below.
+  await deps.ledger.recordSteps(
     job.runId,
-    planned.value.steps.map((s, i) => ({ ordinal: i + 1, intent: s.intent })),
+    steps.map((s, i) => ({ ordinal: i + 1, intent: s.intent })),
   )
 
-  /* ── step through the plan ──────────────────────────────────────────── */
+  /* ── observe → act → observe, until something says stop ─────────────── */
 
-  for (const [index, step] of planned.value.steps.entries()) {
-    const ordinal = index + 1
-    await deps.ledger.advanceProgress(job.runId, ordinal)
+  for (let turn = 0; ; turn += 1) {
+    /**
+     * Past the plan, and told not to leave it.
+     *
+     * Deterministic code reading the compiled policy, not a model declaring
+     * itself finished: `offPlanActions` is the Initiative dial, and *follow the
+     * plan closely* has an obvious meaning once the plan is exhausted. Checked
+     * here rather than left to the gate so the run ends cleanly instead of
+     * burning three model calls on `off_plan` refusals and then reporting
+     * "I kept needing things the agreement does not allow" — which would be a
+     * true sentence about a false situation.
+     */
+    if (turn >= steps.length && !policy.offPlanActions) return finish([], 'succeeded')
+
+    const step = steps[turn]
+    const ordinal = turn + 1
+
+    await deps.ledger.advanceProgress(job.runId, Math.min(ordinal, Math.max(steps.length, 1)))
     await deps.renewLease?.(job.runId)
 
-    // Halts land here — at a boundary, between actions, never inside one.
+    // Halts land here — at a boundary, between actions, never inside one. This
+    // is also where `action-limit` fires, because `progress()` now carries the
+    // real count and the compiled cap.
     const stop = shouldStop(progress(), job.controls.interruption, false)
     if (stop.halt) return finish(stop.rules, 'succeeded')
 
@@ -274,30 +467,52 @@ export async function runWorker(job: WorkerJob, deps: WorkerDeps): Promise<Worke
       objective: job.objective,
       definitionOfDone: job.definitionOfDone,
       guidance: job.guidance,
-      currentStep: {
-        ordinal,
-        intent: step.intent,
-        ...(step.targetSection === undefined ? {} : { targetSection: step.targetSection }),
-      },
+      ...(step === undefined
+        ? {}
+        : {
+            currentStep: {
+              ordinal,
+              intent: step.intent,
+              ...(step.targetSection === undefined ? {} : { targetSection: step.targetSection }),
+            },
+          }),
       allowedActionKinds: [...policy.actionKindAllowlist],
       availableSources: job.sourceLabels,
       history,
       gathered,
+      page: pageForModel(page),
+      ...(screenshot === null
+        ? {}
+        : { screenshot: { mediaType: screenshot.mediaType, base64: screenshot.base64 } }),
+      mutatingActionsRemaining: Math.max(0, policy.maxMutatingActions - mutatingActionsTaken),
     })
 
     if (!proposed.ok) return finish([], 'failed')
-    const action = proposed.value
+    const proposal = proposed.value
+
+    /**
+     * Done. A stop, never a grant — see the boundary header.
+     *
+     * Checked before `decisionNeeded` and before the gate, because a model that
+     * says it has finished has proposed nothing for the gate to decide. Nothing
+     * downstream trusts the claim: what the run produced is whatever it already
+     * recorded, and this only ends the loop early.
+     */
+    if (proposal.done) {
+      summary = proposal.done.summary
+      return finish([], 'succeeded')
+    }
 
     // A raised question is not an action and never reaches the gate. Whether it
     // also halts is the Interruption dial's business; that it is recorded is
     // not configurable.
-    if (action.decisionNeeded) {
-      decisions.push({ ...action.decisionNeeded, atStep: ordinal })
+    if (proposal.decisionNeeded) {
+      decisions.push({ ...proposal.decisionNeeded, atStep: ordinal })
 
       if (effectOfRaisedQuestion(job.controls.interruption) === 'halt') {
         return finish(['decision-needed'], 'succeeded')
       }
-      history.push({ kind: 'question', summary: action.decisionNeeded.question, outcome: 'raised' })
+      history.push({ kind: 'question', summary: proposal.decisionNeeded.question, outcome: 'raised' })
       continue
     }
 
@@ -307,53 +522,74 @@ export async function runWorker(job: WorkerJob, deps: WorkerDeps): Promise<Worke
      * The model proposes none of this — every value here comes from the model's
      * own reply or from the ratified job, and `documentId` comes from the job.
      *
-     * It used to be `job.scope.baseVersionId`: a version id under a key that
-     * means a document. The gate does not look at the value, so the proposal was
-     * authorised as normal and `readDocument` then compared the version id
-     * against the document id it belonged to, found them different, and threw —
-     * every time, on every run that planned a document read. The tool no longer
-     * makes that comparison, and this no longer offers it the wrong id to make
-     * it with.
+     * `snapshotId` is the exception that proves the rule, and it is worth being
+     * precise about. The model DOES name one, and the gate compares it against
+     * `currentSnapshotId` — the value this loop last received from a tool. So a
+     * model naming any other snapshot is refused `stale_snapshot`, and a model
+     * naming the right one has told us nothing we did not already know. It is
+     * carried rather than substituted because substituting it would make the
+     * check vacuous: a proposal that always agrees with us can never disagree,
+     * and disagreement is the entire signal.
      *
-     * Absent when the shift has no document. That is the case
-     * `document_missing` was written for and, until now, the case it never saw:
-     * the key was unconditionally present, so the refusal could not fire.
+     * `documentId` absent when the shift has no document. That is the case
+     * `document_missing` was written for and, until wave 1, the case it never
+     * saw: the key was unconditionally present, so the refusal could not fire.
      */
     const params: Record<string, unknown> = {
-      ...(action.approvedSourceId ? { approvedSourceId: action.approvedSourceId } : {}),
-      ...(action.targetSection ? { sectionPath: action.targetSection } : {}),
-      ...(action.prose ? { text: action.prose } : {}),
+      ...(proposal.approvedSourceId ? { approvedSourceId: proposal.approvedSourceId } : {}),
+      ...(proposal.targetSection ? { sectionPath: proposal.targetSection } : {}),
+      ...(proposal.prose ? { text: proposal.prose } : {}),
+      ...(proposal.ref ? { ref: proposal.ref } : {}),
+      ...(proposal.snapshotId ? { snapshotId: proposal.snapshotId } : {}),
+      ...(proposal.path ? { path: proposal.path } : {}),
+      ...(proposal.inputText === undefined ? {} : { inputText: proposal.inputText }),
+      ...(proposal.key ? { key: proposal.key } : {}),
       ...(job.documentId === undefined ? {} : { documentId: job.documentId }),
     }
 
-    const proposal: ToolProposal = {
-      kind: action.kind,
+    const toolProposal: ToolProposal = {
+      kind: proposal.kind,
       params: params as ToolProposal['params'],
-      reason: action.reason,
-      stepOrdinal: ordinal,
+      reason: proposal.reason,
+      // Inside the plan, the ordinal this loop is counting. Past it, nothing —
+      // which is what makes Initiative bite rather than the plan.
+      ...(step === undefined ? {} : { stepOrdinal: ordinal }),
     }
 
-    const verdict = authorize(policy, proposal, runContext(job, ordinal, planned.value.steps.length, deps), 'pending')
+    const verdict = authorize(
+      policy,
+      toolProposal,
+      runContext(job, ordinal, steps.length, deps, {
+        currentSnapshotId: page?.snapshotId ?? null,
+        actionsTaken,
+        mutatingActionsTaken,
+      }),
+      'pending',
+    )
 
     /* ── refused ──────────────────────────────────────────────────────── */
 
     if (!verdict.authorized) {
       refusals += 1
-      consecutiveRefusals += 1
       consecutiveNoProgress += 1
+
+      // A pause is not a loop. See the file header — this is the whole reason
+      // `PAUSING_RULES` exists, and counting it here would halt a run at the
+      // moment somebody was about to say yes.
+      if (!PAUSING_RULES.has(verdict.rule)) consecutiveRefusals += 1
 
       await deps.ledger.recordIntent({
         runId: job.runId,
-        stepId: stepIds[index] ?? null,
+        stepId: stepIdFor(),
         seq,
-        kind: action.kind,
-        reason: action.reason,
+        kind: proposal.kind,
+        reason: proposal.reason,
         params,
         authorized: false,
         refusedRule: verdict.rule,
       })
 
-      history.push({ kind: action.kind, summary: action.reason, outcome: `refused: ${verdict.rule}` })
+      history.push({ kind: proposal.kind, summary: proposal.reason, outcome: `refused: ${verdict.rule}` })
 
       const afterRefusal = shouldStop(progress(), job.controls.interruption, false)
       if (afterRefusal.halt) return finish(afterRefusal.rules, 'succeeded')
@@ -366,10 +602,10 @@ export async function runWorker(job: WorkerJob, deps: WorkerDeps): Promise<Worke
 
     const intentId = await deps.ledger.recordIntent({
       runId: job.runId,
-      stepId: stepIds[index] ?? null,
+      stepId: stepIdFor(),
       seq,
-      kind: action.kind,
-      reason: action.reason,
+      kind: proposal.kind,
+      reason: proposal.reason,
       params,
       authorized: true,
     })
@@ -380,10 +616,22 @@ export async function runWorker(job: WorkerJob, deps: WorkerDeps): Promise<Worke
       // could hold, and a local called `outcome` sitting three lines above
       // `ledger.recordOutcome` is how the next person comes to write the column.
       const performed = await perform(verdict.action, intentId, deps, gathered)
+
       actionsTaken += 1
+      if (MUTATING_ACTION_KINDS.has(verdict.action.kind)) mutatingActionsTaken += 1
       consecutiveNoProgress = performed.changedSomething ? 0 : consecutiveNoProgress + 1
 
       if (performed.produced !== undefined) produced.push(performed.produced)
+
+      // The one place `currentSnapshotId` moves. Everything the gate will accept
+      // a ref against, for the rest of this run, was returned by a tool right
+      // here.
+      if (performed.observed !== undefined) {
+        page = performed.observed
+        // A new tree makes an old screenshot a picture of a page that is gone.
+        screenshot = null
+      }
+      if (performed.captured !== undefined) screenshot = performed.captured
 
       await deps.ledger.recordOutcome({
         intentId,
@@ -392,31 +640,97 @@ export async function runWorker(job: WorkerJob, deps: WorkerDeps): Promise<Worke
         detail: performed.summary,
         ...(performed.draftText === undefined ? {} : { draftText: performed.draftText }),
       })
-      history.push({ kind: action.kind, summary: action.reason, outcome: performed.summary })
+      history.push({ kind: proposal.kind, summary: proposal.reason, outcome: performed.summary })
     } catch (error) {
+      // Includes every `BrowserControlError`. A channel failure is a recorded
+      // fact about one action — the intent is already committed, so the ledger
+      // says what was attempted and that it did not land — and never an
+      // exception that escapes the loop and takes the run's record with it.
+      actionsTaken += 1
+      if (MUTATING_ACTION_KINDS.has(verdict.action.kind)) mutatingActionsTaken += 1
       consecutiveNoProgress += 1
+
+      const detail = error instanceof Error ? error.message : String(error)
+
       await deps.ledger.recordOutcome({
         intentId,
         result: 'failed',
         scopeVerdict: 'unverified',
-        detail: error instanceof Error ? error.message : String(error),
+        detail,
       })
-      history.push({ kind: action.kind, summary: action.reason, outcome: 'failed' })
+      history.push({ kind: proposal.kind, summary: proposal.reason, outcome: `failed: ${detail}` })
     }
 
     const afterAction = shouldStop(progress(), job.controls.interruption, false)
     if (afterAction.halt) return finish(afterAction.rules, 'succeeded')
   }
-
-  return finish([], 'succeeded')
 }
 
-function runContext(job: WorkerJob, ordinal: number, planLength: number, deps: WorkerDeps): RunContext {
+/**
+ * `ActionIntent.stepId`, which is now null.
+ *
+ * A function rather than a literal `null` at two call sites, so the reason lives
+ * in one place: **no `PlanStep` authorizes anything any more**, so an intent that
+ * pointed at one would be asserting a relationship the gate did not use and the
+ * report does not need. ADR-0010 §6 puts it plainly — the plan is what the run
+ * said it intended, cited by nothing.
+ *
+ * The column stays nullable and the relation stays in the schema, because rows
+ * already written under the old reading are still true about the run that wrote
+ * them, and an append-only ledger does not get to tidy its own history.
+ */
+function stepIdFor(): string | null {
+  return null
+}
+
+/**
+ * The page, wrapped so it cannot reach a prompt unfenced.
+ *
+ * `title` and `tree` are page-authored — on a hostile page every accessible name
+ * in that tree is attacker-controlled — so both go through `datamark`, which is
+ * the only construction site for the brand the boundary requires. A caller who
+ * forgot would not compile.
+ *
+ * `SNAPSHOT_BUDGET_CHARS` and not `EXCERPT_BUDGET_CHARS`: two ledgers, two
+ * budgets, and the distinction is what keeps the published 2,000-character
+ * promise about a person's own browsing true on the day an agent starts reading
+ * whole trees. See the constant's own comment.
+ */
+function pageForModel(observed: PageObservation | null): PageForModel | null {
+  if (observed === null) return null
+
+  const tree = datamark(observed.tree, SNAPSHOT_BUDGET_CHARS)
+
+  return {
+    snapshotId: observed.snapshotId,
+    url: observed.url,
+    title: datamark(observed.title, SNAPSHOT_BUDGET_CHARS),
+    tree,
+    // Either the browser cut it short, or our own budget did. Both mean the same
+    // thing to a model deciding whether a missing button is really missing, and
+    // reporting only the first would let our own truncation masquerade as a
+    // complete page.
+    truncated: observed.truncated || tree.removed.includes('truncated-to-budget'),
+  }
+}
+
+function runContext(
+  job: WorkerJob,
+  ordinal: number,
+  planLength: number,
+  deps: WorkerDeps,
+  ledgerFacts: {
+    currentSnapshotId: string | null
+    actionsTaken: number
+    mutatingActionsTaken: number
+  },
+): RunContext {
   return {
     currentStepOrdinal: ordinal,
     planLength,
     deadlineEpochMs: job.deadlineEpochMs,
     nowEpochMs: deps.now(),
+    ...ledgerFacts,
   }
 }
 
@@ -433,6 +747,12 @@ interface Performed {
    * result it just made, because saying so is the assumption being removed.
    */
   readonly produced?: OutcomeProposal | undefined
+  /** The page as it stands after this action. Present for every browser kind
+   *  that drives a page, which is why the loop needs no separate look. */
+  readonly observed?: PageObservation | undefined
+  /** Pixels, only from `capture-screen`. Carries no refs, so it never advances
+   *  the snapshot. */
+  readonly captured?: ScreenCapture | undefined
 }
 
 /** Dispatch by kind. Exhaustive over ActionKind, so adding a capability without
@@ -485,41 +805,90 @@ async function perform(
     }
 
     /**
-     * The browser kinds, which have a gate but not yet a tool.
+     * The six that drive the person's own Chrome.
      *
-     * `ACTION_KINDS` gained six members before anything could carry one out, so
-     * for this interval the exhaustiveness guard above is telling the truth: a
-     * capability exists in the vocabulary that this loop cannot perform. The
-     * honest response is to say so and record a failure, not to fall through
-     * and return `undefined` to a caller whose type says otherwise.
+     * Every one of them returns the page AFTER it acted, which is what collapses
+     * observe → act → observe into a single round trip and — the part that
+     * matters — makes acting on a page the run did not just see structurally
+     * impossible rather than merely refused. See the header of
+     * `src/policy/tools.ts`.
      *
-     * Nothing reaches here today. `draftContract` grants only
-     * `DOCUMENT_ACTION_KINDS`, so no contract can put a browser kind in its
-     * scope, and the gate refuses one that arrives anyway. This is the second
-     * fence, for the day the first one moves.
+     * `changedSomething` is deliberately NOT "is this a mutating kind", and it
+     * is deliberately NOT "did the tree come back different". It feeds exactly
+     * one rule — `no-progress`, the one that catches a run going in circles —
+     * so it answers *did this move the work along*. `navigate` is not a mutating
+     * kind and does count here: opening a page gets somewhere, where re-reading
+     * the same document three times does not. Comparing two trees instead would
+     * be worse in both directions, counting a click that opened a menu as
+     * progress and a click that submitted a form to an unchanged page as none.
      *
-     * It is deliberately NOT a `default:` clause. A `default` would swallow the
-     * next capability someone adds; naming all six means adding a seventh is
-     * still a type error, which is the property the comment above promises.
+     * The mutating count is a separate thing, read off `MUTATING_ACTION_KINDS`
+     * in the loop above, and the two must not be collapsed: one bounds a lost
+     * run, the other bounds what happens to somebody's account.
      *
      * ── What this costs the outcome vocabulary, said plainly ─────────────
      *
-     * `OutcomeProposal` has five shapes and exactly one of them is produced
-     * here: `section-prose`, from `draft-section`. `item`, `written-answer`,
-     * `composed-text` and `landed` have no producing `ActionKind` today, because
-     * every kind that exists is a read or a draft. `src/server/outcomes/`
-     * handles all five anyway, and its switch is exhaustive for the same reason
-     * this one is: the writer for a shape must exist before the capability that
-     * makes it, or the first run to produce one silently loses it.
+     * `OutcomeProposal` has five shapes and exactly one is produced here:
+     * `section-prose`, from `draft-section`. `landed` still has no producer,
+     * because `LANDING_ACTION_KINDS` is empty and `click-element` is not in it —
+     * landing is about whose act put the effect into the world, not about
+     * whether an effect is possible. `src/server/outcomes/` handles all five
+     * anyway, and its switch is exhaustive for the same reason this one is: the
+     * writer for a shape must exist before the capability that makes it.
      */
-    case 'observe-page':
-    case 'navigate':
-    case 'click-element':
-    case 'type-text':
-    case 'press-key':
-    case 'capture-screen':
-      throw new Error(
-        `${kind} is authorized but this runner cannot carry it out yet — the browser tools are not wired`,
-      )
+    case 'observe-page': {
+      const observed = await observePage(action as AuthorizedAction<'observe-page'>, browserFor(deps, kind))
+      return { summary: `looked at ${observed.url}`, changedSomething: false, observed }
+    }
+
+    case 'navigate': {
+      const observed = await navigateTo(action as AuthorizedAction<'navigate'>, {
+        ...browserFor(deps, kind),
+        sources: deps.readSource.sources,
+      } satisfies NavigateDeps)
+      // Reaching the world and changing something are different: loading a page
+      // is a read that happens to travel, which is why `navigate` is not a
+      // mutating kind. But it is progress — a run that keeps navigating is
+      // getting somewhere, unlike one that keeps re-reading the same document.
+      return { summary: `opened ${observed.url}`, changedSomething: true, observed }
+    }
+
+    case 'click-element': {
+      const observed = await clickElement(action as AuthorizedAction<'click-element'>, browserFor(deps, kind))
+      return { summary: `clicked, and the page is now ${observed.url}`, changedSomething: true, observed }
+    }
+
+    case 'type-text': {
+      const observed = await typeText(action as AuthorizedAction<'type-text'>, browserFor(deps, kind))
+      return { summary: 'typed into the page', changedSomething: true, observed }
+    }
+
+    case 'press-key': {
+      const observed = await pressKey(action as AuthorizedAction<'press-key'>, browserFor(deps, kind))
+      return { summary: `pressed a key, and the page is now ${observed.url}`, changedSomething: true, observed }
+    }
+
+    case 'capture-screen': {
+      const captured = await captureScreen(action as AuthorizedAction<'capture-screen'>, browserFor(deps, kind))
+      return { summary: 'took a picture of the page', changedSomething: false, captured }
+    }
   }
+}
+
+/**
+ * The channel, or a refusal to pretend there is one.
+ *
+ * Nothing should reach here without a browser: `draftContract` grants only
+ * `DOCUMENT_ACTION_KINDS`, so a document contract cannot put a browser kind in
+ * its scope, and the gate refuses one that arrives anyway. This is the second
+ * fence, for the day the first one moves — and it throws rather than returning a
+ * no-op channel because a silent no-op would be recorded as a SUCCEEDED outcome
+ * for an action that never happened, which is the one kind of ledger row that
+ * cannot be recovered from later.
+ */
+function browserFor(deps: WorkerDeps, kind: ActionKind): BrowserDeps {
+  if (!deps.browser) {
+    throw new Error(`${kind} is authorized but this run has no browser to carry it out in`)
+  }
+  return deps.browser
 }

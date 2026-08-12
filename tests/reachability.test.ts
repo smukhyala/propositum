@@ -361,6 +361,105 @@ describe('the safety machinery is reachable from the product', () => {
       'composeOffer has no caller — every offer degrades to the deterministic form forever',
     ).not.toEqual([])
   })
+
+  it('the run path supplies the action counts, so the two caps actually bind', () => {
+    /**
+     * Promoted out of the deferred block when the continuing loop landed.
+     *
+     * `RunContext.actionsTaken` and `mutatingActionsTaken` default to `0` when
+     * absent, which is the one place in that structure where an absent field
+     * GRANTS rather than withholds: an unwired caller got exactly the
+     * enforcement it had before the caps existed — none. So the caps were
+     * compiled, refused correctly in their own unit tests, and bounded nothing
+     * in the product. That is the shape of every defect at the top of this file.
+     *
+     * The counts come from `historyForContract`, which reads them off durable
+     * `ActionIntent` rows rather than a counter held in a process — so they
+     * survive the crash that this project's standing constraint makes routine,
+     * and a continuation cannot get a fresh blast radius by being a fresh run.
+     */
+    expect(
+      callersOf('mutatingActionsTaken', 'src/policy/gate.ts'),
+      'nothing supplies the action counts — MAX_MUTATING_ACTIONS_PER_RUN bounds nothing',
+    ).toContain('src/runtime/worker-loop.ts')
+  })
+
+  it('a pause is distinguished from a loop, or three questions look like circles', () => {
+    /**
+     * Promoted out of the deferred block with the loop.
+     *
+     * Without this filter on the refusal counter, a run that correctly asked
+     * permission three times halts with *"I kept needing things the agreement
+     * does not allow"* — at the exact moment the person was about to answer, and
+     * about the one behaviour the confirmation pause exists to encourage.
+     */
+    expect(
+      callersOf('PAUSING_RULES', 'src/domain/execution/stop-conditions.ts'),
+      'nothing filters pausing refusals out of the loop counter',
+    ).toContain('src/runtime/worker-loop.ts')
+  })
+
+  it('a dangling intent gets an outcome, or the ledger keeps a permanent unknown', () => {
+    /**
+     * `ActionOutcome.observedBy` has been specified in CONTEXT.md §4 since the
+     * vocabulary was written, has been in the schema since wave 1, and had NO
+     * WRITER — so a run that died between the effect and the outcome write left
+     * a trailing `unknown` forever. Under the standing "a local worker stops
+     * when the Mac sleeps" constraint that is routine rather than exotic.
+     *
+     * A column with no writer is the same defect as a function with no caller,
+     * and it is worse in one way: the comment beside it describes a behaviour
+     * that has never happened.
+     */
+    expect(
+      callersOf('recoverOrphanedIntents(', 'src/runtime/history.ts'),
+      'nothing writes a recovery outcome — an interrupted action stays unknown forever',
+    ).not.toEqual([])
+    // ...and it must reach the COLUMN, not just the interface. A recovery
+    // outcome that stops at `RunLedger` and is dropped by the Prisma writer
+    // would be a fix with no row behind it.
+    expect(
+      callersOf('observedBy', 'src/runtime/history.ts'),
+      'observedBy never reaches action_outcome — the column still has no writer',
+    ).toContain('src/server/execute-run.ts')
+  })
+
+  it('the loop rebuilds its history from rows, or resume forgets everything', () => {
+    // One code path for resume, crash recovery and the startup sweep. A per-run
+    // memory would forget the moment a confirmation pause ended one run and
+    // started another — the agent would come back with no idea it had already
+    // filled in half the form.
+    expect(
+      callersOf('historyForContract(', 'src/runtime/history.ts'),
+      'nothing rebuilds a contract history — a continuation starts from nothing',
+    ).toContain('src/runtime/worker-loop.ts')
+    expect(
+      callersOf('intentsForContract', 'src/runtime/history.ts'),
+      'nothing supplies the rows, so every rebuilt history is empty',
+    ).toContain('src/server/execute-run.ts')
+  })
+
+  it('the browser tools are reachable from the run path, or the six kinds cannot act', () => {
+    /**
+     * `ACTION_KINDS` gained six members in wave 2 and the loop threw on all of
+     * them — a capability that existed in the vocabulary, passed the gate, and
+     * could not be carried out. This is that gap closed, and it is asserted here
+     * so it cannot silently reopen behind a refactor.
+     *
+     * Note what this does NOT assert: that any contract grants one. It does not.
+     * `draftContract` grants `DOCUMENT_ACTION_KINDS`, so the gate refuses every
+     * browser kind with `action_kind_not_allowed` before a tool is reached. The
+     * tools are reachable from the loop; the loop is not yet reachable with a
+     * browser kind in scope, and the panel in `src/ui/agreement.tsx` still tells
+     * the truth because of it.
+     */
+    for (const tool of ['observePage(', 'clickElement(', 'typeText(', 'pressKey(', 'navigateTo(', 'captureScreen(']) {
+      expect(
+        callersOf(tool, 'src/policy/tools.ts'),
+        `${tool} has no caller — the capability exists and nothing can carry it out`,
+      ).toContain('src/runtime/worker-loop.ts')
+    }
+  })
 })
 
 /**
@@ -402,16 +501,6 @@ describe('deferred, and asserted as deferred', () => {
     ).toEqual([])
   })
 
-  it('nothing distinguishes a pause from a loop, so three questions look like circles', () => {
-    // Without this filter on the refusal counter, a run that correctly asked
-    // permission three times halts with "I kept needing things the agreement
-    // does not allow" — at the exact moment the person was about to answer.
-    expect(
-      callersOf('PAUSING_RULES', 'src/domain/execution/stop-conditions.ts'),
-      'PAUSING_RULES has a caller now — move this into the section above',
-    ).toEqual([])
-  })
-
   it('nothing reports a lost tab or an action limit, so two stop rules cannot fire', () => {
     // `control-lost` and `action-limit` are structural and deterministic, and
     // `evaluateStructuralStops` cannot raise either until a caller supplies
@@ -419,16 +508,6 @@ describe('deferred, and asserted as deferred', () => {
     expect(
       callersOf('controlLost', 'src/domain/execution/stop-conditions.ts'),
       'something reports control loss now — move this into the section above',
-    ).toEqual([])
-  })
-
-  it('no run path supplies the action counts, so the two caps do not bind', () => {
-    // `EnforcedPolicy.maxActions` and `maxMutatingActions` are compiled and
-    // enforced, but `RunContext.actionsTaken` defaults to 0 when absent, so an
-    // unwired caller gets the enforcement it had before the caps existed.
-    expect(
-      callersOf('mutatingActionsTaken', 'src/policy/gate.ts'),
-      'the caps are wired now — move this into the section above',
     ).toEqual([])
   })
 

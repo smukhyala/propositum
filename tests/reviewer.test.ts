@@ -137,6 +137,27 @@ const DRAFTING_WORKER = [
       prose: 'We propose a partnership on Gold tier terms.',
     },
   },
+  /**
+   * The third terminal, and it is now how a run ENDS.
+   *
+   * The plan used to be the turn budget: one step, one turn, and the loop
+   * stopped when the list ran out. ADR-0010 §6 demoted the plan to reporting, so
+   * under `use-judgment` a run keeps deciding what to do next until it stops
+   * itself, hits a stop rule, or reaches `MAX_ACTIONS_PER_RUN`. A fixture that
+   * simply stopped scripting replies was relying on the plan to end the run, and
+   * that is exactly the thing that no longer authorizes anything.
+   *
+   * `kind` is still required by the schema and is ignored on this arm — the
+   * same shape `decisionNeeded` already had.
+   */
+  {
+    kind: 'ok' as const,
+    value: {
+      kind: 'read-document',
+      reason: 'Commercials names a tier now.',
+      done: { summary: 'I drafted Commercials and named the Gold tier.' },
+    },
+  },
 ]
 
 /**
@@ -154,6 +175,14 @@ const QUIET_WORKER = [
         question: 'Silver or Gold for Northwind?',
         whyItMatters: 'Commercials cannot be finished without it.',
       },
+    },
+  },
+  {
+    kind: 'ok' as const,
+    value: {
+      kind: 'read-document',
+      reason: 'The question is out with them; there is nothing further I can do.',
+      done: { summary: 'I stopped on the tier question.' },
     },
   },
 ]
