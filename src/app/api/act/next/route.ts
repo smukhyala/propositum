@@ -31,6 +31,23 @@
  * would give a component that shares a process with every page in the browser
  * one more thing worth stealing. The runs worth looking at are the ones with a
  * worker currently blocked on a report, which the act store knows.
+ *
+ * **The cost, stated rather than discovered later: with two runs acting at once,
+ * this route would hand run B's instruction to the extension attached to run A's
+ * tab.** Today one run acts at a time, so it cannot happen; the moment two can,
+ * the poll needs to know which tab is asking, and that is a change to what the
+ * extension is told at attach time rather than something this file can fix
+ * alone.
+ *
+ * ── Only the instruction someone is waiting for ──────────────────────────
+ *
+ * The poll hands out the dispatch the hold NAMES, never merely the oldest queued
+ * row for that run. The difference is an orphan: a row left `queued` by an app
+ * restart or by a halt, whose worker is long gone. Handing one of those out
+ * clicks something in a live page for an instruction nobody is waiting on, and
+ * reports the result to nobody. So an orphan found ahead of the awaited row is
+ * ABANDONED — which the repository only permits while it is still queued, so
+ * this can never erase a record of something that was handed out.
  */
 
 import { NextResponse } from 'next/server'
@@ -76,9 +93,18 @@ export async function GET(request: Request) {
   const deadline = Date.now() + pollWindowMs()
 
   for (;;) {
-    for (const runId of store.waitingRuns()) {
-      const queued = await repos.dispatches.nextQueued(runId)
-      if (!queued) continue
+    for (const { runId, dispatchId } of store.waiting()) {
+      // Drain any orphan sitting ahead of the awaited row, so one stale
+      // instruction cannot wedge a run's queue forever.
+      let queued = await repos.dispatches.nextQueued(runId)
+      while (queued !== null && queued.id !== dispatchId) {
+        // Guarded: `abandon` refuses a delivered row, so losing this race means
+        // some other poller took it and this loop simply moves on.
+        await repos.dispatches.abandon(queued.id)
+        queued = await repos.dispatches.nextQueued(runId)
+      }
+
+      if (queued === null) continue
 
       const won = await repos.dispatches.claim({ id: queued.id, deliveredAt: new Date() })
       // Lost the race to another poller. Not an error — the other one has it,

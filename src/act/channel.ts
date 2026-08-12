@@ -200,6 +200,31 @@ export const MAX_TREE_CHARS = 200_000
  *  megabytes of base64 is a generous full-page PNG and a cheap refusal. */
 export const MAX_CAPTURE_BASE64_CHARS = 10_000_000
 
+/**
+ * The ceiling a route can apply BEFORE it reads the body.
+ *
+ * The per-field bounds above are checked by the schema, which runs after
+ * `request.json()` has already allocated whatever arrived — so on their own they
+ * bound what is STORED and not what is read into memory. A route that means the
+ * paragraph above has to refuse on the declared length first, which is what this
+ * constant is for. Comfortably above a maximal capture plus its envelope, so it
+ * only ever catches something absurd.
+ */
+export const MAX_BODY_BYTES = 16 * 1024 * 1024
+
+/**
+ * A page title is page-authored and can be any length the page likes.
+ *
+ * Bounded here rather than only at the evidence door, because this value travels
+ * to the worker whether or not it is ever stored, and "the field the schema
+ * forgot" is how one hostile page decides how much of a model's context window
+ * it gets to fill.
+ */
+export const MAX_TITLE_CHARS = 2_000
+/** A URL Chrome attests to. Long enough for a real one with a real query, short
+ *  enough that it cannot be a payload. */
+export const MAX_URL_CHARS = 4_000
+
 const dispatchableKind = z.enum([
   'observe-page',
   'navigate',
@@ -225,9 +250,9 @@ export const dispatchRequestSchema = z.object({
 export type DispatchRequest = z.infer<typeof dispatchRequestSchema>
 
 export const pageObservationSchema = z.object({
-  snapshotId: z.string().min(1),
-  url: z.string().min(1),
-  title: z.string(),
+  snapshotId: z.string().min(1).max(200),
+  url: z.string().min(1).max(MAX_URL_CHARS),
+  title: z.string().max(MAX_TITLE_CHARS),
   tree: z.string().max(MAX_TREE_CHARS),
   truncated: z.boolean(),
 })
@@ -345,6 +370,35 @@ export function reportOf(body: ReportRequest): BrowserReport {
  * away from a page that can drive someone's session. So each half proves what it
  * is actually able to prove, and neither is handed the other's secret to make
  * the code shorter.
+ *
+ * ── What the extension half does NOT prove, said plainly ─────────────────
+ *
+ * The extension half carries THREE controls, not four. There is no shared
+ * secret on it at all, so it authenticates a CLASS of caller — "not a web page"
+ * — and never an identity.
+ *
+ * Against a hostile page the three hold, and hold well: the custom header forces
+ * a preflight this app never satisfies, and `Sec-Fetch-Site` is a forbidden
+ * header name no script can set or suppress. Against a LOCAL PROCESS they do
+ * not. `curl` can send `sec-fetch-site: none`, and a local process that does can
+ * take a queued command out of the queue — flipping the row to `delivered`, so
+ * the worker is told `not-reported`, which means *it may have run* about
+ * something that never ran — or post a fabricated `PageObservation` whose `url`
+ * the worker treats as browser-attested.
+ *
+ * The capture transport closes this with a per-session bearer token and argues
+ * the local-process case away on the grounds that such a process could read the
+ * SQLite file directly and has no need of the route. **That argument is weaker
+ * here**, because this route does not leak data — it MISDIRECTS an agent that is
+ * about to act. A local process that can lie to the worker is a local process
+ * that can choose what the worker clicks next.
+ *
+ * It is left as it is because the wire protocol is pinned on both sides of this
+ * boundary and a credential is a change to both halves; it is written down here,
+ * at length, so that it is a known cost rather than something someone finds. The
+ * fix, when it comes, is a per-attachment token issued when the tab is opened —
+ * the same lifetime as the debugger attachment itself, which is also the only
+ * window in which any of this is reachable.
  */
 export type ControlCaller =
   | { readonly from: 'worker'; readonly controlToken: string | null }

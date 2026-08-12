@@ -21,6 +21,15 @@
  *      anything, which is the only way to stop cleanly when the thing being
  *      stopped may be mid-navigation in a real browser.
  *
+ * ── The run id, which the poll deliberately does not hand out ────────────
+ *
+ * `GET /api/act/next` returns an intent and nothing else, so the extension
+ * cannot learn a run id from the channel. It has to be told one when the tab is
+ * opened and the attachment is made — the same moment it is told which tab it
+ * may drive. That is a real coupling between this route and whoever opens the
+ * tab, and it is written down here because the alternative reading — that the
+ * extension can derive it — is false and would produce a halt nobody can send.
+ *
  * ── Why an unknown run is still a success ────────────────────────────────
  *
  * A halt for a run that already ended, or never existed, gets `ok: true` with
@@ -60,10 +69,17 @@ export async function POST(request: Request) {
   // for a log and reaches no prompt and no report — the person is shown
   // `control-lost`, which is code-assigned, and the sentence they read is
   // written by us.
-  const settled = actStore().halt(runId, `the browser was detached: ${reason}`)
+  const stopped = actStore().halt(runId, `the browser was detached: ${reason}`)
 
   const { repos } = await appContext()
+
+  // Settling the socket is only half of stopping. The row is still `queued`, and
+  // a queued row nobody is waiting for is precisely the instruction a later poll
+  // would hand to a browser after the person pressed Stop. `abandon` refuses a
+  // delivered row, so this can only ever discard something that never left.
+  for (const dispatchId of stopped) await repos.dispatches.abandon(dispatchId)
+
   const flagged = await repos.runs.requestCancel(runId)
 
-  return NextResponse.json({ ok: true, settled, flagged })
+  return NextResponse.json({ ok: true, settled: stopped.length, flagged })
 }

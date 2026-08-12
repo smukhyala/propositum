@@ -28,11 +28,14 @@ import { appContext } from '@/server/db'
 /**
  * Run statuses whose control token still means anything.
  *
- * The token is minted when a run is claimed and cleared when it reaches a
- * terminal state, so a finished run should hold no credential at all. This is
- * the belt to that braces: a token that outlives its run — because the clearing
- * write failed, or because a crash beat it — still cannot drive a browser,
- * because the status is checked here rather than assumed there.
+ * The intended lifecycle is that a token is minted when a run is claimed and
+ * cleared when it reaches a terminal state. **Neither half exists yet** —
+ * `runs.claim` does not mint and `runs.complete` does not clear — so a token
+ * written at `enqueue` currently lives in the row forever, and this check is not
+ * a belt to that brace: it is the only thing standing between a finished run's
+ * leftover credential and a live browser. Stated rather than implied, because a
+ * comment describing a lifecycle nobody implements is how the check below comes
+ * to look redundant to whoever reads it next.
  */
 const ACTING_STATUSES: ReadonlySet<string> = new Set(['claimed', 'running'])
 
@@ -54,7 +57,7 @@ export async function POST(request: Request) {
       ? (body as { runId: string }).runId
       : null
 
-  const { repos } = await appContext()
+  const { db, repos } = await appContext()
   const run = claimedRunId === null ? null : await repos.runs.byId(claimedRunId)
   const controlToken = run !== null && ACTING_STATUSES.has(run.status) ? run.controlToken : null
 
@@ -86,6 +89,44 @@ export async function POST(request: Request) {
     // and say so, rather than time out once per remaining instruction.
     return NextResponse.json(
       { ok: false, failure: 'control-lost', detail: 'this run was halted' },
+      { status: 409 },
+    )
+  }
+
+  /**
+   * The intent is this run's, it was AUTHORIZED, and it is the kind being asked
+   * for.
+   *
+   * The schema says "one authorised intent yields at most one dispatch" and the
+   * foreign key proves only that the intent exists. Without this read, a worker
+   * — whose next move is chosen by a model — could name an intent the gate
+   * REFUSED, or another run's intent, or send `click-element` against a row that
+   * records `observe-page`, and the channel would carry all three. The gate's
+   * decision is a row; a route that acts on an intent without reading it is
+   * taking the caller's word for what the gate said.
+   *
+   * `kind` and `params` are still enqueued from the request rather than from the
+   * row, because the row's params are what the gate saw and the dispatch's are
+   * what deterministic code compiled from them — the same action, one layer
+   * down. The `kind` must agree, and that is what is checked.
+   *
+   * Read through Prisma rather than a repository because there is no
+   * ActionIntent repository — `execute-run.ts` writes those rows the same way.
+   * Adding one for a single `findUnique` is a bigger change to a file three
+   * other units are editing than this read is worth.
+   */
+  const intent = await db.prisma.actionIntent.findUnique({
+    where: { id: intentId },
+    select: { runId: true, kind: true, authorized: true },
+  })
+
+  if (intent === null || intent.runId !== runId || !intent.authorized || intent.kind !== kind) {
+    return NextResponse.json(
+      {
+        ok: false,
+        failure: 'not-delivered',
+        detail: 'no authorized ActionIntent of that kind belongs to this run',
+      },
       { status: 409 },
     )
   }
@@ -143,6 +184,12 @@ export async function POST(request: Request) {
           }
     },
   })
+
+  // The halt check above happened before a database write, so a halt arriving in
+  // that window found no hold to settle and would otherwise leave this request
+  // waiting the full clamped hold — up to a minute — for a browser that is
+  // already gone. Re-checked here, where the hold exists, so the halt settles it.
+  if (store.halted(runId)) store.halt(runId, 'this run was halted')
 
   // Wake any poll that is currently parked, so the ordinary case costs a round
   // trip rather than a tick.

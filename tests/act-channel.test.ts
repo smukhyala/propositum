@@ -201,6 +201,84 @@ describe('an instruction reaches the browser and the report comes back', () => {
 
     const settled = await ctx.db.prisma.actionDispatch.findUniqueOrThrow({ where: { intentId } })
     expect(settled.status).toBe('reported')
+
+    // The tree went into the SECOND ledger, through its one door. The route
+    // does not write the row itself: `appendEvidence` is what datamarks the
+    // page-authored text and cleans the browser-attested URL.
+    const evidence = await ctx.db.prisma.actionEvidence.findMany({ where: { intentId } })
+    expect(evidence).toHaveLength(1)
+    expect(evidence[0]?.kind).toBe('page-snapshot')
+    expect(evidence[0]?.untrusted).not.toBeNull()
+  }, 20_000)
+
+  it('refuses an intent the gate did not authorize, or one belonging to another run', async () => {
+    // "The gate already authorised it" has to be a read, not an assumption. A
+    // worker whose next move is chosen by a model could otherwise name a
+    // REFUSED intent and have the channel carry it to a live page.
+    const runId = await actingRun()
+    const refused = await ctx.db.prisma.actionIntent.create({
+      data: {
+        runId,
+        seq: 900 + (seq += 1),
+        kind: 'observe-page',
+        reason: 'look',
+        params: {},
+        authorized: false,
+        refusedRule: 'action_kind_not_allowed',
+      },
+      select: { id: true },
+    })
+
+    expect(
+      await json(await dispatchRoute(workerRequest(dispatchBody(runId, refused.id)))),
+    ).toMatchObject({ ok: false, failure: 'not-delivered' })
+
+    // Another run's intent, presented with this run's token.
+    const otherRun = await actingRun()
+    const otherIntent = await intentFor(otherRun)
+
+    expect(
+      await json(await dispatchRoute(workerRequest(dispatchBody(runId, otherIntent)))),
+    ).toMatchObject({ ok: false, failure: 'not-delivered' })
+
+    // And a kind the intent row does not record.
+    const intentId = await intentFor(runId)
+    const mismatched = { ...dispatchBody(runId, intentId), kind: 'click-element' }
+
+    expect(await json(await dispatchRoute(workerRequest(mismatched)))).toMatchObject({
+      ok: false,
+      failure: 'not-delivered',
+    })
+
+    expect(await ctx.db.prisma.actionDispatch.count({ where: { runId } })).toBe(0)
+  }, 20_000)
+
+  it('abandons an orphan sitting ahead of the instruction someone is waiting for', async () => {
+    // An app restart leaves a `queued` row whose worker is gone. Handing it out
+    // later clicks something for an instruction nobody is waiting on, so the
+    // poll drains it instead — and `abandon` refuses a delivered row, so this
+    // can never erase a record of something that was handed out.
+    const runId = await actingRun()
+    const orphanIntent = await intentFor(runId)
+    const orphan = await ctx.repos.dispatches.enqueue({
+      runId,
+      intentId: orphanIntent,
+      kind: 'observe-page',
+      params: {},
+    })
+
+    const intentId = await intentFor(runId)
+    const held = dispatchRoute(workerRequest(dispatchBody(runId, intentId, 6_000)))
+
+    const polled = await json(await nextRoute(extensionGet()))
+    expect(polled['command']).toMatchObject({ intentId })
+
+    expect(
+      (await ctx.db.prisma.actionDispatch.findUniqueOrThrow({ where: { id: orphan.id } })).status,
+    ).toBe('abandoned')
+
+    await reportRoute(extensionPost('/api/act/report', { intentId, ok: true, observation }))
+    await held
   }, 20_000)
 
   it('never hands the same command to two pollers', async () => {
@@ -306,6 +384,12 @@ describe('halting', () => {
 
     const run = await ctx.repos.runs.byId(runId)
     expect(run?.cancelRequested).toBe(true)
+
+    // Settling the socket is only half of stopping: a row left `queued` is the
+    // instruction a later poll would hand to a browser after the person pressed
+    // Stop.
+    const row = await ctx.db.prisma.actionDispatch.findUniqueOrThrow({ where: { intentId } })
+    expect(row.status).toBe('abandoned')
   }, 20_000)
 
   it('answers a later dispatch immediately rather than holding a socket open', async () => {

@@ -82,12 +82,20 @@ export interface ActStore {
   /** Settle a held response. `false` means nobody was waiting — the worker gave
    *  up, or this is a different process than the one that dispatched. */
   settle(intentId: string, report: BrowserReport): boolean
-  /** The dispatch row this intent belongs to, for the report route, which is
-   *  handed an intent id and has to update a row keyed by its own id. */
-  dispatchIdFor(intentId: string): string | null
-  /** Runs with a worker currently blocked, oldest hold first, so a run that has
-   *  been waiting longest is offered to the poller first. */
-  waitingRuns(): readonly string[]
+  /** What is being waited for, for a route handed an intent id that has to
+   *  update a row keyed by its own id and write evidence keyed by a run. */
+  awaited(intentId: string): { runId: string; dispatchId: string } | null
+  /**
+   * What each waiting run is actually waiting FOR, oldest hold first.
+   *
+   * The dispatch id is the load-bearing half. Without it a poll can only ask
+   * "what is queued for this run", and the answer may be an ORPHAN — a row from
+   * a hold that died with the app, or one left behind by a halt. Handing that
+   * out means clicking something for an instruction nobody is waiting on, in a
+   * live page, and reporting it to nobody. So the poll is told which row the
+   * hold expects and hands out that one.
+   */
+  waiting(): readonly { runId: string; dispatchId: string }[]
   /** Something was queued. Wakes every poller so it re-reads. */
   announce(): void
   /** Sleep until an announcement or `timeoutMs`, whichever comes first. */
@@ -101,8 +109,13 @@ export interface ActStore {
    * gone. Detaching happens in the extension BEFORE this call — a stop that has
    * to reach a server before it takes effect is not a stop — so by the time this
    * runs it is recording something already true.
+   *
+   * Returns the dispatch rows it just stopped waiting for, because settling the
+   * socket is only half of stopping: the row is still `queued`, and a queued row
+   * nobody is waiting for is exactly the instruction a later poll would hand to
+   * a browser after the person pressed Stop. The caller abandons them.
    */
-  halt(runId: string, detail: string): number
+  halt(runId: string, detail: string): readonly string[]
   halted(runId: string): boolean
 }
 
@@ -146,7 +159,23 @@ export function createActStore(): ActStore {
 
         const timer = setTimeout(() => {
           holds.delete(intentId)
-          void onExpiry().then((ending) => resolve({ reported: false, ...ending }))
+          void onExpiry()
+            .then((ending) => resolve({ reported: false, ...ending }))
+            .catch((error: unknown) => {
+              // `onExpiry` reads the row to decide what the silence meant, and a
+              // read can fail — SQLite busy, or the process shutting down. An
+              // unsettled promise here is a request that never answers AND an
+              // unhandled rejection, which under Node's default takes the app
+              // down with every other hold on it. So a failed read answers the
+              // honest unknown: we cannot say whether the browser took this.
+              resolve({
+                reported: false,
+                failure: 'not-reported',
+                detail: `the wait ended and the dispatch could not be read: ${
+                  error instanceof Error ? error.message : String(error)
+                }`,
+              })
+            })
         }, timeoutMs)
 
         holds.set(intentId, {
@@ -165,16 +194,15 @@ export function createActStore(): ActStore {
       return true
     },
 
-    dispatchIdFor: (intentId) => holds.get(intentId)?.dispatchId ?? null,
-
-    waitingRuns: () => {
-      const seen = new Map<string, number>()
-      for (const hold of holds.values()) {
-        const first = seen.get(hold.runId)
-        if (first === undefined || hold.heldSince < first) seen.set(hold.runId, hold.heldSince)
-      }
-      return [...seen.entries()].sort((a, b) => a[1] - b[1]).map(([runId]) => runId)
+    awaited: (intentId) => {
+      const hold = holds.get(intentId)
+      return hold ? { runId: hold.runId, dispatchId: hold.dispatchId } : null
     },
+
+    waiting: () =>
+      [...holds.values()]
+        .sort((a, b) => a.heldSince - b.heldSince)
+        .map((hold) => ({ runId: hold.runId, dispatchId: hold.dispatchId })),
 
     announce: () => {
       const woken = [...wakers]
@@ -205,14 +233,14 @@ export function createActStore(): ActStore {
         if (haltedRuns.length > HALTED_MEMORY) haltedRuns.shift()
       }
 
-      let settled = 0
+      const stopped: string[] = []
       for (const [intentId, hold] of [...holds.entries()]) {
         if (hold.runId !== runId) continue
         release(intentId)
         hold.settle({ reported: false, failure: 'control-lost', detail })
-        settled += 1
+        stopped.push(hold.dispatchId)
       }
-      return settled
+      return stopped
     },
 
     halted: (runId) => haltedRuns.includes(runId),
