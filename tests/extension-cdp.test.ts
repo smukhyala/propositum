@@ -403,6 +403,22 @@ describe('one command, one outcome, and one poll', () => {
     expect(worker).toContain('setInterval')
   })
 
+  it('gives the tab up when the work stops, not only when somebody says stop', () => {
+    /**
+     * The protocol has no "that was the last one". A run ends, the app stops
+     * queueing, and without this the person is left with Chrome's attachment
+     * bar and a border reading *"Propositum is working here"* over a tab where
+     * nothing is happening.
+     *
+     * That is the indicator problem inverted and just as damaging: a marker
+     * that outlives the work teaches people the marker means nothing, which is
+     * the whole thing it exists not to do.
+     */
+    expect(worker).toContain('CONTROL_IDLE_MS')
+    expect(worker).toContain('letGoIfIdle')
+    expect(worker).toContain('lastCommandAt')
+  })
+
   it('has a word for a browser command that never comes back', () => {
     // `not-delivered` and `not-reported` are the app's, and they are about
     // whether a command reached a browser. `timed-out` is this side's, and it

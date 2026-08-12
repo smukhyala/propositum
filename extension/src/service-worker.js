@@ -625,6 +625,32 @@ const POLL_ABORT_MS = POLL_TIMEOUT_MS + 5_000
 const POLL_FLOOR_MS = 1_000
 
 /**
+ * How long a controlled tab may sit with no command before it is given up.
+ *
+ * ── A run that ends does not tell us it ended ────────────────────────────
+ *
+ * The wire protocol has a shape for "here is a command" and a shape for
+ * "nothing right now", and nothing at all for "that was the last one". A run
+ * finishes, the app simply stops queueing, and this side is left holding an
+ * attachment: Chrome's bar still saying Propositum is attached, a border and a
+ * chip still saying *"Propositum is working here"*, and a tab nobody is doing
+ * anything in.
+ *
+ * That is the indicator problem inverted, and it is just as bad. An indicator
+ * that outlives the work teaches the person that the border means nothing —
+ * and the whole reason the border exists is so that when it IS there,
+ * something is happening.
+ *
+ * So the extension decides on its own, from something it can see: no command
+ * for two minutes means the work is over. Deliberately generous — a model turn
+ * plus a slow page is comfortably inside it — and deliberately not dependent
+ * on the app saying anything, since the app going quiet is exactly the case
+ * this covers. Letting go early costs a `control-lost` on a run that was still
+ * thinking; never letting go costs the meaning of the marker.
+ */
+const CONTROL_IDLE_MS = 120_000
+
+/**
  * Only one poll may be in flight, and the lease is what says so.
  *
  * A module variable would be the obvious guard and would be wrong: the worker
@@ -1063,6 +1089,7 @@ async function ensureControlledTab(command) {
   }
 
   const tabId = await openControlledTab({ runId, approvedOrigins: seeded })
+  await chrome.storage.session.set({ lastCommandAt: Date.now() })
   await showActingBadge()
   setTimeout(() => void watchIndicator(), INDICATOR_GRACE_MS)
 
@@ -1113,6 +1140,25 @@ async function runCommand(command) {
   }
 }
 
+/**
+ * Give up a tab nothing has asked anything of for a while. See CONTROL_IDLE_MS.
+ *
+ * Checked on every empty poll AND on the heartbeat alarm, because the poll
+ * loop is the thing most likely to have stopped when this is needed — the app
+ * going away is both the reason the run ended and the reason the loop exited.
+ */
+async function letGoIfIdle() {
+  const { controlledTabId, lastCommandAt = 0 } = await chrome.storage.session.get([
+    'controlledTabId',
+    'lastCommandAt',
+  ])
+  if (typeof controlledTabId !== 'number') return
+  if (Date.now() - lastCommandAt < CONTROL_IDLE_MS) return
+
+  console.warn('[propositum] nothing has been asked of this tab for a while — letting go')
+  await stopActing('control-lost')
+}
+
 async function pollOnce() {
   const startedAt = Date.now()
   const controller = new AbortController()
@@ -1126,10 +1172,12 @@ async function pollOnce() {
     if (!command || typeof command.intentId !== 'string') {
       // Nothing to do. If the app answered instantly rather than hanging,
       // wait before asking again — see POLL_FLOOR_MS.
+      await letGoIfIdle()
       if (Date.now() - startedAt < POLL_FLOOR_MS) await sleep(POLL_FLOOR_MS)
       return 'continue'
     }
 
+    await chrome.storage.session.set({ lastCommandAt: Date.now() })
     await runCommand(command)
     return 'continue'
   } catch {
@@ -1236,6 +1284,11 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
   // no session, which is precisely when the rest of this returns early.
   await flushAmbient()
   await showSuggestionBadge()
+
+  // Before anything else that could take a while: a marker still on screen for
+  // work that finished is the same lie as a marker missing from work that has
+  // not. This is the path that still runs when the poll loop has stopped.
+  await letGoIfIdle()
 
   const session = await loadSession()
   if (session) {
