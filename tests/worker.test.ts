@@ -17,14 +17,15 @@ interface Recorded {
 
 function ledger(): { ledger: RunLedger; recorded: Recorded } {
   const recorded: Recorded = { intents: [], outcomes: [], order: [] }
-  let n = 0
 
   return {
     recorded,
     ledger: {
       async recordIntent(input) {
-        n += 1
-        const id = `intent-${n}`
+        // Whatever the loop minted. The gate has already stamped it onto the
+        // AuthorizedAction, so a ledger that invented its own id would hand the
+        // tools a row that does not exist.
+        const id = input.id
         recorded.intents.push({
           kind: input.kind,
           authorized: input.authorized,

@@ -71,6 +71,11 @@ function ledgerFor(ctx: AppContext, runId: string): RunLedger {
     async recordIntent(input) {
       const row = await ctx.db.prisma.actionIntent.create({
         data: {
+          // The caller's id, not `@default(cuid())`. The gate stamped this onto
+          // the `AuthorizedAction` before the row existed, and the browser
+          // channel uses it as an idempotency key — so the row has to be the one
+          // the token names. See `RunLedger.recordIntent`.
+          id: input.id,
           runId: input.runId,
           ...(input.stepId === null ? {} : { stepId: input.stepId }),
           seq: input.seq,

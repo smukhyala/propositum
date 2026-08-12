@@ -112,7 +112,8 @@ import {
   shouldStop,
 } from '../domain/execution/stop-conditions'
 import type { StopRuleId } from '../domain/execution/stop-conditions'
-import { datamark, SNAPSHOT_BUDGET_CHARS } from '../model/untrusted'
+import type { ElementEvidence } from '../domain/execution/reversibility'
+import { datamark } from '../model/untrusted'
 import type { Datamarked } from '../model/untrusted'
 import type { ModelClient } from '../model/client'
 import { planBoundary } from '../model/boundaries/plan'
@@ -171,6 +172,31 @@ export type OutcomeProposal =
 export interface RunLedger {
   /** Committed BEFORE any effect. Returns the intent id. */
   recordIntent(input: {
+    /**
+     * The row's id, minted by the CALLER rather than by the database.
+     *
+     * ── Why this moved out of the database, which is not a small thing ───
+     *
+     * `authorize()` stamps the intent id onto the `AuthorizedAction` it returns,
+     * and every tool reads it — most visibly `src/policy/tools.ts`, where it
+     * becomes the browser channel's IDEMPOTENCY KEY. One authorised intent, at
+     * most one dispatch, so a retry after a transport error cannot click twice.
+     *
+     * That only works if the id is real. The loop used to authorize with the
+     * literal string `'pending'`, because the row could not be written until the
+     * verdict was known, and then commit the row afterwards and let the database
+     * pick an id. Nothing noticed, because the only readers were error messages.
+     * The moment a browser action existed, **every dispatch in every run carried
+     * the same key**, and a channel deduplicating on it would have collapsed a
+     * whole run's instructions into one.
+     *
+     * Minting it here fixes the ordering rather than papering over it: the id
+     * exists before the decision, the decision names it, and the row is
+     * committed under that id before any effect. `AuthorizedAction.intentId`
+     * therefore names a row that is on disk by the time a tool can run, which is
+     * what its docstring always claimed.
+     */
+    id: string
     runId: string
     stepId: string | null
     seq: number
@@ -220,6 +246,28 @@ export interface WorkerDeps {
    */
   readonly browser?: BrowserDeps | undefined
   /**
+   * What the page says about one element in the snapshot the run is looking at.
+   *
+   * The gate needs this to classify reversibility, and the gate never queries —
+   * it is handed facts. The extraction that produces these lives with whoever
+   * owns the snapshot map, so it arrives as a function rather than as a field on
+   * `PageObservation`: the observation is what the BROWSER reported, and every
+   * field of `ElementEvidence` is what the PAGE claims about itself. Folding the
+   * second into the first would put attested and page-authored values in one
+   * structure with no marker between them, which is the confusion the whole
+   * `attested` distinction exists to prevent.
+   *
+   * **Absent is the safe state, and it is safe by construction rather than by
+   * care.** With no lookup the gate sees `null`, `classifyReversibility`
+   * escalates, and every `click-element`, `type-text` and `press-key` is refused
+   * `confirmation_required` until a person answers. Wiring this up therefore
+   * makes the pause QUIETER, never weaker — there is no input to it that can
+   * turn `requires-confirmation` back into `ordinary`.
+   */
+  readonly elementEvidence?:
+    | ((input: { snapshotId: string; ref: string }) => ElementEvidence | null)
+    | undefined
+  /**
    * Where the run reads what has already happened under this contract.
    *
    * Optional so that a caller with nothing to resume — and every existing test —
@@ -231,6 +279,16 @@ export interface WorkerDeps {
   readonly history?: HistoryReader | undefined
   /** Injected. Never Date.now() inside the loop. */
   readonly now: () => number
+  /**
+   * Where an `ActionIntent` id comes from.
+   *
+   * Injected for the same reason `now` is: it is the loop's only other source of
+   * a value it did not compute, and a fixture that can fix it can assert on the
+   * exact key a dispatch carried. Unlike `now`, it is not a decision — nothing
+   * branches on an id — so the default below is a convenience rather than a
+   * policy hiding in a default argument.
+   */
+  readonly newIntentId?: (() => string) | undefined
   readonly renewLease?: ((runId: string) => Promise<void>) | undefined
 }
 
@@ -556,6 +614,17 @@ export async function runWorker(job: WorkerJob, deps: WorkerDeps): Promise<Worke
       ...(step === undefined ? {} : { stepOrdinal: ordinal }),
     }
 
+    /**
+     * The row's id, minted before the decision so the decision can name it.
+     *
+     * `authorize()` stamps this onto the `AuthorizedAction`, and the browser
+     * tools use it as the channel's idempotency key. It used to be the literal
+     * string `'pending'` — harmless while the only readers were error messages,
+     * and a defect the moment one authorised intent had to map to at most one
+     * dispatch. See `RunLedger.recordIntent`.
+     */
+    const intentId = (deps.newIntentId ?? defaultIntentId)()
+
     const verdict = authorize(
       policy,
       toolProposal,
@@ -563,8 +632,16 @@ export async function runWorker(job: WorkerJob, deps: WorkerDeps): Promise<Worke
         currentSnapshotId: page?.snapshotId ?? null,
         actionsTaken,
         mutatingActionsTaken,
+        // Looked up against the snapshot the RUN last saw, never against the one
+        // the proposal named. A proposal naming a stale snapshot is refused
+        // before this matters, and looking evidence up by the model's own value
+        // would let a proposal choose which element it is judged as.
+        targetEvidence:
+          page !== null && proposal.ref
+            ? deps.elementEvidence?.({ snapshotId: page.snapshotId, ref: proposal.ref }) ?? null
+            : null,
       }),
-      'pending',
+      intentId,
     )
 
     /* ── refused ──────────────────────────────────────────────────────── */
@@ -579,6 +656,7 @@ export async function runWorker(job: WorkerJob, deps: WorkerDeps): Promise<Worke
       if (!PAUSING_RULES.has(verdict.rule)) consecutiveRefusals += 1
 
       await deps.ledger.recordIntent({
+        id: intentId,
         runId: job.runId,
         stepId: stepIdFor(),
         seq,
@@ -600,7 +678,8 @@ export async function runWorker(job: WorkerJob, deps: WorkerDeps): Promise<Worke
 
     consecutiveRefusals = 0
 
-    const intentId = await deps.ledger.recordIntent({
+    await deps.ledger.recordIntent({
+      id: intentId,
       runId: job.runId,
       stepId: stepIdFor(),
       seq,
@@ -667,6 +746,40 @@ export async function runWorker(job: WorkerJob, deps: WorkerDeps): Promise<Worke
 }
 
 /**
+ * The bound applied at the PROMPT door, which is not the published retention
+ * constant and must not be confused with it.
+ *
+ * `SNAPSHOT_BUDGET_CHARS` is the retention promise, declared beside the one
+ * writer that can enforce it — `appendEvidence` in
+ * `src/persistence/ledger-writer.ts` — and it governs what Propositum KEEPS.
+ * This governs what reaches a prompt, and it exists because those are not the
+ * same journey: an observation comes back from `dispatch` as a plain string,
+ * and whether it also passed through the ledger writer on its way is somebody
+ * else's route's business. A tree that never went through that door must still
+ * not arrive unbounded.
+ *
+ * The number matches the published one deliberately, so the loop never silently
+ * shows the model LESS of a page than Propositum was willing to keep. If the two
+ * ever diverge, the ledger's is the published promise and this one is a
+ * defensive second fence — never the other way round, and never a knob to raise
+ * when a page does not fit.
+ */
+const PROMPT_TREE_BUDGET_CHARS = 60_000
+
+/**
+ * The default id source: the platform's UUID generator.
+ *
+ * `crypto` off `globalThis` rather than an import from `node:crypto`, so this
+ * module stays runnable in both processes that use it without either of them
+ * pulling in a Node built-in it did not ask for. Ids are opaque everywhere they
+ * are read, so a UUID sitting beside the database's own `cuid()` values in the
+ * same column costs nothing but a difference in appearance.
+ */
+function defaultIntentId(): string {
+  return globalThis.crypto.randomUUID()
+}
+
+/**
  * `ActionIntent.stepId`, which is now null.
  *
  * A function rather than a literal `null` at two call sites, so the reason lives
@@ -691,20 +804,19 @@ function stepIdFor(): string | null {
  * the only construction site for the brand the boundary requires. A caller who
  * forgot would not compile.
  *
- * `SNAPSHOT_BUDGET_CHARS` and not `EXCERPT_BUDGET_CHARS`: two ledgers, two
- * budgets, and the distinction is what keeps the published 2,000-character
- * promise about a person's own browsing true on the day an agent starts reading
- * whole trees. See the constant's own comment.
+ * The budget is `PROMPT_TREE_BUDGET_CHARS` and NOT `EXCERPT_BUDGET_CHARS`, whose
+ * 2,000 characters would cut most real pages off before their primary controls
+ * and make the agent conclude that half the page does not exist.
  */
 function pageForModel(observed: PageObservation | null): PageForModel | null {
   if (observed === null) return null
 
-  const tree = datamark(observed.tree, SNAPSHOT_BUDGET_CHARS)
+  const tree = datamark(observed.tree, PROMPT_TREE_BUDGET_CHARS)
 
   return {
     snapshotId: observed.snapshotId,
     url: observed.url,
-    title: datamark(observed.title, SNAPSHOT_BUDGET_CHARS),
+    title: datamark(observed.title, PROMPT_TREE_BUDGET_CHARS),
     tree,
     // Either the browser cut it short, or our own budget did. Both mean the same
     // thing to a model deciding whether a missing button is really missing, and
@@ -723,6 +835,7 @@ function runContext(
     currentSnapshotId: string | null
     actionsTaken: number
     mutatingActionsTaken: number
+    targetEvidence: ElementEvidence | null
   },
 ): RunContext {
   return {
