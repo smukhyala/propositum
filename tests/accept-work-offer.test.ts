@@ -93,19 +93,16 @@ function watched(): string {
 
   const signature = ambient.signatureOf(['northwind', 'partners'])
   store.rememberThread(signature, pages.map((p) => p.url))
-  store.remember({
-    signature,
-    subject: 'northwind partners',
-    confident: true,
-    offer: 'deep-research',
-    offerLabel: 'Want me to read up on northwind partners?',
-  })
+  store.startNaming(signature)
+  store.remember({ signature, subject: 'northwind partners', confident: true })
   return signature
 }
 
 /** A composed offer against the same thread. */
 function composed(signature: string): void {
-  stores.ambientStore().rememberOffer({
+  const store = stores.ambientStore()
+  store.startComposing(signature)
+  store.rememberOffer(signature, {
     signature,
     promptVersion: 'offer@1',
     title: 'Write up how the two partner programmes differ.',
@@ -114,8 +111,15 @@ function composed(signature: string): void {
     produces: 'One page comparing the two, with the terms quoted.',
     excludes: ['I will not sign anything', 'I will not email either of them'],
     expects: ['document-changes'],
-    grounds: ['You went back to Northwind partners after leaving it.', 'You followed it across 2 different sites.'],
-    groundKinds: ['came-back', 'followed-across'],
+    grounds: {
+      kinds: ['came-back', 'followed-across'],
+      sufficient: true,
+      sentences: [
+        'You went back to Northwind partners after leaving it.',
+        'You followed it across 2 different sites.',
+      ],
+    },
+    confident: true,
   })
 }
 

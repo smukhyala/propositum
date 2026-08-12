@@ -66,6 +66,51 @@ describe('it forgets when told', () => {
     expect(store.size()).toBe(0)
   })
 
+  it('clear drops what a model worked out, not only what was watched', () => {
+    // A name and an offer are statements about what somebody appeared to be
+    // doing. One that outlives the session start meant to fold it in — or a
+    // decline — is the profile this object exists to refuse.
+    const store = createAmbientStore()
+    store.startNaming('sig')
+    store.remember({ signature: 'sig', subject: 'parcel carrier rates', confident: true })
+    store.startComposing('sig')
+    store.rememberOffer('sig', {
+      signature: 'sig',
+      promptVersion: 'offer@1',
+      title: 'Compare those carrier rates',
+      rationale: 'You searched, then read three of them.',
+      outline: ['Pull the rates'],
+      produces: 'One table',
+      excludes: [],
+      expects: ['collection'],
+      grounds: { kinds: [], sufficient: true, sentences: [] },
+      confident: true,
+    })
+    store.rememberThread('sig', ['https://example.com/a'])
+
+    store.clear()
+
+    expect(store.nameFor('sig')).toBeNull()
+    expect(store.offerFor('sig')).toBeNull()
+    expect(store.pagesOfThread('sig')).toEqual([])
+    // ...and the thread may be asked about again, because whatever browsing
+    // comes after a session start or a decline is genuinely new.
+    expect(store.attemptedNaming('sig')).toBe(false)
+    expect(store.attemptedOffer('sig')).toBe(false)
+  })
+
+  it('a call that lands after a clear is dropped, not written back', () => {
+    // A model call takes about fifteen seconds and a person can decline inside
+    // it. Without this, "nothing was kept" would be true for a quarter of a
+    // minute and then quietly stop being true.
+    const store = createAmbientStore()
+    store.startNaming('sig')
+    store.clear()
+    store.remember({ signature: 'sig', subject: 'parcel carrier rates', confident: true })
+
+    expect(store.nameFor('sig')).toBeNull()
+  })
+
   it('declining removes the evidence, so the same detection cannot re-fire', () => {
     // Without this, the next poll sees the same observations and offers again —
     // which is how a well-meaning prompt becomes something people mute.

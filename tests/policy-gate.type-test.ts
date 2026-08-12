@@ -82,6 +82,41 @@ compilePolicy(
 )
 
 /**
+ * And not the composed offer either, which is the widest prose in the product.
+ *
+ * ADR-0009 lets a model write the proposal a person ratifies, in its own words,
+ * from page titles alone and before any session exists. Everything that keeps
+ * that safe is structural: the offer has no field for a place, none for an
+ * `ActionKind`, and — this line — no route into the function that decides what
+ * the worker may touch.
+ *
+ * The refactor this stops does not look hostile. It looks like "compilePolicy
+ * needs to know what kind of work this is, and the offer already says". The
+ * moment that compiles, a hostile page title is one hop from a permission.
+ */
+const workOffer = {
+  title: 'Compare the carriers',
+  rationale: 'You searched for rates, then read four pages of them',
+  outline: ['Pull the published rates', 'Put them in one table'],
+  produces: 'One table of rates',
+  excludes: ['Book anything'],
+  expects: ['collection'],
+  confident: true,
+}
+
+// @ts-expect-error — compilePolicy takes no WorkOffer, and must not.
+compilePolicy(scope, controls, workOffer)
+
+compilePolicy(
+  // @ts-expect-error — nor folded into the scope, however convenient it looks.
+  { ...scope, offer: workOffer },
+  controls,
+)
+
+// @ts-expect-error — nor as the shape of the result the offer expects.
+compilePolicy(scope, { ...controls, expects: workOffer.expects })
+
+/**
  * The honest limit of the three assertions above.
  *
  * They rest on TypeScript's excess-property check, which fires on object

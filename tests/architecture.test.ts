@@ -104,6 +104,58 @@ describe('capabilities the brief excludes do not exist', () => {
   })
 })
 
+describe('a composed offer has nowhere to name a place', () => {
+  /**
+   * ADR-0009's first structural property, checked rather than asserted.
+   *
+   * `ContractScope.approvedSourceIds` is derived by deterministic code from the
+   * pages the thread actually ran through. The offer boundary composes prose,
+   * and the guarantee that it cannot widen what the agent may touch is not
+   * "the prompt says not to" — it is that there is NO FIELD for a URL, a host,
+   * an origin or a source id. A model that could name one could add one.
+   *
+   * The same move ADR-0008 already relies on for the ambient endpoint, which is
+   * grepped for `text` in tests/capture.test.ts. Crude on purpose: a
+   * sophisticated check would need the thing it is checking to already work.
+   */
+  const file = join(repo, 'src/model/boundaries/offer.ts')
+
+  it('exists, so this test cannot pass by checking nothing', () => {
+    expect(readFileSync(file, 'utf8')).toContain('export const offerSchema')
+  })
+
+  it('has no field, description or example that could carry one', () => {
+    const source = readFileSync(file, 'utf8')
+    const start = source.indexOf('export const offerSchema')
+    const end = source.indexOf('export type OfferOutput')
+
+    // The canary the tools regex above exists because of: if the slice is
+    // empty, every assertion below passes having read nothing.
+    expect(end).toBeGreaterThan(start)
+    const schema = source.slice(start, end)
+    expect(schema.length).toBeGreaterThan(200)
+
+    expect(
+      schema,
+      'the offer schema names a place — a model that can name one can add one',
+    ).not.toMatch(/url|origin|host|site|domain|source/i)
+  })
+
+  it('names no ActionKind either, so it proposes no permission', () => {
+    // CONTEXT.md §3: a model may not propose `allowedActionKinds` at all,
+    // because there is no session-level grant for a subset check to compare
+    // against and a vacuous check is worse than none. `outcomeKinds` describes
+    // the shape of a RESULT, which grants nothing.
+    const source = readFileSync(file, 'utf8')
+    const schema = source.slice(
+      source.indexOf('export const offerSchema'),
+      source.indexOf('export type OfferOutput'),
+    )
+
+    expect(schema).not.toMatch(/allowedActionKinds|actionKinds|ActionKind/)
+  })
+})
+
 describe('the reversibility classifier stays domain code', () => {
   /**
    * Covered by the domain-purity block below, and asserted separately anyway.

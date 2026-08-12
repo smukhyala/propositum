@@ -128,20 +128,10 @@ export async function GET(request: Request) {
       void nameThread(ambient, new AnthropicModelClient({ apiKey }), detected)
     }
 
-    /**
-     * The second, higher bar — and it is arithmetic, so it runs on every poll.
-     *
-     * Cheap enough to recompute rather than cache, and recomputing is the
-     * honest thing: the grounds are a claim about what has been seen SO FAR,
-     * and a person who reads three more pages should see three more reasons.
-     * The set frozen onto the composed offer is the one that permitted it to be
-     * composed, which is the set the durable `WorkOffer.grounds` column wants.
-     */
-    const grounds = groundsFor(detected, threadPagesOf(observations, detected, now))
     const composed = ambient.offerFor(signature)
 
     /**
-     * Composing needs a CONFIDENT name first, and the bar met.
+     * Composing needs a CONFIDENT name first.
      *
      * The subject boundary runs on titles and produces the two or three words
      * the offer is about; asking the offer boundary to invent that as well
@@ -149,19 +139,18 @@ export async function GET(request: Request) {
      *
      * `confident: false` means the pages did not agree on a subject, and
      * `describeWork` already refuses to put an unsure name in a sentence for
-     * exactly that reason. An offer composed on one would undo that at the next
-     * step: `describeOffer` says "Looks like you're working on X" flatly, and
-     * the extension turns it into a notification that interrupts. A hedge that
+     * exactly that reason. Composing on one would undo that at the next step:
+     * `describeOffer` reads the offer's own `confident` flag, but the SUBJECT
+     * it is about would already be a guess nobody flagged. A hedge that
      * survives one screen and not the next is not a hedge.
+     *
+     * The second, higher bar — `OfferGrounds.sufficient` — is checked inside
+     * `composeOffer` rather than here, so the one function in the codebase that
+     * can turn observation into a proposal to act carries its own gate. A guard
+     * that lives only in its caller is a guard the next caller will not have.
      */
-    if (!composed && named?.confident && grounds.sufficient && apiKey) {
-      void composeOffer(
-        ambient,
-        new AnthropicModelClient({ apiKey }),
-        detected,
-        named.subject,
-        grounds,
-      )
+    if (!composed && named?.confident && apiKey) {
+      void composeOffer(ambient, new AnthropicModelClient({ apiKey }), detected, named, now)
     }
 
     /**

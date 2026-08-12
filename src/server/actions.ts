@@ -1192,7 +1192,7 @@ export async function offerForThread(threadSignature: string): Promise<
     const detected = detectWork(observations, now)
     const stillThisThread = detected !== null && signatureOf(detected.terms) === thread
     const grounds =
-      composed?.grounds ??
+      composed?.grounds.sentences ??
       (stillThisThread && detected
         ? groundsFor(detected, threadPagesOf(observations, detected, now)).sentences
         : [])
@@ -1349,7 +1349,11 @@ export async function acceptWorkOffer(
         excludes: composed.excludes,
         originPatterns: chosen,
         expectedKinds: composed.expects,
-        grounds: { kinds: [...composed.groundKinds], sentences: [...composed.grounds] },
+        grounds: {
+          kinds: [...composed.grounds.kinds],
+          sentences: [...composed.grounds.sentences],
+          sufficient: composed.grounds.sufficient,
+        },
       })
     }
 

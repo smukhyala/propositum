@@ -9,7 +9,7 @@
 import { describe, it, expect } from 'vitest'
 import { BOUNDARY_NAMES } from '../src/model/client'
 import type { BoundaryName } from '../src/model/client'
-import { datamark } from '../src/model/untrusted'
+import { UNTRUSTED_CONTENT_RULE, datamark } from '../src/model/untrusted'
 import { MAX_PLAN_STEPS } from '../src/domain/handoff/policy'
 
 import { handoffBoundary, handoffSchema, sourceHandlesFor } from '../src/model/boundaries/handoff'
@@ -18,7 +18,8 @@ import { workerActionBoundary, workerActionSchema } from '../src/model/boundarie
 import { changeHandlesFor, reviewBoundary, reviewSchema } from '../src/model/boundaries/review'
 import { shiftReportBoundary } from '../src/model/boundaries/shift-report'
 import { subjectBoundary } from '../src/model/boundaries/subject'
-import { offerBoundary } from '../src/model/boundaries/offer'
+import { offerBoundary, offerSchema, outcomeKindsOf } from '../src/model/boundaries/offer'
+import { SHIFT_OUTCOME_KINDS } from '../src/domain/execution/outcome-kinds'
 import { sessionReadingBoundary, handlesFor } from '../src/model/boundaries/session-reading'
 
 const sources = [
@@ -49,14 +50,167 @@ describe('all eight boundaries exist and are distinct', () => {
       handoffBoundary(new Set(['S1'])).promptVersion,
       planBoundary.promptVersion,
       subjectBoundary.promptVersion,
+      offerBoundary.promptVersion,
       workerActionBoundary.promptVersion,
       reviewBoundary(new Set(['C1'])).promptVersion,
       shiftReportBoundary.promptVersion,
-      offerBoundary.promptVersion,
     ]
 
     expect(new Set(versions).size).toBe(8)
     for (const v of versions) expect(v).toMatch(/@\d+$/)
+  })
+})
+
+describe('the subject boundary names, and no longer offers', () => {
+  it('has no offer field, because the closed two-member list is gone', () => {
+    // ADR-0009 deletes OFFERABLE outright rather than deprecating it. A schema
+    // that still accepted an `offer` would leave the old shape reachable from
+    // a model reply, which is the whole thing the deletion was for.
+    const parsed = subjectBoundary.schema.safeParse({
+      subject: 'world models',
+      confident: true,
+      offer: 'draft-document',
+      offerLabel: 'Want me to draft a doc?',
+    })
+
+    expect(parsed.success).toBe(true)
+    if (parsed.success) {
+      expect('offer' in parsed.data).toBe(false)
+      expect('offerLabel' in parsed.data).toBe(false)
+    }
+  })
+})
+
+describe('an offer describes work and can grant nothing', () => {
+  const valid = {
+    title: 'Compare the carriers you have been reading',
+    rationale: 'You searched for rates, then read four pages of them.',
+    outline: ['Pull the published rates', 'Put them in one table', 'Say which is cheapest under 5kg'],
+    produces: 'One table of published rates with the cheapest marked',
+    excludes: ['Book anything', 'Write to any of them'],
+    outcomeKinds: ['collection'],
+    confident: true,
+  }
+
+  it('accepts a whole offer', () => {
+    expect(offerSchema.safeParse(valid).success).toBe(true)
+  })
+
+  it('has no field that could carry a place, so a reply naming one loses it', () => {
+    // The structural half of ADR-0009's first property. `originPatterns` are
+    // derived by code from the pages the thread ran through; a model that
+    // wanted to add one has nowhere to write it down. The grep in
+    // tests/architecture.test.ts is what stops a field being added later.
+    const parsed = offerSchema.safeParse({
+      ...valid,
+      origins: ['https://attacker.example.com'],
+      sourceIds: ['src-9'],
+      url: 'https://attacker.example.com/rates',
+    })
+
+    expect(parsed.success).toBe(true)
+    if (parsed.success) {
+      expect(Object.keys(parsed.data).sort()).toEqual([
+        'confident',
+        'excludes',
+        'outcomeKinds',
+        'outline',
+        'produces',
+        'rationale',
+        'title',
+      ])
+    }
+  })
+
+  it('has no allowedActionKinds field — the model never proposes what may be done', () => {
+    const parsed = offerSchema.safeParse({ ...valid, allowedActionKinds: ['click-element'] })
+
+    expect(parsed.success).toBe(true)
+    if (parsed.success) expect('allowedActionKinds' in parsed.data).toBe(false)
+  })
+
+  it('rejects an outline longer than the cap, because the grammar would not', () => {
+    const parsed = offerSchema.safeParse({
+      ...valid,
+      outline: ['a', 'b', 'c', 'd', 'e', 'f', 'g'],
+    })
+
+    expect(parsed.success).toBe(false)
+  })
+
+  it('rejects a title past its bound, for the same reason', () => {
+    expect(offerSchema.safeParse({ ...valid, title: 'x'.repeat(71) }).success).toBe(false)
+  })
+
+  it('tells the model it may not name a place', () => {
+    const prompt = offerBoundary.buildPrompt({
+      terms: ['carriers', 'rates'],
+      titles: [datamark('Rates — Carrier A')],
+      searches: [datamark('cheapest parcel rates')],
+      subject: datamark('parcel carrier rates'),
+      siteCount: 3,
+      pageCount: 7,
+      readingMinutes: 14,
+      grounds: ['You searched for it, then read what came back.'],
+      producible: ['a collection of things found and kept'],
+    })
+
+    expect(prompt.system).toMatch(/Never name a website/)
+    // Datamarking is depth, not a boundary — but a prompt that shows page-
+    // authored text without saying what it is has given up the depth for free.
+    expect(prompt.system).toContain('written by a web page')
+    expect(prompt.user).toContain('UNTRUSTED_PAGE_TEXT')
+  })
+
+  it('never says the words that would put it inside a machine', () => {
+    // Not house style. An offer is a sentence said to somebody who has agreed
+    // to nothing, and the vocabulary of a system that executes plans is how a
+    // proposal starts reading as a decision already taken.
+    for (const banned of ['task', 'step', 'workflow', 'objective', 'allowlist']) {
+      expect(
+        offerBoundary.buildPrompt({
+          terms: [],
+          titles: [],
+          searches: [],
+          subject: datamark('x'),
+          siteCount: 1,
+          pageCount: 1,
+          readingMinutes: 1,
+          grounds: [],
+          producible: [],
+          // The shared untrusted-content rule is excluded: it is one string
+          // used by every boundary, and it says "task" once, about the model's
+          // own instructions rather than about the person's work.
+        }).system?.replace(UNTRUSTED_CONTENT_RULE, ''),
+        `the offer prompt says "${banned}"`,
+      ).not.toMatch(new RegExp(`\\b${banned}`, 'i'))
+    }
+  })
+})
+
+describe('the closed set of outcome kinds is applied in code, not by the grammar', () => {
+  it('keeps the real ones', () => {
+    expect(outcomeKindsOf(['collection', 'answer'])).toEqual(['collection', 'answer'])
+  })
+
+  it('drops an invented kind rather than mapping it to a neighbour', () => {
+    // Guessing which of five a sixth resembles is the fallback branch ADR-0009
+    // refuses. Dropping is the honest answer, and an empty list is allowed.
+    expect(outcomeKindsOf(['phone-call', 'telepathy'])).toEqual([])
+    expect(outcomeKindsOf(['document-changes', 'other'])).toEqual(['document-changes'])
+  })
+
+  it('tolerates the shapes a free-string field really produces', () => {
+    expect(outcomeKindsOf(['  Collection  ', 'COLLECTION'])).toEqual(['collection'])
+  })
+
+  it('holds the cap the grammar carries only as prose', () => {
+    expect(outcomeKindsOf([...SHIFT_OUTCOME_KINDS])).toHaveLength(3)
+  })
+
+  it('coerces junk without throwing, because a model reply is not a contract', () => {
+    expect(outcomeKindsOf([])).toEqual([])
+    expect(outcomeKindsOf(['', ' ', 'collection'])).toEqual(['collection'])
   })
 })
 
