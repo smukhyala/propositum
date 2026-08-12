@@ -86,6 +86,19 @@ export interface HistoryReader {
 
 export interface HistoryDeps {
   readonly ledger: HistoryReader
+  /**
+   * The set that decides whether an intent counts against the Progress dial.
+   *
+   * Passed in rather than imported from `../domain/handoff/policy`, and the
+   * reason is not layering pedantry. This module reads STRINGS off durable rows
+   * — a `kind` column written months ago, possibly naming a capability that no
+   * longer exists in the enum. Importing the live set would tempt a future
+   * reader into narrowing `kind` to `ActionKind` here, and then an old row
+   * naming a retired capability would either crash the rebuild or silently stop
+   * being counted. Neither is acceptable in the code path that recovers a
+   * crashed run.
+   */
+  readonly mutatingKinds: ReadonlySet<string>
 }
 
 /** What one earlier action looks like to the model. Deliberately the same shape
@@ -116,21 +129,6 @@ export interface RebuiltHistory {
 }
 
 /**
- * The set that decides whether an intent counts against the Progress dial.
- *
- * Passed in rather than imported from `../domain/handoff/policy`, and the reason
- * is not layering pedantry. This module reads STRINGS off durable rows — a
- * `kind` column written months ago, possibly naming a capability that no longer
- * exists in the enum. Importing the live set would tempt a future reader into
- * narrowing `kind` to `ActionKind` here, and then an old row naming a retired
- * capability would either crash the rebuild or silently stop being counted.
- * Neither is acceptable in the code path that recovers a crashed run.
- */
-export interface HistoryOptions {
-  readonly mutatingKinds: ReadonlySet<string>
-}
-
-/**
  * Rebuild what a contract's runs have already done.
  *
  * Pure over its input rows: no clock, no policy, no model, and no writes. The
@@ -140,7 +138,6 @@ export interface HistoryOptions {
 export async function historyForContract(
   contractId: string,
   deps: HistoryDeps,
-  options: HistoryOptions,
 ): Promise<RebuiltHistory> {
   const rows = await deps.ledger.intentsForContract(contractId)
 
@@ -164,7 +161,7 @@ export async function historyForContract(
     }
 
     actionsTaken += 1
-    if (options.mutatingKinds.has(row.kind)) mutatingActionsTaken += 1
+    if (deps.mutatingKinds.has(row.kind)) mutatingActionsTaken += 1
 
     if (row.outcome === null) {
       orphanedIntentIds.push(row.id)

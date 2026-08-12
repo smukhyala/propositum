@@ -449,8 +449,9 @@ describe('the history is rebuilt from the ledger, not carried in a process', () 
   })
 
   it('counts authorized intents, and only mutating ones toward the mutating cap', async () => {
-    const rebuilt = await historyForContract('contract-1', { ledger: reader(rows()) }, {
-      mutatingKinds: MUTATING_ACTION_KINDS as ReadonlySet<string>,
+    const rebuilt = await historyForContract('contract-1', {
+      ledger: reader(rows()),
+      mutatingKinds: MUTATING_ACTION_KINDS,
     })
 
     // Three rows: two authorized (one of them mutating), one refused.
@@ -460,8 +461,9 @@ describe('the history is rebuilt from the ledger, not carried in a process', () 
   })
 
   it('carries the refusal into the turns, so the agent does not propose it again', async () => {
-    const rebuilt = await historyForContract('contract-1', { ledger: reader(rows()) }, {
-      mutatingKinds: MUTATING_ACTION_KINDS as ReadonlySet<string>,
+    const rebuilt = await historyForContract('contract-1', {
+      ledger: reader(rows()),
+      mutatingKinds: MUTATING_ACTION_KINDS,
     })
 
     expect(rebuilt.turns).toHaveLength(3)
@@ -484,8 +486,9 @@ describe('the history is rebuilt from the ledger, not carried in a process', () 
       outcome: null,
     }
 
-    const rebuilt = await historyForContract('contract-1', { ledger: reader(rows([orphan])) }, {
-      mutatingKinds: MUTATING_ACTION_KINDS as ReadonlySet<string>,
+    const rebuilt = await historyForContract('contract-1', {
+      ledger: reader(rows([orphan])),
+      mutatingKinds: MUTATING_ACTION_KINDS,
     })
 
     expect(rebuilt.orphanedIntentIds).toEqual(['i4'])

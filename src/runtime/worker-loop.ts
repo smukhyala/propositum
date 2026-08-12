@@ -415,8 +415,9 @@ export async function runWorker(job: WorkerJob, deps: WorkerDeps): Promise<Worke
    * however unsatisfyingly, and everything after it belongs to this run.
    */
   const rebuilt = deps.history
-    ? await historyForContract(job.contractId, { ledger: deps.history }, {
-        mutatingKinds: MUTATING_ACTION_KINDS as ReadonlySet<string>,
+    ? await historyForContract(job.contractId, {
+        ledger: deps.history,
+        mutatingKinds: MUTATING_ACTION_KINDS,
       })
     : { turns: [] as HistoryTurn[], actionsTaken: 0, mutatingActionsTaken: 0, orphanedIntentIds: [] }
 
