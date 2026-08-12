@@ -28,7 +28,7 @@
  */
 
 import type { ActionParams } from '../policy/gate'
-import type { BrowserReport, DispatchableKind } from '../act/channel'
+import type { BrowserReport, ControlFailure, DispatchableKind, PageObservation, ScreenCapture } from '../act/channel'
 import { CONTROL_HEADER, MAX_HOLD_MS, REQUIRED_CONTENT_TYPE, dispatchResponseSchema } from '../act/channel'
 
 /**
@@ -46,7 +46,18 @@ export interface BrowserControl {
   dispatch(input: {
     intentId: string
     kind: DispatchableKind
-    params: ActionParams
+    /**
+     * Carried opaquely, matching the wire.
+     *
+     * This was `ActionParams` — the gate's shape — and that is narrower than
+     * what actually crosses. `navigate` sends a RESOLVED url, because the tool
+     * has already joined the path to the approved source's origin and proven the
+     * result did not leave it; re-deriving that in the extension would be a
+     * second implementation of the check that matters most. `src/act/channel.ts`
+     * types the same field `Record<string, unknown>` and says why: deterministic
+     * code built it and the extension validates it per kind.
+     */
+    params: Record<string, unknown>
     timeoutMs: number
   }): Promise<BrowserReport>
 }
@@ -113,3 +124,54 @@ export function createBrowserControl(input: {
     },
   }
 }
+
+/**
+ * The failures after which we cannot say whether the world changed.
+ *
+ * Every browser failure is recorded `unverified` — CONTEXT.md is explicit that
+ * the verdict covers both "nothing happened" and "we cannot tell". What this set
+ * changes is the SENTENCE the ledger carries, and that distinction is the whole
+ * reason `not-delivered` and `not-reported` are separate codes.
+ *
+ * Telling somebody "it did not go through" about an instruction that reached
+ * their browser and may well have pressed Send is the single most damaging thing
+ * this ledger could say, because they will act on it — retry the order, re-send
+ * the message. The reverse error is merely annoying: they check something that
+ * never happened.
+ *
+ * `not-delivered` is deliberately absent: the guarded UPDATE means the row was
+ * still `queued`, so the instruction provably never left the app.
+ */
+export const UNVERIFIED_FAILURES: ReadonlySet<ControlFailure> = new Set<ControlFailure>([
+  'not-reported',
+  'timed-out',
+])
+
+/**
+ * Raised by a tool when the channel reported a failure.
+ *
+ * A class rather than a bare `Error` so the loop can record the deterministic
+ * `failure` code beside the prose, instead of parsing a message. The loop
+ * catches it exactly where it catches everything else a tool can throw, so
+ * nothing about the ledger ordering changes.
+ */
+export class BrowserControlError extends Error {
+  readonly failure: ControlFailure
+
+  constructor(failure: ControlFailure, detail: string) {
+    super(`${failure}: ${detail}`)
+    this.name = 'BrowserControlError'
+    this.failure = failure
+  }
+}
+
+/**
+ * Re-exported so the loop and the tools import their vocabulary from the thing
+ * they hold, not from the wire module underneath it.
+ *
+ * The definitions live in `src/act/channel.ts` because that is where both ends
+ * of the channel agree on them, and there is exactly one declaration. This is a
+ * doorway, not a second home.
+ */
+export type { BrowserReport, ControlFailure, DispatchableKind, PageObservation, ScreenCapture }
+export { DISPATCH_TIMEOUT_MS } from '../act/channel'

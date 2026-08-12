@@ -43,11 +43,12 @@
 
 import { runWorker } from '../runtime/worker-loop'
 import type { RunLedger, WorkerJob, WorkerResult } from '../runtime/worker-loop'
+import type { ConfirmedAction, HistoryReader } from '../runtime/history'
 import { STOP_RULES } from '../domain/execution/stop-conditions'
 import { allowlisted } from '../policy/fetcher'
 import type { SourceFetcher } from '../policy/fetcher'
 import { readableCause } from './problem'
-import { creditedDeadlineFor, settleAbandonedIntents } from './confirmations'
+import { confirmationForIntent, confirmedRequestIdsFor, creditedDeadlineFor, settleAbandonedIntents } from './confirmations'
 import type { RunFence } from '../runtime/worker-process'
 import { FINDING_KINDS, reviewBoundary, reviewHandlesFor } from '../model/boundaries/review'
 import type { ReviewedOutcome } from '../model/boundaries/review'
@@ -124,6 +125,11 @@ function ledgerFor(ctx: AppContext, runId: string, fence: RunFence): RunLedger {
 
       const row = await ctx.db.prisma.actionIntent.create({
         data: {
+          // The caller's id, not `@default(cuid())`. The gate stamped this onto
+          // the `AuthorizedAction` before the row existed, and the browser
+          // channel uses it as an idempotency key — so the row has to be the one
+          // the token names. See `RunLedger.recordIntent`.
+          id: input.id,
           runId: input.runId,
           ...(input.stepId === null ? {} : { stepId: input.stepId }),
           seq: input.seq,
@@ -146,6 +152,11 @@ function ledgerFor(ctx: AppContext, runId: string, fence: RunFence): RunLedger {
           scopeVerdict: input.scopeVerdict,
           ...(input.detail === undefined ? {} : { detail: input.detail }),
           ...(input.draftText === undefined ? {} : { draftText: input.draftText }),
+          // NULL when the authorising run saw the result itself, which is every
+          // outcome the loop writes. `'recovery'` arrives here from
+          // `recoverOrphanedIntents` — the first writer this column has had
+          // since CONTEXT.md specified it.
+          ...(input.observedBy === undefined ? {} : { observedBy: input.observedBy }),
         },
       })
     },
@@ -163,6 +174,114 @@ function ledgerFor(ctx: AppContext, runId: string, fence: RunFence): RunLedger {
     },
 
     advanceProgress: (id, step) => ctx.repos.runs.advanceProgress(id, step),
+  }
+}
+
+/**
+ * Everything this contract's runs have already committed, oldest first.
+ *
+ * ── Why it is a query here rather than a repository method ───────────────
+ *
+ * `ledgerFor` above already reaches `ctx.db.prisma` directly for the same three
+ * tables, and for the same reason: this is the run spine's own private view of
+ * the ledger, not a shape any screen renders. A repository method would be a
+ * second public surface over rows whose only consumer is `historyForContract`,
+ * and the repositories are shared with the UI — a query added there tends to
+ * grow readers who then need it to mean something slightly different.
+ *
+ * The ORDER is this function's promise, not the rebuilder's. `createdAt` then
+ * `seq`: runs are sequential under one contract, `seq` is unique per run, and
+ * `createdAt` on an append-only table is monotonic within a run. Sorting by
+ * `seq` alone would interleave a continuation's first action with its
+ * predecessor's first action, which would tell the model it did things in an
+ * order it did not.
+ */
+function historyReaderFor(ctx: AppContext): HistoryReader {
+  return {
+    async intentsForContract(contractId) {
+      const rows = await ctx.db.prisma.actionIntent.findMany({
+        where: { run: { contractId } },
+        orderBy: [{ createdAt: 'asc' }, { seq: 'asc' }],
+        select: {
+          id: true,
+          runId: true,
+          seq: true,
+          kind: true,
+          reason: true,
+          authorized: true,
+          refusedRule: true,
+          outcome: { select: { result: true, scopeVerdict: true, detail: true } },
+        },
+      })
+
+      return rows.map((row) => ({
+        id: row.id,
+        runId: row.runId,
+        seq: row.seq,
+        kind: row.kind,
+        reason: row.reason,
+        authorized: row.authorized,
+        refusedRule: row.refusedRule,
+        outcome: row.outcome
+          ? {
+              result: row.outcome.result,
+              scopeVerdict: row.outcome.scopeVerdict,
+              detail: row.outcome.detail,
+            }
+          : null,
+      }))
+    },
+
+    /**
+     * The confirmations a human answered YES to, paired with what they covered.
+     *
+     * -- Two helpers, and why both --------------------------------------
+     *
+     * `confirmedRequestIdsFor` is the membership set the gate checks.
+     * `confirmationForIntent` is the deterministic injection point: it walks
+     * from a REFUSED intent to the request a person answered about it. Both are
+     * contract-scoped on purpose -- the yes is answered against the run that
+     * asked and honoured by the continuation, so a run-scoped lookup would lose
+     * it at exactly the moment it is needed.
+     *
+     * Only `confirmed` counts in either. A rejected verdict and an absent one
+     * are indistinguishable here on purpose: all three mean *not permitted*, and
+     * **expiry never approves**, because an unanswered request has no verdict
+     * row and time does not write rows.
+     *
+     * The refused intent's own `kind` and `params` ride along because they are
+     * what the person was SHOWN -- the question was built by code from attested
+     * facts about that intent -- so `confirmationIdFor` can require a proposal
+     * to match it before attaching the id.
+     *
+     * The walk covers this contract's refused intents only, and runs at all only
+     * when something is confirmed, so the common case is one query returning
+     * nothing.
+     */
+    async confirmationsForContract(contractId) {
+      const confirmedIds = await confirmedRequestIdsFor(ctx, contractId)
+      if (confirmedIds.size === 0) return []
+
+      const refused = await ctx.db.prisma.actionIntent.findMany({
+        where: { run: { contractId }, authorized: false },
+        orderBy: [{ createdAt: 'asc' }, { seq: 'asc' }],
+        select: { id: true, kind: true, params: true },
+      })
+
+      const covered: ConfirmedAction[] = []
+      for (const intent of refused) {
+        const requestId = await confirmationForIntent(ctx, intent.id)
+        if (requestId === null || !confirmedIds.has(requestId)) continue
+
+        covered.push({
+          requestId,
+          intentId: intent.id,
+          kind: intent.kind,
+          params: (intent.params ?? {}) as Record<string, unknown>,
+        })
+      }
+      return covered
+    },
   }
 }
 
@@ -232,6 +351,10 @@ export async function executeRun(runId: string, deps: ExecuteDeps): Promise<void
 
   const job: WorkerJob = {
     runId,
+    // The unit of history and of both blast-radius caps. A confirmation pause
+    // ends one run and starts another under the same contract, so anything
+    // counted per run would reset every time somebody was asked a question.
+    contractId: contract.id,
     objective: contract.objective,
     definitionOfDone: contract.definitionOfDone,
     guidance: contract.guidance,
@@ -280,6 +403,10 @@ export async function executeRun(runId: string, deps: ExecuteDeps): Promise<void
         versions: { byId: (id) => ctx.repos.documents.version(id) },
         ...(contract.baseVersionId === null ? {} : { baseVersionId: contract.baseVersionId }),
       },
+      // Resume, crash recovery and the startup sweep all read the same rows
+      // through this. See `src/runtime/history.ts` for why there is one path and
+      // not three.
+      history: historyReaderFor(ctx),
       now: deps.now,
       renewLease: (id) => ctx.repos.runs.renewLease(id, new Date(deps.now() + 60_000)),
     })
@@ -372,7 +499,15 @@ export async function executeRun(runId: string, deps: ExecuteDeps): Promise<void
 
   const stopLabel = result.stoppedBy.length ? STOP_RULES[result.stoppedBy[0]!].consumerLabel : null
 
-  await writeReport(ctx, contract.id, stopLabel, result.decisions, undefined, recorded.dropped)
+  await writeReport(
+    ctx,
+    contract.id,
+    stopLabel,
+    result.decisions,
+    undefined,
+    recorded.dropped,
+    result.summary,
+  )
 
   // The session goes back to the person. Without this it stays `away` forever,
   // and every control that offers to hand it back is a promise the product
@@ -546,6 +681,24 @@ async function writeReport(
    * productions is an internal metric wearing consumer clothes.
    */
   dropped?: number,
+  /**
+   * What the run said when it declared itself finished.
+   *
+   * **This is not boundary 6.** `shiftReportBoundary` narrates a whole Shift
+   * from the ledger, after the fact, and is still unwired — `tests/
+   * reachability.test.ts` asserts that. This is one sentence the worker wrote at
+   * the moment it stopped, in the same call where it declined to continue, and
+   * it is used only where the narrative would OTHERWISE BE NULL: a run that
+   * finished cleanly and hit no stop rule currently produces a blank note, which
+   * is the "the software knew something and told no one" shape this file already
+   * fixes twice above.
+   *
+   * It is model prose about model work and nothing branches on it. When boundary
+   * 6 lands it narrates from the ledger and this stops being read — which is the
+   * right order, because a narrative built from rows can say what happened even
+   * when the run died before it could say anything at all.
+   */
+  finishedSummary?: string,
 ): Promise<void> {
   const existing = await ctx.repos.reports.forContract(contractId)
   if (existing) return
@@ -572,9 +725,11 @@ async function writeReport(
     narrative: failureDetail
       ? `Propositum stopped before it could finish, and nothing was changed. (${readableCause(failureDetail)})`
       : stopLabel === null
-        ? lost === ''
-          ? null
-          : lost.trim()
+        ? finishedSummary === undefined
+          ? lost === ''
+            ? null
+            : lost.trim()
+          : `${finishedSummary}${lost}`
         : `${stopLabel}${lost}`,
     decisions: decisions.map((d, i) => ({
       question: d.question,

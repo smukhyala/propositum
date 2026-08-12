@@ -12,6 +12,7 @@
  * the state the review caught.
  */
 
+import { randomBytes } from 'node:crypto'
 import { createDatabase } from '../src/persistence/client'
 import { createRepositories } from '../src/persistence/repositories/index'
 import { createLedgerWriter } from '../src/persistence/ledger-writer'
@@ -132,7 +133,27 @@ const handle = startWorkerProcess(
 
       return swept
     },
-    claimNext: (lease) => ctx.repos.runs.claim(lease),
+    /**
+     * ── The token is minted HERE, because this is where a process takes a run ─
+     *
+     * `runs.claim` documents the token as minted at claim and takes it as an
+     * OPTIONAL parameter — so the mint site is whoever claims, and this is the
+     * only thing that does. Until this line it was passed by nobody, which left
+     * `AgentRun.controlToken` null on every run in production while the comment
+     * beside it read as proof a fence existed. A credential the schema
+     * describes and no code issues is worse than none.
+     *
+     * `randomBytes` rather than `randomUUID`: a UUID is an identifier that
+     * happens to be hard to guess, and this is a bearer secret. The distinction
+     * matters the day somebody logs one.
+     *
+     * It is not an authorization — the gate still decides every action. It
+     * answers one question for the control channel: *is this the run the
+     * extension agreed to take instructions from.* Its lifetime is the claim's;
+     * `complete`, `sweepExpiredLeases` and the confirmation paths clear it.
+     */
+    claimNext: (lease) =>
+      ctx.repos.runs.claim({ ...lease, controlToken: randomBytes(32).toString('base64url') }),
     /** The coordinator's decision, at the only point it can be honoured: a
      *  continuation whose shift already ended never enters the loop. */
     admit: (runId) => admitRun(ctx, runId, new Date()),

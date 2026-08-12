@@ -367,6 +367,8 @@ describe('worker-action keeps kind a free string', () => {
       availableSources: [],
       history: [],
       gathered: [],
+      page: null,
+      mutatingActionsRemaining: 8,
     })
 
     expect(prompt.system).toMatch(/write the prose/i)
@@ -382,6 +384,8 @@ describe('worker-action keeps kind a free string', () => {
       availableSources: [],
       history: [],
       gathered: [{ label: 'Northwind', content: datamark('Standard partners receive 15%.') }],
+      page: null,
+      mutatingActionsRemaining: 8,
     })
 
     expect(prompt.user).toContain('<<<UNTRUSTED_PAGE_TEXT>>>')
