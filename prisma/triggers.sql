@@ -36,6 +36,12 @@
 -- document_version   insert-only by convention; guarded below anyway, because
 --                    an edited base would silently invalidate every changeset
 --                    hash that points at it
+-- action_dispatch    mutable by design; it is the claim target for the browser
+--                    control channel, exactly as agent_run is for runs. It is
+--                    not evidence — the append-only record of what was
+--                    attempted is the action_intent, committed before the
+--                    dispatch exists, so a redelivered or abandoned dispatch
+--                    changes nothing about what the audit trail says
 
 -- ═══════════════════════════════════════════════════ observation_event
 
@@ -206,4 +212,171 @@ BEFORE DELETE ON handoff_contract
 WHEN OLD.status = 'accepted'
 BEGIN
   SELECT RAISE(ABORT, 'handoff_contract cannot be deleted once accepted');
+END;
+
+-- ══════════════════════════════════════════════════════════ work_offer
+--
+-- Insert-only, and written only on acceptance. The reason this table needs
+-- guarding at all is narrower than it looks: what it holds is the record of an
+-- offer a PERSON AGREED TO, and `grounds` is frozen at that moment precisely
+-- because the ambient buffer it came from is bounded by a 30-minute window and
+-- will not contain the answer an hour later. An UPDATE here would rewrite why
+-- Propositum said it asked — the one thing the person cannot check any other
+-- way.
+
+DROP TRIGGER IF EXISTS work_offer_no_update;
+CREATE TRIGGER work_offer_no_update
+BEFORE UPDATE ON work_offer
+BEGIN
+  SELECT RAISE(ABORT, 'work_offer is insert-only: UPDATE forbidden');
+END;
+
+DROP TRIGGER IF EXISTS work_offer_no_delete;
+CREATE TRIGGER work_offer_no_delete
+BEFORE DELETE ON work_offer
+BEGIN
+  SELECT RAISE(ABORT, 'work_offer is insert-only: DELETE forbidden');
+END;
+
+DROP TRIGGER IF EXISTS work_offer_no_replace;
+CREATE TRIGGER work_offer_no_replace
+BEFORE INSERT ON work_offer
+WHEN EXISTS (SELECT 1 FROM work_offer WHERE id = NEW.id)
+BEGIN
+  SELECT RAISE(ABORT, 'work_offer is insert-only: REPLACE forbidden');
+END;
+
+-- ═══════════════════════════════════════════════════════ shift_outcome
+
+DROP TRIGGER IF EXISTS shift_outcome_no_update;
+CREATE TRIGGER shift_outcome_no_update
+BEFORE UPDATE ON shift_outcome
+BEGIN
+  SELECT RAISE(ABORT, 'shift_outcome is insert-only: UPDATE forbidden');
+END;
+
+DROP TRIGGER IF EXISTS shift_outcome_no_delete;
+CREATE TRIGGER shift_outcome_no_delete
+BEFORE DELETE ON shift_outcome
+BEGIN
+  SELECT RAISE(ABORT, 'shift_outcome is insert-only: DELETE forbidden');
+END;
+
+DROP TRIGGER IF EXISTS shift_outcome_no_replace;
+CREATE TRIGGER shift_outcome_no_replace
+BEFORE INSERT ON shift_outcome
+WHEN EXISTS (SELECT 1 FROM shift_outcome WHERE id = NEW.id)
+BEGIN
+  SELECT RAISE(ABORT, 'shift_outcome is insert-only: REPLACE forbidden');
+END;
+
+-- ═════════════════════════════════════════════════════ outcome_verdict
+--
+-- The sibling of change_verdict, and guarded for the identical reason: a
+-- verdict is recorded once, and changing your mind has to be an act the
+-- interface performs visibly rather than an UPDATE nobody can see afterwards.
+
+DROP TRIGGER IF EXISTS outcome_verdict_no_update;
+CREATE TRIGGER outcome_verdict_no_update
+BEFORE UPDATE ON outcome_verdict
+BEGIN
+  SELECT RAISE(ABORT, 'outcome_verdict is append-only: UPDATE forbidden');
+END;
+
+DROP TRIGGER IF EXISTS outcome_verdict_no_delete;
+CREATE TRIGGER outcome_verdict_no_delete
+BEFORE DELETE ON outcome_verdict
+BEGIN
+  SELECT RAISE(ABORT, 'outcome_verdict is append-only: DELETE forbidden');
+END;
+
+DROP TRIGGER IF EXISTS outcome_verdict_no_replace;
+CREATE TRIGGER outcome_verdict_no_replace
+BEFORE INSERT ON outcome_verdict
+WHEN EXISTS (SELECT 1 FROM outcome_verdict WHERE id = NEW.id)
+BEGIN
+  SELECT RAISE(ABORT, 'outcome_verdict is append-only: REPLACE forbidden');
+END;
+
+-- ════════════════════════════════════════════════ confirmation_request
+
+DROP TRIGGER IF EXISTS confirmation_request_no_update;
+CREATE TRIGGER confirmation_request_no_update
+BEFORE UPDATE ON confirmation_request
+BEGIN
+  SELECT RAISE(ABORT, 'confirmation_request is append-only: UPDATE forbidden');
+END;
+
+DROP TRIGGER IF EXISTS confirmation_request_no_delete;
+CREATE TRIGGER confirmation_request_no_delete
+BEFORE DELETE ON confirmation_request
+BEGIN
+  SELECT RAISE(ABORT, 'confirmation_request is append-only: DELETE forbidden');
+END;
+
+DROP TRIGGER IF EXISTS confirmation_request_no_replace;
+CREATE TRIGGER confirmation_request_no_replace
+BEFORE INSERT ON confirmation_request
+WHEN EXISTS (SELECT 1 FROM confirmation_request WHERE id = NEW.id)
+BEGIN
+  SELECT RAISE(ABORT, 'confirmation_request is append-only: REPLACE forbidden');
+END;
+
+-- ════════════════════════════════════════════════ confirmation_verdict
+--
+-- This is the one on the list where a silent overwrite would be worst. The row
+-- says a HUMAN authorised an effect that leaves Propositum, and it is the only
+-- durable trace of that fact. `INSERT OR REPLACE` walking through a two-trigger
+-- pair would let a `rejected` become a `confirmed` with no record of either —
+-- which is why the third trigger is not optional here any more than elsewhere.
+
+DROP TRIGGER IF EXISTS confirmation_verdict_no_update;
+CREATE TRIGGER confirmation_verdict_no_update
+BEFORE UPDATE ON confirmation_verdict
+BEGIN
+  SELECT RAISE(ABORT, 'confirmation_verdict is append-only: UPDATE forbidden');
+END;
+
+DROP TRIGGER IF EXISTS confirmation_verdict_no_delete;
+CREATE TRIGGER confirmation_verdict_no_delete
+BEFORE DELETE ON confirmation_verdict
+BEGIN
+  SELECT RAISE(ABORT, 'confirmation_verdict is append-only: DELETE forbidden');
+END;
+
+DROP TRIGGER IF EXISTS confirmation_verdict_no_replace;
+CREATE TRIGGER confirmation_verdict_no_replace
+BEFORE INSERT ON confirmation_verdict
+WHEN EXISTS (SELECT 1 FROM confirmation_verdict WHERE id = NEW.id)
+BEGIN
+  SELECT RAISE(ABORT, 'confirmation_verdict is append-only: REPLACE forbidden');
+END;
+
+-- ═══════════════════════════════════════════════════════ action_evidence
+--
+-- What the agent saw while acting. Guarded because a ConfirmationRequest points
+-- at one of these rows as the thing the person looked at before authorising an
+-- effect: a mutable snapshot means the record of what they were shown is not a
+-- record of what they were shown.
+
+DROP TRIGGER IF EXISTS action_evidence_no_update;
+CREATE TRIGGER action_evidence_no_update
+BEFORE UPDATE ON action_evidence
+BEGIN
+  SELECT RAISE(ABORT, 'action_evidence is append-only: UPDATE forbidden');
+END;
+
+DROP TRIGGER IF EXISTS action_evidence_no_delete;
+CREATE TRIGGER action_evidence_no_delete
+BEFORE DELETE ON action_evidence
+BEGIN
+  SELECT RAISE(ABORT, 'action_evidence is append-only: DELETE forbidden');
+END;
+
+DROP TRIGGER IF EXISTS action_evidence_no_replace;
+CREATE TRIGGER action_evidence_no_replace
+BEFORE INSERT ON action_evidence
+WHEN EXISTS (SELECT 1 FROM action_evidence WHERE id = NEW.id)
+BEGIN
+  SELECT RAISE(ABORT, 'action_evidence is append-only: REPLACE forbidden');
 END;

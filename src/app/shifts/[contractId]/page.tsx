@@ -253,10 +253,17 @@ export default async function ShiftPage({ params }: { params: Promise<{ contract
 
   /* ── the document, and whether it moved ───────────────────────────────── */
 
-  const baseRow = await db.prisma.documentVersion.findUnique({
-    where: { id: contract.baseVersionId },
-    select: { id: true, ordinal: true, content: true, documentId: true, document: { select: { title: true } } },
-  })
+  // `baseVersionId` is nullable now: a Shift that acted in a browser pins no
+  // document. Everything below already copes with `baseRow` being absent — it
+  // was written for the case where the version was deleted — so the only new
+  // thing is not asking for a row when there is no id to ask about.
+  const baseRow =
+    contract.baseVersionId === null
+      ? null
+      : await db.prisma.documentVersion.findUnique({
+          where: { id: contract.baseVersionId },
+          select: { id: true, ordinal: true, content: true, documentId: true, document: { select: { title: true } } },
+        })
   const baseContent = normalise(baseRow?.content ?? '')
   const headings = headingsOf(baseContent)
   const latest = baseRow ? await repos.documents.latestVersion(baseRow.documentId) : null

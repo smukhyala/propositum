@@ -251,6 +251,97 @@ describe('deferred, and asserted as deferred', () => {
       'model calls are recorded now — move this into the section above',
     ).toEqual([])
   })
+
+  /**
+   * The computer-use tables, landed ahead of everything that uses them.
+   *
+   * Schema and repositories are one unit and the paths that write them are
+   * several others, so for one commit these are tables with guards,
+   * repositories with tests, and no callers — the exact shape of every bug the
+   * section above exists to remember. Asserting the absence is what stops that
+   * shape from being indistinguishable from the accident: each of these turns
+   * this file RED the moment something calls it, which forces the claim up into
+   * the reachable section rather than leaving it ambiguous.
+   *
+   * If you are here because one went red: that is the system working. Move it.
+   */
+  const repos = 'src/persistence/repositories/index.ts'
+
+  it('no WorkOffer is written, so an accepted offer leaves no durable trace', () => {
+    // Which also means `grounds` — the frozen record of WHY Propositum asked —
+    // does not exist yet, and "why did it offer me this" has no answer after
+    // the ambient buffer's 30-minute window closes.
+    expect(
+      callersOf('offers.create', repos),
+      'work offers are persisted now — move this into the section above',
+    ).toEqual([])
+  })
+
+  it('nothing writes a ShiftOutcome, so a Shift can still only produce a document', () => {
+    // The whole point of the table is that the document path is one kind among
+    // five. With no writer it is still the only kind, and a run that read three
+    // pages and answered a question has nowhere to say so.
+    expect(
+      callersOf('outcomes.create', repos),
+      'shift outcomes are written now — move this into the section above',
+    ).toEqual([])
+  })
+
+  it('no OutcomeVerdict is recordable, so a production cannot be accepted or rejected', () => {
+    expect(
+      callersOf('outcomes.recordVerdict', repos),
+      'outcome verdicts are recorded now — move this into the section above',
+    ).toEqual([])
+  })
+
+  it('the gate never stops for a person, so ConfirmationRequest cannot occur', () => {
+    // This is the one worth watching. A ConfirmationRequest is deterministic
+    // and no dial can switch it off — but a rule nothing raises is a rule that
+    // never fires, and it would be invisible in a green suite exactly the way
+    // `registerContentScripts` was.
+    expect(
+      callersOf('confirmations.create', repos),
+      'the gate raises confirmations now — move this into the section above',
+    ).toEqual([])
+  })
+
+  it('and no human can answer one, so a raised request would strand its run', () => {
+    expect(
+      callersOf('confirmations.recordVerdict', repos),
+      'confirmations are answerable now — move this into the section above',
+    ).toEqual([])
+  })
+
+  it('nothing records what an agent saw while acting', () => {
+    // Without this the second ledger is empty, so a ConfirmationRequest has
+    // nothing to show the person before they authorise an effect.
+    expect(
+      callersOf('evidence.create', repos),
+      'action evidence is captured now — move this into the section above',
+    ).toEqual([])
+  })
+
+  it('no instruction reaches a browser, so nothing is ever dispatched or claimed', () => {
+    expect(
+      callersOf('dispatches.enqueue', repos),
+      'dispatches are enqueued now — move this into the section above',
+    ).toEqual([])
+    expect(
+      callersOf('dispatches.claim', repos),
+      'dispatches are claimed now — move this into the section above',
+    ).toEqual([])
+  })
+
+  it('nothing flags a run for cancellation, so the fence stays a paragraph', () => {
+    // `cancelRequested` and `claimedBy` are described in CONTEXT.md §4 and have
+    // never existed in the schema. They exist now; nothing writes or reads them
+    // yet, so "a Runner that no longer holds the claim aborts without writing"
+    // is still a sentence rather than a behaviour.
+    expect(
+      callersOf('runs.requestCancel', repos),
+      'runs can be cancelled now — move this into the section above',
+    ).toEqual([])
+  })
 })
 
 describe('the extension can actually capture', () => {

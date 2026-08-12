@@ -47,6 +47,15 @@ export interface RawExecutor {
  * `verifyAppendOnlyGuards` checks one against the other — so adding a trigger
  * to the SQL without adding it here (or vice versa) fails loudly at startup
  * rather than leaving a table quietly unguarded.
+ *
+ * That loudness is the feature and it is worth defending, because the failure
+ * mode it prevents is silent. If you arrived here because startup threw, the
+ * fix is to add the missing half, never to shorten this list.
+ *
+ * `agent_run` and `action_dispatch` are ABSENT ON PURPOSE. Both are claim
+ * targets, and a claim is by definition a mutation. The append-only record of
+ * what a dispatch was for is its `action_intent`, which is guarded and is
+ * committed before the dispatch exists.
  */
 export const REQUIRED_GUARDS: ReadonlyArray<readonly [string, string]> = [
   ['observation_event_no_update', 'observation_event'],
@@ -69,6 +78,24 @@ export const REQUIRED_GUARDS: ReadonlyArray<readonly [string, string]> = [
   ['document_version_no_replace', 'document_version'],
   ['handoff_contract_frozen_once_accepted', 'handoff_contract'],
   ['handoff_contract_no_delete_accepted', 'handoff_contract'],
+  ['work_offer_no_update', 'work_offer'],
+  ['work_offer_no_delete', 'work_offer'],
+  ['work_offer_no_replace', 'work_offer'],
+  ['shift_outcome_no_update', 'shift_outcome'],
+  ['shift_outcome_no_delete', 'shift_outcome'],
+  ['shift_outcome_no_replace', 'shift_outcome'],
+  ['outcome_verdict_no_update', 'outcome_verdict'],
+  ['outcome_verdict_no_delete', 'outcome_verdict'],
+  ['outcome_verdict_no_replace', 'outcome_verdict'],
+  ['confirmation_request_no_update', 'confirmation_request'],
+  ['confirmation_request_no_delete', 'confirmation_request'],
+  ['confirmation_request_no_replace', 'confirmation_request'],
+  ['confirmation_verdict_no_update', 'confirmation_verdict'],
+  ['confirmation_verdict_no_delete', 'confirmation_verdict'],
+  ['confirmation_verdict_no_replace', 'confirmation_verdict'],
+  ['action_evidence_no_update', 'action_evidence'],
+  ['action_evidence_no_delete', 'action_evidence'],
+  ['action_evidence_no_replace', 'action_evidence'],
 ] as const
 
 export class AppendOnlyGuardError extends Error {
