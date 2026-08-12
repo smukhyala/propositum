@@ -120,17 +120,38 @@
    * right answer. A click has no such problem — whatever the service worker
    * needs to do to let go of this tab, it may do off the back of this.
    */
+  /**
+   * Send, and treat every way it can fail the same.
+   *
+   * `chrome.runtime.sendMessage` without a callback returns a promise, so the
+   * common failure — "Could not establish connection", i.e. nothing is
+   * listening — arrives as a REJECTION and sails straight past a `try/catch`.
+   * Only a context-invalidated error throws synchronously. Both mean the same
+   * thing here (there is no extension driving this tab any more) and both have
+   * to reach `onGone`, or the border sits there claiming work is in progress
+   * with nothing doing it — the "worse than none" indicator this file is
+   * written against.
+   */
+  function tell(message, onGone) {
+    try {
+      var sending = chrome.runtime.sendMessage(message)
+      if (sending !== null && sending !== undefined && typeof sending.catch === 'function') {
+        sending.catch(onGone)
+      }
+    } catch (error) {
+      void error
+      onGone()
+    }
+  }
+
   stop.addEventListener('click', function () {
     stop.disabled = true
     label.textContent = 'Stopping…'
-    try {
-      chrome.runtime.sendMessage({ propositumIndicator: 'stop' })
-    } catch (error) {
-      // The worker is gone, which means nothing is driving this tab either.
+    tell({ propositumIndicator: 'stop' }, function () {
+      // Nothing is listening, which means nothing is driving this tab either.
       // Say so rather than leaving a button that looks like it did nothing.
       label.textContent = 'Propositum has let go of this tab'
-      void error
-    }
+    })
   })
 
   chip.appendChild(dot)
@@ -158,16 +179,41 @@
    * teaches the person to read its absence as "nothing is happening".
    */
   var beat = setInterval(function () {
-    try {
-      chrome.runtime.sendMessage({ propositumIndicator: 'alive' })
-    } catch (error) {
+    /**
+     * The beat reports that the marker is ON THE PAGE, not that this script is
+     * still scheduled. Those are different facts and only the first is worth
+     * anything.
+     *
+     * The host element lives in the page's own light DOM — it has to, or
+     * nothing would render — so any page script can remove it with one line.
+     * A beat that did not check would keep renewing the grace while the border
+     * and the chip were gone, the watchdog would never fire, and Propositum
+     * would carry on acting in a tab showing no sign of it. That is the exact
+     * outcome INDICATOR_GRACE_MS exists to prevent, reached through the
+     * mechanism meant to prevent it.
+     *
+     * Going quiet rather than re-appending is deliberate. Re-appending would
+     * be a fight with the page that the page can always win, conducted where
+     * the person cannot see it; going quiet hands the decision to the
+     * watchdog, which gives the tab up. Losing the marker is a reason to stop,
+     * not a rendering problem to work around.
+     *
+     * What this does NOT catch: a page that leaves the element in place and
+     * hides it with its own CSS. Shadow DOM protects what is inside the host,
+     * not the host itself. That gap is real and is not closable from here.
+     */
+    if (!host.isConnected) {
+      clearInterval(beat)
+      return
+    }
+
+    tell({ propositumIndicator: 'alive' }, function () {
       // Nothing is listening: the extension was reloaded or disabled. Stop
       // pinging, and take the marker down rather than leaving a border
       // claiming work is in progress that nothing is doing.
       clearInterval(beat)
       host.remove()
-      void error
-    }
+    })
   }, 500)
 
   /** The extension asking for the marker back — a stop it did not hear from here. */

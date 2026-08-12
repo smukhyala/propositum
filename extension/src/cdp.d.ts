@@ -54,4 +54,5 @@ export declare function classifyPausedRequest(
   paused: unknown,
   approvedOrigins: unknown,
   patternCovers?: (pattern: string, origin: string) => boolean,
+  mainFrameId?: string | null,
 ): 'allow' | 'blocked-request' | 'off-origin'

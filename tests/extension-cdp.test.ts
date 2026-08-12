@@ -33,7 +33,7 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import { readFileSync, readdirSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import {
@@ -113,6 +113,10 @@ describe('the extension holds the file the guard is written about', () => {
       'Page.captureScreenshot',
       'Page.lifecycleEvent',
       'Page.loadEventFired',
+      // The main frame, without which the off-origin rule cannot tell the tab
+      // navigating away from the page embedding an iframe.
+      'Page.getFrameTree',
+      'Page.frameNavigated',
     ]) {
       expect(ALL_CODE, `${expected} is gone — either the driver moved or it stopped working`).toContain(
         expected,
@@ -443,12 +447,44 @@ describe('the accessibility tree, flattened', () => {
     expect(flattenAXTree(many.slice(0, 3)).truncated).toBe(false)
   })
 
-  it('the default bounds are the ones the receiver is told about', () => {
-    // Defence in depth is two bounds that AGREE about which is tighter. Two
-    // that disagree is a lock — wave 2 shipped exactly that on the ambient
-    // path and ambient detection died for the life of the session storage.
+  it('the sender bounds below what the receiver accepts, never above', () => {
+    /**
+     * Defence in depth is two bounds that AGREE about which is tighter. Two
+     * that disagree is a lock — wave 2 shipped exactly that on the ambient
+     * path (sender 200, receiver 100, buffer cleared only on success) and
+     * ambient detection died for the life of the session storage.
+     *
+     * So this reads the app's number rather than repeating it, and fails if
+     * the extension ever becomes the looser side. Read off the source because
+     * the extension cannot import TypeScript and this test can — the same
+     * arrangement `tests/search-url.test.ts` uses to keep a hand port honest.
+     */
     expect(SNAPSHOT_NODE_CAP).toBe(1500)
-    expect(SNAPSHOT_BUDGET_CHARS).toBe(20_000)
+    expect(SNAPSHOT_BUDGET_CHARS).toBe(48_000)
+
+    /**
+     * And the cross-check, which arms itself when the app's side lands.
+     *
+     * `src/model/untrusted.ts` is another unit's file and may not be on this
+     * branch yet. Pinning 48,000 above holds regardless; this compares the two
+     * whenever both exist, so a later change to either number that puts the
+     * extension on the looser side turns red here rather than at three in the
+     * afternoon on somebody's real inbox.
+     */
+    const untrustedPath = join(repo, 'src/model/untrusted.ts')
+    if (!existsSync(untrustedPath)) return
+
+    const declared = /SNAPSHOT_BUDGET_CHARS\s*[:=][^=]*?([\d_]{3,})/.exec(
+      readFileSync(untrustedPath, 'utf8'),
+    )
+    if (declared === null) return
+
+    const receiver = Number((declared[1] ?? '0').replace(/_/g, ''))
+    expect(receiver).toBeGreaterThan(0)
+    expect(
+      SNAPSHOT_BUDGET_CHARS,
+      'the extension is now the LOOSER side — that is the wave-2 wedge, from the other end',
+    ).toBeLessThanOrEqual(receiver)
   })
 
   it('survives a tree it cannot walk', () => {
@@ -513,9 +549,12 @@ describe('the origin check', () => {
 describe('what the browser attests about a request it is holding', () => {
   const approved = ['https://mail.example.com']
 
-  const paused = (method: string, url: string, resourceType = 'XHR'): unknown => ({
+  const MAIN = 'frame-main'
+
+  const paused = (method: string, url: string, resourceType = 'XHR', frameId = MAIN): unknown => ({
     request: { method, url },
     resourceType,
+    frameId,
   })
 
   it('blocks every non-GET, whatever it is for', () => {
@@ -542,7 +581,12 @@ describe('what the browser attests about a request it is holding', () => {
 
   it('blocks a navigation off the approved sources', () => {
     expect(
-      classifyPausedRequest(paused('GET', 'https://elsewhere.example/', 'Document'), approved),
+      classifyPausedRequest(
+        paused('GET', 'https://elsewhere.example/', 'Document'),
+        approved,
+        patternCovers,
+        MAIN,
+      ),
     ).toBe('off-origin')
   })
 
@@ -554,12 +598,63 @@ describe('what the browser attests about a request it is holding', () => {
      * because the person's own browser fetches exactly the same subresources
      * when they read it themselves.
      */
-    expect(classifyPausedRequest(paused('GET', 'https://mail.example.com/', 'Document'), approved)).toBe(
-      'allow',
-    )
+    expect(
+      classifyPausedRequest(
+        paused('GET', 'https://mail.example.com/', 'Document'),
+        approved,
+        patternCovers,
+        MAIN,
+      ),
+    ).toBe('allow')
     expect(classifyPausedRequest(paused('GET', 'https://cdn.example/font.woff2'), approved)).toBe(
       'allow',
     )
+  })
+
+  it('does not mistake a third-party iframe for the agent leaving', () => {
+    /**
+     * CDP has no separate resource type for a sub-frame: an `<iframe>`'s own
+     * navigation is a `Document` too. Without the frame check, a consent
+     * manager, an embedded video or a captcha on an approved page would be
+     * read as the agent walking off the approved origin, fail at the network,
+     * and halt the run — the same "every page unusable" outcome the narrowing
+     * above exists to avoid, arriving through its one blind spot.
+     */
+    expect(
+      classifyPausedRequest(
+        paused('GET', 'https://consent.example/frame', 'Document', 'frame-child'),
+        approved,
+        patternCovers,
+        MAIN,
+      ),
+    ).toBe('allow')
+  })
+
+  it('falls back to checking every document when the main frame is unknown', () => {
+    // The closed direction. A run that aborts on an iframe is a bad afternoon;
+    // one that walks off the approved origin unnoticed is what this is for.
+    expect(
+      classifyPausedRequest(
+        paused('GET', 'https://consent.example/frame', 'Document', 'frame-child'),
+        approved,
+        patternCovers,
+        null,
+      ),
+    ).toBe('off-origin')
+  })
+
+  it('checks a request whose shape it does not recognise', () => {
+    /**
+     * A fail-open on a missing `resourceType`, in the same function that fails
+     * closed on a missing method one branch earlier, is the inconsistency an
+     * attacker looks for. Both absences are treated as the dangerous case.
+     */
+    expect(
+      classifyPausedRequest(
+        { request: { method: 'GET', url: 'https://elsewhere.example/' } },
+        approved,
+      ),
+    ).toBe('off-origin')
   })
 })
 

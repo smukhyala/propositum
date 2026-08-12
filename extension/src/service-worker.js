@@ -496,27 +496,51 @@ function actFetch(path, init) {
 }
 
 /**
- * Tell the app what happened, exactly once.
+ * Report whatever is in flight, and make sure only one thing ever does.
  *
- * ── A rejection must never be permanent ──────────────────────────────────
+ * ── One intent, one outcome ──────────────────────────────────────────────
  *
- * The extension bounds the accessibility tree before it leaves the browser and
- * the app bounds it again at the ledger; neither trusts the other. Wave 2
- * shipped that same pairing with the numbers the wrong way round and it
- * WEDGED: the sender kept 200 observations against a route that accepted 100,
- * cleared its buffer only on success, and so ambient detection was dead for
- * the life of that session storage.
+ * Three code paths can end up wanting to report the same intent, and for a
+ * while all three did: `onIrreversibleBlocked` reported `blocked-request`,
+ * then `stopActing` → `releaseControl` reported `control-lost` for the same id,
+ * then the `ControlLost` thrown out of `performCommand` produced a third. The
+ * receiver takes the last one, so the person was told *"I lost the browser"*
+ * about the moment Propositum had correctly refused to send a POST — the
+ * single most important thing that could have been said, overwritten by the
+ * least informative.
  *
- * Two things make that impossible here. There is no buffer at all — a report
- * is produced, sent once, and forgotten. And a 4xx is not retried with the
- * same bytes; it is answered with a *minimal* failure report for the same
- * intent, which carries no page-derived content and therefore cannot be
- * refused for the same reason twice.
+ * Claiming the id out of session storage before reporting makes the first
+ * writer the only writer. The two later paths find nothing in flight and stay
+ * quiet, which is right: they have nothing to add.
+ */
+async function reportInFlight(body) {
+  const { inFlightIntentId } = await chrome.storage.session.get(['inFlightIntentId'])
+  if (typeof inFlightIntentId !== 'string') return false
+
+  await chrome.storage.session.remove(['inFlightIntentId'])
+  await postReport(inFlightIntentId, body)
+  return true
+}
+
+/**
+ * ── Nothing is held, so nothing can wedge ────────────────────────────────
  *
- * The point of that fallback is not to salvage the observation. It is that the
- * intent must never become an orphan: an ActionIntent with no ActionOutcome is
- * indistinguishable from a crash, and gets reported to the person as `unknown`
- * when we know perfectly well what happened.
+ * A report is produced, sent once, and forgotten. There is no buffer on this
+ * path, which is the structural half of not repeating the wave-2 ambient bug —
+ * the extension buffered 200 observations against a route accepting 100 and
+ * cleared only on success, so past 100 the same bytes were rejected the same
+ * way every thirty seconds and ambient detection was dead until session
+ * storage was dropped.
+ *
+ * The receiver cannot refuse for size either: `appendEvidence` truncates an
+ * oversized tree and writes it. So a 4xx here is the app objecting to
+ * something other than the payload's length, and the answer is a *minimal*
+ * failure report for the same intent — sent once, never looped, carrying no
+ * page-derived content and therefore not refusable for the same reason twice.
+ *
+ * That fallback is not there to salvage the observation. It is there because
+ * an ActionIntent with no ActionOutcome is indistinguishable from a crash, and
+ * gets reported to the person as `unknown` when we know exactly what happened.
  */
 async function postReport(intentId, report) {
   const send = (body) =>
@@ -577,7 +601,10 @@ async function postHalt(runId, reason) {
 async function showIndicator(tabId) {
   try {
     await chrome.scripting.executeScript({ target: { tabId }, files: ['src/overlay.js'] })
-    await chrome.storage.session.set({ indicatorAliveAt: Date.now() })
+    // The marker is back, so the navigation grace is spent and closed. That is
+    // what makes the grace ONE window per marker rather than a sliding one a
+    // page could keep pushing forward by navigating itself in a loop.
+    await chrome.storage.session.set({ indicatorAliveAt: Date.now(), indicatorGraceUntil: 0 })
     return true
   } catch (error) {
     console.warn('[propositum] could not mark the tab it is working in:', error)
@@ -690,16 +717,29 @@ async function releaseControl(state, reason) {
   releasing = true
 
   try {
+    /**
+     * The poll lease is NOT released here, and that is not an omission.
+     *
+     * It belongs to whichever `pollForWork` loop took it, and that loop is
+     * almost certainly still running — parked on the 25-second long poll, which
+     * is exactly where it is when somebody presses Stop or closes the tab.
+     * Releasing it from underneath would let the next heartbeat alarm claim it
+     * and start a SECOND loop beside the first: two consumers of
+     * `/api/act/next`, two `runCommand`s racing over one in-flight intent. The
+     * lease exists to make that impossible, so only its owner may give it up.
+     */
+    // Read the in-flight id, then drop ALL of it, and only then reach the
+    // network. Clearing first is what makes every subsequent CDP call
+    // impossible, and it must not be conditional on the app answering. It also
+    // takes `inFlightIntentId` with it, so a later path finds nothing in
+    // flight and cannot overwrite the outcome written below.
+    const { inFlightIntentId } = await chrome.storage.session.get(['inFlightIntentId'])
+
     await clearControlState()
-    await releasePollLease()
     await clearActingBadge()
 
-    if (state.inFlightIntentId !== null) {
-      await postReport(state.inFlightIntentId, {
-        ok: false,
-        failure: 'control-lost',
-        detail: reason,
-      })
+    if (typeof inFlightIntentId === 'string') {
+      await postReport(inFlightIntentId, { ok: false, failure: 'control-lost', detail: reason })
     }
 
     await postHalt(state.runId, reason)
@@ -743,14 +783,11 @@ const controlHandlers = {
    * which is what makes the stop clean rather than mid-effect.
    */
   onIrreversibleBlocked: async (failure, detail) => {
-    const state = await controlState()
-    if (state.inFlightIntentId !== null) {
-      await postReport(state.inFlightIntentId, {
-        ok: false,
-        failure,
-        detail: `${detail.method} ${detail.origin}`,
-      })
-    }
+    // First writer wins, and this is the one that knows something. Claiming
+    // the intent here means the `control-lost` that follows from stopping
+    // finds nothing in flight and stays quiet, rather than overwriting "I was
+    // about to send a POST and did not" with "I lost the browser".
+    await reportInFlight({ ok: false, failure, detail: `${detail.method} ${detail.origin}` })
     await stopActing(failure)
   },
 }
@@ -815,16 +852,19 @@ async function runCommand(command) {
     if (state.tabId === null) {
       const opened = await ensureControlledTab(command)
       if (opened.ok === false) {
-        await postReport(command.intentId, opened)
+        await reportInFlight(opened)
         return
       }
     }
 
-    await postReport(command.intentId, await performCommand(command, controlHandlers))
+    // `reportInFlight` rather than `postReport`: something that went wrong
+    // mid-command — a blocked request, a detach — may already have said what
+    // happened, and it knew more than this line does.
+    await reportInFlight(await performCommand(command, controlHandlers))
   } catch (error) {
     // Nothing may escape this. An unreported intent is an orphan, and an
     // orphan is indistinguishable from a crash to everything downstream.
-    await postReport(command.intentId, {
+    await reportInFlight({
       ok: false,
       failure: 'not-delivered',
       detail: String(error?.message ?? error),

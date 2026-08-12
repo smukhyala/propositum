@@ -99,16 +99,20 @@
  * never cleared, and ambient detection was dead for the life of that session
  * storage — no offers, ever, on a machine where everything looked healthy.
  *
- * Two things stop that here:
+ * Three things stop that here, and only the first is about numbers:
  *
  *  1. **This side is the stricter one.** Defence in depth is two bounds that
- *     agree about which is tighter. Two that disagree is a lock.
- *  2. **A rejection is not permanent.** There is no buffer on this path at
- *     all — an observation is produced, sent once, and forgotten — and a 4xx
- *     on `/api/act/report` is answered with a *minimal* failure report for the
- *     same intent rather than a retry of the same bytes. So the worst case is
- *     one lost observation, never a channel that can no longer report
- *     anything.
+ *     agree about which is tighter. Two that disagree is a lock. See
+ *     `SNAPSHOT_BUDGET_CHARS` below for the pairing.
+ *  2. **The receiver does not reject for size at all.** `appendEvidence`
+ *     truncates an oversized tree, flags it, and writes it. So the failure the
+ *     wave-2 bug needed — a permanent refusal — is not available on this path.
+ *  3. **There is no buffer to wedge.** An observation is produced, sent once,
+ *     and forgotten. Nothing is retained across a report, so nothing can be
+ *     retained across a *failed* report either.
+ *
+ * This bound still earns its place: it is what stops a 100,000-node page
+ * crossing the wire in the first place.
  */
 export const SNAPSHOT_NODE_CAP = 1500
 
@@ -124,8 +128,21 @@ export const SNAPSHOT_NODE_CAP = 1500
  * It exists because an accessibility tree is ten to a hundred times an article
  * excerpt and arrives every single turn, so an unbounded one would quietly
  * become the largest thing Propositum stores.
+ *
+ * ── 48,000 here against 60,000 there, and the order matters ──────────────
+ *
+ * The app's `SNAPSHOT_BUDGET_CHARS` in `src/model/untrusted.ts` is **60,000**.
+ * This one is deliberately below it, exactly as `AMBIENT_BATCH_MAX` in
+ * `service-worker.js` sits at or below what the ambient route accepts, and for
+ * the same reason written in that comment: defence in depth is two bounds that
+ * agree about which is tighter, and two that disagree is a lock.
+ *
+ * The headroom between the two is not slack — it is what makes a version skew
+ * survivable. An older extension sending a slightly larger tree than a newer
+ * app expects is truncated at the ledger rather than refused, and neither side
+ * has to know the other's number to be correct.
  */
-export const SNAPSHOT_BUDGET_CHARS = 20_000
+export const SNAPSHOT_BUDGET_CHARS = 48_000
 
 /**
  * The longest one accessible name may be before it is cut.
@@ -468,10 +485,10 @@ export function flattenAXTree(nodes, options) {
  * buys is unconditional: while Propositum holds this tab, it does not send a
  * request that changes something without a human having confirmed it.
  *
- * **Off-origin is checked on `Document` requests only** — that is, on
- * navigations. This is narrower than a literal reading of ADR-0010's *"a
- * request to an origin outside the contract's approved sources"*, and the
- * narrowing is deliberate rather than an oversight:
+ * **Off-origin is checked on the TOP-LEVEL `Document` request only** — that is,
+ * on the tab navigating somewhere. This is narrower than a literal reading of
+ * ADR-0010's *"a request to an origin outside the contract's approved
+ * sources"*, and the narrowing is deliberate rather than an oversight:
  *
  *   - A real page pulls fonts, images, stylesheets and scripts from a dozen
  *     origins. Blocking those would render every approved page unusable while
@@ -479,13 +496,28 @@ export function flattenAXTree(nodes, options) {
  *     subresources when they read the page themselves, so no new capability is
  *     involved.
  *   - What the rule is *about* is the agent leaving approved territory. That
- *     is a navigation, and a navigation is a `Document` request.
+ *     is a navigation of the tab, and nothing else.
+ *
+ * ── Why the frame check is not an optimisation ───────────────────────────
+ *
+ * CDP has **no separate resource type for a sub-frame**: an `<iframe>`'s own
+ * navigation arrives as `Document` too. So resource type alone would classify
+ * every third-party frame on an approved page — a consent manager, a payment
+ * frame, an embedded video, a captcha — as the agent leaving approved
+ * territory, fail the request, and halt the run. That is the same "every page
+ * unusable" outcome the narrowing above exists to avoid, arriving through the
+ * one subresource class that is also a document.
+ *
+ * `mainFrameId` is therefore load-bearing. When it is not known the check
+ * applies to every `Document`, which is the closed direction: a run that
+ * aborts on an iframe is a bad afternoon, and one that walks off the approved
+ * origin unnoticed is the thing this function exists for.
  *
  * Two honest costs of the narrowing, recorded rather than smoothed over: a
  * sign-in redirect to an identity provider outside the approved sources is
  * blocked, and an off-origin `GET` beacon is allowed.
  */
-export function classifyPausedRequest(paused, approvedOrigins, patternCovers) {
+export function classifyPausedRequest(paused, approvedOrigins, patternCovers, mainFrameId) {
   const method = String(paused?.request?.method ?? '').toUpperCase()
   const url = paused?.request?.url ?? ''
   const resourceType = String(paused?.resourceType ?? '')
@@ -496,7 +528,17 @@ export function classifyPausedRequest(paused, approvedOrigins, patternCovers) {
   if (method === '') return 'blocked-request'
   if (method !== 'GET') return 'blocked-request'
 
-  if (resourceType === 'Document') {
+  // A request Chrome described in a shape this function does not recognise is
+  // checked as though it were a navigation. Failing open on a missing field,
+  // in the same function that fails closed on a missing method one branch up,
+  // would be the inconsistency an attacker looks for.
+  const unrecognised = resourceType === ''
+
+  const topLevelDocument =
+    resourceType === 'Document' &&
+    (typeof mainFrameId !== 'string' || mainFrameId === '' || paused?.frameId === mainFrameId)
+
+  if (topLevelDocument || unrecognised) {
     if (!isApprovedOrigin(url, approvedOrigins, patternCovers)) return 'off-origin'
   }
 
@@ -523,6 +565,7 @@ const CONTROL_KEYS = [
   'indicatorAliveAt',
   'indicatorGraceUntil',
   'actionWindow',
+  'mainFrameId',
 ]
 
 export async function controlState() {
@@ -538,6 +581,7 @@ export async function controlState() {
     indicatorGraceUntil:
       typeof state.indicatorGraceUntil === 'number' ? state.indicatorGraceUntil : 0,
     actionWindow: typeof state.actionWindow === 'number' ? state.actionWindow : 0,
+    mainFrameId: typeof state.mainFrameId === 'string' ? state.mainFrameId : null,
   }
 }
 
@@ -595,21 +639,41 @@ export function registerControlListeners(handlers) {
        * cannot be re-injected until the new one has loaded, which is routinely
        * longer than the grace window.
        *
-       * The grace is capped rather than open-ended, because a page can
-       * navigate itself in a loop and would otherwise be able to keep the
-       * marker suppressed indefinitely. A page doing that is also a page
-       * nothing can be done in, so the cap costs nothing real.
+       * ── One grace per marker, not one per navigation ───────────────────
        *
-       * Note what this grace does NOT relax: `performCommand` checks
-       * `indicatorAliveAt` strictly and refuses to dispatch anything while the
-       * marker is quiet, navigation or no navigation. The tolerant reading is
-       * only for deciding whether to give up the tab; the strict one is for
-       * deciding whether to act in it. Both fail safe, in opposite directions.
+       * The obvious version — extend the window on every `init` — is a
+       * SLIDING window, and a sliding window is not a cap. A page that
+       * navigates itself every few seconds would push the deadline forward
+       * forever, and both the watchdog and `performCommand` would stay
+       * suppressed indefinitely while nothing on screen said anything was
+       * happening. That is the whole failure this constant exists to prevent,
+       * arriving through the mechanism meant to prevent it.
+       *
+       * So the window is only opened when one is not already open, and it is
+       * closed again by a SUCCESSFUL injection — see `showIndicator`, which
+       * clears it alongside setting `indicatorAliveAt`. One grace per period
+       * of the marker actually being alive: a page that navigates in a loop
+       * gets ten seconds total and is then let go of.
        */
       if (method === 'Page.lifecycleEvent' && params?.name === 'init') {
+        if (Date.now() < state.indicatorGraceUntil) return
+
         await chrome.storage.session.set({
           indicatorGraceUntil: Date.now() + SETTLE_CEILING_MS,
         })
+        return
+      }
+
+      /**
+       * Which frame is the tab, as opposed to something embedded in it.
+       *
+       * `classifyPausedRequest` needs this to tell "the agent navigated off
+       * the approved origin" from "the page embedded a third-party iframe",
+       * which CDP reports with the same resource type.
+       */
+      if (method === 'Page.frameNavigated' && params?.frame?.parentId === undefined) {
+        const id = params?.frame?.id
+        if (typeof id === 'string') await chrome.storage.session.set({ mainFrameId: id })
         return
       }
 
@@ -657,7 +721,12 @@ export function registerControlListeners(handlers) {
  * rather than discovered later.
  */
 async function onRequestPaused(state, params, handlers) {
-  const verdict = classifyPausedRequest(params, state.approvedOrigins, handlers.patternCovers)
+  const verdict = classifyPausedRequest(
+    params,
+    state.approvedOrigins,
+    handlers.patternCovers,
+    state.mainFrameId,
+  )
   const requestId = params?.requestId
 
   if (verdict === 'allow') {
@@ -711,27 +780,58 @@ export async function openControlledTab({ runId, approvedOrigins }) {
   const tab = await chrome.tabs.create({ url: 'about:blank', active: false })
   if (typeof tab.id !== 'number') throw new ControlLost('Chrome did not return a tab id')
 
-  await chrome.storage.session.set({
-    controlledTabId: tab.id,
-    controlledRunId: runId ?? null,
-    approvedOrigins: approvedOrigins ?? [],
-    indicatorAliveAt: Date.now(),
-    indicatorGraceUntil: Date.now() + SETTLE_CEILING_MS,
-    actionWindow: 0,
-    snapshot: null,
-  })
+  /**
+   * Attach FIRST, then claim the tab in storage.
+   *
+   * `controlledTabId` is not bookkeeping — it is what every other surface in
+   * this extension reads to answer *"is Propositum working right now"*. Written
+   * before the attach succeeded, a failed attach (DevTools already open on the
+   * tab, another extension holding it, the tab closed under us) leaves that
+   * flag set with nothing attached: no watchdog, no badge, no way to stop
+   * something that is not happening — and, because `showSuggestionBadge`
+   * stands down while it is set, offers silently stop appearing until the
+   * browser is restarted. A flag that says work is in progress when none is
+   * has to be harder to set than that.
+   *
+   * On any failure the tab is closed as well as released. We opened it, it is
+   * blank, and nobody is looking at it.
+   */
+  try {
+    await chrome.debugger.attach({ tabId: tab.id }, '1.3')
 
-  await chrome.debugger.attach({ tabId: tab.id }, '1.3')
+    await chrome.storage.session.set({
+      controlledTabId: tab.id,
+      controlledRunId: runId ?? null,
+      approvedOrigins: approvedOrigins ?? [],
+      indicatorAliveAt: Date.now(),
+      indicatorGraceUntil: Date.now() + SETTLE_CEILING_MS,
+      actionWindow: 0,
+      snapshot: null,
+      mainFrameId: null,
+    })
 
-  // Order matters. `Fetch.enable` last, so the interceptor is the last thing
-  // installed and nothing is held before we are ready to answer it.
-  await send(tab.id, 'Page.enable')
-  await send(tab.id, 'DOM.enable')
-  await send(tab.id, 'Accessibility.enable')
-  await send(tab.id, 'Page.setLifecycleEventsEnabled', { enabled: true })
-  await send(tab.id, 'Fetch.enable', { patterns: [{ requestStage: 'Request' }] })
+    // Order matters. `Fetch.enable` last, so the interceptor is the last thing
+    // installed and nothing is held before we are ready to answer it.
+    await send(tab.id, 'Page.enable')
+    await send(tab.id, 'DOM.enable')
+    await send(tab.id, 'Accessibility.enable')
+    await send(tab.id, 'Page.setLifecycleEventsEnabled', { enabled: true })
+    await send(tab.id, 'Fetch.enable', { patterns: [{ requestStage: 'Request' }] })
 
-  return tab.id
+    // Whichever frame the blank page is, is the tab. `Page.frameNavigated`
+    // keeps it current from here; asking now means the very first navigation
+    // is already classifiable.
+    const { frameTree } = await send(tab.id, 'Page.getFrameTree')
+    const mainFrameId = frameTree?.frame?.id
+    if (typeof mainFrameId === 'string') await chrome.storage.session.set({ mainFrameId })
+
+    return tab.id
+  } catch (error) {
+    await chrome.debugger.detach({ tabId: tab.id }).catch(() => {})
+    await clearControlState()
+    await chrome.tabs.remove(tab.id).catch(() => {})
+    throw error
+  }
 }
 
 /**
@@ -760,8 +860,21 @@ async function waitForSettle() {
   const startedAt = Date.now()
   await sleep(SETTLE_FLOOR_MS)
 
+  /**
+   * The idle we are waiting for is one that happens AFTER the floor.
+   *
+   * Comparing against `startedAt` instead would defeat the floor entirely: an
+   * idle that fired during it is the previous document's — the exact thing the
+   * floor exists to skip — and it would satisfy the check on the first
+   * iteration. `observePage` would then snapshot the outgoing page after a
+   * click that triggered navigation, and the agent would get refs for a tree
+   * that is about to be replaced. The ceiling still runs from `startedAt`, so
+   * "ten seconds" means ten seconds.
+   */
+  const floorPassed = Date.now()
+
   while (Date.now() - startedAt < SETTLE_CEILING_MS) {
-    if (networkIdleSince > startedAt) return true
+    if (networkIdleSince > floorPassed) return true
     await sleep(100)
   }
   return false
@@ -946,9 +1059,22 @@ export async function performCommand(command, handlers) {
     return { ok: false, failure: 'control-lost', detail: 'the working-here marker was lost' }
   }
 
-  // Arm the window the request interceptor scopes its aborts to. Generous
-  // rather than tight: an action that provokes a POST 8 seconds later still
-  // provoked it.
+  /**
+   * Arm the window the request interceptor scopes its aborts to.
+   *
+   * Generous rather than tight, and it deliberately OUTLIVES the command. The
+   * shape that matters is `type-text`, which returns the instant
+   * `Input.insertText` resolves — the autosave or search-suggest POST it
+   * provoked arrives a second or two later, when the command is long finished.
+   * Closing the window on return would mean that request is failed at the
+   * network (good) and then nothing is reported (bad): the run carries on
+   * reasoning about a page whose request silently did not go.
+   *
+   * So it is left to expire on its own clock. The next command re-arms it, and
+   * a block landing between two commands still finds an in-flight intent
+   * roughly as often as not — and when it does not, `onIrreversibleBlocked`
+   * still halts the run, which is the half that must not be optional.
+   */
   await chrome.storage.session.set({ actionWindow: Date.now() + SETTLE_CEILING_MS + 2000 })
 
   try {
@@ -1001,7 +1127,8 @@ export async function performCommand(command, handlers) {
       return { ok: false, failure: 'control-lost', detail: error.message }
     }
     return { ok: false, failure: 'not-delivered', detail: String(error?.message ?? error) }
-  } finally {
-    await chrome.storage.session.set({ actionWindow: 0 })
   }
+  // No `finally` clearing `actionWindow` — see the comment where it is armed.
+  // Closing it on return would blind the interceptor to exactly the requests a
+  // just-finished action provoked.
 }
