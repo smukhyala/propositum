@@ -82,6 +82,22 @@ export interface WorkerJob {
   readonly scope: ContractScope
   readonly controls: AutonomyControls
   readonly documentTitle: string
+  /**
+   * The `Document` the shift works on, or `undefined` when there is not one.
+   *
+   * A real `Document.id`, and deliberately not `scope.baseVersionId` — that is a
+   * `DocumentVersion` id, and passing it here as though it named a document is
+   * the mistake this field exists to make impossible to repeat. It rides on the
+   * job rather than on `ContractScope` because it grants nothing: the version a
+   * tool may read is still fixed by `baseVersionId` alone, and adding a second
+   * identifier to the scope would invite the idea that this one also authorises
+   * something.
+   *
+   * `undefined` is a real state — a contract whose base version has gone — and
+   * the gate is what handles it, refusing `read-document` and `draft-section`
+   * with `document_missing` rather than letting a run work on nothing.
+   */
+  readonly documentId: string | undefined
   readonly sections: readonly string[]
   readonly sourceLabels: ReadonlyArray<{ id: string; label: string }>
   /** contract.acceptedAt + timeLimitMinutes. Derived, never stored, so a
@@ -202,11 +218,28 @@ export async function runWorker(job: WorkerJob, deps: WorkerDeps): Promise<Worke
     }
 
     seq += 1
+
+    /**
+     * The model proposes none of this — every value here comes from the model's
+     * own reply or from the ratified job, and `documentId` comes from the job.
+     *
+     * It used to be `job.scope.baseVersionId`: a version id under a key that
+     * means a document. The gate does not look at the value, so the proposal was
+     * authorised as normal and `readDocument` then compared the version id
+     * against the document id it belonged to, found them different, and threw —
+     * every time, on every run that planned a document read. The tool no longer
+     * makes that comparison, and this no longer offers it the wrong id to make
+     * it with.
+     *
+     * Absent when the shift has no document. That is the case
+     * `document_missing` was written for and, until now, the case it never saw:
+     * the key was unconditionally present, so the refusal could not fire.
+     */
     const params: Record<string, unknown> = {
       ...(action.approvedSourceId ? { approvedSourceId: action.approvedSourceId } : {}),
       ...(action.targetSection ? { sectionPath: action.targetSection } : {}),
       ...(action.prose ? { text: action.prose } : {}),
-      documentId: job.scope.baseVersionId,
+      ...(job.documentId === undefined ? {} : { documentId: job.documentId }),
     }
 
     const proposal: ToolProposal = {

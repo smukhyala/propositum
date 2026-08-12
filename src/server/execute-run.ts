@@ -141,6 +141,10 @@ export async function executeRun(runId: string, deps: ExecuteDeps): Promise<void
       timeLimitMinutes: contract.timeLimitMinutes,
     },
     documentTitle: document?.title ?? 'the document',
+    // The real `Document.id`, resolved through the pinned version just above.
+    // Undefined when that version is gone, which the gate turns into a
+    // `document_missing` refusal rather than a run that drafts into nothing.
+    documentId: document?.id,
     sections: sectionsOf(version?.content ?? ''),
     sourceLabels: sources.map((s) => ({ id: s.id, label: s.label })),
     deadlineEpochMs,
