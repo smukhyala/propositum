@@ -737,49 +737,38 @@ describe('a confirmation pause is not a run going in circles', () => {
     expect(d.recorded.intents[1]?.refusedRule).toBe('confirmation_required')
   })
 
-  it('does not count three pauses as a refusal loop', async () => {
+  it('does not halt on three consecutive pauses, under either loop rule', async () => {
     /**
-     * Three correct requests for permission. Counting them would halt the run at
-     * the exact moment the person was about to answer, and report it as *"I kept
-     * needing things the agreement does not allow"*.
+     * Three correct requests for permission, back to back, with nothing between
+     * them.
      *
-     * ── Why the navigates are here, and what they revealed ───────────────
+     * ── What the first version of this test missed ───────────────────────
      *
-     * The first version of this test proposed three clicks back to back and
-     * asserted three refusals. It got two, because `consecutiveNoProgress` also
-     * counts a refusal and `no-progress` fires at three — so the run was halted
-     * with a DIFFERENT label saying much the same wrong thing. That is a real
-     * finding and it is recorded here rather than smoothed over: `PAUSING_RULES`
-     * exempts a pause from the refusal counter and NOT from the progress
-     * counter, so a run doing nothing but asking still stops, just not under a
-     * rule that blames it for asking.
+     * It proposed the same three clicks and asserted three refusals, and got
+     * two. `PAUSING_RULES` was exempting a pause from `consecutiveRefusals`
+     * only, while every refusal still incremented `consecutiveNoProgress` — and
+     * both limits are 3. So the run halted on the same turn it always had, now
+     * under `no-progress`, and was reported as *"I stopped because I was going
+     * in circles without changing anything."*
      *
-     * It is left that way on purpose rather than widened, for two reasons. In
-     * production the FIRST pausing refusal ends the run — ADR-0010 §5: the
-     * refusal is written, a `ConfirmationRequest` is written, the run halts, and
-     * a new run continues if the person says yes — so three pauses in one run is
-     * an artificial shape to begin with. And a run that makes no progress at all
-     * should still stop; the fix if it ever bites is to that rule's copy, not to
-     * the counter.
-     *
-     * So each ask is separated by a navigate, which is progress and resets it.
+     * The test was rewritten to route around it, by separating each ask with a
+     * navigate that reset the progress counter. That made the suite green over
+     * a defect: an exemption that moves a halt from one rule to another has
+     * exempted nothing, and the replacement label is worse — a person reading it
+     * about a run that asked them three questions concludes the machine was
+     * confused rather than waiting. A review caught it; the assertion is now the
+     * hard one, with nothing between the asks.
      */
     const d = deps(
       [
         plan('ask three times'),
-        act({ kind: 'navigate', approvedSourceId: 'src-orders', path: '/page/1' }),
+        act({ kind: 'observe-page' }),
         act({ kind: 'click-element', ref: 'r1', snapshotId: 'snap-1' }),
-        act({ kind: 'navigate', approvedSourceId: 'src-orders', path: '/page/2' }),
-        act({ kind: 'click-element', ref: 'r2', snapshotId: 'snap-2' }),
-        act({ kind: 'navigate', approvedSourceId: 'src-orders', path: '/page/3' }),
-        act({ kind: 'click-element', ref: 'r3', snapshotId: 'snap-3' }),
+        act({ kind: 'click-element', ref: 'r2', snapshotId: 'snap-1' }),
+        act({ kind: 'click-element', ref: 'r3', snapshotId: 'snap-1' }),
         done(),
       ],
-      [
-        { ok: true, observation: observed(1) },
-        { ok: true, observation: observed(2) },
-        { ok: true, observation: observed(3) },
-      ],
+      [{ ok: true, observation: observed(1) }],
       blind,
     )
 
@@ -791,12 +780,14 @@ describe('a confirmation pause is not a run going in circles', () => {
       'confirmation_required',
       'confirmation_required',
     ])
-    expect(result.stoppedBy).not.toContain('refusal-loop')
+    expect(result.stoppedBy).toEqual([])
   })
 
   it('still counts three ORDINARY refusals as a loop', async () => {
-    // The filter is narrow on purpose. A run that keeps proposing things the
-    // agreement does not allow is exactly what `refusal-loop` is for.
+    // The other half of the pair. The exemption is narrow on purpose: a run that
+    // keeps proposing things the agreement does not allow is exactly what
+    // `refusal-loop` is for, and a fix that quieted both would have removed the
+    // rule rather than corrected it.
     const d = deps(
       [
         plan('propose the impossible'),
@@ -810,6 +801,34 @@ describe('a confirmation pause is not a run going in circles', () => {
     const result = await runWorker(job(), d)
 
     expect(result.stoppedBy).toContain('refusal-loop')
+  })
+
+  it('still ends a run whose every proposal is a pause', async () => {
+    /**
+     * The consequence of exempting a pause from both counters, bounded.
+     *
+     * With neither loop rule counting a pause, a run that proposes an
+     * irreversible action every single turn has nothing ending it — refusals do
+     * not advance `actionsTaken`, so `action-limit` never fires either. In
+     * production that is thirty minutes of model calls; under an injected clock
+     * it is an infinite loop, which is how this would have been discovered.
+     *
+     * So the turn count is bounded by the same number, and the run ends.
+     */
+    const replies: ScriptedReply<unknown>[] = [plan('ask forever'), act({ kind: 'observe-page' })]
+    for (let i = 0; i < MAX_ACTIONS_PER_RUN + 5; i += 1) {
+      replies.push(act({ kind: 'click-element', ref: `r${i}`, snapshotId: 'snap-1' }))
+    }
+
+    const d = deps(replies, [{ ok: true, observation: observed(1) }], blind)
+
+    const result = await runWorker(job(), d)
+
+    expect(result.stoppedBy).toContain('action-limit')
+    // One authorized action all run — the observe. The cap that bit was the one
+    // on turns, not the one on permitted actions.
+    expect(result.actionsTaken).toBe(1)
+    expect(result.refusals).toBe(MAX_ACTIONS_PER_RUN - 1)
   })
 })
 

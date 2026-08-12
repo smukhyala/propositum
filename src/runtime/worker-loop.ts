@@ -515,6 +515,27 @@ export async function runWorker(job: WorkerJob, deps: WorkerDeps): Promise<Worke
      */
     if (turn >= steps.length && !policy.offPlanActions) return finish([], 'succeeded')
 
+    /**
+     * A hard bound on TURNS, not on authorized actions.
+     *
+     * `action-limit` below counts what the gate permitted, which is the number
+     * people care about — and it is not a bound on the loop, because a refusal
+     * increments nothing. That was survivable while every refusal also counted
+     * toward `no-progress`; the moment a pause stopped counting toward either
+     * loop rule, a run whose every proposal is refused `confirmation_required`
+     * had NOTHING ending it but the deadline. Thirty minutes of model calls in
+     * production, and a genuinely infinite loop under an injected clock.
+     *
+     * So the same number bounds both: forty gate evaluations, however they went.
+     * `MAX_ACTIONS_PER_RUN` exists, in the ADR's own words, "so a loop ends",
+     * and a loop that proposes forty things and is refused forty times has
+     * looped. The counter the gate reads keeps its narrower meaning — authorized
+     * actions, matching what `historyForContract` counts off rows — because two
+     * definitions of one number is how a cap comes to bind differently in two
+     * places.
+     */
+    if (turn >= policy.maxActions) return finish(['action-limit'], 'succeeded')
+
     const step = steps[turn]
     const ordinal = turn + 1
 
@@ -677,12 +698,27 @@ export async function runWorker(job: WorkerJob, deps: WorkerDeps): Promise<Worke
 
     if (!verdict.authorized) {
       refusals += 1
-      consecutiveNoProgress += 1
 
-      // A pause is not a loop. See the file header — this is the whole reason
-      // `PAUSING_RULES` exists, and counting it here would halt a run at the
-      // moment somebody was about to say yes.
-      if (!PAUSING_RULES.has(verdict.rule)) consecutiveRefusals += 1
+      /**
+       * A pause is exempt from BOTH loop counters, or it is exempt from neither.
+       *
+       * The first version of this exempted `confirmation_required` from
+       * `consecutiveRefusals` only — and a review found that this changed
+       * nothing observable, because the line above it incremented
+       * `consecutiveNoProgress` on every refusal and `NO_PROGRESS_LIMIT` and
+       * `REFUSAL_LOOP_LIMIT` are both 3. Three consecutive pauses still halted
+       * the run on the same turn, now labelled *"I stopped because I was going
+       * in circles without changing anything."*
+       *
+       * That label is worse than the one it replaced. A person reading it about
+       * a run that asked their permission three times concludes the machine got
+       * confused, when what it was doing was waiting for them. An exemption that
+       * moves the halt from one rule to another has not exempted anything.
+       */
+      if (!PAUSING_RULES.has(verdict.rule)) {
+        consecutiveRefusals += 1
+        consecutiveNoProgress += 1
+      }
 
       await deps.ledger.recordIntent({
         id: intentId,
@@ -718,15 +754,41 @@ export async function runWorker(job: WorkerJob, deps: WorkerDeps): Promise<Worke
       authorized: true,
     })
 
-    try {
-      // `performed`, not `outcome`. The word is banned as a column name in this
-      // codebase's vocabulary because it is ambiguous between two things a row
-      // could hold, and a local called `outcome` sitting three lines above
-      // `ledger.recordOutcome` is how the next person comes to write the column.
-      const performed = await perform(verdict.action, intentId, deps, gathered)
+    /**
+     * ONLY the effect is guarded, and the outcome write sits outside.
+     *
+     * The obvious shape puts both in the `try` — act, then record success;
+     * record failure in the `catch`. It has a hole with teeth: if the SUCCESS
+     * write is the thing that throws, the `catch` immediately attempts a second
+     * write for the same intent, `ActionOutcome.intentId` is unique, and the
+     * second insert fails too. The run then dies with an error about a duplicate
+     * row, having successfully done the thing it was trying to record.
+     *
+     * `performed`, not `outcome`. The word is banned as a column name in this
+     * codebase's vocabulary because it is ambiguous between two things a row
+     * could hold, and a local called `outcome` sitting three lines above
+     * `ledger.recordOutcome` is how the next person comes to write the column.
+     */
+    let performed: Performed | null = null
+    let failed: string | null = null
 
-      actionsTaken += 1
-      if (MUTATING_ACTION_KINDS.has(verdict.action.kind)) mutatingActionsTaken += 1
+    try {
+      performed = await perform(verdict.action, intentId, deps, gathered)
+    } catch (error) {
+      // Includes every `BrowserControlError`. A channel failure is a recorded
+      // fact about one action — the intent is already committed, so the ledger
+      // says what was attempted and that it did not land — and never an
+      // exception that escapes the loop and takes the run's record with it.
+      failed = error instanceof Error ? error.message : String(error)
+    }
+
+    // Attempted either way. An action that was authorised and dispatched counts
+    // against both caps whether or not we can show it worked — a failure is not
+    // a refund, and a run whose every action fails must still end.
+    actionsTaken += 1
+    if (MUTATING_ACTION_KINDS.has(verdict.action.kind)) mutatingActionsTaken += 1
+
+    if (performed !== null) {
       consecutiveNoProgress = performed.changedSomething ? 0 : consecutiveNoProgress + 1
 
       if (performed.produced !== undefined) produced.push(performed.produced)
@@ -749,24 +811,16 @@ export async function runWorker(job: WorkerJob, deps: WorkerDeps): Promise<Worke
         ...(performed.draftText === undefined ? {} : { draftText: performed.draftText }),
       })
       history.push({ kind: proposal.kind, summary: proposal.reason, outcome: performed.summary })
-    } catch (error) {
-      // Includes every `BrowserControlError`. A channel failure is a recorded
-      // fact about one action — the intent is already committed, so the ledger
-      // says what was attempted and that it did not land — and never an
-      // exception that escapes the loop and takes the run's record with it.
-      actionsTaken += 1
-      if (MUTATING_ACTION_KINDS.has(verdict.action.kind)) mutatingActionsTaken += 1
+    } else {
       consecutiveNoProgress += 1
-
-      const detail = error instanceof Error ? error.message : String(error)
 
       await deps.ledger.recordOutcome({
         intentId,
         result: 'failed',
         scopeVerdict: 'unverified',
-        detail,
+        detail: failed ?? 'unknown',
       })
-      history.push({ kind: proposal.kind, summary: proposal.reason, outcome: `failed: ${detail}` })
+      history.push({ kind: proposal.kind, summary: proposal.reason, outcome: `failed: ${failed}` })
     }
 
     const afterAction = shouldStop(progress(), job.controls.interruption, false)
