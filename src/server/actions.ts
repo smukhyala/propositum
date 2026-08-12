@@ -43,6 +43,8 @@ import {
 } from '../model/boundaries/session-reading'
 import type { PromptEvent } from '../model/boundaries/session-reading'
 import { handoffBoundary, sourceHandlesFor } from '../model/boundaries/handoff'
+import { matchProject, projectTerms } from '../domain/detection/match-project'
+import type { ProjectCandidate } from '../domain/detection/match-project'
 import { checkDrift, hashContent, materialise } from '../domain/document/changeset'
 import type { Decision } from '../domain/document/changeset'
 import { normalise } from '../domain/document/normalise'
@@ -260,19 +262,204 @@ export interface ProjectCreated {
   readonly name: string
 }
 
-export async function createProject(name: string): Promise<ActionResult<ProjectCreated>> {
+/**
+ * A project comes into existence, and NOBODY ASKED FOR ONE.
+ *
+ * ── Why this is not exported any more ────────────────────────────────────
+ *
+ * "I don't want the user to define the projects themselves. The tools should
+ * identify them for them, and then the user can edit after. Initially, they
+ * shouldn't have to create it."
+ *
+ * There used to be a form on the front page whose whole content was this
+ * function. It asked a person to name and file a piece of work before they had
+ * decided they wanted help with it, which is the setup Propositum exists to
+ * remove — and it asked for the one thing the product is supposed to work out
+ * on its own.
+ *
+ * So this is internal. The only thing that calls it is the acceptance path, on
+ * a subject the detector found and a model named, and nothing a person clicks
+ * reaches it directly. Keeping it as a function rather than inlining the one
+ * line it wraps is not ceremony: the length rule and the message a person reads
+ * when a name is unusable belong in one place, and the split path below needs
+ * exactly the same two.
+ */
+async function createProject(name: string): Promise<ActionResult<ProjectCreated>> {
+  const clean = name.trim()
+  if (!clean) {
+    return no<ProjectCreated>(
+      'invalid-input',
+      'Propositum could not work out what to call this. Give it a name and it will file the work under that.',
+    )
+  }
+  if (clean.length > 120) {
+    return no<ProjectCreated>('invalid-input', 'That name is too long — keep it under 120 characters.')
+  }
+
+  const { repos } = await appContext()
+  return ok(await repos.projects.create(clean))
+}
+
+/**
+ * The person fixes the name Propositum gave it.
+ *
+ * This is the other half of the sentence at the top of this section — the tools
+ * identify the work, and the person edits afterwards. Auto-naming is only
+ * acceptable if it is correctable, so this is not a nicety and it is not
+ * deferrable: without it, a subject the model got slightly wrong is a label
+ * nobody can ever change.
+ */
+export async function renameProject(
+  projectId: string,
+  name: string,
+): Promise<ActionResult<ProjectCreated>> {
   return attempt(async () => {
     const clean = name.trim()
-    if (!clean) return no<ProjectCreated>('invalid-input', 'Give the project a name first.')
+    if (!clean) return no<ProjectCreated>('invalid-input', 'Give it a name to go by.')
     if (clean.length > 120) {
       return no<ProjectCreated>('invalid-input', 'That name is too long — keep it under 120 characters.')
     }
 
     const { repos } = await appContext()
-    const project = await repos.projects.create(clean)
+    const project = await repos.projects.byId(projectId)
+    if (!project) return no<ProjectCreated>('not-found', "That project doesn't exist any more.")
+    if (project.name === clean) {
+      return no<ProjectCreated>('already-done', 'That is what it is already called.')
+    }
+
+    await repos.projects.rename(projectId, clean)
     refresh()
-    return ok(project)
+    return ok({ id: projectId, name: clean })
   })
+}
+
+/* ── which project this work belongs to ─────────────────────────────────── */
+
+/**
+ * What Propositum knows about a project it thinks this work belongs to.
+ *
+ * Enough to render the offer's carry-on box without a second round trip, and
+ * deliberately no more: the count of sittings, sources and documents is what
+ * makes "back on World models" checkable at a glance, and anything richer would
+ * be asking the person to review a filing decision instead of noticing one.
+ */
+export interface CarriedProject {
+  readonly projectId: string
+  readonly name: string
+  readonly sittings: number
+  readonly sources: number
+  readonly documents: number
+  /** Words this subject and that project's name have in common. The reason,
+   *  shown, so a wrong guess is arguable rather than mysterious. */
+  readonly overlap: number
+}
+
+/** Every project as something `matchProject` can compare against. */
+async function projectCandidates(): Promise<ProjectCandidate[]> {
+  const { repos } = await appContext()
+  const projects = await repos.projects.list()
+  return projects.map((project) => ({
+    id: project.id,
+    name: project.name,
+    terms: projectTerms(project.name),
+  }))
+}
+
+/** The counts behind the carry-on box, for one project. */
+async function describeProject(
+  project: { id: string; name: string },
+  overlap: number,
+): Promise<CarriedProject> {
+  const { repos } = await appContext()
+  const [sittings, sources, documents] = await Promise.all([
+    repos.sessions.forProject(project.id),
+    repos.projects.approvedSources(project.id),
+    repos.documents.forProject(project.id),
+  ])
+
+  return {
+    projectId: project.id,
+    name: project.name,
+    sittings: sittings.length,
+    sources: sources.filter((source) => source.grantState === 'granted').length,
+    documents: documents.length,
+    overlap,
+  }
+}
+
+/**
+ * "Looks like you're back on…" — the state, for whichever screen is asking.
+ *
+ * Exported rather than folded into the acceptance path because the offer screen
+ * belongs to someone else and needs to render the box BEFORE anything durable
+ * exists. `null` is the ordinary answer; most work is new work.
+ *
+ * ── Why it takes the subject and not the thread's terms ──────────────────
+ *
+ * It takes exactly what `startFromSuggestion` takes first, so the two cannot
+ * disagree. If this asked for terms while acceptance matched on the subject,
+ * a screen could promise "carrying on with World models" and then quietly open
+ * a second project called the same thing — the failure would look like a
+ * filing bug and would actually be two functions answering slightly different
+ * questions. One input, one answer.
+ */
+export async function carryOnCandidate(
+  subject: string,
+): Promise<ActionResult<CarriedProject | null>> {
+  return attempt(async () => {
+    const candidates = await projectCandidates()
+    const match = matchProject(projectTerms(subject), candidates)
+    if (!match) return ok<CarriedProject | null>(null)
+
+    const project = candidates.find((c) => c.id === match.projectId)
+    if (!project) return ok<CarriedProject | null>(null)
+
+    return ok<CarriedProject | null>(await describeProject(project, match.overlap))
+  })
+}
+
+/**
+ * Where this sitting goes: an existing project, or a new one.
+ *
+ * ── The first thing in this repo that survives a session ─────────────────
+ *
+ * `CONTEXT.md` lists "there is no cross-session continuity" among the risks the
+ * vocabulary does not remove — a second session starts cold, which the
+ * product's own shift-change metaphor implies otherwise. This is the first
+ * crack in that, and it is a narrow one on purpose: what carries forward is the
+ * PROJECT, and with it the sources already approved and the document already
+ * being written. No objective, no reading, no claim. Those are what the next
+ * sitting is for working out fresh, and inheriting them quietly is the failure
+ * the cold start exists to avoid.
+ *
+ * ── Why the default is to join, and the override is one click ────────────
+ *
+ * Asking "is this the same work as before?" up front is the setup this feature
+ * removed, in a smaller box. So Propositum files it where the arithmetic says
+ * it belongs, says on the screen that it did, and moving it is one click. The
+ * threshold is set to split when unsure precisely so that the click is rarely
+ * needed and never urgent.
+ */
+async function projectForWork(
+  name: string,
+  treatAsNewWork: boolean,
+): Promise<
+  ActionResult<{ readonly project: { id: string; name: string }; readonly joined: boolean }>
+> {
+  type Chosen = { readonly project: { id: string; name: string }; readonly joined: boolean }
+
+  if (!treatAsNewWork) {
+    const match = matchProject(projectTerms(name), await projectCandidates())
+    if (match) {
+      const { repos } = await appContext()
+      const existing = await repos.projects.byId(match.projectId)
+      if (existing) return ok<Chosen>({ project: existing, joined: true })
+    }
+  }
+
+  const created = await createProject(name)
+  if (!created.ok) return { ok: false, problem: created.problem }
+  return ok<Chosen>({ project: created.value, joined: false })
 }
 
 /**
@@ -597,50 +784,6 @@ export interface SessionStarted {
 }
 
 /**
- * Start a sitting.
- *
- * `src/app/api/session/route.ts` does the same two things over HTTP for the
- * extension, and issues it a bearer token besides. The overlap is deliberate
- * and duplicated rather than shared: the route owns a credential this action
- * has no business minting, and pulling the common half into a helper would mean
- * editing a file this change does not own. See the report.
- */
-export interface OfferAccepted {
-  readonly sessionId: string
-  readonly projectId: string
-  readonly sourceId: string
-  /** Ambient observations folded into the new session's ledger. */
-  readonly carriedOver: number
-}
-
-/**
- * The person says yes to a suggestion.
- *
- * ── One click, three acts, all of them theirs ────────────────────────────
- *
- * Approving the source, starting the session, and admitting what was already
- * seen are separate decisions in the data model and one decision in the
- * interface. Splitting them across three prompts would make the feature more
- * annoying than doing it by hand, which is the whole thing it exists to avoid.
- *
- * ── Why the ambient observations are carried over ────────────────────────
- *
- * The offer says "you have been reading northwind.example.com for 12 minutes".
- * A session that then began at zero would produce a reading with no evidence
- * for the work that triggered it, and the person would have to redo the
- * browsing Propositum just told them it watched.
- *
- * So they are folded in — and once folded they are ORDINARY ObservationEvents,
- * written through the one ledger door with every normal rule applying. They
- * carry `attested.ambient = true`, because "Propositum saw this before you
- * started the session" is a fact about provenance the timeline should not hide.
- *
- * Nothing is invented on the way in. Ambient observations hold no page text, so
- * the events that come out of this hold none either — the reading will be
- * thinner than one from a watched session, and that is honest rather than a
- * bug to paper over.
- */
-/**
  * One click, from a suggestion to a session with everything it needs.
  *
  * ── Why this exists ──────────────────────────────────────────────────────
@@ -670,12 +813,40 @@ export interface OfferAccepted {
  *
  * Removing setup friction is not the same as removing consent, and this is the
  * line between them.
+ *
+ * ── Why what was already seen is carried over ────────────────────────────
+ *
+ * The offer says "you have been looking into world models across 3 sites". A
+ * session that then began at zero would produce a reading with no evidence for
+ * the work that triggered it, and the person would have to redo the browsing
+ * Propositum had just told them it watched.
+ *
+ * So those pages are folded in — and once folded they are ORDINARY
+ * ObservationEvents, written through the one ledger door with every normal rule
+ * applying. They carry `attested.ambient = true`, because "Propositum saw this
+ * before you started the session" is a fact about provenance the timeline
+ * should not hide. Nothing is invented on the way in: ambient observations hold
+ * no page text, so neither do the events, and the reading will be thinner than
+ * one from a watched session. That is honest rather than a bug to paper over.
  */
 export interface WorkStarted {
   readonly projectId: string
+  readonly projectName: string
   readonly sessionId: string
   readonly documentId: string
   readonly carriedOver: number
+  /**
+   * True when this sitting joined a project that already existed, rather than
+   * opening a new one.
+   *
+   * Every caller must render this where the person lands. A merge nobody is
+   * told about is the failure `match-project.ts` calls the expensive one: the
+   * work is filed under an old subject, the old document is what Propositum
+   * offers to work on, and nothing on screen says a decision was taken. The
+   * flag exists so that "then the user can edit after" has something to edit
+   * FROM.
+   */
+  readonly joinedExisting: boolean
   /**
    * Sites the caller asked for that Propositum had not seen, and did not
    * approve.
@@ -687,6 +858,10 @@ export interface WorkStarted {
    * noticed.
    */
   readonly discardedOrigins: number
+  /** Sites this sitting was about that the joined project had WITHDRAWN, and
+   *  which stay withdrawn. Propositum cannot see them here, and the person is
+   *  the only one who may put that back. */
+  readonly leftWithdrawn: number
 }
 
 export async function startFromSuggestion(
@@ -697,6 +872,16 @@ export async function startFromSuggestion(
    *  this falls back to everything from the same sites, which is how a search
    *  for "nissan altima" became evidence for a hiking trip. */
   threadSignature?: string,
+  /**
+   * The person said "no — this is new work" before accepting.
+   *
+   * Optional and last, so a caller that does not ask the question gets the
+   * ordinary behaviour and no screen has to change to keep working. Answering
+   * it after the fact is `splitIntoNewProject`, which costs one click and one
+   * moved row — the two paths exist because the offer screen can ask before
+   * anything durable exists and the project screen can only ask after.
+   */
+  treatAsNewWork?: boolean,
 ): Promise<ActionResult<WorkStarted>> {
   return attempt(async () => {
     const name = subject.trim()
@@ -766,16 +951,42 @@ export async function startFromSuggestion(
       )
     }
 
-    // The thread names the project. Nobody is asked to file anything.
-    const project = await repos.projects.create(name)
+    // The thread names the project — or finds the one this work already
+    // belongs to. Nobody is asked to file anything either way.
+    const chosen = await projectForWork(name, treatAsNewWork === true)
+    if (!chosen.ok) return { ok: false, problem: chosen.problem } as const
+    const { project, joined } = chosen.value
 
-    // Keyed by pattern rather than by the caller's spelling of the site. The
-    // carry-over below looks a source up from an OBSERVATION's origin, which is
-    // always `https://host` — so matching on what the link happened to say meant
-    // a link reading `northwind.com` approved the site and then carried none of
-    // its pages, silently.
+    /**
+     * Approve each surviving site on whichever project this landed in — except
+     * one the person has already withdrawn there.
+     *
+     * Joining an existing project means writing approvals into a workspace with
+     * its own history, and `approveSource` upserts `granted`. Without this
+     * check, a site somebody deliberately withdrew in Chrome comes back as
+     * approved because they happened to read it again — a human act undone by a
+     * convenience, on a screen that promises "it will not ask again unless you
+     * add it back". A revocation outranks a match.
+     *
+     * Keyed by pattern rather than by the caller's spelling of the site. The
+     * carry-over below looks a source up from an OBSERVATION's origin, which is
+     * always `https://host` — so matching on what the link happened to say meant
+     * a link reading `northwind.com` approved the site and then carried none of
+     * its pages, silently.
+     */
+    const withdrawn = new Set(
+      (await repos.projects.approvedSources(project.id))
+        .filter((source) => source.grantState !== 'granted')
+        .map((source) => source.originPattern),
+    )
+
     const sourceByPattern = new Map<string, string>()
+    let leftWithdrawn = 0
     for (const [pattern, host] of wanted) {
+      if (withdrawn.has(pattern)) {
+        leftWithdrawn += 1
+        continue
+      }
       const source = await repos.projects.approveSource({
         projectId: project.id,
         originPattern: pattern,
@@ -784,19 +995,29 @@ export async function startFromSuggestion(
       sourceByPattern.set(pattern, source.id)
     }
 
-    // Something to work in. A heading rather than an empty file, so the first
-    // draft has somewhere to go and the diff has something to anchor against.
+    /**
+     * Something to work in — unless the project already has one.
+     *
+     * Carrying the document forward is most of what joining a project is FOR.
+     * A second sitting on the same subject that opened a fresh skeleton beside
+     * yesterday's half-written draft would have continuity in the filing and
+     * none where it matters, and slice 0 works on one document at a time, so
+     * which of the two the handoff picked would come down to insertion order.
+     */
+    const existing = await repos.documents.forProject(project.id)
     const skeleton = normalise(
       intent === 'draft-document'
         ? `# ${name}\n\n## What this is\n\n## What to do about it\n`
         : `# ${name}\n\n## What I found\n\n## Open questions\n`,
     )
-    const document = await repos.documents.create({
-      projectId: project.id,
-      title: name,
-      content: skeleton,
-      contentHash: hashContent(skeleton),
-    })
+    const document =
+      existing[0] ??
+      (await repos.documents.create({
+        projectId: project.id,
+        title: name,
+        content: skeleton,
+        contentHash: hashContent(skeleton),
+      }))
 
     const session = await repos.sessions.start(project.id)
     const startedAtMs = Date.now()
@@ -839,81 +1060,232 @@ export async function startFromSuggestion(
     refresh()
     return ok({
       projectId: project.id,
+      projectName: project.name,
       sessionId: session.id,
       documentId: document.id,
       carriedOver,
+      joinedExisting: joined,
       discardedOrigins,
+      leftWithdrawn,
     })
   })
 }
 
-export async function acceptOffer(
+/**
+ * Re-filing, and the two shapes it takes.
+ *
+ * ── Why this is not optional ─────────────────────────────────────────────
+ *
+ * Propositum decides where a sitting goes, and it will sometimes be wrong.
+ * Automatic filing is only defensible if it is correctable — otherwise the
+ * arithmetic above is not a helpful guess, it is a decision imposed on someone
+ * about their own work with no way back. So both directions exist: put this
+ * sitting under a project that already exists, or take it out into one of its
+ * own.
+ *
+ * ── What moves, and what deliberately does not ───────────────────────────
+ *
+ * The sitting moves. Its ObservationEvents do not: the ledger is append-only,
+ * and rewriting recorded history to tidy a filing decision is precisely what
+ * append-only exists to refuse. Those rows keep pointing at the sources they
+ * were recorded under, which stays true — that IS where Propositum was looking
+ * when it saw them.
+ *
+ * What is carried instead is the permission going forward: the origins this
+ * sitting is entitled to, approved on the destination, so what Propositum may
+ * see there matches what it could see here.
+ *
+ * ── Which origins those are, and why it is not just the observed ones ────
+ *
+ * The obvious rule — the sources this sitting's events already cite — is right
+ * for a sitting that has ENDED and silently wrong for one that is still
+ * running. Capture resolves an incoming page against the sources of the
+ * session's CURRENT project (`api/capture/events`), so moving a live sitting
+ * into a project holding none of them makes every subsequent signal
+ * unattributable, and it is dropped. The person pressed a button labelled "this
+ * is new work" and Propositum stopped watching, with nothing said.
+ *
+ * So an open sitting carries every granted source of the project it is leaving:
+ * those are exactly what capture was resolving against a moment ago, and
+ * narrowing that set at the moment of a move is a change to what Propositum can
+ * see that nobody asked for. An ended sitting carries the tighter set, because
+ * nothing is arriving and least privilege costs nothing.
+ *
+ * ── A withdrawal is never undone by a move ───────────────────────────────
+ *
+ * `approveSource` upserts `granted`, so carrying a source into a project that
+ * had REVOKED it would flip it back — a permission the person deliberately
+ * withdrew in Chrome, restored because a sitting moved house. Those are skipped
+ * and counted. Propositum then cannot see that site there, which is true, and
+ * the person is the only one who may change it back.
+ */
+async function carrySourcesAcross(
+  sessionId: string,
+  fromProjectId: string,
+  toProjectId: string,
+): Promise<{ carried: number; leftWithdrawn: number }> {
+  const { repos } = await appContext()
+
+  const session = await repos.sessions.byId(sessionId)
+  const stillOpen = session !== null && session.phase !== 'ended'
+
+  const events = await repos.events.bySession(sessionId)
+  const observed = new Set<string>()
+  for (const event of events) {
+    if (event.approvedSourceId !== null) observed.add(event.approvedSourceId)
+  }
+
+  const withdrawn = new Set(
+    (await repos.projects.approvedSources(toProjectId))
+      .filter((source) => source.grantState !== 'granted')
+      .map((source) => source.originPattern),
+  )
+
+  const sources = await repos.projects.approvedSources(fromProjectId)
+  let carried = 0
+  let leftWithdrawn = 0
+
+  for (const source of sources) {
+    const entitled = observed.has(source.id) || (stillOpen && source.grantState === 'granted')
+    if (!entitled) continue
+
+    if (withdrawn.has(source.originPattern)) {
+      leftWithdrawn += 1
+      continue
+    }
+
+    await repos.projects.approveSource({
+      projectId: toProjectId,
+      originPattern: source.originPattern,
+      label: source.label,
+    })
+    carried += 1
+  }
+
+  return { carried, leftWithdrawn }
+}
+
+export interface SessionRefiled {
+  readonly sessionId: string
+  readonly projectId: string
+  readonly projectName: string
+  /** Origins approved on the destination so it can see what this sitting was
+   *  recorded against, and — while it is still running — go on seeing it. */
+  readonly sourcesCarried: number
+  /** Origins the destination had withdrawn, left withdrawn. */
+  readonly leftWithdrawn: number
+}
+
+/**
+ * "Carry on with it" — put this sitting under a project that already exists.
+ *
+ * The same act the acceptance path performs on its own when the arithmetic is
+ * confident, available to a person who saw it split something that should not
+ * have been. It takes a session and a project and nothing else, so the offer
+ * screen and the project screen can both call it unchanged.
+ */
+export async function refileSession(
+  sessionId: string,
   projectId: string,
-  origin: string,
-  label: string,
-): Promise<ActionResult<OfferAccepted>> {
+): Promise<ActionResult<SessionRefiled>> {
   return attempt(async () => {
-    const { repos, ledger } = await appContext()
+    const { repos } = await appContext()
 
-    const project = await repos.projects.byId(projectId)
-    if (!project) return no<OfferAccepted>('not-found', "That project doesn't exist any more.")
+    const session = await repos.sessions.byId(sessionId)
+    if (!session) return no<SessionRefiled>('not-found', "That sitting isn't there any more.")
 
-    const live = captureStore().current()
-    if (live) {
-      const running = await repos.sessions.byId(live.sessionId)
-      if (running && running.phase !== 'ended') {
-        return no<OfferAccepted>(
-          'already-done',
-          'A session is already running. End that one before starting another.',
-        )
-      }
+    const destination = await repos.projects.byId(projectId)
+    if (!destination) return no<SessionRefiled>('not-found', "That project doesn't exist any more.")
+
+    if (session.projectId === projectId) {
+      return no<SessionRefiled>('already-done', `This is already filed under ${destination.name}.`)
     }
 
-    const pattern = normaliseOriginPattern(origin)
-    if (!pattern) {
-      return no<OfferAccepted>('invalid-input', "Propositum could not make sense of that site.")
-    }
+    const carried = await carrySourcesAcross(sessionId, session.projectId, projectId)
+    await repos.sessions.refile(sessionId, projectId)
 
-    const host = pattern.replace(/^https?:\/\//, '').replace(/\/\*$/, '')
-    const source = await repos.projects.approveSource({
+    refresh()
+    return ok({
+      sessionId,
       projectId,
-      originPattern: pattern,
-      label: label.trim() || host,
+      projectName: destination.name,
+      sourcesCarried: carried.carried,
+      leftWithdrawn: carried.leftWithdrawn,
+    })
+  })
+}
+
+/**
+ * "No — this is new work."
+ *
+ * The one control the whole automatic-filing story rests on. Propositum joined
+ * this sitting to something it had already seen; the person says it is not that
+ * at all, and it leaves with a project of its own.
+ *
+ * ── Why this is answerable afterwards and not only before ────────────────
+ *
+ * The offer screen can ask before anything durable exists, and it should — it
+ * has the person's attention and a spare click. But a person accepting an offer
+ * is not reading carefully, which is the point of a one-click offer, so the
+ * question has to survive being missed. Everything here is one row moved and
+ * two rows written; nothing is lost, and the sitting's own record is untouched.
+ *
+ * The name is passed in rather than re-derived: by the time someone presses
+ * this, the subject Propositum guessed is the thing they are disagreeing with.
+ */
+export async function splitIntoNewProject(
+  sessionId: string,
+  name: string,
+): Promise<ActionResult<SessionRefiled>> {
+  return attempt(async () => {
+    const { repos } = await appContext()
+
+    const session = await repos.sessions.byId(sessionId)
+    if (!session) return no<SessionRefiled>('not-found', "That sitting isn't there any more.")
+
+    const siblings = await repos.sessions.forProject(session.projectId)
+    if (siblings.length <= 1) {
+      return no<SessionRefiled>(
+        'already-done',
+        'This is the only sitting here, so it already has a project to itself. Rename it if the name is wrong.',
+      )
+    }
+
+    // Deliberately NOT `projectForWork`: the person has just said this is not
+    // the work Propositum matched it to, and running the match again would be
+    // the software arguing with them.
+    const created = await createProject(name)
+    if (!created.ok) return { ok: false, problem: created.problem } as const
+
+    const carried = await carrySourcesAcross(sessionId, session.projectId, created.value.id)
+    await repos.sessions.refile(sessionId, created.value.id)
+
+    /**
+     * And something to work in, because otherwise this is a dead end.
+     *
+     * The document stays with the project it was written in — it may hold the
+     * earlier sittings' work, and this sitting has just been declared to be
+     * about something else. But `draftContract` refuses outright when a project
+     * has no document, so leaving the new one empty would mean the correction
+     * button dropped the person somewhere they cannot hand anything over from.
+     * The same skeleton the acceptance path writes, for the same reason.
+     */
+    const skeleton = normalise(`# ${created.value.name}\n\n## What I found\n\n## Open questions\n`)
+    await repos.documents.create({
+      projectId: created.value.id,
+      title: created.value.name,
+      content: skeleton,
+      contentHash: hashContent(skeleton),
     })
 
-    const session = await repos.sessions.start(projectId)
-    const startedAtMs = Date.now()
-    captureStore().start(session.id, startedAtMs)
-
-    // Take what was seen before folding, then forget the buffer entirely —
-    // including anything about other sites, which the person did not accept.
-    const ambient = ambientStore()
-    const carried = ambient.forOrigin(new URL(pattern.replace(/\/\*$/, '')).origin, startedAtMs)
-
-    let carriedOver = 0
-    for (const observation of carried) {
-      const appended = await ledger.append(session.id, {
-        kind: observation.kind === 'query' ? 'queried' : 'visited',
-        observedAt: new Date(observation.at),
-        // Before the session began, so it is negative time. Clamp rather than
-        // lie: the ledger's elapsed clock starts when the session does.
-        elapsedMs: 0,
-        approvedSourceId: source.id,
-        attested: {
-          url: observation.url,
-          title: observation.title,
-          // Provenance, said out loud. This event was seen before the person
-          // started the session, and the timeline should not imply otherwise.
-          ambient: true,
-        },
-      })
-      if (appended.ok) carriedOver += 1
-    }
-
-    ambient.clear()
     refresh()
-
-    return { ok: true, value: { sessionId: session.id, projectId, sourceId: source.id, carriedOver } }
+    return ok({
+      sessionId,
+      projectId: created.value.id,
+      projectName: created.value.name,
+      sourcesCarried: carried.carried,
+      leftWithdrawn: carried.leftWithdrawn,
+    })
   })
 }
 
@@ -926,6 +1298,20 @@ export async function declineOffer(origin: string): Promise<ActionResult<{ origi
   })
 }
 
+/**
+ * Start a sitting on a project that already exists.
+ *
+ * `src/app/api/session/route.ts` does the same two things over HTTP for the
+ * extension, and issues it a bearer token besides. The overlap is deliberate
+ * and duplicated rather than shared: the route owns a credential this action
+ * has no business minting, and pulling the common half into a helper would mean
+ * editing a file this change does not own. See the report.
+ *
+ * This does NOT create anything. It is reached from one button on a project
+ * Propositum already identified — the person choosing to sit down at work that
+ * is already there, which is a different act from declaring that the work
+ * exists.
+ */
 export async function startSession(projectId: string): Promise<ActionResult<SessionStarted>> {
   return attempt(async () => {
     const { repos } = await appContext()

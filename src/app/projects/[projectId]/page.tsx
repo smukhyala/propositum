@@ -1,6 +1,21 @@
 /**
  * One project: what Propositum can see, the session boundary, and the timeline.
  *
+ * ── Nobody made this project, so this is where it gets corrected ─────────
+ *
+ * A person never types a project into existence any more. Propositum notices a
+ * subject, names it, and files the sitting under it — which means every name on
+ * this screen is a guess, and two of the guesses can be wrong in ways only the
+ * person can see. The name can be off. The filing can be off: a thread that
+ * shared two words with something from last week is not necessarily last week's
+ * work.
+ *
+ * So both corrections live here, plainly, and neither of them is buried behind
+ * a settings screen. Automatic filing is only defensible if it is correctable,
+ * and a correction nobody can find is not one. The wording says what Propositum
+ * did rather than asking the person to configure anything — "Propositum called
+ * this", not "Project name".
+ *
  * ── The session boundary is the loudest thing on the page ────────────────
  *
  * Start and End are the two acts the whole product rests on. Before Start,
@@ -39,7 +54,10 @@ import {
   approveSource,
   createDocument,
   endSession,
+  refileSession,
+  renameProject,
   saveDocument,
+  splitIntoNewProject,
   startSession,
 } from '@/server/actions'
 import { captureStore } from '@/server/capture-store'
@@ -143,6 +161,11 @@ export default async function ProjectPage({
   const shownSession = openSession ?? sessions[0] ?? null
   const earlier = sessions.filter((session) => session.id !== shownSession?.id)
 
+  // Somewhere else this sitting could belong. Only ever a correction: the list
+  // exists so a sitting Propositum filed wrongly can be moved, never so that
+  // starting work begins with choosing where to put it.
+  const elsewhere = (await repos.projects.list()).filter((other) => other.id !== projectId)
+
   // The two questions that look like one and are not: is a session open, and is
   // anything actually being captured into it.
   const liveCapture = captureStore().current()
@@ -213,6 +236,50 @@ export default async function ProjectPage({
     )
     if (!result.ok) redirect(`${here}?problem=${encodeURIComponent(result.problem.message)}`)
     redirect(here)
+  }
+
+  async function rename(formData: FormData) {
+    'use server'
+
+    const result = await renameProject(projectId, String(formData.get('name') ?? ''))
+
+    // The field is prefilled with the current name, so pressing Save without
+    // editing is the likeliest thing anyone does with it. Showing a red banner
+    // for that would be Propositum complaining about a no-op it invited.
+    if (!result.ok && result.problem.code !== 'already-done') {
+      redirect(`${here}?problem=${encodeURIComponent(result.problem.message)}`)
+    }
+    redirect(here)
+  }
+
+  /**
+   * "No — this is new work."
+   *
+   * The undo for a filing decision Propositum made on its own. It lands on the
+   * new project rather than staying here, because the sitting has gone with it
+   * and a screen that stayed put would be showing the place the work is no
+   * longer.
+   */
+  async function splitOut(formData: FormData) {
+    'use server'
+
+    const result = await splitIntoNewProject(
+      String(formData.get('sessionId') ?? ''),
+      String(formData.get('name') ?? ''),
+    )
+    if (!result.ok) redirect(`${here}?problem=${encodeURIComponent(result.problem.message)}`)
+    redirect(`/projects/${result.value.projectId}`)
+  }
+
+  async function moveElsewhere(formData: FormData) {
+    'use server'
+
+    const result = await refileSession(
+      String(formData.get('sessionId') ?? ''),
+      String(formData.get('projectId') ?? ''),
+    )
+    if (!result.ok) redirect(`${here}?problem=${encodeURIComponent(result.problem.message)}`)
+    redirect(`/projects/${result.value.projectId}`)
   }
 
   async function begin() {
@@ -367,7 +434,83 @@ export default async function ProjectPage({
         </div>
       </Section>
 
-      <Section title="What Propositum can see" index={2}>
+      <Section title="What Propositum called this" index={2}>
+        <p className="pj-under" style={{ marginTop: 0 }}>
+          {sessions.length > 1
+            ? `Propositum named this from what you were reading, and has filed ${sessions.length} sittings under it. Change either if it got them wrong.`
+            : 'Propositum named this from what you were reading. You did not have to make it, and you can change what it is called.'}
+        </p>
+
+        <form className="pj-form" action={rename}>
+          <label className="pj-field">
+            <span className="pj-label">Call it</span>
+            <input
+              className="pj-input"
+              name="name"
+              type="text"
+              required
+              maxLength={120}
+              autoComplete="off"
+              defaultValue={project.name}
+            />
+          </label>
+          <button className="pj-submit" type="submit">
+            Save the name
+          </button>
+        </form>
+
+        {/* The way out of a filing decision nobody made deliberately. Shown
+            only when there is something to leave: a project holding one sitting
+            already belongs to it alone, and offering to split it would be
+            offering to do nothing. */}
+        {shownSession !== null && sessions.length > 1 ? (
+          <form className="pj-form" action={splitOut}>
+            <input type="hidden" name="sessionId" value={shownSession.id} />
+            <label className="pj-field">
+              <span className="pj-label">This sitting is about something else</span>
+              <input
+                className="pj-input"
+                name="name"
+                type="text"
+                required
+                maxLength={120}
+                autoComplete="off"
+                placeholder="What it is actually about"
+              />
+            </label>
+            <button className="pj-submit" type="submit">
+              No &mdash; this is new work
+            </button>
+            <p className="pj-hint">
+              The sitting on {DAY.format(shownSession.startedAt)} moves out on its own. The sites it
+              was recorded against are approved there too, so Propositum can still see them, and
+              they stay approved here. Nothing already in its timeline changes, and this project
+              keeps its document.
+            </p>
+          </form>
+        ) : null}
+
+        {shownSession !== null && elsewhere.length > 0 ? (
+          <form className="pj-form" action={moveElsewhere}>
+            <input type="hidden" name="sessionId" value={shownSession.id} />
+            <label className="pj-field">
+              <span className="pj-label">Or it belongs with</span>
+              <select className="pj-input" name="projectId" defaultValue={elsewhere[0]?.id}>
+                {elsewhere.map((other) => (
+                  <option key={other.id} value={other.id}>
+                    {other.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button className="pj-submit" type="submit">
+              Carry on with that
+            </button>
+          </form>
+        ) : null}
+      </Section>
+
+      <Section title="What Propositum can see" index={3}>
         {sources.length === 0 ? (
           <Empty
             title="Propositum cannot see anything in this project."
@@ -430,7 +573,7 @@ export default async function ProjectPage({
         </form>
       </Section>
 
-      <Section title="Your document" index={3}>
+      <Section title="Your document" index={4}>
         {document === null ? (
           <>
             <Empty
@@ -510,7 +653,7 @@ export default async function ProjectPage({
         )}
       </Section>
 
-      <Section title={openSession ? 'Session timeline' : 'The last session'} index={4}>
+      <Section title={openSession ? 'Session timeline' : 'The last session'} index={5}>
         {shownSession === null ? (
           <Empty
             title="No session has been started in this project."
@@ -539,7 +682,7 @@ export default async function ProjectPage({
       </Section>
 
       {earlier.length > 0 ? (
-        <Section title="Before this" index={5}>
+        <Section title="Before this" index={6}>
           <p className="pj-under" style={{ margin: 0 }}>
             <Handover size={14} title="Earlier" /> {earlier.length} earlier{' '}
             {earlier.length === 1 ? 'session' : 'sessions'} in this project. Each one starts cold:

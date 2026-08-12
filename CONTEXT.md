@@ -82,14 +82,25 @@ reads is a project goal in disguise and would silently pre-answer whether the hu
 they are working on.
 
 ~~The user creates it explicitly.~~ **Amended 2026-08-11
-([ADR-0009](docs/adr/0009-composed-offers.md)): a human never creates one.** A Project is
-auto-created when a WorkOffer is accepted and no existing one matches, auto-named from the thread's
-terms, matched against existing projects by deterministic term overlap so a subject picked up again
-on Thursday continues Tuesday's project rather than founding a duplicate, and **renameable
-afterwards** — which is the correction channel and the only one. The founding brief's exclusion of
-*automatic project recognition* is reversed outright here, for ADR-0008's reason one step on: a
-person who must first create a workspace has been asked to know in advance that what they are about
-to do is worth recording, and that is the bet that already lost.
+([ADR-0009](docs/adr/0009-composed-offers.md)): a human never creates one.** The detector finds a
+thread, a model names the subject, and accepting the offer creates the project under that name —
+there is no form, and `createProject` is not a server action. The schema is unchanged; what went is
+the human act of filing. The founding brief's exclusion of *automatic project recognition* is
+reversed outright here, for ADR-0008's reason one step on: a person who must first create a
+workspace has been asked to know in advance that what they are about to do is worth recording, and
+that is the bet that already lost.
+
+**Two corrections make that defensible, and are therefore part of the term rather than
+decoration:** the name is editable, and a sitting can be moved to another project or split out into
+its own. Rows are mutable for exactly this reason — a Project holds no inference and carries no
+provenance, so nothing here is append-only.
+
+**Filing is deterministic.** `matchProject` compares the subject's words to each existing
+project's, and joins only on at least two shared words covering 0.6 of the smaller set — so a
+subject picked up again on Thursday continues Tuesday's project rather than founding a duplicate. A
+model naming the match would be a model deciding where someone's work is filed. The thresholds are
+guesses set before real data, tuned toward splitting: a false split is one click, a false merge
+silently inherits the wrong sources and the wrong document.
 
 The no-description rule matters **more** after this change, not less: the offer boundary now runs
 before any person has said anything at all, so the only thing auto-naming may write is `name`.
@@ -1445,6 +1456,11 @@ Recorded so they are found deliberately rather than discovered.
 - **There is no cross-session continuity.** The objective does not survive a session, and the
   brief's Project "goals" is deliberately unmodelled. A second session starts cold — which the
   product's own shift-change metaphor implies otherwise.
+  *Partly addressed 2026-08-11.* `matchProject` joins a new sitting to the project it recognises,
+  so the approved sources and the document survive a session. **The objective still does not, and
+  must not**: a stale objective inherited quietly by the next sitting is worse than a cold read,
+  because nothing on screen would say it had been. What carries forward is where the work lives,
+  never what Propositum thinks it is for.
 - **Locking the document for the duration of a Shift is an untested product cost.** It buys a
   genuinely immutable base, and it tells the user who opens their laptop at 6pm to fix a typo *no*.
 - **`guidance` is unenforceable prose beside enforced fields**, held honest only by a UI label.
