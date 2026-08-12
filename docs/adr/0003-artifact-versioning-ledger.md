@@ -90,8 +90,17 @@ other fails at startup rather than leaving a table unguarded.
 Guarded: `observation_event`, `action_intent`, `action_outcome`, `model_call_record`,
 `change_verdict`, `document_version`. Plus `handoff_contract`, frozen once `accepted`.
 
+**Amended 2026-08-11 ([ADR-0009](0009-composed-offers.md), [ADR-0010](0010-acting-in-the-browser.md)).**
+Guarded also: `shift_outcome`, `outcome_proposal`, `outcome_verdict`, `confirmation_verdict`. A
+verdict about an irreversible action is the last row anyone should be able to rewrite.
+
 Deliberately unguarded: `agent_run` (the claim target — a claim *is* a mutation), and
-`session_reading` / `session_claim` (the human edits these before ratifying).
+`session_reading` / `session_claim` (the human edits these before ratifying). Plus, from
+2026-08-11, **`action_evidence`** — the accessibility trees and screenshots an acting agent saw. It
+is the only durable table whose rows are deliberately **deleted**, by the same startup sweep that
+reaps expired leases, and a no-`DELETE` trigger and a sweep cannot both be true. It is bounded by its
+own published constant and nothing in the `ShiftReport` renders from it, so nothing depends on it
+surviving.
 
 ## Two traps found while building this
 
@@ -123,19 +132,26 @@ enforced by our code at both boundaries, never by the platform.
 
 The walkthrough the ticket asks for. Given a sentence in the reviewed draft:
 
+*Amended 2026-08-11: the walk gains one hop. A `Changeset` is now what a `document-changes`
+`ShiftOutcome` holds, rather than the only thing a run can produce, so the route to the contract goes
+through the outcome and the run. Every hop is still a foreign key.*
+
 ```
 ProposedChange.replacement          the sentence
   └── changesetId → Changeset       which Shift proposed it
         ├── baseVersionId           what it was written against
         ├── baseHash                and whether that base still holds
-        └── contractId → HandoffContract
-              ├── objective / definitionOfDone     what it was for
-              ├── approvedSourceIds                what it was allowed to read
-              └── readingId → SessionReading
-                    └── SessionClaim[]             what we believed
-                          └── Evidence[]
-                                ├── eventId → ObservationEvent   what you actually did
-                                └── quote                        verified against that event
+        └── shiftOutcomeId → ShiftOutcome   what kind of thing this run produced
+              ├── reversibility     held, or already out there
+              └── runId → AgentRun  which run, and how it ended
+                    └── contractId → HandoffContract
+                          ├── objective / definitionOfDone     what it was for
+                          ├── approvedSourceIds                what it was allowed to read
+                          └── readingId → SessionReading
+                                └── SessionClaim[]             what we believed
+                                      └── Evidence[]
+                                            ├── eventId → ObservationEvent  what you actually did
+                                            └── quote                       verified against it
 
 ActionIntent  (runId + kind='draft-section' + reason)   why it acted
   └── ActionOutcome.draftText                            what it produced
@@ -149,9 +165,13 @@ H1 datum.
 
 ## Consequences
 
-- 20 tables. Large, but each is a `CONTEXT.md` term; nothing here invents a name. Terms marked
-  *computed view* deliberately have no table: `EnforcedPolicy`, `Shift`, `ExecutionPlan`,
-  `ActionStatus`.
+- ~~20 tables.~~ **21 when this was written — `Evidence` is a table, and `CONTEXT.md` called it a
+  value object until 2026-08-11 — and 27 after [ADR-0009](0009-composed-offers.md) and
+  [ADR-0010](0010-acting-in-the-browser.md) add `shift_outcome`, `outcome_proposal`,
+  `outcome_verdict`, `action_evidence`, `confirmation_request` and `confirmation_verdict`.** Large,
+  and the count being wrong for months is itself worth recording. Each is still a `CONTEXT.md` term;
+  nothing here invents a name. Terms marked *computed view* deliberately have no table:
+  `EnforcedPolicy`, `Shift`, `ExecutionPlan`, `ActionStatus`, `OfferGrounds`.
 - `ProposedChange` carries a W3C-style `prefix`/`exact`/`suffix` anchor alongside offsets. With
   refuse-on-drift these are belt-and-braces — if the base hash matches, the bytes are identical —
   but they make a corrupted changeset detectable rather than silently misapplied.

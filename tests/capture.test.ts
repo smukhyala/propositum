@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import {
@@ -44,36 +44,141 @@ describe('the manifest asks for nothing frightening', () => {
     host_permissions?: string[]
   }
 
-  it('requests only warning-free permissions', () => {
+  it('requests only warning-free permissions, and one that is not', () => {
+    // `notifications` is warning-free and is the ONLY way to surface an offer
+    // nobody asked for. `sidePanel.open()` needs a user gesture, so calling it
+    // from an alarm silently throws — which is what happened: the app named
+    // "hiking to Kauai's Secret Falls" correctly and the person saw a dot.
+    //
+    // `debugger` is the exception, and this list is the second place that says
+    // so out loud. ADR-0002 refused it — "would make every constraint below
+    // advisory" — and ADR-0010 grants it anyway, stating in its opening
+    // paragraph that it is the first decision in the series whose net effect
+    // on safety is negative. The test below is the half that still holds:
+    // `debugger` WITHOUT `tabs` is confined to a tab Propositum opened.
     expect(manifest.permissions.sort()).toEqual(
-      ['alarms', 'idle', 'scripting', 'sidePanel', 'storage'].sort(),
+      ['alarms', 'debugger', 'idle', 'notifications', 'scripting', 'sidePanel', 'storage'].sort(),
     )
   })
 
-  it('does not request tabs, webNavigation, history or debugger', () => {
+  it('can actually raise a notification — icon and all', () => {
+    // `type: 'basic'` REQUIRES an iconUrl. Without the file the create call
+    // fails silently and the popup simply never appears, which is the same
+    // symptom as no detection at all.
+    const worker = readFileSync(join(repo, 'extension/src/service-worker.js'), 'utf8')
+
+    expect(worker).toContain('notifications.create')
+    expect(worker).toContain("getURL('icon.png')")
+    expect(existsSync(join(repo, 'extension/icon.png'))).toBe(true)
+  })
+
+  it('never reports a page the person has not actually seen', () => {
+    // Typing in the omnibox makes Chrome prerender search/warmup.html in a
+    // hidden document, and the content script fired on it like a real page. In
+    // one recorded session that stub was the MOST-captured page in a piece of
+    // research about a waterfall: 13 of 45 events, complete with `returnedTo`
+    // for somewhere nobody had been once.
+    const content = readFileSync(join(repo, 'extension/src/content.js'), 'utf8')
+
+    expect(content).toContain('document.prerendering')
+    expect(content).toContain('prerenderingchange')
+    // And a background tab is not a visit until it is looked at.
+    expect(content).toContain("visibilityState === 'hidden'")
+  })
+
+  it('measures scroll from any element, not just the window', () => {
+    // Scroll events do not bubble but do fire during capture. Without this,
+    // a site that scrolls inside a container reports 0 however far you read.
+    const content = readFileSync(join(repo, 'extension/src/content.js'), 'utf8')
+
+    expect(content).toMatch(/capture:\s*true/)
+    expect(content).toContain('scrollHeight > el.clientHeight')
+  })
+
+  it('answers to the notification, or it is just a dismissable banner', () => {
+    const worker = readFileSync(join(repo, 'extension/src/service-worker.js'), 'utf8')
+
+    expect(worker).toContain('notifications.onButtonClicked')
+    expect(worker).toContain('notifications.onClicked')
+  })
+
+  it('does not request tabs, webNavigation or history', () => {
     // Without `tabs`, the extension is structurally incapable of learning the
     // person visited anything they did not approve. Chrome enforces it.
-    for (const forbidden of ['tabs', 'webNavigation', 'history', 'debugger']) {
+    //
+    // `debugger` used to be in this list and was moved out by ADR-0010. Its
+    // absence from here makes THIS assertion carry more than it used to, not
+    // less: `chrome.debugger.attach` needs a tab id, and without `tabs` the
+    // only tab id the extension can obtain is one `chrome.tabs.create`
+    // returned. `tests/extension-cdp.test.ts` closes the other door by
+    // asserting `chrome.debugger.getTargets` is never called.
+    for (const forbidden of ['tabs', 'webNavigation', 'history']) {
       expect(manifest.permissions).not.toContain(forbidden)
     }
   })
 
-  it('grants no access to any WEBSITE at install — each origin is requested on approval', () => {
-    // This used to assert `host_permissions` was absent entirely, which was a
-    // proxy for the real property and became false for the right reason: the
-    // extension cannot reach the app at all without loopback access, because a
-    // service worker fetch to 127.0.0.1 is cross-origin and the app sends no
-    // CORS headers deliberately.
+  it('grants broad website access at install — a REVERSAL, priced in the open', () => {
+    // This test used to assert the opposite, and the assertion was load-bearing:
+    // ADR-0002's whole argument was that Chrome, not our code, decides what the
+    // extension may see.
     //
-    // So assert the property rather than the proxy. Loopback is our own
-    // process, not a site the person browses.
+    // Detection cannot work on sources the person has not set up yet, and
+    // noticing work before being told about it is the entire feature. So the
+    // broad grant is deliberate, and it costs Chrome's "Read and change all
+    // your data on all websites" warning at install.
+    //
+    // The limit is now BEHAVIOURAL, not a permission, which is a weaker kind of
+    // guarantee and is written down as such. The two tests below are what
+    // enforce it.
     const hosts: string[] = manifest.host_permissions ?? []
 
-    expect(hosts).toEqual(['http://127.0.0.1/*'])
-    for (const host of hosts) {
-      expect(host).toMatch(/^http:\/\/127\.0\.0\.1/)
+    expect(hosts).toContain('https://*/*')
+    expect(hosts).toContain('http://127.0.0.1/*')
+  })
+
+  it('the content script strips page text when no session is running', () => {
+    // The behavioural half of the guarantee above. There is exactly one place
+    // that decides page text may travel, and it is the service worker — the
+    // content script deliberately does not know whether a session is running,
+    // because a page could learn that by timing what its own script may do.
+    const worker = readFileSync(join(repo, 'extension/src/service-worker.js'), 'utf8')
+
+    expect(worker).toContain('bufferAmbient')
+    // `text` destructured out and discarded on the no-session path.
+    expect(worker).toMatch(/const \{ text, \.\.\.metadataOnly \} = message\.signal/)
+  })
+
+  it('the ambient endpoint has no field that could carry page text', () => {
+    const route = readFileSync(join(repo, 'src/app/api/capture/ambient/route.ts'), 'utf8')
+    const schema = route.slice(route.indexOf('ambientSchema'), route.indexOf('export async function'))
+
+    for (const banned of ['text', 'excerpt', 'content', 'untrusted', 'body']) {
+      expect(schema, `ambient observations must not carry ${banned}`).not.toMatch(
+        new RegExp(`\\b${banned}\\s*:`),
+      )
     }
-    expect(manifest.optional_host_permissions).toBeDefined()
+  })
+
+  it('the app accepts the origin the extension is pinned to', () => {
+    // 127.0.0.1 and localhost are the same machine and DIFFERENT ORIGINS. The
+    // dev server announces itself as localhost and 403s dev-asset requests from
+    // origins it was not told about — so a static chunk requested with
+    // `Origin: http://127.0.0.1:3117` failed, hydration never completed, and
+    // every motion section stayed at the opacity:0 its own server render
+    // emitted. A blank page, 200 in the log, no error anywhere.
+    //
+    // The extension is buildless and hardcodes 127.0.0.1, so the app is the
+    // side that has to accept it.
+    const config = readFileSync(join(repo, 'next.config.ts'), 'utf8')
+    const workerOrigin = /const APP_ORIGIN = 'https?:\/\/([^:']+)/.exec(
+      readFileSync(join(repo, 'extension/src/service-worker.js'), 'utf8'),
+    )?.[1]
+
+    expect(workerOrigin).toBeDefined()
+    expect(
+      config,
+      `next.config.ts must allow ${workerOrigin} as a dev origin, or the client bundle 403s`,
+    ).toContain(`'${workerOrigin}'`)
   })
 
   it('keeps the app port pinned to the one the extension talks to', () => {
@@ -118,6 +223,66 @@ describe('the transport does not rely on CORS', () => {
     expect(admit({ ...good, headers }, context)).toEqual({
       ok: false,
       reason: 'missing-custom-header',
+    })
+  })
+
+  /**
+   * The real shape of an extension request, captured off the wire.
+   *
+   * Granting `host_permissions` for loopback — which the extension cannot work
+   * without — makes Chrome treat the fetch as privileged and send NO Origin at
+   * all. Requiring one meant the extension reached the app and was refused by
+   * its own transport every 30 seconds, silently, while the interface said
+   * capture was running.
+   */
+  const EXTENSION_REQUEST = {
+    headers: {
+      'content-type': 'application/json',
+      [CUSTOM_HEADER]: '1',
+      'sec-fetch-site': 'none',
+      'sec-fetch-mode': 'cors',
+      // No `origin`. This is the point.
+    },
+    body: good.body,
+  }
+
+  it('admits the extension when Chrome sends no Origin at all', () => {
+    expect(admit(EXTENSION_REQUEST, context).ok).toBe(true)
+  })
+
+  it('rejects a missing Origin that is NOT browser-attested as non-page', () => {
+    // A page-initiated request carries `cross-site`. Only a privileged caller
+    // with no initiating document sends `none`, and Sec-Fetch-* is a forbidden
+    // header name, so no script can set or suppress it.
+    const headers = { ...EXTENSION_REQUEST.headers, 'sec-fetch-site': 'cross-site' }
+
+    expect(admit({ ...EXTENSION_REQUEST, headers }, context)).toEqual({
+      ok: false,
+      reason: 'bad-origin',
+    })
+  })
+
+  it('rejects a missing Origin with no Sec-Fetch-Site at all', () => {
+    const headers = { ...EXTENSION_REQUEST.headers, 'sec-fetch-site': undefined }
+
+    expect(admit({ ...EXTENSION_REQUEST, headers }, context)).toEqual({
+      ok: false,
+      reason: 'bad-origin',
+    })
+  })
+
+  it('still rejects a hostile page even if it claims sec-fetch-site: none', () => {
+    // Belt: a present Origin is checked against ours regardless of what else
+    // the request claims, so a forged Sec-Fetch-Site cannot launder a page.
+    const headers = {
+      ...EXTENSION_REQUEST.headers,
+      origin: 'https://northwind.example.com',
+      'sec-fetch-site': 'none',
+    }
+
+    expect(admit({ ...EXTENSION_REQUEST, headers }, context)).toEqual({
+      ok: false,
+      reason: 'bad-origin',
     })
   })
 

@@ -1,5 +1,5 @@
 /**
- * The six boundaries, checked against the constraints the grammar cannot hold.
+ * The eight boundaries, checked against the constraints the grammar cannot hold.
  *
  * Every assertion here exists because #3 verified that the API enforces SHAPE
  * ONLY — no `enum`, no `const`, no bounds. Anything else has to be enforced by
@@ -9,14 +9,17 @@
 import { describe, it, expect } from 'vitest'
 import { BOUNDARY_NAMES } from '../src/model/client'
 import type { BoundaryName } from '../src/model/client'
-import { datamark } from '../src/model/untrusted'
+import { UNTRUSTED_CONTENT_RULE, datamark } from '../src/model/untrusted'
 import { MAX_PLAN_STEPS } from '../src/domain/handoff/policy'
 
 import { handoffBoundary, handoffSchema, sourceHandlesFor } from '../src/model/boundaries/handoff'
 import { planBoundary, planSchema } from '../src/model/boundaries/plan'
 import { workerActionBoundary, workerActionSchema } from '../src/model/boundaries/worker-action'
-import { changeHandlesFor, reviewBoundary, reviewSchema } from '../src/model/boundaries/review'
+import { reviewBoundary, reviewHandlesFor, reviewSchema } from '../src/model/boundaries/review'
 import { shiftReportBoundary } from '../src/model/boundaries/shift-report'
+import { subjectBoundary } from '../src/model/boundaries/subject'
+import { offerBoundary, offerSchema, outcomeKindsOf } from '../src/model/boundaries/offer'
+import { SHIFT_OUTCOME_KINDS } from '../src/domain/outcome/shift-outcome'
 import { sessionReadingBoundary, handlesFor } from '../src/model/boundaries/session-reading'
 
 const sources = [
@@ -24,7 +27,7 @@ const sources = [
   { handle: 'S2', label: 'Northwind pricing' },
 ]
 
-describe('all six boundaries exist and are distinct', () => {
+describe('all eight boundaries exist and are distinct', () => {
   it('covers every declared boundary name', () => {
     const declared = new Set<BoundaryName>(BOUNDARY_NAMES)
     const built = new Set<BoundaryName>([
@@ -32,8 +35,10 @@ describe('all six boundaries exist and are distinct', () => {
       handoffBoundary(new Set(['S1'])).name,
       planBoundary.name,
       workerActionBoundary.name,
-      reviewBoundary(new Set(['C1'])).name,
+      reviewBoundary(new Set(['O1'])).name,
       shiftReportBoundary.name,
+      subjectBoundary.name,
+      offerBoundary.name,
     ])
 
     expect([...built].sort()).toEqual([...declared].sort())
@@ -44,13 +49,168 @@ describe('all six boundaries exist and are distinct', () => {
       sessionReadingBoundary(new Set(['E1'])).promptVersion,
       handoffBoundary(new Set(['S1'])).promptVersion,
       planBoundary.promptVersion,
+      subjectBoundary.promptVersion,
+      offerBoundary.promptVersion,
       workerActionBoundary.promptVersion,
-      reviewBoundary(new Set(['C1'])).promptVersion,
+      reviewBoundary(new Set(['O1'])).promptVersion,
       shiftReportBoundary.promptVersion,
     ]
 
-    expect(new Set(versions).size).toBe(6)
+    expect(new Set(versions).size).toBe(8)
     for (const v of versions) expect(v).toMatch(/@\d+$/)
+  })
+})
+
+describe('the subject boundary names, and no longer offers', () => {
+  it('has no offer field, because the closed two-member list is gone', () => {
+    // ADR-0009 deletes OFFERABLE outright rather than deprecating it. A schema
+    // that still accepted an `offer` would leave the old shape reachable from
+    // a model reply, which is the whole thing the deletion was for.
+    const parsed = subjectBoundary.schema.safeParse({
+      subject: 'world models',
+      confident: true,
+      offer: 'draft-document',
+      offerLabel: 'Want me to draft a doc?',
+    })
+
+    expect(parsed.success).toBe(true)
+    if (parsed.success) {
+      expect('offer' in parsed.data).toBe(false)
+      expect('offerLabel' in parsed.data).toBe(false)
+    }
+  })
+})
+
+describe('an offer describes work and can grant nothing', () => {
+  const valid = {
+    title: 'Compare the carriers you have been reading',
+    rationale: 'You searched for rates, then read four pages of them.',
+    outline: ['Pull the published rates', 'Put them in one table', 'Say which is cheapest under 5kg'],
+    produces: 'One table of published rates with the cheapest marked',
+    excludes: ['Book anything', 'Write to any of them'],
+    outcomeKinds: ['collection'],
+    confident: true,
+  }
+
+  it('accepts a whole offer', () => {
+    expect(offerSchema.safeParse(valid).success).toBe(true)
+  })
+
+  it('has no field that could carry a place, so a reply naming one loses it', () => {
+    // The structural half of ADR-0009's first property. `originPatterns` are
+    // derived by code from the pages the thread ran through; a model that
+    // wanted to add one has nowhere to write it down. The grep in
+    // tests/architecture.test.ts is what stops a field being added later.
+    const parsed = offerSchema.safeParse({
+      ...valid,
+      origins: ['https://attacker.example.com'],
+      sourceIds: ['src-9'],
+      url: 'https://attacker.example.com/rates',
+    })
+
+    expect(parsed.success).toBe(true)
+    if (parsed.success) {
+      expect(Object.keys(parsed.data).sort()).toEqual([
+        'confident',
+        'excludes',
+        'outcomeKinds',
+        'outline',
+        'produces',
+        'rationale',
+        'title',
+      ])
+    }
+  })
+
+  it('has no allowedActionKinds field — the model never proposes what may be done', () => {
+    const parsed = offerSchema.safeParse({ ...valid, allowedActionKinds: ['click-element'] })
+
+    expect(parsed.success).toBe(true)
+    if (parsed.success) expect('allowedActionKinds' in parsed.data).toBe(false)
+  })
+
+  it('rejects an outline longer than the cap, because the grammar would not', () => {
+    const parsed = offerSchema.safeParse({
+      ...valid,
+      outline: ['a', 'b', 'c', 'd', 'e', 'f', 'g'],
+    })
+
+    expect(parsed.success).toBe(false)
+  })
+
+  it('rejects a title past its bound, for the same reason', () => {
+    expect(offerSchema.safeParse({ ...valid, title: 'x'.repeat(71) }).success).toBe(false)
+  })
+
+  it('tells the model it may not name a place', () => {
+    const prompt = offerBoundary.buildPrompt({
+      terms: ['carriers', 'rates'],
+      titles: [datamark('Rates — Carrier A')],
+      searches: [datamark('cheapest parcel rates')],
+      subject: datamark('parcel carrier rates'),
+      siteCount: 3,
+      pageCount: 7,
+      readingMinutes: 14,
+      grounds: ['You searched for it, then read what came back.'],
+      producible: ['a collection of things found and kept'],
+    })
+
+    expect(prompt.system).toMatch(/Never name a website/)
+    // Datamarking is depth, not a boundary — but a prompt that shows page-
+    // authored text without saying what it is has given up the depth for free.
+    expect(prompt.system).toContain('written by a web page')
+    expect(prompt.user).toContain('UNTRUSTED_PAGE_TEXT')
+  })
+
+  it('never says the words that would put it inside a machine', () => {
+    // Not house style. An offer is a sentence said to somebody who has agreed
+    // to nothing, and the vocabulary of a system that executes plans is how a
+    // proposal starts reading as a decision already taken.
+    for (const banned of ['task', 'step', 'workflow', 'objective', 'allowlist']) {
+      expect(
+        offerBoundary.buildPrompt({
+          terms: [],
+          titles: [],
+          searches: [],
+          subject: datamark('x'),
+          siteCount: 1,
+          pageCount: 1,
+          readingMinutes: 1,
+          grounds: [],
+          producible: [],
+          // The shared untrusted-content rule is excluded: it is one string
+          // used by every boundary, and it says "task" once, about the model's
+          // own instructions rather than about the person's work.
+        }).system?.replace(UNTRUSTED_CONTENT_RULE, ''),
+        `the offer prompt says "${banned}"`,
+      ).not.toMatch(new RegExp(`\\b${banned}`, 'i'))
+    }
+  })
+})
+
+describe('the closed set of outcome kinds is applied in code, not by the grammar', () => {
+  it('keeps the real ones', () => {
+    expect(outcomeKindsOf(['collection', 'answer'])).toEqual(['collection', 'answer'])
+  })
+
+  it('drops an invented kind rather than mapping it to a neighbour', () => {
+    // Guessing which of five a sixth resembles is the fallback branch ADR-0009
+    // refuses. Dropping is the honest answer, and an empty list is allowed.
+    expect(outcomeKindsOf(['phone-call', 'telepathy'])).toEqual([])
+    expect(outcomeKindsOf(['document-changes', 'other'])).toEqual(['document-changes'])
+  })
+
+  it('tolerates the shapes a free-string field really produces', () => {
+    expect(outcomeKindsOf(['  Collection  ', 'COLLECTION'])).toEqual(['collection'])
+  })
+
+  it('holds the cap the grammar carries only as prose', () => {
+    expect(outcomeKindsOf([...SHIFT_OUTCOME_KINDS])).toHaveLength(3)
+  })
+
+  it('coerces junk without throwing, because a model reply is not a contract', () => {
+    expect(outcomeKindsOf([])).toEqual([])
+    expect(outcomeKindsOf(['', ' ', 'collection'])).toEqual(['collection'])
   })
 })
 
@@ -150,13 +310,30 @@ describe('plan is a list, never a graph', () => {
     const prompt = planBoundary.buildPrompt({
       objective: 'o',
       definitionOfDone: 'd',
-      documentTitle: 'proposal',
-      sections: ['Scope'],
+      context: ['Document: proposal', 'Sections: Scope'],
+      expects: ['document-changes'],
       availableSourceLabels: ['Northwind'],
       mayDraft: false,
     })
 
     expect(prompt.user).toMatch(/may NOT draft/)
+  })
+
+  it('says nothing about a document when the shift pins none', () => {
+    // The old prompt sent `Document: the document` on a shift that had none —
+    // a sentence about a thing that did not exist, in the one call whose job is
+    // to plan against what does.
+    const prompt = planBoundary.buildPrompt({
+      objective: 'o',
+      definitionOfDone: 'd',
+      context: [],
+      expects: ['answer'],
+      availableSourceLabels: ['Northwind'],
+      mayDraft: false,
+    })
+
+    expect(prompt.user).not.toMatch(/Document:/)
+    expect(prompt.user).toMatch(/a written answer/)
   })
 })
 
@@ -190,6 +367,8 @@ describe('worker-action keeps kind a free string', () => {
       availableSources: [],
       history: [],
       gathered: [],
+      page: null,
+      mutatingActionsRemaining: 8,
     })
 
     expect(prompt.system).toMatch(/write the prose/i)
@@ -205,6 +384,8 @@ describe('worker-action keeps kind a free string', () => {
       availableSources: [],
       history: [],
       gathered: [{ label: 'Northwind', content: datamark('Standard partners receive 15%.') }],
+      page: null,
+      mutatingActionsRemaining: 8,
     })
 
     expect(prompt.user).toContain('<<<UNTRUSTED_PAGE_TEXT>>>')
@@ -218,12 +399,28 @@ describe('worker-action keeps kind a free string', () => {
 })
 
 describe('review grants nothing', () => {
-  const changes = [{ handle: 'C1', section: 'Scope', replacement: 'x', reason: 'r' }]
-  const schema = reviewSchema(changeHandlesFor(changes))
+  const outcomes = [
+    {
+      handle: 'O1',
+      headline: '1 change to the proposal',
+      reason: 'Drafted while you were away.',
+      summary: '1 change to the proposal',
+      changes: [{ handle: 'C1', section: 'Scope', replacement: 'x', reason: 'r' }],
+    },
+  ]
+  const schema = reviewSchema(reviewHandlesFor(outcomes))
+
+  it('accepts both an outcome handle and a change handle nested under it', () => {
+    // One handle space, two levels. The nesting is what lets a finding land on
+    // the paragraph rather than on "the document" when there is a paragraph to
+    // land on, and on the whole thing when there is not.
+    expect(schema.safeParse({ findings: [{ handle: 'O1', kind: 'unclear', detail: 'd' }] }).success).toBe(true)
+    expect(schema.safeParse({ findings: [{ handle: 'C1', kind: 'unclear', detail: 'd' }] }).success).toBe(true)
+  })
 
   it('rejects a finding against a change it was not shown', () => {
     expect(
-      schema.safeParse({ findings: [{ changeHandle: 'C9', kind: 'unclear', detail: 'd' }] }).success,
+      schema.safeParse({ findings: [{ handle: 'C9', kind: 'unclear', detail: 'd' }] }).success,
     ).toBe(false)
   })
 
@@ -232,11 +429,11 @@ describe('review grants nothing', () => {
   })
 
   it('tells the reviewer not to re-check permissions, which are already deterministic', () => {
-    const prompt = reviewBoundary(changeHandlesFor(changes)).buildPrompt({
+    const prompt = reviewBoundary(reviewHandlesFor(outcomes)).buildPrompt({
       objective: 'o',
       definitionOfDone: 'd',
       guidance: [],
-      changes,
+      outcomes,
       sourcesRead: [{ label: 'Northwind', content: datamark('terms') }],
     })
 

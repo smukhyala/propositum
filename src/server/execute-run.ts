@@ -22,15 +22,39 @@
  * a routine outcome rather than an exotic one.
  *
  * So the runner returns a `WorkerResult` and this file turns it into rows.
+ *
+ * ── What this file used to assume, and no longer may ─────────────────────
+ *
+ * It used to load a version, split its content on `## ` headings, hand the
+ * worker a title and a section list, and turn the prose that came back into a
+ * `Changeset`. Every one of those steps was correct and every one of them said
+ * the same thing: *a run works on a document*. A run that did anything else had
+ * nowhere to put its result, because the result WAS the changeset.
+ *
+ * So the spine is generic now. A run produces `ShiftOutcome`s, of which
+ * `document-changes` is one kind among five, and the machinery that knows about
+ * Markdown lives in `./outcomes/document-changes.ts` where it can be the special
+ * case rather than the shape of everything.
+ *
+ * The check that this actually happened, rather than the assumption moving one
+ * directory over: **this file contains no Markdown, no `##`, no `diff(` and no
+ * `Document` import.** That is greppable, and it is grepped.
  */
 
 import { runWorker } from '../runtime/worker-loop'
 import type { RunLedger, WorkerJob, WorkerResult } from '../runtime/worker-loop'
+import type { ConfirmedAction, HistoryReader } from '../runtime/history'
 import { STOP_RULES } from '../domain/execution/stop-conditions'
 import { allowlisted } from '../policy/fetcher'
 import type { SourceFetcher } from '../policy/fetcher'
-import { diff } from '../domain/document/changeset'
-import { FINDING_KINDS, changeHandlesFor, reviewBoundary } from '../model/boundaries/review'
+import { readableCause } from './problem'
+import { confirmationForIntent, confirmedRequestIdsFor, creditedDeadlineFor, settleAbandonedIntents } from './confirmations'
+import type { RunFence } from '../runtime/worker-process'
+import { FINDING_KINDS, reviewBoundary, reviewHandlesFor } from '../model/boundaries/review'
+import type { ReviewedOutcome } from '../model/boundaries/review'
+import { loadWorkspace } from './outcomes/workspace'
+import { recordOutcomes } from './outcomes/index'
+import { sectionTitleFor } from './outcomes/document-changes'
 import type { AppContext } from './db'
 import type { ModelClient } from '../model/client'
 import type { ActionKind } from '../domain/handoff/policy'
@@ -40,15 +64,72 @@ export interface ExecuteDeps {
   readonly model: ModelClient
   readonly fetcher: SourceFetcher
   readonly now: () => number
+  /**
+   * The claim fence, from the process that claimed this run.
+   *
+   * REQUIRED, not optional, and that is the difference between the fence
+   * existing and the fence being a paragraph. CONTEXT.md §4 has said for a long
+   * time that "every action boundary re-reads `status` and `claimedBy`; a
+   * Runner that no longer holds the claim aborts without writing" — and until
+   * the columns landed there was nothing to read. An optional dep defaulting to
+   * "carry on" would put it straight back into the state where the sentence is
+   * true of the documentation and false of the software.
+   */
+  readonly fence: RunFence
+}
+
+/**
+ * The fence said stop, so the run stopped without writing the intent.
+ *
+ * A sentinel rather than an ordinary failure, because "another process owns
+ * this run now" and "this run crashed" must not produce the same report. It is
+ * thrown from inside `recordIntent`, which is the action boundary itself: the
+ * intent is committed BEFORE any effect, so refusing to write it is refusing to
+ * take the action, and nothing has happened out in the world at that point.
+ */
+class ClaimFenced extends Error {
+  constructor(readonly fenceReason: 'claim-lost' | 'cancel-requested' | 'run-ended') {
+    super(`run fenced: ${fenceReason}`)
+    this.name = 'ClaimFenced'
+  }
 }
 
 /** A ledger backed by real rows. The worker writes intents before effects
  *  through this, so a run that dies mid-action still shows what it attempted. */
-function ledgerFor(ctx: AppContext, runId: string): RunLedger {
+function ledgerFor(ctx: AppContext, runId: string, fence: RunFence): RunLedger {
   return {
     async recordIntent(input) {
+      /**
+       * THE action boundary, and the only place the fence needs to be checked.
+       *
+       * An `ActionIntent` is committed before any effect. So the instant before
+       * writing one is the instant before the run does anything out in the
+       * world, and a halt landing here lands exactly where ADR-0007 requires:
+       * at the next action boundary, never mid-action, never leaving an intent
+       * with no outcome.
+       *
+       * Putting the check in the ledger rather than in the loop is deliberate.
+       * The loop can be rewritten, and a check the loop owns is a check the
+       * next rewrite can drop; a run physically cannot take an action without
+       * coming through here first, because coming through here is what makes an
+       * action auditable at all.
+       *
+       * A lost claim then "aborts WITHOUT writing", in CONTEXT.md's own words.
+       * That matters more than it sounds: two workers writing interleaved
+       * intents into an append-only ledger under one `AgentRun` cannot be
+       * untangled afterwards, and the loser is the one holding stale beliefs
+       * about a live page.
+       */
+      const verdict = await fence.check()
+      if (!verdict.proceed) throw new ClaimFenced(verdict.reason)
+
       const row = await ctx.db.prisma.actionIntent.create({
         data: {
+          // The caller's id, not `@default(cuid())`. The gate stamped this onto
+          // the `AuthorizedAction` before the row existed, and the browser
+          // channel uses it as an idempotency key — so the row has to be the one
+          // the token names. See `RunLedger.recordIntent`.
+          id: input.id,
           runId: input.runId,
           ...(input.stepId === null ? {} : { stepId: input.stepId }),
           seq: input.seq,
@@ -71,6 +152,11 @@ function ledgerFor(ctx: AppContext, runId: string): RunLedger {
           scopeVerdict: input.scopeVerdict,
           ...(input.detail === undefined ? {} : { detail: input.detail }),
           ...(input.draftText === undefined ? {} : { draftText: input.draftText }),
+          // NULL when the authorising run saw the result itself, which is every
+          // outcome the loop writes. `'recovery'` arrives here from
+          // `recoverOrphanedIntents` — the first writer this column has had
+          // since CONTEXT.md specified it.
+          ...(input.observedBy === undefined ? {} : { observedBy: input.observedBy }),
         },
       })
     },
@@ -92,6 +178,114 @@ function ledgerFor(ctx: AppContext, runId: string): RunLedger {
 }
 
 /**
+ * Everything this contract's runs have already committed, oldest first.
+ *
+ * ── Why it is a query here rather than a repository method ───────────────
+ *
+ * `ledgerFor` above already reaches `ctx.db.prisma` directly for the same three
+ * tables, and for the same reason: this is the run spine's own private view of
+ * the ledger, not a shape any screen renders. A repository method would be a
+ * second public surface over rows whose only consumer is `historyForContract`,
+ * and the repositories are shared with the UI — a query added there tends to
+ * grow readers who then need it to mean something slightly different.
+ *
+ * The ORDER is this function's promise, not the rebuilder's. `createdAt` then
+ * `seq`: runs are sequential under one contract, `seq` is unique per run, and
+ * `createdAt` on an append-only table is monotonic within a run. Sorting by
+ * `seq` alone would interleave a continuation's first action with its
+ * predecessor's first action, which would tell the model it did things in an
+ * order it did not.
+ */
+function historyReaderFor(ctx: AppContext): HistoryReader {
+  return {
+    async intentsForContract(contractId) {
+      const rows = await ctx.db.prisma.actionIntent.findMany({
+        where: { run: { contractId } },
+        orderBy: [{ createdAt: 'asc' }, { seq: 'asc' }],
+        select: {
+          id: true,
+          runId: true,
+          seq: true,
+          kind: true,
+          reason: true,
+          authorized: true,
+          refusedRule: true,
+          outcome: { select: { result: true, scopeVerdict: true, detail: true } },
+        },
+      })
+
+      return rows.map((row) => ({
+        id: row.id,
+        runId: row.runId,
+        seq: row.seq,
+        kind: row.kind,
+        reason: row.reason,
+        authorized: row.authorized,
+        refusedRule: row.refusedRule,
+        outcome: row.outcome
+          ? {
+              result: row.outcome.result,
+              scopeVerdict: row.outcome.scopeVerdict,
+              detail: row.outcome.detail,
+            }
+          : null,
+      }))
+    },
+
+    /**
+     * The confirmations a human answered YES to, paired with what they covered.
+     *
+     * -- Two helpers, and why both --------------------------------------
+     *
+     * `confirmedRequestIdsFor` is the membership set the gate checks.
+     * `confirmationForIntent` is the deterministic injection point: it walks
+     * from a REFUSED intent to the request a person answered about it. Both are
+     * contract-scoped on purpose -- the yes is answered against the run that
+     * asked and honoured by the continuation, so a run-scoped lookup would lose
+     * it at exactly the moment it is needed.
+     *
+     * Only `confirmed` counts in either. A rejected verdict and an absent one
+     * are indistinguishable here on purpose: all three mean *not permitted*, and
+     * **expiry never approves**, because an unanswered request has no verdict
+     * row and time does not write rows.
+     *
+     * The refused intent's own `kind` and `params` ride along because they are
+     * what the person was SHOWN -- the question was built by code from attested
+     * facts about that intent -- so `confirmationIdFor` can require a proposal
+     * to match it before attaching the id.
+     *
+     * The walk covers this contract's refused intents only, and runs at all only
+     * when something is confirmed, so the common case is one query returning
+     * nothing.
+     */
+    async confirmationsForContract(contractId) {
+      const confirmedIds = await confirmedRequestIdsFor(ctx, contractId)
+      if (confirmedIds.size === 0) return []
+
+      const refused = await ctx.db.prisma.actionIntent.findMany({
+        where: { run: { contractId }, authorized: false },
+        orderBy: [{ createdAt: 'asc' }, { seq: 'asc' }],
+        select: { id: true, kind: true, params: true },
+      })
+
+      const covered: ConfirmedAction[] = []
+      for (const intent of refused) {
+        const requestId = await confirmationForIntent(ctx, intent.id)
+        if (requestId === null || !confirmedIds.has(requestId)) continue
+
+        covered.push({
+          requestId,
+          intentId: intent.id,
+          kind: intent.kind,
+          params: (intent.params ?? {}) as Record<string, unknown>,
+        })
+      }
+      return covered
+    },
+  }
+}
+
+/**
  * Execute one claimed run end to end, then write the note.
  *
  * Never throws for a run-level failure — a failed run is a recorded outcome,
@@ -109,28 +303,69 @@ export async function executeRun(runId: string, deps: ExecuteDeps): Promise<void
     return
   }
 
-  const version = await ctx.repos.documents.version(contract.baseVersionId)
-  const document = version ? await ctx.repos.documents.byId(version.documentId) : null
+  /**
+   * Everything the ratified contract gives this run to work with — and the
+   * branch that used to be a refusal.
+   *
+   * Wave 1 left a refusal here: `baseVersionId` had just become nullable, and a
+   * runner whose entire shape assumed a document declined the null rather than
+   * casting it away. It was unreachable, because nothing wrote a null yet, and
+   * it was there so that whoever started writing them would find a refusal to
+   * replace instead of a cast that had already lied on their behalf.
+   *
+   * This is that replacement. A missing base is now an ordinary state that
+   * `loadWorkspace` returns and everything downstream holds: the gate refuses
+   * the document capabilities with `no_document_pinned`, the outcome writers
+   * drop a `section-prose` production they cannot apply, and the run completes
+   * normally having produced whatever else it produced.
+   */
+  const workspace = await loadWorkspace(ctx, contract)
 
-  const sources = await ctx.db.prisma.approvedSource.findMany({
-    where: { id: { in: contract.approvedSourceIds } },
-    select: { id: true, label: true, originPattern: true },
-  })
-
-  // The deadline is DERIVED from an immutable pair, never stored — a
-  // crash-restart loop must not be able to silently reset the budget.
+  /**
+   * The deadline is DERIVED, never stored — a crash-restart loop must not be
+   * able to silently reset the budget — and it now includes confirmation waits.
+   *
+   * ── Why the two clocks had to be reconciled here ─────────────────────────
+   *
+   * `admitRun` lets a continuation into the loop when its CREDITED deadline is
+   * still ahead. If this line then computed `acceptedAt + timeLimit` without the
+   * credit, the run would be admitted and every proposal inside it refused with
+   * `budget_exhausted` — a shift accepted at 09:00 for thirty minutes, asked at
+   * 09:05, answered at 09:35, admitted against 10:00 and then starved against
+   * 09:30. That is precisely the failure `continuation.ts` names as the worst
+   * of its options: a run that appears to resume and then silently does
+   * nothing, with the only evidence being refusal rows written in the gate's
+   * vocabulary rather than the person's.
+   *
+   * `creditedDeadlineFor` sums immutable `(requestedAt, decidedAt)` pairs, so
+   * this stays a pure function of durable timestamps and recomputes to the same
+   * number after any number of restarts — the property the missing `deadlineAt`
+   * field was protecting. It falls back to the uncredited value only when the
+   * contract has no `acceptedAt`, which is the same case the old line guessed
+   * at with the clock.
+   */
   const acceptedAt = contract.acceptedAt?.getTime() ?? deps.now()
-  const deadlineEpochMs = acceptedAt + contract.timeLimitMinutes * 60_000
+  const deadlineEpochMs =
+    (await creditedDeadlineFor(ctx, contract.id)) ??
+    acceptedAt + contract.timeLimitMinutes * 60_000
 
   const job: WorkerJob = {
     runId,
+    // The unit of history and of both blast-radius caps. A confirmation pause
+    // ends one run and starts another under the same contract, so anything
+    // counted per run would reset every time somebody was asked a question.
+    contractId: contract.id,
     objective: contract.objective,
     definitionOfDone: contract.definitionOfDone,
     guidance: contract.guidance,
     scope: {
       approvedSourceIds: contract.approvedSourceIds,
       allowedActionKinds: contract.allowedActionKinds as ActionKind[],
-      baseVersionId: contract.baseVersionId,
+      // Still the contract's own pin, still the only thing that fixes which
+      // version a tool may read. `undefined` rather than `null` because the
+      // scope's optional field is what `compilePolicy` reads to decide whether
+      // the document capability exists at all.
+      ...(contract.baseVersionId === null ? {} : { baseVersionId: contract.baseVersionId }),
     },
     controls: {
       initiative: contract.initiative as 'follow-closely' | 'use-judgment',
@@ -139,9 +374,14 @@ export async function executeRun(runId: string, deps: ExecuteDeps): Promise<void
       interruption: contract.interruption as 'stop-when-uncertain' | 'stop-only-when-blocked',
       timeLimitMinutes: contract.timeLimitMinutes,
     },
-    documentTitle: document?.title ?? 'the document',
-    sections: sectionsOf(version?.content ?? ''),
-    sourceLabels: sources.map((s) => ({ id: s.id, label: s.label })),
+    context: workspace.context,
+    expects: workspace.expects,
+    // Resolved through the pinned version. Undefined when nothing is pinned, or
+    // when the pin no longer resolves — the gate turns those into
+    // `no_document_pinned` and `document_missing` respectively, rather than a
+    // run that drafts into nothing.
+    documentId: workspace.documentId,
+    sourceLabels: workspace.sources.map((s) => ({ id: s.id, label: s.label })),
     deadlineEpochMs,
   }
 
@@ -149,50 +389,96 @@ export async function executeRun(runId: string, deps: ExecuteDeps): Promise<void
   try {
     result = await runWorker(job, {
       model: deps.model,
-      ledger: ledgerFor(ctx, runId),
+      ledger: ledgerFor(ctx, runId, deps.fence),
       readSource: {
-        fetcher: allowlisted(deps.fetcher, sources.map((s) => s.originPattern)),
+        fetcher: allowlisted(deps.fetcher, workspace.sources.map((s) => s.originPattern)),
         sources: {
           urlFor: async (id) => {
-            const source = sources.find((s) => s.id === id)
+            const source = workspace.sources.find((s) => s.id === id)
             return source ? source.originPattern.replace(/\/\*$/, '/') : null
           },
         },
       },
-      readDoc: { versions: { byId: (id) => ctx.repos.documents.version(id) }, baseVersionId: contract.baseVersionId },
+      readDoc: {
+        versions: { byId: (id) => ctx.repos.documents.version(id) },
+        ...(contract.baseVersionId === null ? {} : { baseVersionId: contract.baseVersionId }),
+      },
+      // Resume, crash recovery and the startup sweep all read the same rows
+      // through this. See `src/runtime/history.ts` for why there is one path and
+      // not three.
+      history: historyReaderFor(ctx),
       now: deps.now,
       renewLease: (id) => ctx.repos.runs.renewLease(id, new Date(deps.now() + 60_000)),
     })
   } catch (error) {
+    /**
+     * A fenced run is not a failed run, and must not be reported as one.
+     *
+     * Three endings, three different sentences, and the difference is what the
+     * person actually did.
+     */
+    if (error instanceof ClaimFenced) {
+      // Another process holds the claim. Abort WITHOUT WRITING — not the
+      // status, not a report, not anything. The row belongs to the winner now,
+      // and the loser's last useful act is to touch nothing.
+      if (error.fenceReason === 'claim-lost') return
+
+      if (error.fenceReason === 'cancel-requested') {
+        await ctx.db.prisma.agentRun.update({
+          where: { id: runId },
+          data: {
+            status: 'interrupted',
+            terminalReason: 'cancelled',
+            endedAt: new Date(deps.now()),
+            // The browser credential dies with the run. `haltRun` already
+            // revoked it on the app side; doing it again here means the
+            // property holds even for a stop that never went through the app —
+            // Chrome's own infobar Cancel, which is not ours to intercept.
+            controlToken: null,
+          },
+        })
+      }
+
+      /**
+       * Settle anything the run left in flight, now that it is terminal.
+       *
+       * The stop landed at an action boundary, so ordinarily there is nothing:
+       * the intent that would have been abandoned is the one that was never
+       * written. It runs anyway because the OTHER kill switches — Chrome's
+       * infobar, the tab overlay chip — remove the capability mid-action and do
+       * not come through here at all, and a run cancelled just after one of
+       * those really can have an intent with no outcome.
+       */
+      await settleAbandonedIntents(ctx, runId)
+
+      await writeReport(
+        ctx,
+        contract.id,
+        error.fenceReason === 'cancel-requested'
+          ? 'You stopped me, so I put everything down where it was.'
+          : 'Something else ended this before I finished.',
+        [],
+      )
+      await ctx.repos.sessions.markObserving(contract.sessionId)
+      return
+    }
+
     await ctx.repos.runs.complete(runId, 'failed', new Date(deps.now()), 'error')
     await writeReport(ctx, contract.id, null, [], error instanceof Error ? error.message : String(error))
     return
   }
 
-  /* ── the changeset, computed deterministically from the worker's prose ── */
+  /* ── what the run produced, whatever kind of thing that was ──────────── */
 
-  if (result.drafts.length > 0 && version) {
-    let proposed = version.content
-    for (const draft of result.drafts) proposed = replaceSection(proposed, draft.section, draft.prose)
-
-    const { baseHash, changes } = diff(version.content, proposed, 'Drafted while you were away.')
-    if (changes.length > 0) {
-      await ctx.repos.changesets.create({
-        contractId: contract.id,
-        baseVersionId: version.id,
-        baseHash,
-        changes: changes.map((c) => ({
-          startOffset: c.startOffset,
-          endOffset: c.endOffset,
-          prefix: c.prefix,
-          exact: c.exact,
-          suffix: c.suffix,
-          replacement: c.replacement,
-          reason: c.reason,
-        })),
-      })
-    }
-  }
+  // Deterministic code decides what each production IS. The worker returned
+  // shapes; nothing it returned named a kind, claimed a reversibility, or
+  // asserted which of its own actions supports what.
+  const recorded = await recordOutcomes(ctx, {
+    run: { id: runId },
+    contract: { id: contract.id },
+    workspace,
+    produced: result.produced,
+  })
 
   await ctx.repos.runs.complete(
     runId,
@@ -203,13 +489,25 @@ export async function executeRun(runId: string, deps: ExecuteDeps): Promise<void
 
   /* ── the second pass ─────────────────────────────────────────────────── */
 
-  await review(ctx, deps, contract)
+  // Runs when there is at least one HELD outcome, which is the generalisation of
+  // "if there is a changeset". A `landed` outcome is deliberately excluded: the
+  // reviewer's whole output is advice to somebody who still has a decision to
+  // make, and there is no decision left on something that already happened.
+  if (recorded.heldOutcomeIds.length > 0) await review(ctx, deps, contract, runId)
 
   /* ── the note ───────────────────────────────────────────────────────── */
 
   const stopLabel = result.stoppedBy.length ? STOP_RULES[result.stoppedBy[0]!].consumerLabel : null
 
-  await writeReport(ctx, contract.id, stopLabel, result.decisions)
+  await writeReport(
+    ctx,
+    contract.id,
+    stopLabel,
+    result.decisions,
+    undefined,
+    recorded.dropped,
+    result.summary,
+  )
 
   // The session goes back to the person. Without this it stays `away` forever,
   // and every control that offers to hand it back is a promise the product
@@ -249,10 +547,12 @@ async function review(
   ctx: AppContext,
   deps: ExecuteDeps,
   contract: { id: string; objective: string; definitionOfDone: string; guidance: readonly string[] },
+  workerRunId: string,
 ): Promise<void> {
   try {
-    const changeset = await ctx.repos.changesets.forContract(contract.id)
-    if (!changeset || changeset.changes.length === 0) return
+    const produced = await ctx.repos.outcomes.forRun(workerRunId)
+    const held = produced.filter((outcome) => outcome.reversibility === 'held')
+    if (held.length === 0) return
 
     // Its own run row, so the second pass is visible in the ledger as a thing
     // that happened rather than folded into the worker's record.
@@ -260,41 +560,99 @@ async function review(
 
     // The model sees handles, never ids — the same rule every other boundary
     // follows, and a Zod refinement resolves them back.
-    const handles = changeset.changes.map((change, index) => ({
-      handle: `C${index + 1}`,
-      changeId: change.id,
-      section: sectionTitleFor(change.exact) ?? 'the document',
-      replacement: change.replacement,
-      reason: change.reason,
-    }))
+    const changeIdByHandle = new Map<string, string>()
+    const outcomeIdByHandle = new Map<string, string>()
 
-    const outcome = await deps.model.run(reviewBoundary(changeHandlesFor(handles)), {
+    const handles: ReviewedOutcome[] = []
+
+    /**
+     * One counter for every change handle in the prompt, not one per outcome.
+     *
+     * A per-outcome counter would restart at `C1` under each outcome, and two
+     * outcomes each holding a `C1` would put the same handle in the set twice —
+     * so the map would keep whichever was written last and every finding citing
+     * `C1` would resolve onto that one. One run holds at most one
+     * `document-changes` outcome today, because its writer groups every drafted
+     * section into one, so the collision is currently unreachable. It is a
+     * counter rather than a comment because the thing keeping it unreachable is
+     * a grouping decision in a different file.
+     */
+    let changeHandles = 0
+
+    for (const [index, outcome] of held.entries()) {
+      const handle = `O${index + 1}`
+      outcomeIdByHandle.set(handle, outcome.id)
+
+      /**
+       * The changes under this outcome, looked up BY THE OUTCOME.
+       *
+       * Not `changesets.forContract`, which returns the newest changeset for the
+       * contract. A contract can carry more than one worker run — a re-accept
+       * enqueues another, a stale lease re-claims — and the reviewer is judging
+       * one run's own work. Reading the newest would let it annotate a different
+       * run's changes and then resolve its findings onto their ids, which is a
+       * mis-attribution the person has no way to notice.
+       */
+      const changeset =
+        outcome.kind === 'document-changes'
+          ? await ctx.repos.changesets.forOutcome(outcome.id)
+          : null
+
+      const changes = changeset?.changes.map((change) => {
+        changeHandles += 1
+        const changeHandle = `C${changeHandles}`
+        changeIdByHandle.set(changeHandle, change.id)
+        return {
+          handle: changeHandle,
+          section: sectionTitleFor(change.exact) ?? 'the document',
+          replacement: change.replacement,
+          reason: change.reason,
+        }
+      })
+
+      handles.push({
+        handle,
+        headline: outcome.headline,
+        reason: outcome.reason,
+        summary: outcome.headline,
+        ...(changes === undefined ? {} : { changes }),
+      })
+    }
+
+    const judged = await deps.model.run(reviewBoundary(reviewHandlesFor(handles)), {
       objective: contract.objective,
       definitionOfDone: contract.definitionOfDone,
       guidance: contract.guidance,
-      changes: handles,
+      outcomes: handles,
       // Empty, and see the note above. Not a bug to fix here.
       sourcesRead: [],
     })
 
-    if (!outcome.ok) {
+    if (!judged.ok) {
       await ctx.repos.runs.complete(run.id, 'failed', new Date(deps.now()), 'error')
       return
     }
 
-    const byHandle = new Map(handles.map((h) => [h.handle, h.changeId]))
     const kinds = new Set<string>(FINDING_KINDS)
 
-    const findings = outcome.value.findings
+    const findings = judged.value.findings
       // A kind outside the closed list is dropped rather than stored. The
       // grammar enforces shape only, so `kind` is a free string at the wire and
       // the constraint has to be applied here.
       .filter((finding: { kind: string }) => kinds.has(finding.kind))
-      .map((finding: { changeHandle: string; kind: string; detail: string }) => ({
-        changeId: byHandle.get(finding.changeHandle) ?? null,
-        kind: finding.kind,
-        detail: finding.detail,
-      }))
+      .map((finding: { handle: string; kind: string; detail: string }) => {
+        // At most one of the two is set, and that is a property of the handle
+        // spaces being disjoint rather than a rule applied afterwards. A finding
+        // that resolves to neither is about the run as a whole, which is already
+        // how a null `changeId` behaved.
+        const changeId = changeIdByHandle.get(finding.handle) ?? null
+        return {
+          changeId,
+          outcomeId: changeId === null ? outcomeIdByHandle.get(finding.handle) ?? null : null,
+          kind: finding.kind,
+          detail: finding.detail,
+        }
+      })
 
     await ctx.repos.findings.create({ runId: run.id, findings })
     await ctx.repos.runs.complete(run.id, 'succeeded', new Date(deps.now()))
@@ -303,27 +661,76 @@ async function review(
   }
 }
 
-/** The `## ` heading a change sits under, if the anchor happens to carry one. */
-function sectionTitleFor(exact: string): string | null {
-  const heading = /^#{2,3}\s+(.+)$/m.exec(exact)
-  return heading?.[1]?.trim() ?? null
-}
-
 async function writeReport(
   ctx: AppContext,
   contractId: string,
   stopLabel: string | null,
   decisions: ReadonlyArray<{ question: string; whyItMatters: string }>,
   failureDetail?: string,
+  /**
+   * Productions the outcome writers could not realise.
+   *
+   * Nearly always zero, and it has to be SAID when it is not. The writers count
+   * every drop precisely so the count is evidence that the closed set of kinds
+   * is wrong — and a count returned to a caller that reads only the held ids is
+   * a count nobody has. That is the same shape as the swallowed notification and
+   * the blank report: the software knew something was lost and told no one.
+   *
+   * It is one sentence, not a number on a screen. "Two things it made could not
+   * be kept" is actionable — the person knows to ask. A tally of dropped
+   * productions is an internal metric wearing consumer clothes.
+   */
+  dropped?: number,
+  /**
+   * What the run said when it declared itself finished.
+   *
+   * **This is not boundary 6.** `shiftReportBoundary` narrates a whole Shift
+   * from the ledger, after the fact, and is still unwired — `tests/
+   * reachability.test.ts` asserts that. This is one sentence the worker wrote at
+   * the moment it stopped, in the same call where it declined to continue, and
+   * it is used only where the narrative would OTHERWISE BE NULL: a run that
+   * finished cleanly and hit no stop rule currently produces a blank note, which
+   * is the "the software knew something and told no one" shape this file already
+   * fixes twice above.
+   *
+   * It is model prose about model work and nothing branches on it. When boundary
+   * 6 lands it narrates from the ledger and this stops being read — which is the
+   * right order, because a narrative built from rows can say what happened even
+   * when the run died before it could say anything at all.
+   */
+  finishedSummary?: string,
 ): Promise<void> {
   const existing = await ctx.repos.reports.forContract(contractId)
   if (existing) return
 
+  const lost =
+    dropped === undefined || dropped === 0
+      ? ''
+      : ` ${dropped === 1 ? 'One thing it made' : `${dropped} things it made`} could not be kept, so ${dropped === 1 ? 'it is' : 'they are'} not below.`
+
   await ctx.repos.reports.create({
     contractId,
-    // The narrative boundary fails open. A null narrative is a designed
-    // outcome, not an error — the report renders without it.
-    narrative: failureDetail ? null : stopLabel,
+    /**
+     * A failure has to SAY something, or it is undiagnosable.
+     *
+     * This used `failureDetail` as a boolean and discarded the message. A run
+     * failed in real use, the report said nothing, the ledger held no intents,
+     * and the only copy of the reason was a line in a terminal nobody had kept.
+     * That is the same shape as the blank page and the swallowed notification:
+     * the software knew what went wrong and told no one.
+     *
+     * The narrative boundary still fails open — a null narrative is a designed
+     * outcome. A CRASH is not, and now reads as one.
+     */
+    narrative: failureDetail
+      ? `Propositum stopped before it could finish, and nothing was changed. (${readableCause(failureDetail)})`
+      : stopLabel === null
+        ? finishedSummary === undefined
+          ? lost === ''
+            ? null
+            : lost.trim()
+          : `${finishedSummary}${lost}`
+        : `${stopLabel}${lost}`,
     decisions: decisions.map((d, i) => ({
       question: d.question,
       whyStopped: d.whyItMatters,
@@ -331,32 +738,4 @@ async function writeReport(
       ordinal: i,
     })),
   })
-}
-
-/** Markdown `## ` headings, in order. */
-function sectionsOf(content: string): string[] {
-  return content
-    .split('\n')
-    .filter((l) => /^#{2,3}\s/.test(l.trim()))
-    .map((l) => l.replace(/^#+\s*/, '').trim())
-}
-
-/** Replace a named section's body with new prose, leaving its heading. Appends
- *  when the section does not exist — a worker drafting a section the document
- *  lacks is a planning error the reviewer should see, not something to drop. */
-function replaceSection(content: string, section: string, prose: string): string {
-  const lines = content.split('\n')
-  const start = lines.findIndex((l) => /^#{2,3}\s/.test(l.trim()) && l.replace(/^#+\s*/, '').trim() === section)
-
-  if (start === -1) return `${content.trimEnd()}\n\n## ${section}\n\n${prose}\n`
-
-  let end = lines.length
-  for (let i = start + 1; i < lines.length; i += 1) {
-    if (/^#{2,3}\s/.test(lines[i]!.trim())) {
-      end = i
-      break
-    }
-  }
-
-  return [...lines.slice(0, start + 1), '', prose, '', ...lines.slice(end)].join('\n')
 }

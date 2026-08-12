@@ -23,14 +23,28 @@
  *    text with nobody watching, which is precisely what CONTEXT rules out.
  */
 
-import { notFound } from 'next/navigation'
+import { notFound, redirect } from 'next/navigation'
 
 import { appContext } from '@/server/db'
-import { BackLink, Empty, Masthead, Sheet } from '@/ui/primitives'
+import { splitIntoNewProject } from '@/server/actions'
+import { BackLink, Empty, Masthead, Section, Sheet } from '@/ui/primitives'
 import { TakeOver } from '@/ui/reading'
 import type { ClaimView, EvidenceView, SourceView } from '@/ui/reading'
 
 export const dynamic = 'force-dynamic'
+
+const FILED_CSS = `
+.sn-filed-lede { font-family: var(--serif); font-size: 1.125rem; line-height: 1.45; margin: 0; max-width: 36rem; text-wrap: pretty; }
+.sn-filed-under { margin: 0.6rem 0 0; font-size: 0.875rem; color: var(--muted); max-width: 36rem; }
+.sn-filed-form { display: flex; gap: 0.75rem; flex-wrap: wrap; align-items: flex-end; margin-top: 1.1rem; }
+.sn-filed-field { display: grid; gap: 0.35rem; flex: 1 1 16rem; }
+.sn-filed-label { font-size: 0.6875rem; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+.sn-filed-input { font: inherit; font-size: 0.9375rem; padding: 0.45rem 0.65rem; border: 1px solid var(--rule); background: var(--ground); color: var(--ink); border-radius: 3px; width: 100%; }
+.sn-filed-input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.sn-filed-submit { font: inherit; font-size: 0.8125rem; line-height: 1.4; padding: 0.45rem 0.9rem; border: 1px solid var(--rule); background: var(--ground); color: var(--ink); border-radius: 3px; cursor: pointer; }
+.sn-filed-submit:hover { border-color: var(--accent); }
+.sn-filed-submit:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+`
 
 /* ── times, in the register the prototype set ───────────────────────────── */
 
@@ -95,10 +109,41 @@ function sentenceFor(kind: string, attested: Record<string, unknown>, where: str
 
 export default async function SessionPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ sessionId: string }>
+  searchParams: Promise<Record<string, string | string[] | undefined>>
 }) {
   const { sessionId } = await params
+
+  /**
+   * Propositum decided where this sitting goes. Say so, here, before anything
+   * else on the screen.
+   *
+   * ── Why a merge cannot be silent ─────────────────────────────────────────
+   *
+   * `matchProject` files a sitting under a project that already exists when the
+   * subjects share enough words. That is the whole point of it, and it is also
+   * the one failure the arithmetic calls expensive: the sources of an older
+   * piece of work become approved for this one, the older document is what
+   * Propositum offers to work on, and — worst — nothing says a decision was
+   * taken. Undoing it would mean noticing it first.
+   *
+   * The offer screens state it before the click where they can. This states it
+   * where the person actually lands, which is the only place that covers every
+   * path: a link the extension composed, a race between the offer rendering and
+   * the button being pressed, and anything added later that forgets to ask.
+   *
+   * ── Why the claim is checked against the rows ────────────────────────────
+   *
+   * The parameter only says the accept path believed it joined. The band
+   * renders only if the project really does hold more than this one sitting, so
+   * a stale bookmark or a hand-typed URL cannot make Propositum announce a
+   * decision it never took.
+   */
+  const query = await searchParams
+  const rawFiled = query['filed']
+  const filedAs = typeof rawFiled === 'string' ? rawFiled.trim() : ''
 
   let loaded: Awaited<ReturnType<typeof load>>
   try {
@@ -122,9 +167,68 @@ export default async function SessionPage({
 
   if (loaded === null) notFound()
 
+  const filed = loaded.siblingSittings > 1 && filedAs !== '' ? loaded : null
+
+  async function splitOut(formData: FormData) {
+    'use server'
+
+    const result = await splitIntoNewProject(sessionId, String(formData.get('name') ?? ''))
+    if (!result.ok) {
+      const back = new URLSearchParams({ filed: filedAs, problem: result.problem.message })
+      redirect(`/sessions/${sessionId}?${back.toString()}`)
+    }
+    redirect(`/sessions/${sessionId}`)
+  }
+
+  const rawProblem = query['problem']
+  const problem = typeof rawProblem === 'string' ? rawProblem : null
+
   return (
     <Sheet>
       <BackLink href={`/projects/${loaded.projectId}`}>&larr; {loaded.projectName}</BackLink>
+
+      {filed === null ? null : (
+        <Section title="Propositum filed this for you" tone="attention" index={0}>
+          <style href="propositum-session-filed" precedence="default">
+            {FILED_CSS}
+          </style>
+
+          <p className="sn-filed-lede">
+            You have been here before, so this sitting went under {filed.projectName} rather than
+            somewhere new.
+          </p>
+          <p className="sn-filed-under">
+            That means it carries on with what is already there &mdash; {filed.sources.length}{' '}
+            {filed.sources.length === 1 ? 'approved source' : 'approved sources'}
+            {filed.documentTitle === null ? '' : `, and ${filed.documentTitle}`}. It is{' '}
+            {filed.siblingSittings === 2
+              ? 'the second sitting'
+              : `sitting ${filed.siblingSittings}`}{' '}
+            on it.
+          </p>
+
+          {problem === null ? null : <p className="sn-filed-under">{problem}</p>}
+
+          <form className="sn-filed-form" action={splitOut}>
+            <label className="sn-filed-field">
+              <span className="sn-filed-label">If that is wrong, what is this about?</span>
+              <input
+                className="sn-filed-input"
+                name="name"
+                type="text"
+                required
+                maxLength={120}
+                autoComplete="off"
+                defaultValue={filedAs}
+              />
+            </label>
+            <button className="sn-filed-submit" type="submit">
+              No &mdash; this is new work
+            </button>
+          </form>
+        </Section>
+      )}
+
       <TakeOver
         sessionId={sessionId}
         projectName={loaded.projectName}
@@ -132,7 +236,6 @@ export default async function SessionPage({
         when={loaded.when}
         reading={loaded.reading}
         sources={loaded.sources}
-        documentTitle={loaded.documentTitle}
         shiftContractId={loaded.shiftContractId}
       />
     </Sheet>
@@ -148,7 +251,7 @@ async function load(sessionId: string) {
   if (!session) return null
 
   const project = await repos.projects.byId(session.projectId)
-  const [events, granted, documents, head, shift] = await Promise.all([
+  const [events, granted, documents, head, shift, sittings] = await Promise.all([
     repos.events.bySession(sessionId),
     repos.projects.approvedSources(session.projectId),
     repos.documents.forProject(session.projectId),
@@ -157,6 +260,10 @@ async function load(sessionId: string) {
     // Propositum is away would otherwise strand the person on this screen with
     // no way through to the note they came back for.
     repos.contracts.acceptedForSession(sessionId),
+    // How many sittings this project holds. The only thing that can confirm a
+    // "Propositum filed this under an existing project" claim from the rows
+    // rather than from the URL that made it.
+    repos.sessions.forProject(session.projectId),
   ])
 
   const labelById = new Map(granted.map((source) => [source.id, source.label]))
@@ -229,5 +336,6 @@ async function load(sessionId: string) {
     sources,
     documentTitle: document?.title ?? null,
     shiftContractId: shift?.id ?? null,
+    siblingSittings: sittings.length,
   }
 }

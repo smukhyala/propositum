@@ -61,12 +61,18 @@ collapsed.
 
 ## 5. Draft before acting
 
-Work lands as `ProposedChange`s against an immutable `BaseVersion`. Review produces **decisions,
-never documents** — `materialise(base, changes, decisions)` is a pure fold, so nothing is committed
-by the act of reviewing it.
+Work is **held** and you decide. For a `document-changes` `ShiftOutcome` that means `ProposedChange`s
+against an immutable `BaseVersion`, folded by `materialise(base, changes, decisions)`; for a
+`collection`, an `answer` or a `message-draft` it means `OutcomeProposal`s decided one at a time.
+Review produces **decisions, never documents**, whatever the kind.
 
 **Forbids:** a worker that mutates a `DocumentVersion` · a `Changeset` applied without a
-`ChangeVerdict` · any `DocumentVersion` that exists without a human having authorized it.
+`ChangeVerdict` · any `DocumentVersion` that exists without a human having authorized it · a message
+that is sent by the act of drafting it.
+
+**Honest limit, from 2026-08-11:** one `ShiftOutcomeKind` — `external-effect` — is not held, because
+it already happened. That outcome is **reported and never reviewed**, and the interface must not
+render a verdict control beside it. See principle 9.
 
 ---
 
@@ -80,6 +86,17 @@ counts, temperatures, or token limits · a cost dial the product cannot honour.
 
 **The test for any new control:** name the deterministic check it compiles to. If there isn't one,
 it is theatre — the reason "Suggestions only" became a real permission rather than a display mode.
+
+**Progress, redefined 2026-08-11** ([ADR-0010](./adr/0010-acting-in-the-browser.md)): a **step is the
+interval between two mutating actions**, because an agent that perceives a page and then decides
+cannot be bound by a list written before it looked. `current-step-only` now means *make at most one
+change out there, then come back to me*. The dial still bites — it compiles to a count off the
+ledger rather than to a set of step ids.
+
+**And one thing no dial may ever do:** pre-approve an irreversible action. There is no setting that
+grants one in advance, and there is no free-text field that could be read as one. A model saying
+"this is still the same step" is likewise forbidden, because that is a grant wearing a description's
+clothes.
 
 ---
 
@@ -115,13 +132,30 @@ without it.
 
 ---
 
-## 9. Every change is reversible
+## 9. Every change is reversible **by default**
 
-The base is immutable for the whole review. Nothing Propositum does is hard to undo.
+*(Amended 2026-08-11 — [ADR-0010](./adr/0010-acting-in-the-browser.md). This principle previously
+read "Every change is reversible" and rested on absence of capability. It is the one principle in
+this list that got weaker, and the weakening is stated here rather than in a footnote.)*
+
+The base is immutable for the whole review. An **irreversible** capability may exist only as a
+landing `ActionKind`, which the gate refuses unless the human acknowledged **that action
+individually** — not via a dial — and whose outcome is **reported rather than reviewed**.
 
 **Forbids:** in-place edits · deleting anything the person created · any action outside the
-`ActionKind` enum — capabilities the brief excludes are **absent from the enum entirely** rather
-than denied by a rule. Absence of capability is the strongest prohibition available.
+`ActionKind` enum · **a dial, a default, a timeout, or a model that can approve an irreversible
+action** · a verdict control rendered beside something that already happened.
+
+**Enforced:** irreversibility is decided by what Chrome is about to send, not by a model and not by
+the page; the word list over a button's own label can only escalate; a `ConfirmationVerdict` has no
+`expired` member, so a question that times out produces no permission; the server refuses a verdict
+against a `landed` outcome before it checks anything else.
+
+**Honest limit:** absence of capability was the strongest prohibition available, and a confirmation
+is weaker than an absence — it can be misconfigured, and it can be clicked through. `ActionKind` now
+enumerates mechanisms rather than effects, so `tests/architecture.test.ts` still asserts no
+`sendMessage` function exists, still passes, and no longer means what it was written to mean. This
+is a principle held up by mechanisms now, and mechanisms erode.
 
 ---
 
@@ -154,7 +188,11 @@ Mac sleeps · a confidence band dressed up as certainty · reporting an H1 score
 protocol that produced it.
 
 **Applies to this repo too.** `ReviewFinding` currently has no effect. `unknown` will be the
-routine `ActionStatus` rather than the exception. Both are written down instead of smoothed over.
+routine `ActionStatus` rather than the exception. A person answering a confirmation is sitting at
+their desk under a screen headed *"While you were away"*, because `SessionPhase` has no honest value
+for that moment and keeping `away` is the smaller lie — **and it is still a lie**. The fence
+`CONTEXT.md` describes around a claimed run has never existed in the schema. All four are written
+down instead of smoothed over.
 
 ---
 
@@ -171,5 +209,10 @@ The interface says what a person would say.
 | session state | what I think you're working on |
 | copy, working copy | *(nothing is copied — the `Changeset` is the copy)* |
 | task | *(banned outright)* |
+| approve / authorise (for an irreversible action) | *"Yes, do it"* — the human **confirms** |
+
+**Four verbs, never interchangeable:** the gate **refuses** · the human **rejects** · the model
+**declines** · the human **confirms**. Rejecting is a decision about work already held; confirming is
+permission for something that has not happened and cannot be undone once it has.
 
 Full list in [`CONTEXT.md`](../CONTEXT.md).

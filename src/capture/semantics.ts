@@ -26,7 +26,8 @@ import { cleanUrl, searchTermOf } from './url'
 export { cleanUrl, searchTermOf }
 
 /** Dwell past this, with some scroll, counts as engagement rather than a glance. */
-export const ENGAGEMENT_DWELL_MS = 20_000
+export const ENGAGEMENT_DWELL_MS =
+  process.env['PROPOSITUM_FAST_DETECT'] === '1' ? 3_000 : 20_000
 export const ENGAGEMENT_SCROLL_FRACTION = 0.25
 
 export interface RawNavigation {
@@ -49,6 +50,9 @@ export interface RawEngagement {
   readonly elapsedMs: number
   readonly dwellMs: number
   readonly scrollFraction: number
+  /** Any deliberate act on the page — scroll, click, key, selection. Absent on
+   *  older captures, where scroll alone has to carry it. */
+  readonly interacted?: boolean | undefined
 }
 
 export interface RawSelection {
@@ -76,6 +80,7 @@ export interface SemanticEvent {
  */
 export function createNavigationClassifier() {
   const seen = new Set<string>()
+  const engaged = new Map<string, number>()
 
   return {
     classify(nav: RawNavigation): SemanticEvent {
@@ -113,9 +118,38 @@ export function createNavigationClassifier() {
       }
     },
 
+    /**
+     * The dwell already written down for this page in this sitting, or null.
+     *
+     * This was a `has this page engaged` boolean, and the boolean was wrong in
+     * a way that took a whole feature down with it. Engagement is reported
+     * repeatedly while a page is open and every report carries CUMULATIVE
+     * dwell, so keeping only the first crossing meant `attested.dwellMs` was
+     * frozen at whatever it was twenty seconds in, forever. Everything reading
+     * dwell back off the ledger — `detectPause`, and so the entire hand-off
+     * offer — was reading a number that could not grow past the threshold that
+     * produced it.
+     *
+     * Remembering the VALUE rather than the fact is what lets the adapter ask
+     * "has this grown enough to be worth saying again", which is a question a
+     * boolean cannot answer.
+     */
+    recordedDwell(url: string): number | null {
+      return engaged.get(url) ?? null
+    },
+
+    /** Called only once an engagement event was actually PRODUCED. Marking on
+     *  the query instead would let an early below-threshold report claim the
+     *  page, so the real crossing a minute later would be suppressed and the
+     *  engagement never recorded at all. */
+    markEngaged(url: string, dwellMs: number): void {
+      engaged.set(url, dwellMs)
+    },
+
     /** New session, new memory. */
     reset() {
       seen.clear()
+      engaged.clear()
     },
   }
 }
@@ -124,7 +158,22 @@ export function createNavigationClassifier() {
  *  timeline free of "they glanced at a page" noise. */
 export function classifyEngagement(raw: RawEngagement): SemanticEvent | null {
   if (raw.dwellMs < ENGAGEMENT_DWELL_MS) return null
-  if (raw.scrollFraction < ENGAGEMENT_SCROLL_FRACTION) return null
+
+  /**
+   * Dwell, plus evidence a person was actually there.
+   *
+   * This used to demand a scroll fraction and nothing else, which rejected
+   * every page on a site that scrolls inside a container — `window.scrollY`
+   * stays 0 however far you read. A real session produced ZERO engagement
+   * events across several minutes on a page opened seven times.
+   *
+   * Scrolling was always a proxy for presence, and a poor one: a short page
+   * read fully, or a long one read above the fold, involves no scrolling. Any
+   * deliberate act serves the purpose better, and the purpose is unchanged —
+   * separating reading from a tab left open.
+   */
+  const present = raw.interacted === true || raw.scrollFraction >= ENGAGEMENT_SCROLL_FRACTION
+  if (!present) return null
 
   return {
     kind: 'engaged',

@@ -16,8 +16,10 @@
  * This endpoint is credential-bearing, so it is guarded the same way event
  * submission is, minus the token it exists to supply:
  *
- *   - `Origin` pinned to the extension id. A page's Origin is its own site and
- *     cannot be forged by script.
+ *   - Proof the request was not page-initiated: our `Origin` when Chrome sends
+ *     one, and `Sec-Fetch-Site: none` when it does not. Granting the loopback
+ *     host permission the extension cannot work without makes Chrome drop the
+ *     Origin header entirely — see `fromOurExtension`.
  *   - A custom header, which forces a preflight a hostile page cannot satisfy.
  *     Remember `text/plain` is CORS-safelisted — CORS alone stops nothing here.
  *
@@ -28,17 +30,50 @@
  */
 
 import { NextResponse } from 'next/server'
-import { CUSTOM_HEADER } from '@/capture/transport'
+import { CUSTOM_HEADER, fromOurExtension } from '@/capture/transport'
 import { appContext } from '@/server/db'
-import { captureStore, expectedOrigin } from '@/server/capture-store'
+import { ambientStore, captureStore, expectedOrigin } from '@/server/capture-store'
+import { describeOffer, describePause, describeWork, signatureOf } from '@/server/ambient-store'
+import { nameThread } from '@/server/name-thread'
+import { composeOffer } from '@/server/compose-offer'
+import { AnthropicModelClient } from '@/model/anthropic'
+import { detectPause, detectWork, threadPagesOf } from '@/domain/detection/detect'
+import { groundsFor } from '@/domain/detection/grounds'
+
+/** An origin, or an empty string. Never throws — a malformed stored URL is a
+ *  ledger curiosity, not a reason to fail a poll the extension depends on. */
+function safeOrigin(url: string): string {
+  try {
+    return new URL(url).origin
+  } catch {
+    return ''
+  }
+}
+
+/**
+ * An `ObservationKind` as the detector's smaller vocabulary.
+ *
+ * The two that matter are `engaged` and `switchedAway`; everything else is an
+ * arrival as far as `detectPause` is concerned. Anything unrecognised falls to
+ * `navigation`, which is the conservative end: a new kind would count as
+ * activity and delay a hand-off offer rather than produce one.
+ */
+function ambientKind(kind: string): 'navigation' | 'query' | 'engagement' | 'away' {
+  if (kind === 'engaged') return 'engagement'
+  if (kind === 'switchedAway') return 'away'
+  if (kind === 'queried') return 'query'
+  return 'navigation'
+}
 
 export async function GET(request: Request) {
   if (request.headers.get(CUSTOM_HEADER) !== '1') {
     return NextResponse.json({ ok: false, reason: 'missing-custom-header' }, { status: 403 })
   }
 
-  const origin = request.headers.get('origin')
-  if (origin !== expectedOrigin()) {
+  // The same check event submission uses, from one definition. Chrome sends NO
+  // Origin for a host-permitted loopback fetch, so this accepts either our
+  // origin or a browser-attested non-page caller — see `fromOurExtension`.
+  if (!fromOurExtension((name) => request.headers.get(name) ?? undefined, expectedOrigin())) {
     return NextResponse.json(
       {
         ok: false,
@@ -53,7 +88,87 @@ export async function GET(request: Request) {
   }
 
   const live = captureStore().current()
-  if (!live) return NextResponse.json({ ok: true, session: null })
+
+  /**
+   * No session. Has Propositum noticed work anyway?
+   *
+   * The offer rides on the poll the extension already makes, rather than a
+   * second endpoint on its own timer — one round trip, and the suggestion can
+   * never be staler than the session state it arrives with.
+   *
+   * It is a SUGGESTION. Nothing here starts a session, approves a source or
+   * records anything durable; accepting is a human act on a human's click.
+   */
+  if (!live) {
+    const ambient = ambientStore()
+    const now = Date.now()
+    const observations = ambient.since(now)
+    const detected = detectWork(observations, now)
+
+    if (!detected || ambient.isSnoozed(detected.origins[0] ?? '', now)) {
+      return NextResponse.json({ ok: true, session: null, suggestion: null })
+    }
+
+    const signature = signatureOf(detected.terms)
+
+    // Pin which pages this thread was made of, so accepting later carries the
+    // thread and not everything that happened to be on the same sites. Done
+    // before anything can be returned, because the signature is now the ONLY
+    // thing the accept link carries and a thread nothing was recorded against
+    // approves nothing at all.
+    ambient.rememberThread(signature, detected.urls)
+
+    const named = ambient.nameFor(signature)
+
+    // Naming happens in the BACKGROUND. This poll exists to be cheap, a model
+    // call takes about 15 seconds, and a failure must not take the offer with
+    // it. The deterministic offer goes out now; the next poll carries the name.
+    const apiKey = process.env['ANTHROPIC_API_KEY']
+    if (!named && apiKey) {
+      void nameThread(ambient, new AnthropicModelClient({ apiKey }), detected)
+    }
+
+    const composed = ambient.offerFor(signature)
+
+    /**
+     * Composing needs a CONFIDENT name first.
+     *
+     * The subject boundary runs on titles and produces the two or three words
+     * the offer is about; asking the offer boundary to invent that as well
+     * would be one call doing two jobs.
+     *
+     * `confident: false` means the pages did not agree on a subject, and
+     * `describeWork` already refuses to put an unsure name in a sentence for
+     * exactly that reason. Composing on one would undo that at the next step:
+     * `describeOffer` reads the offer's own `confident` flag, but the SUBJECT
+     * it is about would already be a guess nobody flagged. A hedge that
+     * survives one screen and not the next is not a hedge.
+     *
+     * The second, higher bar — `OfferGrounds.sufficient` — is checked inside
+     * `composeOffer` rather than here, so the one function in the codebase that
+     * can turn observation into a proposal to act carries its own gate. A guard
+     * that lives only in its caller is a guard the next caller will not have.
+     */
+    if (!composed && named?.confident && apiKey) {
+      void composeOffer(ambient, new AnthropicModelClient({ apiKey }), detected, named, now)
+    }
+
+    /**
+     * The full offer when there is one; the degraded form otherwise.
+     *
+     * "Otherwise" covers three ordinary cases and they all matter: the grounds
+     * bar is not met, composing has not finished yet (about fifteen seconds),
+     * or there is no `ANTHROPIC_API_KEY` at all and there never will be one.
+     * The last of those used to be a dead end — the extension linked to a page
+     * that could not render — and it is now simply yesterday's behaviour.
+     */
+    const suggestion =
+      composed && named
+        ? describeOffer(detected, signature, named.subject, composed)
+        : describeWork(detected, signature, named)
+
+    return NextResponse.json({ ok: true, session: null, suggestion })
+  }
 
   const { repos } = await appContext()
   const session = await repos.sessions.byId(live.sessionId)
@@ -61,8 +176,40 @@ export async function GET(request: Request) {
 
   const sources = await repos.projects.approvedSources(session.projectId)
 
+  /**
+   * A session IS running. Is this a natural point to hand over?
+   *
+   * Computed from the session's own ObservationEvents rather than from the
+   * ambient buffer, which is not being fed while a session runs — the ledger
+   * already holds exactly this, and double-recording the same browsing in two
+   * places to save a mapping would be the worse trade.
+   */
+  const events = await repos.events.bySession(live.sessionId)
+  const asAmbient = events.map((event) => {
+    const attested = (event.attested ?? {}) as Record<string, unknown>
+    const url = typeof attested['url'] === 'string' ? attested['url'] : ''
+    const dwell = attested['dwellMs']
+
+    return {
+      at: event.observedAt.getTime(),
+      origin: url === '' ? '' : safeOrigin(url),
+      url,
+      title: typeof attested['title'] === 'string' ? attested['title'] : '',
+      // The kind has to survive the crossing. This flattened everything to
+      // `navigation`, which threw away the one fact `detectPause` needs most:
+      // `switchedAway` is `chrome.idle` saying the person left, and without it
+      // the detector cannot tell an engagement report from a still-open tab
+      // apart from somebody actually being here.
+      kind: ambientKind(event.kind),
+      ...(typeof dwell === 'number' ? { engagedMs: dwell } : {}),
+    }
+  })
+
+  const pause = detectPause(asAmbient, Date.now())
+
   return NextResponse.json({
     ok: true,
+    suggestion: pause === null ? null : describePause(pause),
     session: {
       id: live.sessionId,
       token: live.token,

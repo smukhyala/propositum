@@ -26,7 +26,7 @@ import { createLedgerWriter } from '../src/persistence/ledger-writer'
 import { executeRun } from '../src/server/execute-run'
 import { FakeModelClient } from '../src/model/fake'
 import { fixtureFetcher } from '../src/policy/fetcher'
-import { diff, hashContent } from '../src/domain/document/changeset'
+import { hashContent } from '../src/domain/document/changeset'
 import { normalise } from '../src/domain/document/normalise'
 import type { AppContext } from '../src/server/db'
 
@@ -63,7 +63,20 @@ afterAll(async () => {
   if (dir) rmSync(dir, { recursive: true, force: true })
 })
 
-/** A contract with a changeset already against it — the state the reviewer runs in. */
+/**
+ * An accepted document contract, ready for a run.
+ *
+ * ── It no longer writes the changeset itself ─────────────────────────────
+ *
+ * The reviewer used to run "if there is a changeset", and now runs when the
+ * worker run produced at least one HELD `ShiftOutcome`. That is the same
+ * condition generalised — a document run writes exactly one `document-changes`
+ * outcome with the changeset hanging off it — but it means a changeset written
+ * by hand, belonging to no run, is a state the product can no longer reach.
+ *
+ * So the drafting happens for real, through the worker, and this only sets up
+ * the agreement it happens under.
+ */
 async function shiftWithChanges() {
   const stored = normalise(DOC)
   const document = await repos.documents.create({
@@ -95,33 +108,61 @@ async function shiftWithChanges() {
   })
   await repos.contracts.accept(contract.id, new Date())
 
-  const { changes, baseHash } = diff(
-    stored,
-    DOC.replace('standard terms', 'Gold tier terms'),
-    'Drafted while you were away.',
-  )
-  await repos.changesets.create({
-    contractId: contract.id,
-    baseVersionId: document.versionId,
-    baseHash,
-    changes: changes.map((c) => ({
-      startOffset: c.startOffset,
-      endOffset: c.endOffset,
-      prefix: c.prefix,
-      exact: c.exact,
-      suffix: c.suffix,
-      replacement: c.replacement,
-      reason: c.reason,
-    })),
-  })
-
   return { contractId: contract.id }
 }
 
 /**
+ * A worker that drafts exactly one section, so the run produces one
+ * `document-changes` ShiftOutcome with a real changeset under it.
+ *
+ * This used to be a worker that raised a question and drafted nothing, with the
+ * changeset written into the database by hand beside it. That was the right
+ * shape while "is there a changeset" was the reviewer's trigger and a changeset
+ * could exist without a run having made one. It is the wrong shape now: the
+ * trigger is "did this run produce something a person still decides about", and
+ * a fixture that writes rows the product cannot produce is a fixture that stops
+ * measuring the product.
+ */
+const DRAFTING_WORKER = [
+  {
+    kind: 'ok' as const,
+    value: { steps: [{ intent: 'Draft Commercials.', targetSection: 'Commercials' }] },
+  },
+  {
+    kind: 'ok' as const,
+    value: {
+      kind: 'draft-section',
+      reason: 'Commercials needs a tier named.',
+      targetSection: 'Commercials',
+      prose: 'We propose a partnership on Gold tier terms.',
+    },
+  },
+  /**
+   * The third terminal, and it is now how a run ENDS.
+   *
+   * The plan used to be the turn budget: one step, one turn, and the loop
+   * stopped when the list ran out. ADR-0010 §6 demoted the plan to reporting, so
+   * under `use-judgment` a run keeps deciding what to do next until it stops
+   * itself, hits a stop rule, or reaches `MAX_ACTIONS_PER_RUN`. A fixture that
+   * simply stopped scripting replies was relying on the plan to end the run, and
+   * that is exactly the thing that no longer authorizes anything.
+   *
+   * `kind` is still required by the schema and is ignored on this arm — the
+   * same shape `decisionNeeded` already had.
+   */
+  {
+    kind: 'ok' as const,
+    value: {
+      kind: 'read-document',
+      reason: 'Commercials names a tier now.',
+      done: { summary: 'I drafted Commercials and named the Gold tier.' },
+    },
+  },
+]
+
+/**
  * A worker that plans one step and then raises a question, so it terminates
- * cleanly without drafting. The changeset under review is written by the test
- * directly — this keeps the worker out of what is being measured.
+ * cleanly having produced nothing at all.
  */
 const QUIET_WORKER = [
   { kind: 'ok' as const, value: { steps: [{ intent: 'Decide the tier.' }] } },
@@ -136,6 +177,14 @@ const QUIET_WORKER = [
       },
     },
   },
+  {
+    kind: 'ok' as const,
+    value: {
+      kind: 'read-document',
+      reason: 'The question is out with them; there is nothing further I can do.',
+      done: { summary: 'I stopped on the tier question.' },
+    },
+  },
 ]
 
 async function runWith(replies: ReadonlyArray<unknown>, contractId: string) {
@@ -145,6 +194,11 @@ async function runWith(replies: ReadonlyArray<unknown>, contractId: string) {
     ctx,
     model: new FakeModelClient(replies as never),
     fetcher: fixtureFetcher({}),
+    // The claim fence, which `executeRun` now requires. These tests do not
+    // exercise a stale claim, so it always says proceed — spelled out rather
+    // than defaulted, because a fence that defaults to "carry on" is the exact
+    // thing the required dep exists to prevent.
+    fence: { check: async () => ({ proceed: true as const }) },
     now: () => Date.now(),
   })
   return run.id
@@ -156,12 +210,12 @@ describe('the second pass runs and is recorded', () => {
 
     await runWith(
       [
-        ...QUIET_WORKER,
+        ...DRAFTING_WORKER,
         {
           kind: 'ok' as const,
           value: {
             findings: [
-              { changeHandle: 'C1', kind: 'unsupported', detail: 'Nothing read says Gold is the right tier.' },
+              { handle: 'C1', kind: 'unsupported', detail: 'Nothing read says Gold is the right tier.' },
             ],
           },
         },
@@ -181,7 +235,7 @@ describe('the second pass runs and is recorded', () => {
 
   it('records the reviewer as its own run, not folded into the worker', async () => {
     const { contractId } = await shiftWithChanges()
-    await runWith([...QUIET_WORKER, { kind: 'ok' as const, value: { findings: [] } }], contractId)
+    await runWith([...DRAFTING_WORKER, { kind: 'ok' as const, value: { findings: [] } }], contractId)
 
     const runs = await db.prisma.agentRun.findMany({
       where: { contractId },
@@ -198,13 +252,13 @@ describe('the second pass runs and is recorded', () => {
 
     await runWith(
       [
-        ...QUIET_WORKER,
+        ...DRAFTING_WORKER,
         {
           kind: 'ok' as const,
           value: {
             findings: [
-              { changeHandle: 'C1', kind: 'made-up-kind', detail: 'Should not be stored.' },
-              { changeHandle: 'C1', kind: 'unclear', detail: 'Which quarter?' },
+              { handle: 'C1', kind: 'made-up-kind', detail: 'Should not be stored.' },
+              { handle: 'C1', kind: 'unclear', detail: 'Which quarter?' },
             ],
           },
         },
@@ -221,7 +275,7 @@ describe('the second pass runs and is recorded', () => {
 
   it('an empty finding list is a good outcome, not a failure', async () => {
     const { contractId } = await shiftWithChanges()
-    await runWith([...QUIET_WORKER, { kind: 'ok' as const, value: { findings: [] } }], contractId)
+    await runWith([...DRAFTING_WORKER, { kind: 'ok' as const, value: { findings: [] } }], contractId)
 
     const changeset = await repos.changesets.forContract(contractId)
     if (!changeset) throw new Error('no changeset')
@@ -237,7 +291,7 @@ describe('the reviewer cannot take the note down — acceptance bullet 9', () =>
     const { contractId } = await shiftWithChanges()
 
     // No scripted reply for `review`, so FakeModelClient throws on that call.
-    await runWith(QUIET_WORKER, contractId)
+    await runWith(DRAFTING_WORKER, contractId)
 
     const report = await repos.reports.forContract(contractId)
 
@@ -250,7 +304,7 @@ describe('the reviewer cannot take the note down — acceptance bullet 9', () =>
     if (!contract) throw new Error('no contract')
 
     await repos.sessions.markAway(contract.sessionId)
-    await runWith(QUIET_WORKER, contractId)
+    await runWith(DRAFTING_WORKER, contractId)
 
     const session = await repos.sessions.byId(contract.sessionId)
     expect(session?.phase).toBe('observing')
@@ -258,7 +312,7 @@ describe('the reviewer cannot take the note down — acceptance bullet 9', () =>
 })
 
 describe('the reviewer runs only when there is something to review', () => {
-  it('no changeset means no reviewer run at all', async () => {
+  it('a run that produced nothing gets no reviewer run at all', async () => {
     // A `suggestions-only` shift, or one that stopped before drafting.
     const stored = normalise(DOC)
     const document = await repos.documents.create({

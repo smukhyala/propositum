@@ -64,6 +64,7 @@ model WorkSession {
   events    ObservationEvent[]
   readings  SessionReading[]
   contracts HandoffContract[]
+  offer     WorkOffer?
 
   @@index([projectId])
   @@map("work_session")
@@ -195,6 +196,71 @@ model Evidence {
 
 // ═══════════════════════════════════════════════════════════ 3. Handoff
 
+/// INSERT-ONLY, and written ONLY on acceptance.
+///
+/// What Propositum offered to do, once the person said yes. Before that a
+/// WorkOffer lives in the in-memory ambient store and dies with the process,
+/// which is the same rule ADR-0008 applies to ambient observations and for the
+/// same reason: a durable row saying "Propositum thought you were job-hunting"
+/// for an offer NOBODY ACCEPTED is exactly the profile the ambient buffer
+/// refuses to become. Declining must cost nothing and leave nothing, or the
+/// honest thing to do with the feature is turn it off.
+///
+/// ── It grants nothing ────────────────────────────────────────────────────
+///
+/// This is the load-bearing property, and it is worth being blunt about
+/// because the model wrote most of the row. `title`, `rationale`, `outline`,
+/// `produces` and `excludes` are PROSE. Nothing reads them to decide anything.
+/// The only field that reaches a scope decision is `originPatterns`, and that
+/// is CODE-DERIVED from the pages the detected thread actually ran through —
+/// never model-authored, never widened by anything the model said. So the worst
+/// a compromised or confused offer can do is describe work badly; it cannot
+/// describe its way into a source the person never visited.
+model WorkOffer {
+  id              String   @id @default(cuid())
+  /// The session accepting the offer started. Unique — one offer per session,
+  /// because accepting is what creates the session.
+  sessionId       String   @unique
+  /// The detected thread this offer was composed for, keyed the same way the
+  /// ambient store keys it. Ties the durable row back to the deterministic
+  /// detection that preceded it.
+  threadSignature String
+  promptVersion   String
+  /// Model-authored, DISPLAY-ONLY.
+  title           String
+  rationale       String
+  /// OfferOutline — ordered one-line intentions, so the person can see the
+  /// SHAPE of what was offered before agreeing to it.
+  ///
+  /// DISPLAY ONLY. These are never turned into PlanSteps and are never binding
+  /// on the plan. The temptation to bind them is strong and wrong: the outline
+  /// is written before any planning happens, from titles and search terms
+  /// alone, and a plan pinned to it would be a plan pinned to a guess made with
+  /// the least information anyone will ever have about the work.
+  outline         Json
+  produces        String
+  excludes        Json
+  /// ContractScope material, CODE-DERIVED from the pages the thread ran
+  /// through. NEVER model-authored — see the header.
+  originPatterns  Json
+  /// ShiftOutcomeKind[]. Coerced in code against the closed set; a kind the
+  /// model invented is dropped, not stored.
+  expectedKinds   Json
+  /// OfferGrounds — what the detector saw, frozen at acceptance.
+  ///
+  /// Frozen rather than recomputed, because the ambient buffer it came from is
+  /// bounded by a 30-minute window and a 500-row cap and will not contain the
+  /// answer an hour later. Without this the shift report can say what was done
+  /// and not WHY IT WAS ASKED, and "why did it offer me this" is the question a
+  /// person asks first when an offer was wrong.
+  grounds         Json
+  createdAt       DateTime @default(now())
+
+  session WorkSession @relation(fields: [sessionId], references: [id])
+
+  @@map("work_offer")
+}
+
 /// The persisted, human-ratified agreement governing exactly one autonomous
 /// continuation. No AgentRun may start from an unaccepted contract, and NOTHING
 /// in the controls can switch off human ratification.
@@ -223,7 +289,24 @@ model HandoffContract {
   approvedSourceIds  Json
   /// ActionKind[]: read-approved-source | read-document | draft-section
   allowedActionKinds Json
-  baseVersionId      String
+  /// NULLABLE. A run no longer necessarily has a document.
+  ///
+  /// This column was required because every Shift was a document Shift: the
+  /// worker drafted prose, deterministic code diffed it against a pinned base,
+  /// and the base was the whole point. Once a Shift can act in a browser and
+  /// produce an answer, a collection or a message draft, pinning a
+  /// DocumentVersion is no longer something every contract can honestly do —
+  /// and a required column would force the person to invent a document so the
+  /// schema would let them hand work over.
+  ///
+  /// NULL means "this Shift pins no document", not "we forgot to pin one". The
+  /// consequence is deliberate and lives in the gate rather than here: with no
+  /// base pinned there is nothing for `read-document` or `draft-section` to
+  /// address, so those refuse rather than guess. Everything that already
+  /// depends on an immutable base — refuse-on-drift, the settled-once foreign
+  /// key, offsets into the base — is untouched, because it only ever runs on
+  /// the branch where a base exists.
+  baseVersionId      String?
 
   /// AutonomyControls. Absent from every model-facing schema; defaults are
   /// static product constants, never model-proposed.
@@ -240,9 +323,9 @@ model HandoffContract {
   /// a 30-minute budget is about $2, so latency binds and cost never does.
   timeLimitMinutes Int
 
-  session     WorkSession     @relation(fields: [sessionId], references: [id])
-  reading     SessionReading  @relation(fields: [readingId], references: [id])
-  baseVersion DocumentVersion @relation(fields: [baseVersionId], references: [id])
+  session     WorkSession      @relation(fields: [sessionId], references: [id])
+  reading     SessionReading   @relation(fields: [readingId], references: [id])
+  baseVersion DocumentVersion? @relation(fields: [baseVersionId], references: [id])
   runs        AgentRun[]
   changesets  Changeset[]
   report      ShiftReport?
@@ -264,7 +347,16 @@ model AgentRun {
   contractId     String
   /// worker | reviewer
   role           String
-  /// pending | claimed | running | succeeded | failed | interrupted
+  /// pending | claimed | running | succeeded | failed | interrupted |
+  /// awaiting-confirmation.
+  ///
+  /// `awaiting-confirmation` is terminal FOR THIS RUN and is not a failure. The
+  /// gate refused an action that needs the person, the run wrote a
+  /// ConfirmationRequest and stopped; if the person confirms, a SUCCESSOR run
+  /// carrying `resumesRunId` continues from there. That is why it is a status
+  /// and not a flag: a paused run that still holds a lease would either be
+  /// reaped by the sweep while the person was reading the request, or would
+  /// hold a claim for as long as they took to answer, which may be overnight.
   status         String    @default("pending")
   /// lease-expired | budget-exhausted | stop-condition | cancelled | error
   terminalReason String?
@@ -277,11 +369,47 @@ model AgentRun {
   /// Monotonic high-water mark, so PlanSteps stay immutable.
   progressStep   Int       @default(0)
 
-  contract HandoffContract   @relation(fields: [contractId], references: [id])
-  steps    PlanStep[]
-  intents  ActionIntent[]
-  calls    ModelCallRecord[]
-  findings ReviewFinding[]
+  /// The secret this run must present to drive the browser control channel.
+  /// Nullable because only a run that acts in Chrome needs one, and a run that
+  /// does not should not be issued a credential it cannot use. It is not an
+  /// authorization: the gate still decides every action. It only answers "is
+  /// this the run the extension agreed to take instructions from", which
+  /// matters because the channel's other end is a browser extension that any
+  /// page in the browser shares a process boundary with.
+  controlToken    String?
+  /// The person asked this run to stop. Deterministic code reads it at action
+  /// boundaries and halts; nothing here cancels anything by itself.
+  ///
+  /// NOTE, and this is the uncomfortable part: `cancelRequested` and
+  /// `claimedBy` are BOTH described in CONTEXT.md — §4 says in as many words
+  /// that "every action boundary re-reads `status` and `claimedBy`; a Runner
+  /// that no longer holds the claim aborts without writing" — and NEITHER HAS
+  /// EVER EXISTED IN THIS SCHEMA. The fence CONTEXT describes has never been
+  /// real. It did not matter much while the worst a stale run could do was
+  /// append a draft nobody asked for to a document under review. A
+  /// browser-driving run is the first run where a stale claim can press a
+  /// button on a live page, so the columns arrive here rather than staying a
+  /// paragraph.
+  cancelRequested Boolean @default(false)
+  /// Which process holds the claim. See the note on `cancelRequested`: this is
+  /// the other half of a fence CONTEXT.md has always documented and the
+  /// database has never had.
+  claimedBy       String?
+  /// The run this one continues, set when a ConfirmationRequest was confirmed
+  /// and the work picked up where it stopped. Deliberately a plain id and not a
+  /// self-relation: this is provenance for the report to read, not a graph
+  /// anything traverses, and a self-relation would invite one.
+  resumesRunId    String?
+
+  contract      HandoffContract       @relation(fields: [contractId], references: [id])
+  steps         PlanStep[]
+  intents       ActionIntent[]
+  calls         ModelCallRecord[]
+  findings      ReviewFinding[]
+  outcomes      ShiftOutcome[]
+  confirmations ConfirmationRequest[]
+  evidence      ActionEvidence[]
+  dispatches    ActionDispatch[]
 
   @@index([status, createdAt])
   @@index([contractId])
@@ -315,21 +443,39 @@ model ActionIntent {
   runId       String
   stepId      String?
   seq         Int
-  /// ActionKind: read-approved-source | read-document | draft-section
+  /// ActionKind. The closed set lives in src/domain/handoff/policy.ts and is
+  /// nine wide since the browser capabilities landed:
+  ///   read-approved-source | read-document | draft-section
+  ///   observe-page | navigate | click-element | type-text | press-key
+  ///   capture-screen
+  ///
+  /// Rows written before that are still valid and still carry one of the first
+  /// three — this column is append-only and describes what was proposed at the
+  /// time, not what the enum holds today.
   kind        String
   /// Why the worker proposed this. Exists BEFORE the action runs.
   reason      String
   params      Json
   authorized  Boolean
-  /// Set only when authorized=false. Deterministic rule id, never prose:
-  /// e.g. source_not_approved, action_kind_not_allowed, budget_exhausted,
-  /// unknown_action_kind.
+  /// Set only when authorized=false. Deterministic rule id, never prose. The
+  /// closed set is `RefusalRule` in src/policy/gate.ts — seventeen of them
+  /// since the gate learned to drive a browser. Examples across the range:
+  /// source_not_approved, action_kind_not_allowed, budget_exhausted,
+  /// unknown_action_kind, stale_snapshot, confirmation_required,
+  /// no_document_pinned, password_field.
+  ///
+  /// `confirmation_required` is the one worth knowing about when reading a
+  /// ledger: it is not a failure, it is the gate stopping to ask the person,
+  /// and a later intent in the same Shift carries the same proposal allowed.
   refusedRule String?
   createdAt   DateTime @default(now())
 
-  run     AgentRun       @relation(fields: [runId], references: [id])
-  step    PlanStep?      @relation(fields: [stepId], references: [id])
-  outcome ActionOutcome?
+  run          AgentRun             @relation(fields: [runId], references: [id])
+  step         PlanStep?            @relation(fields: [stepId], references: [id])
+  outcome      ActionOutcome?
+  confirmation ConfirmationRequest?
+  dispatch     ActionDispatch?
+  evidence     ActionEvidence[]
 
   @@unique([runId, seq])
   @@index([runId, authorized])
@@ -352,6 +498,21 @@ model ActionOutcome {
   detail       String?
   /// For draft-section actions only.
   draftText    String?
+  /// Who observed this result. NULL = the authorising run saw it itself.
+  /// `recovery` = a bounded startup sweep recorded it afterwards, and may only
+  /// write what it can prove by hash — it may never infer.
+  ///
+  /// CONTEXT.md §4 has specified this field since the vocabulary was written
+  /// and the schema has never carried it, which left the `unknown` ActionStatus
+  /// — authorized, zero outcomes — indistinguishable from a run that genuinely
+  /// did nothing. Its first writer is the recovery sweep, and that is the whole
+  /// point of adding it now: today a run that dies between the effect and the
+  /// outcome write leaves a trailing `unknown` forever, and under the standing
+  /// "a local worker stops when the Mac sleeps" constraint that is ROUTINE, not
+  /// an edge case. The sweep converts a reporting gap into a recorded fact —
+  /// `observedBy = 'recovery'` with `scopeVerdict = 'unverified'`, which reads
+  /// as "an effect landed and no check ran" rather than as reassurance.
+  observedBy   String?
   createdAt    DateTime @default(now())
 
   intent ActionIntent @relation(fields: [intentId], references: [id])
@@ -383,6 +544,241 @@ model ModelCallRecord {
 
   @@index([runId])
   @@map("model_call_record")
+}
+
+// ══════════════════════════════════ 4b. Acting in the browser, and its result
+//
+// Everything below is new with the computer-use path, and one property is
+// shared by all of it: the models here point at `agent_run` and `action_intent`
+// with declared relations, not with loose ids. ADR-0003's provenance walk turns
+// on the sentence "every hop is a foreign key", and a screenshot or a dispatch
+// carrying a runId the database does not check is a hop that can rot silently.
+// The one place an id is deliberately NOT a foreign key is
+// `ShiftOutcome.citedActionIntentIds`, which is a set rather than a link and is
+// validated in code against the run's own completed intents — see there.
+
+/// INSERT-ONLY. One thing a Shift produced.
+///
+/// This is the run's RESULT, and putting it here rather than under documents is
+/// the point of the model. The document path — Changeset, ProposedChange,
+/// ChangeVerdict — was never wrong, it was just the ONLY thing a Shift could
+/// end with, so it became the spine by default. It is now ONE KIND AMONG FIVE.
+/// A Shift that read three pages and answered a question produced something
+/// real, and before this table the only way to say so was to write it into a
+/// document nobody asked for.
+model ShiftOutcome {
+  id                   String   @id @default(cuid())
+  runId                String
+  ordinal              Int
+  /// ShiftOutcomeKind: document-changes | collection | answer | message-draft |
+  /// external-effect.
+  ///
+  /// CLOSED and CODE-OWNED. Deterministic code decides the kind; a worker
+  /// returns a shape and code reads the shape. There is deliberately NO
+  /// `other` — the same rule as ObservationKind, and for the same reason: an
+  /// escape hatch turns a closed set into an open one on the first awkward
+  /// case, and then nothing downstream can render a kind it has never seen. A
+  /// production matching no kind is DROPPED AND COUNTED, because the count is
+  /// the evidence that the set is wrong, and a silent drop is not.
+  kind                 String
+  /// Reversibility: held | landed. CODE-ASSIGNED, never model-assigned.
+  ///
+  /// `held` means Propositum is still holding the thing and the person's accept
+  /// or reject decides its fate. `landed` means the effect is ALREADY OUTSIDE
+  /// PROPOSITUM — a form was submitted, a message was sent, a booking exists.
+  /// There is no verdict to offer on a landed outcome and the UI must not
+  /// pretend there is: an Accept/Reject pair over something that already
+  /// happened is a lie about what the buttons do, and it is exactly the lie
+  /// that makes a person stop reading them.
+  reversibility        String
+  /// Model-authored prose, display-only.
+  headline             String
+  /// Why this was produced.
+  ///
+  /// Denormalised on purpose. The one-minute re-entry list has to render
+  /// without touching the ledger, and — the stronger half of the argument — the
+  /// reason must SURVIVE REJECTION. This is the same argument as
+  /// ProposedChange.reason: after the person rejects an outcome, "what was it
+  /// trying to do" is the only question left worth answering, and a reason
+  /// assembled by joining live rows is a reason that changes shape depending on
+  /// what else was cleaned up.
+  reason               String
+  /// The completed ActionIntents this outcome rests on, validated against THIS
+  /// RUN'S OWN completed intents. An id not among them is dropped.
+  ///
+  /// A Json set rather than a join table, because it closes the provenance
+  /// chain as A JOIN, NOT A CLAIM: nothing here is trusted, the ids are checked
+  /// against rows the gate already authorised, and what survives is
+  /// intersection rather than assertion. A join table would add a second place
+  /// for the same fact to disagree with itself.
+  citedActionIntentIds Json
+  /// Kind-shaped payload, canonical JSON.
+  ///
+  /// NEVER document bodies. A `document-changes` outcome points at a Changeset
+  /// instead, so the immutable-base machinery stays the single owner of
+  /// document text and this column cannot become a second, unversioned copy of
+  /// it that drifts.
+  detail               Json
+  createdAt            DateTime @default(now())
+
+  run       AgentRun        @relation(fields: [runId], references: [id])
+  verdict   OutcomeVerdict?
+  changeset Changeset?
+  findings  ReviewFinding[]
+
+  @@unique([runId, ordinal])
+  @@map("shift_outcome")
+}
+
+/// APPEND-ONLY. The human's decision on one non-document ShiftOutcome.
+///
+/// A SIBLING of ChangeVerdict, not a replacement. Merging them was considered
+/// and is worse: a ChangeVerdict addresses a ProposedChange at character
+/// offsets into an immutable base and feeds a pure fold, while this addresses a
+/// whole production and feeds nothing. One table would need a nullable half for
+/// each case and a discriminator that only ever has one right answer, and the
+/// review fold — the code that must stay obviously correct — would have to
+/// filter rows that cannot possibly apply to it.
+model OutcomeVerdict {
+  id         String   @id @default(cuid())
+  outcomeId  String   @unique
+  /// accept | reject | edit
+  verdict    String
+  /// Set only when verdict = edit.
+  editedText String?
+  createdAt  DateTime @default(now())
+
+  shiftOutcome ShiftOutcome @relation(fields: [outcomeId], references: [id])
+
+  @@map("outcome_verdict")
+}
+
+/// APPEND-ONLY. The gate determined this action needs the person.
+///
+/// NOT a DecisionNeeded, and the difference is the whole reason this is a
+/// separate table. A DecisionNeeded is the WORKER DECLINING a judgment call: it
+/// is model-raised, it is a question about the work, and the Interruption dial
+/// can suppress it — `stop-only-when-blocked` exists precisely so a person can
+/// say "don't ask me about every wording choice". This is deterministic. Code
+/// looked at an authorised action, saw an effect that leaves Propositum, and
+/// refused to take it without a human. NO DIAL CAN SWITCH IT OFF, because a
+/// control that could would be a control that turns off human ratification, and
+/// nothing in the controls may do that.
+model ConfirmationRequest {
+  id         String   @id @default(cuid())
+  runId      String
+  /// The REFUSED intent that produced this. Unique: one intent, one request.
+  intentId   String   @unique
+  /// CODE-GENERATED from attested facts — the browser-attested URL, the action
+  /// kind, the element the gate matched. NEVER model prose. The person is being
+  /// asked to authorise a specific effect, and a sentence the model wrote about
+  /// what it intends is not evidence of what will happen.
+  summary    String
+  /// The ActionEvidence the person should look at while deciding — usually the
+  /// snapshot of the page the action would land on.
+  evidenceId String?
+  createdAt  DateTime @default(now())
+
+  run      AgentRun             @relation(fields: [runId], references: [id])
+  intent   ActionIntent         @relation(fields: [intentId], references: [id])
+  evidence ActionEvidence?      @relation(fields: [evidenceId], references: [id])
+  verdict  ConfirmationVerdict?
+
+  @@index([runId])
+  @@map("confirmation_request")
+}
+
+/// APPEND-ONLY. Only a human writes one.
+///
+/// No model, no worker run and no reviewer run may. That is not enforceable by
+/// a column — the database cannot see who is holding the keyboard — so it is
+/// enforced by there being exactly one writer, in the app process, on a request
+/// the person is looking at. Saying it here is the point: the next person to
+/// need a confirmation resolved from inside a run must change this comment
+/// before they can change the rule.
+model ConfirmationVerdict {
+  id        String   @id @default(cuid())
+  requestId String   @unique
+  /// confirmed | rejected
+  verdict   String
+  decidedAt DateTime @default(now())
+
+  request ConfirmationRequest @relation(fields: [requestId], references: [id])
+
+  @@map("confirmation_verdict")
+}
+
+/// APPEND-ONLY. What the agent saw while acting under a ratified contract.
+///
+/// DISJOINT FROM ObservationEvent, and this is a standing rule rather than a
+/// tidiness preference. ObservationEvent is what Propositum retains about THE
+/// PERSON'S OWN BROWSING, and the published retention promise is a product
+/// constant: title, cleaned URL, deliberate selections verbatim, and at most
+/// 2,000 characters of readable text per approved source. An agent driving a
+/// browser must capture whole accessibility trees and screenshots to act at
+/// all. Those two things cannot share a table without one of them becoming a
+/// lie — and it would be the promise that broke, quietly, the first time a
+/// screenshot landed in the ledger the person reads.
+model ActionEvidence {
+  id        String   @id @default(cuid())
+  runId     String
+  intentId  String?
+  /// page-snapshot | screen-capture
+  kind      String
+  /// Browser-attested. Chrome said this is where the tab is; the page did not.
+  url       String
+  /// UntrustedContent — page-authored, so sanitised, bounded, and NEVER
+  /// interpolated raw into a prompt. Carried structurally, exactly as
+  /// ObservationEvent.untrusted is, so the trust boundary is a shape and not a
+  /// habit.
+  untrusted Json?
+  image     Bytes?
+  /// Whether the capture was cut short of what the page actually held. A
+  /// truncated tree that reads as complete is how an agent concludes a button
+  /// does not exist.
+  truncated Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  run      AgentRun              @relation(fields: [runId], references: [id])
+  intent   ActionIntent?         @relation(fields: [intentId], references: [id])
+  requests ConfirmationRequest[]
+
+  @@index([runId])
+  @@map("action_evidence")
+}
+
+/// MUTABLE BY DESIGN. One instruction handed to the browser control channel.
+///
+/// This is the claim target for the channel, exactly the role AgentRun plays
+/// for runs, and for the same reason: the queue is a status column and one
+/// guarded conditional UPDATE, not new infrastructure. It is deliberately NOT
+/// append-only — a claim is by definition a mutation, and pretending otherwise
+/// would mean a second table to hold the mutable half.
+///
+/// The ledger consequence is worth stating: this row is not evidence. The
+/// append-only record of what was attempted is the ActionIntent, written and
+/// committed before this row exists. A dispatch that is delivered twice, lost,
+/// or abandoned changes nothing about what the audit trail says was authorised.
+model ActionDispatch {
+  id          String    @id @default(cuid())
+  runId       String
+  /// IDEMPOTENCY KEY. One authorised intent yields at most one dispatch, so a
+  /// worker retry after a transport error cannot double-deliver — which for a
+  /// browser action means clicking twice.
+  intentId    String    @unique
+  kind        String
+  params      Json
+  /// queued | delivered | reported | abandoned
+  status      String    @default("queued")
+  createdAt   DateTime  @default(now())
+  deliveredAt DateTime?
+  reportedAt  DateTime?
+
+  run    AgentRun     @relation(fields: [runId], references: [id])
+  intent ActionIntent @relation(fields: [intentId], references: [id])
+
+  @@index([runId, status])
+  @@map("action_dispatch")
 }
 
 // ══════════════════════════════════════════════ 5. Documents and review
@@ -449,14 +845,26 @@ model Changeset {
   /// Re-checked at review time. If the base moved, the whole changeset is
   /// refused rather than merged — the human's own edit always wins.
   baseHash      String
+  /// The `document-changes` ShiftOutcome this changeset is the body of.
+  ///
+  /// Nullable, and `contractId` STAYS. It would be tidy to reparent the
+  /// changeset onto the outcome and drop the contract link, and it would break
+  /// two things that already work: `changesets.forContract` is how the review
+  /// screen finds the changes, and the settled-once unique foreign key from
+  /// DocumentVersion depends on nothing about this row moving. A document Shift
+  /// that produces no ShiftOutcome — every one that has ever run — must keep
+  /// working unchanged, so this is a link the outcome path adds, not a spine
+  /// the document path is rehomed onto.
+  outcomeId     String?  @unique
   createdAt     DateTime @default(now())
 
-  contract  HandoffContract  @relation(fields: [contractId], references: [id])
-  base      DocumentVersion  @relation(fields: [baseVersionId], references: [id])
-  changes   ProposedChange[]
+  contract     HandoffContract  @relation(fields: [contractId], references: [id])
+  base         DocumentVersion  @relation(fields: [baseVersionId], references: [id])
+  shiftOutcome ShiftOutcome?    @relation(fields: [outcomeId], references: [id])
+  changes      ProposedChange[]
   /// Present once the person finished the review and the kept changes became a
   /// new version. Its absence is what "still open" means.
-  settledAs DocumentVersion? @relation("settled")
+  settledAs    DocumentVersion? @relation("settled")
 
   @@index([contractId])
   @@map("changeset")
@@ -513,15 +921,27 @@ model ChangeVerdict {
 /// The reviewer is close to decorative in slice 0; the brief mandates it, and
 /// whether it earns its place is a measured question, not an assumed answer.
 model ReviewFinding {
-  id       String  @id @default(cuid())
-  runId    String
-  changeId String?
+  id        String  @id @default(cuid())
+  runId     String
+  changeId  String?
+  /// The non-document production this finding annotates. AT MOST ONE of
+  /// `changeId` and `outcomeId` is set; a finding about the run as a whole sets
+  /// neither, which is already how `changeId` behaves.
+  ///
+  /// Two nullable foreign keys where a polymorphic target would be tempting.
+  /// They cost nothing here precisely BECAUSE a finding is display-only: it
+  /// cannot block a change, fail a run or alter a verdict, so nothing has to
+  /// resolve the target to decide anything. The moment a finding gained teeth
+  /// this shape would need revisiting — and that is the argument for keeping it
+  /// toothless, not for generalising the column.
+  outcomeId String?
   /// unsupported | outside-agreement | unclear | contradicts-source
-  kind     String
-  detail   String
+  kind      String
+  detail    String
 
-  run    AgentRun        @relation(fields: [runId], references: [id])
-  change ProposedChange? @relation(fields: [changeId], references: [id])
+  run          AgentRun        @relation(fields: [runId], references: [id])
+  change       ProposedChange? @relation(fields: [changeId], references: [id])
+  shiftOutcome ShiftOutcome?   @relation(fields: [outcomeId], references: [id])
 
   @@index([runId])
   @@map("review_finding")

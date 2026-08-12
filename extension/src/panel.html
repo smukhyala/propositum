@@ -19,6 +19,14 @@
   button { font: inherit; font-size: 12px; padding: 0.3rem 0.7rem; border-radius: 3px; border: 1px solid currentColor; background: transparent; color: inherit; cursor: pointer; white-space: nowrap; }
   button:hover { opacity: 0.75; }
   .why { font-size: 12px; opacity: 0.65; margin-top: 1rem; }
+  #offer { border: 1px solid rgba(124,108,240,0.5); border-radius: 4px; padding: 0.9rem; margin-bottom: 1.25rem; }
+  #offer h2 { margin-top: 0; }
+  #offer-what { font-size: 15px; margin-bottom: 0.35rem; }
+  .offer-acts { display: flex; gap: 0.5rem; margin-top: 0.75rem; }
+  #offer-yes { border-color: #7c6cf0; }
+  #acting { border: 1px solid rgba(124,108,240,0.5); border-radius: 4px; padding: 0.9rem; margin-bottom: 1.25rem; }
+  #acting h2 { margin-top: 0; }
+  #acting-stop { border-color: #7c6cf0; margin-top: 0.6rem; }
 </style>
 
 <h1>Propositum</h1>
@@ -26,6 +34,35 @@
 <p class="off" id="warning" hidden>
   Can’t reach the app — capture is off. Nothing is being recorded.
 </p>
+
+<!--
+  Layer three of the working-here indicator, and the one you find rather than
+  the one that finds you.
+
+  Chrome's own attachment bar is unsuppressible but browser-scoped and written
+  in developer vocabulary; the chip in the tab is legible but only visible if
+  you are looking at that tab. This is what answers "is Propositum doing
+  something right now" from anywhere in Chrome.
+-->
+<div id="acting" hidden>
+  <h2>Right now</h2>
+  <p>Propositum is working in a tab it opened. It cannot touch any other tab.</p>
+  <button id="acting-stop">Stop</button>
+</div>
+
+<div id="offer" hidden>
+  <h2>Propositum noticed</h2>
+  <p id="offer-what"></p>
+  <p class="why" id="offer-why"></p>
+  <div class="offer-acts">
+    <button id="offer-yes">Start a session here</button>
+    <button id="offer-no">Not now</button>
+  </div>
+  <p class="why">
+    Nothing has been recorded. What Propositum saw is held in memory for half an hour
+    and thrown away unless you say yes.
+  </p>
+</div>
 
 <div id="grants" hidden>
   <h2>What Propositum may see</h2>
@@ -54,6 +91,87 @@
   const warning = document.getElementById('warning')
   const grants = document.getElementById('grants')
   const list = document.getElementById('list')
+  const offer = document.getElementById('offer')
+
+  const APP = 'http://127.0.0.1:3117'
+  const HEADER = 'x-propositum-capture'
+
+  /**
+   * The offer, and the two answers to it.
+   *
+   * Rendered here rather than as a notification on purpose: a suggestion that
+   * interrupts is one people turn off. The toolbar badge waits until they look,
+   * and this is what they find when they do.
+   */
+  async function renderOffer() {
+    let suggestion = null
+    try {
+      const response = await fetch(`${APP}/api/session/current`, { headers: { [HEADER]: '1' } })
+      if (response.ok) ({ suggestion } = await response.json())
+    } catch {
+      /* the warning above already covers an unreachable app */
+    }
+
+    if (!suggestion) {
+      offer.hidden = true
+      return
+    }
+
+    offer.hidden = false
+
+    const yes = document.getElementById('offer-yes')
+    const no = document.getElementById('offer-no')
+
+    /**
+     * The offer, in Propositum's own words when it has composed any.
+     *
+     * A `work-offer` carries a title — "Write up the three labs and how they
+     * differ" — which is the thing worth reading. The degraded `start-session`
+     * form carries only what was observed, which is true and duller, and is
+     * what shows for the first half-minute of every offer and for good on a
+     * machine with no API key.
+     */
+    if (suggestion.kind === 'work-offer') {
+      document.getElementById('offer-what').textContent = suggestion.title
+      document.getElementById('offer-why').textContent =
+        suggestion.rationale || `${suggestion.sentence} ${suggestion.because}`
+      yes.textContent = 'Show me'
+    } else {
+      document.getElementById('offer-what').textContent = suggestion.sentence
+      document.getElementById('offer-why').textContent = suggestion.because
+      yes.textContent = suggestion.kind === 'hand-off' ? 'Hand it over' : 'Start watching this'
+    }
+
+    yes.onclick = async () => {
+      /**
+       * The link carries the thread signature and nothing else.
+       *
+       * It used to carry the subject, the sites and the intent, which made what
+       * the app approved a function of the link rather than of what had been
+       * observed. It also dead-ended: the subject does not exist until the app
+       * has named the thread, so for the first thirty seconds of every offer
+       * this opened a page that said the link had gone stale. The signature
+       * exists from the first poll that detected anything.
+       */
+      await chrome.tabs.create({
+        url:
+          suggestion.kind === 'hand-off'
+            ? `${APP}/`
+            : `${APP}/start?thread=${encodeURIComponent(suggestion.thread ?? '')}`,
+      })
+    }
+
+    no.onclick = async () => {
+      const origin = suggestion.origin || (suggestion.origins ?? [])[0] || ''
+      await fetch(`${APP}/api/capture/ambient/decline`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', [HEADER]: '1' },
+        body: JSON.stringify({ origin }),
+      }).catch(() => {})
+      await chrome.action.setBadgeText({ text: '' })
+      offer.hidden = true
+    }
+  }
 
   function patternFor(origin) {
     return origin.endsWith('/*') ? origin : `${origin}/*`
@@ -99,13 +217,45 @@
         const button = document.createElement('button')
         button.textContent = 'Allow'
         button.addEventListener('click', async () => {
-          // Must be called directly in the click handler. Awaiting anything
-          // first spends the user gesture and Chrome rejects the request.
-          const granted = await chrome.permissions.request({
-            origins: [patternFor(source.origin)],
-          })
-          if (granted) await chrome.runtime.sendMessage({ ask: 'reconcile' })
-          await render()
+          /**
+           * A refusal has to be VISIBLE, because this button has been inert.
+           *
+           * `permissions.request()` only works for something the manifest lists
+           * under `optional_host_permissions`, and this manifest has none — it
+           * takes the broad grant up front instead, because detection cannot
+           * work on sources the person has not set up yet. So the call resolved
+           * false, the row re-rendered identically, and pressing Allow did
+           * nothing at all with nothing said.
+           *
+           * Chrome is the authority here and we cannot talk it round. What we
+           * can do is stop pretending the click worked: on this screen, of all
+           * screens, silence reads as "Propositum can see it now".
+           */
+          let granted = false
+          try {
+            // Must be called directly in the click handler. Awaiting anything
+            // first spends the user gesture and Chrome rejects the request.
+            granted = await chrome.permissions.request({
+              origins: [patternFor(source.origin)],
+            })
+          } catch (error) {
+            console.warn('[propositum] host grant request refused:', error)
+          }
+
+          if (granted) {
+            await chrome.runtime.sendMessage({ ask: 'reconcile' })
+            await render()
+            return
+          }
+
+          const refused = document.createElement('div')
+          refused.className = 'off'
+          refused.style.fontSize = '12px'
+          refused.textContent =
+            'Chrome did not grant that. Propositum still cannot read this site — you can allow it ' +
+            'from Chrome’s own extension settings.'
+          left.append(refused)
+          button.disabled = true
         })
         row.append(button)
       }
@@ -114,7 +264,35 @@
     }
   }
 
+  /**
+   * Whether anything is being worked on, and the third way to stop it.
+   *
+   * A click here is a user gesture, so it can do everything — the same
+   * asymmetry that made the in-tab chip's Stop able to detach outright while
+   * an alarm handler could not so much as open this panel.
+   */
+  async function renderActing() {
+    const acting = document.getElementById('acting')
+    let working = false
+
+    try {
+      ;({ acting: working } = await chrome.runtime.sendMessage({ ask: 'acting' }))
+    } catch {
+      /* the worker is asleep, which means nothing is being driven either */
+    }
+
+    acting.hidden = !working
+    if (!working) return
+
+    document.getElementById('acting-stop').onclick = async () => {
+      await chrome.runtime.sendMessage({ ask: 'stop-acting' })
+      acting.hidden = true
+    }
+  }
+
   await render()
+  await renderOffer()
+  await renderActing()
 
   const badge = await chrome.action.getBadgeText({})
   warning.hidden = badge !== '!'

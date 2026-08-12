@@ -98,7 +98,6 @@ export interface TakeOverProps {
   readonly reading: { readonly id: string; readonly claims: readonly ClaimView[] } | null
   /** Granted sources on the project, for labelling the agreement's scope. */
   readonly sources: readonly SourceView[]
-  readonly documentTitle: string | null
   /**
    * The accepted contract for this session, read from the server.
    *
@@ -338,7 +337,6 @@ export function TakeOver(props: TakeOverProps) {
           readOnly={!observing}
           pending={pending}
           problem={problem}
-          documentTitle={props.documentTitle}
           onContinue={() => openAgreement(reading.id)}
         />
       )}
@@ -441,13 +439,10 @@ interface ReadingProps {
   readonly readOnly: boolean
   readonly pending: boolean
   readonly problem: string | null
-  /** Null when the project has no document. Checked here rather than left to
-   *  the draft boundary, so the person is told before they spend the click. */
-  readonly documentTitle: string | null
   readonly onContinue?: (() => void) | undefined
 }
 
-function Reading({ claims, readOnly, pending, problem, documentTitle, onContinue }: ReadingProps) {
+function Reading({ claims, readOnly, pending, problem, onContinue }: ReadingProps) {
   const objective = claims.find((c) => c.kind === 'objective') ?? null
   const constraints = claims.filter((c) => c.kind === 'constraint')
   const leftover = claims.filter((c) => !CLAIMED_KINDS.has(c.kind))
@@ -525,21 +520,27 @@ function Reading({ claims, readOnly, pending, problem, documentTitle, onContinue
 
       {onContinue && !readOnly ? (
         <div className="tk-foot">
+          {/* An absent document no longer blocks the handoff.
+
+              It used to, and the refusal was honest at the time: a shift could
+              only produce changes to a document, so a project without one had
+              nothing to hand over. A shift now produces a ShiftOutcome of which
+              a document change is one kind among five, and the document itself
+              is created at the moment the agreement is written — so refusing
+              here would be refusing to reach the step that fixes it. */}
           <p>
-            {documentTitle === null
-              ? 'There is no document in this project yet. Paste one in first — Propositum needs something to work on before it can be handed anything.'
-              : 'Correct anything wrong above first. The agreement is written from what is on this screen, and this reading is the only place Propositum can be caught misunderstanding you.'}
+            Correct anything wrong above first. The agreement is written from what is on this
+            screen, and this reading is the only place Propositum can be caught misunderstanding
+            you.
           </p>
           <div className="tk-foot-actions">
             <Button
               variant="primary"
               onClick={onContinue}
-              disabled={pending || objective === null || documentTitle === null}
+              disabled={pending || objective === null}
               {...(objective === null
                 ? { title: 'Propositum recorded no objective, so there is nothing to hand over.' }
-                : documentTitle === null
-                  ? { title: 'This project has no document yet.' }
-                  : {})}
+                : {})}
             >
               {pending ? 'Writing the agreement…' : 'Write the working agreement'}
             </Button>

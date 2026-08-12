@@ -32,7 +32,10 @@
 import { revalidatePath } from 'next/cache'
 
 import { appContext } from './db'
-import { captureStore } from './capture-store'
+import { readableCause } from './problem'
+import { confirmRequest, haltRun, rejectRequest } from './confirmations'
+import { ambientStore, captureStore } from './capture-store'
+import { describeWork, signatureOf } from './ambient-store'
 import { AnthropicModelClient } from '../model/anthropic'
 import type { FailureKind, ModelClient } from '../model/client'
 import { datamark } from '../model/untrusted'
@@ -42,10 +45,15 @@ import {
 } from '../model/boundaries/session-reading'
 import type { PromptEvent } from '../model/boundaries/session-reading'
 import { handoffBoundary, sourceHandlesFor } from '../model/boundaries/handoff'
+import { detectWork, threadPagesOf } from '../domain/detection/detect'
+import { groundsFor } from '../domain/detection/grounds'
+import { matchProject, projectTerms } from '../domain/detection/match-project'
+import type { ProjectCandidate } from '../domain/detection/match-project'
 import { checkDrift, hashContent, materialise } from '../domain/document/changeset'
 import type { Decision } from '../domain/document/changeset'
 import { normalise } from '../domain/document/normalise'
-import { ACTION_KINDS } from '../domain/handoff/policy'
+import { isDecidable } from '../domain/outcome/shift-outcome'
+import { DOCUMENT_ACTION_KINDS } from '../domain/handoff/policy'
 import type { ActionKind, AutonomyControls } from '../domain/handoff/policy'
 import type { ClaimInput } from '../persistence/repositories/index'
 
@@ -111,11 +119,10 @@ async function attempt<T>(work: () => Promise<ActionResult<T>>): Promise<ActionR
     const raw = error instanceof Error ? error.message : String(error)
     const key = process.env['ANTHROPIC_API_KEY']
     const scrubbed = key ? raw.split(key).join('«key»') : raw
-    const detail = scrubbed.length > 240 ? `${scrubbed.slice(0, 240)}…` : scrubbed
 
     return no<T>(
       'write-failed',
-      `Propositum could not finish that, and nothing was changed. (${detail})`,
+      `Propositum could not finish that, and nothing was changed. (${readableCause(scrubbed)})`,
     )
   }
 }
@@ -260,19 +267,204 @@ export interface ProjectCreated {
   readonly name: string
 }
 
-export async function createProject(name: string): Promise<ActionResult<ProjectCreated>> {
+/**
+ * A project comes into existence, and NOBODY ASKED FOR ONE.
+ *
+ * ── Why this is not exported any more ────────────────────────────────────
+ *
+ * "I don't want the user to define the projects themselves. The tools should
+ * identify them for them, and then the user can edit after. Initially, they
+ * shouldn't have to create it."
+ *
+ * There used to be a form on the front page whose whole content was this
+ * function. It asked a person to name and file a piece of work before they had
+ * decided they wanted help with it, which is the setup Propositum exists to
+ * remove — and it asked for the one thing the product is supposed to work out
+ * on its own.
+ *
+ * So this is internal. The only thing that calls it is the acceptance path, on
+ * a subject the detector found and a model named, and nothing a person clicks
+ * reaches it directly. Keeping it as a function rather than inlining the one
+ * line it wraps is not ceremony: the length rule and the message a person reads
+ * when a name is unusable belong in one place, and the split path below needs
+ * exactly the same two.
+ */
+async function createProject(name: string): Promise<ActionResult<ProjectCreated>> {
+  const clean = name.trim()
+  if (!clean) {
+    return no<ProjectCreated>(
+      'invalid-input',
+      'Propositum could not work out what to call this. Give it a name and it will file the work under that.',
+    )
+  }
+  if (clean.length > 120) {
+    return no<ProjectCreated>('invalid-input', 'That name is too long — keep it under 120 characters.')
+  }
+
+  const { repos } = await appContext()
+  return ok(await repos.projects.create(clean))
+}
+
+/**
+ * The person fixes the name Propositum gave it.
+ *
+ * This is the other half of the sentence at the top of this section — the tools
+ * identify the work, and the person edits afterwards. Auto-naming is only
+ * acceptable if it is correctable, so this is not a nicety and it is not
+ * deferrable: without it, a subject the model got slightly wrong is a label
+ * nobody can ever change.
+ */
+export async function renameProject(
+  projectId: string,
+  name: string,
+): Promise<ActionResult<ProjectCreated>> {
   return attempt(async () => {
     const clean = name.trim()
-    if (!clean) return no<ProjectCreated>('invalid-input', 'Give the project a name first.')
+    if (!clean) return no<ProjectCreated>('invalid-input', 'Give it a name to go by.')
     if (clean.length > 120) {
       return no<ProjectCreated>('invalid-input', 'That name is too long — keep it under 120 characters.')
     }
 
     const { repos } = await appContext()
-    const project = await repos.projects.create(clean)
+    const project = await repos.projects.byId(projectId)
+    if (!project) return no<ProjectCreated>('not-found', "That project doesn't exist any more.")
+    if (project.name === clean) {
+      return no<ProjectCreated>('already-done', 'That is what it is already called.')
+    }
+
+    await repos.projects.rename(projectId, clean)
     refresh()
-    return ok(project)
+    return ok({ id: projectId, name: clean })
   })
+}
+
+/* ── which project this work belongs to ─────────────────────────────────── */
+
+/**
+ * What Propositum knows about a project it thinks this work belongs to.
+ *
+ * Enough to render the offer's carry-on box without a second round trip, and
+ * deliberately no more: the count of sittings, sources and documents is what
+ * makes "back on World models" checkable at a glance, and anything richer would
+ * be asking the person to review a filing decision instead of noticing one.
+ */
+export interface CarriedProject {
+  readonly projectId: string
+  readonly name: string
+  readonly sittings: number
+  readonly sources: number
+  readonly documents: number
+  /** Words this subject and that project's name have in common. The reason,
+   *  shown, so a wrong guess is arguable rather than mysterious. */
+  readonly overlap: number
+}
+
+/** Every project as something `matchProject` can compare against. */
+async function projectCandidates(): Promise<ProjectCandidate[]> {
+  const { repos } = await appContext()
+  const projects = await repos.projects.list()
+  return projects.map((project) => ({
+    id: project.id,
+    name: project.name,
+    terms: projectTerms(project.name),
+  }))
+}
+
+/** The counts behind the carry-on box, for one project. */
+async function describeProject(
+  project: { id: string; name: string },
+  overlap: number,
+): Promise<CarriedProject> {
+  const { repos } = await appContext()
+  const [sittings, sources, documents] = await Promise.all([
+    repos.sessions.forProject(project.id),
+    repos.projects.approvedSources(project.id),
+    repos.documents.forProject(project.id),
+  ])
+
+  return {
+    projectId: project.id,
+    name: project.name,
+    sittings: sittings.length,
+    sources: sources.filter((source) => source.grantState === 'granted').length,
+    documents: documents.length,
+    overlap,
+  }
+}
+
+/**
+ * "Looks like you're back on…" — the state, for whichever screen is asking.
+ *
+ * Exported rather than folded into the acceptance path because the offer screen
+ * belongs to someone else and needs to render the box BEFORE anything durable
+ * exists. `null` is the ordinary answer; most work is new work.
+ *
+ * ── Why it takes the subject and not the thread's terms ──────────────────
+ *
+ * It takes exactly what `startFromSuggestion` takes first, so the two cannot
+ * disagree. If this asked for terms while acceptance matched on the subject,
+ * a screen could promise "carrying on with World models" and then quietly open
+ * a second project called the same thing — the failure would look like a
+ * filing bug and would actually be two functions answering slightly different
+ * questions. One input, one answer.
+ */
+export async function carryOnCandidate(
+  subject: string,
+): Promise<ActionResult<CarriedProject | null>> {
+  return attempt(async () => {
+    const candidates = await projectCandidates()
+    const match = matchProject(projectTerms(subject), candidates)
+    if (!match) return ok<CarriedProject | null>(null)
+
+    const project = candidates.find((c) => c.id === match.projectId)
+    if (!project) return ok<CarriedProject | null>(null)
+
+    return ok<CarriedProject | null>(await describeProject(project, match.overlap))
+  })
+}
+
+/**
+ * Where this sitting goes: an existing project, or a new one.
+ *
+ * ── The first thing in this repo that survives a session ─────────────────
+ *
+ * `CONTEXT.md` lists "there is no cross-session continuity" among the risks the
+ * vocabulary does not remove — a second session starts cold, which the
+ * product's own shift-change metaphor implies otherwise. This is the first
+ * crack in that, and it is a narrow one on purpose: what carries forward is the
+ * PROJECT, and with it the sources already approved and the document already
+ * being written. No objective, no reading, no claim. Those are what the next
+ * sitting is for working out fresh, and inheriting them quietly is the failure
+ * the cold start exists to avoid.
+ *
+ * ── Why the default is to join, and the override is one click ────────────
+ *
+ * Asking "is this the same work as before?" up front is the setup this feature
+ * removed, in a smaller box. So Propositum files it where the arithmetic says
+ * it belongs, says on the screen that it did, and moving it is one click. The
+ * threshold is set to split when unsure precisely so that the click is rarely
+ * needed and never urgent.
+ */
+async function projectForWork(
+  name: string,
+  treatAsNewWork: boolean,
+): Promise<
+  ActionResult<{ readonly project: { id: string; name: string }; readonly joined: boolean }>
+> {
+  type Chosen = { readonly project: { id: string; name: string }; readonly joined: boolean }
+
+  if (!treatAsNewWork) {
+    const match = matchProject(projectTerms(name), await projectCandidates())
+    if (match) {
+      const { repos } = await appContext()
+      const existing = await repos.projects.byId(match.projectId)
+      if (existing) return ok<Chosen>({ project: existing, joined: true })
+    }
+  }
+
+  const created = await createProject(name)
+  if (!created.ok) return { ok: false, problem: created.problem }
+  return ok<Chosen>({ project: created.value, joined: false })
 }
 
 /**
@@ -303,6 +495,85 @@ function normaliseOriginPattern(raw: string): string | null {
   if (!new RegExp(`^(\\*\\.)?${label}(\\.${label})*$`).test(host)) return null
 
   return `${scheme}//${host}/*`
+}
+
+/**
+ * The sites Propositum actually SAW, as the patterns an approval would store.
+ *
+ * ── What went wrong without this ─────────────────────────────────────────
+ *
+ * `startFromSuggestion` took its list of sites from its caller and approved
+ * every one of them. The caller is a page, and the page reads them off a query
+ * string, so the list was in practice whatever was in the link. A crafted link
+ * — `…/start?subject=Invoices&origins=https://attacker.example` — put an origin
+ * nobody had ever visited into `ApprovedSource` and started a session watching
+ * it, behind one click, under a heading the same link chose the words for.
+ *
+ * Local-only and needing a click, so the severity was low. The shape was not:
+ * the one-click path had no idea what had been observed, and "the suggestion
+ * came from what Propositum saw" was true of the honest path by coincidence
+ * rather than by construction.
+ *
+ * ── Why an origin cannot be laundered through this ───────────────────────
+ *
+ * The set is derived from the ambient buffer and nothing else. That buffer is
+ * filled by one route, from the extension, on origins Chrome has already
+ * granted — nothing a link can reach writes to it. So an origin the person has
+ * not been browsing is absent from the returned set no matter what the caller
+ * asks for, and approval becomes a function of observation instead of a
+ * function of the request.
+ *
+ * ── Why the comparison is on patterns, not on raw origins ────────────────
+ *
+ * `https://northwind.com`, `northwind.com` and `https://northwind.com/` all name
+ * one site and would all fail a string comparison against the buffer's
+ * `new URL(url).origin`. Normalising both sides first compares exactly the thing
+ * that would be written to `ApprovedSource.originPattern` — so what is checked
+ * and what is stored can never diverge.
+ *
+ * The one case it does not rescue is a scheme mismatch: a bare hostname means
+ * `https`, so an `http` site the person really was reading is not matched by a
+ * link that spells it without a scheme, and is discarded. Approving `https`
+ * because `http` was seen would be widening a grant on a guess, which is the
+ * opposite of what this function is for.
+ *
+ * ── The thread, and nothing wider ────────────────────────────────────────
+ *
+ * The observed set is the sites of ONE thread — the same narrowing the
+ * carry-over below does, and it must be, because the two decide the same
+ * question about the same sitting.
+ *
+ * An earlier version of this fell back to every origin in the window when no
+ * signature arrived, on the reasoning that a restarted process would have lost
+ * the thread. That reasoning was wrong twice over. `pagesOfThread` and the
+ * observations are the same in-memory store with the same lifetime, so a
+ * restart empties both and the fallback rescues nothing — while every honest
+ * caller does supply a signature, because `/api/session/current` remembers the
+ * thread before it will emit an offer at all, and both the panel and the
+ * service worker put it in the link. So the fallback was reachable only by a
+ * request that left the signature out, which is precisely the crafted link, and
+ * it handed that request every site browsed in the last half hour.
+ *
+ * No signature, or one nothing was recorded against, is therefore no sites. The
+ * carry-over already refuses to fall back for exactly this reason, and these
+ * two refusals are the same refusal.
+ */
+function observedOriginPatterns(
+  threadSignature: string | undefined,
+  nowMs: number,
+): ReadonlySet<string> {
+  const patterns = new Set<string>()
+  if (threadSignature === undefined || threadSignature === '') return patterns
+
+  const ambient = ambientStore()
+  const threadPages = ambient.pagesOfThread(threadSignature)
+  if (threadPages.length === 0) return patterns
+
+  for (const observation of ambient.forUrls(threadPages, nowMs)) {
+    const pattern = normaliseOriginPattern(observation.origin)
+    if (pattern !== null) patterns.add(pattern)
+  }
+  return patterns
 }
 
 export interface SourceApproved {
@@ -518,13 +789,888 @@ export interface SessionStarted {
 }
 
 /**
- * Start a sitting.
+ * One click, from a suggestion to a session with everything it needs.
+ *
+ * ── Why this exists ──────────────────────────────────────────────────────
+ *
+ * "I don't want to have to go into the UI, create a project, and do all of it.
+ * My whole vision is that whatever I'm doing, it pops up and says: hey, I see
+ * you're doing this, can I help?"
+ *
+ * Creating a project by hand is asking someone to name and file work before
+ * they know they want help with it. So the thread names the project, its sites
+ * become the approved sources, and a document is created to work in — all from
+ * one answer to one question.
+ *
+ * ── The one thing this does not take from its caller ─────────────────────
+ *
+ * Which sites to approve. Everything else here is the caller's to choose; that
+ * is not, because approving a source is the decision that widens what
+ * Propositum may watch. The list arrives as a suggestion and is intersected
+ * with what the ambient buffer actually holds — see `observedOriginPatterns`.
+ *
+ * ── What is still a human act, and stays one ─────────────────────────────
+ *
+ * This starts a SESSION. It does not start a run. The person lands on the
+ * agreement screen with the objective filled in from what they were doing, and
+ * nothing happens until they ratify it — `MVP.md` acceptance bullet 4, and the
+ * invariant the whole product rests on.
+ *
+ * Removing setup friction is not the same as removing consent, and this is the
+ * line between them.
+ *
+ * ── Why what was already seen is carried over ────────────────────────────
+ *
+ * The offer says "you have been looking into world models across 3 sites". A
+ * session that then began at zero would produce a reading with no evidence for
+ * the work that triggered it, and the person would have to redo the browsing
+ * Propositum had just told them it watched.
+ *
+ * So those pages are folded in — and once folded they are ORDINARY
+ * ObservationEvents, written through the one ledger door with every normal rule
+ * applying. They carry `attested.ambient = true`, because "Propositum saw this
+ * before you started the session" is a fact about provenance the timeline
+ * should not hide. Nothing is invented on the way in: ambient observations hold
+ * no page text, so neither do the events, and the reading will be thinner than
+ * one from a watched session. That is honest rather than a bug to paper over.
+ */
+export interface WorkStarted {
+  readonly projectId: string
+  readonly projectName: string
+  readonly sessionId: string
+  /**
+   * The project's document, if it already had one. NULL for a project this
+   * sitting just opened.
+   *
+   * It was non-null and always present, because starting work created a skeleton
+   * document whether or not the work was drafting. Nothing has ever read this
+   * field, which is itself the evidence that the eager creation was serving the
+   * schema rather than anybody's screen — see the note where it used to happen.
+   */
+  readonly documentId: string | null
+  readonly carriedOver: number
+  /**
+   * True when this sitting joined a project that already existed, rather than
+   * opening a new one.
+   *
+   * Every caller must render this where the person lands. A merge nobody is
+   * told about is the failure `match-project.ts` calls the expensive one: the
+   * work is filed under an old subject, the old document is what Propositum
+   * offers to work on, and nothing on screen says a decision was taken. The
+   * flag exists so that "then the user can edit after" has something to edit
+   * FROM.
+   */
+  readonly joinedExisting: boolean
+  /**
+   * Sites the caller asked for that Propositum had not seen, and did not
+   * approve.
+   *
+   * Counted rather than quietly skipped, for the same reason
+   * `ReadingProduced.discardedQuotes` is: a discard here means something asked
+   * Propositum to watch a site on evidence it does not have, and a number that
+   * is never zero on the honest path is the only way that would ever be
+   * noticed.
+   */
+  readonly discardedOrigins: number
+  /** Sites this sitting was about that the joined project had WITHDRAWN, and
+   *  which stay withdrawn. Propositum cannot see them here, and the person is
+   *  the only one who may put that back. */
+  readonly leftWithdrawn: number
+}
+
+export async function startFromSuggestion(
+  subject: string,
+  origins: readonly string[],
+  intent: 'draft-document' | 'deep-research',
+  /** The thread's signature. What makes the carry-over precise — without it
+   *  this falls back to everything from the same sites, which is how a search
+   *  for "nissan altima" became evidence for a hiking trip. */
+  threadSignature?: string,
+  /**
+   * The person said "no — this is new work" before accepting.
+   *
+   * Optional and last, so a caller that does not ask the question gets the
+   * ordinary behaviour and no screen has to change to keep working. Answering
+   * it after the fact is `splitIntoNewProject`, which costs one click and one
+   * moved row — the two paths exist because the offer screen can ask before
+   * anything durable exists and the project screen can only ask after.
+   */
+  treatAsNewWork?: boolean,
+): Promise<ActionResult<WorkStarted>> {
+  return attempt(async () => {
+    const name = subject.trim()
+    if (!name) return no<WorkStarted>('invalid-input', 'Propositum could not name that work.')
+
+    const { repos, ledger } = await appContext()
+
+    /**
+     * A running session is answered before anything else, and deliberately
+     * before the sites are looked at.
+     *
+     * Starting a session empties the ambient buffer, so by the time one is live
+     * there is nothing left in it — and checking the sites first would answer a
+     * second click on the same link with "Propositum has not been watching any
+     * of those sites", which is true of the buffer and useless to the person.
+     * The session they already started is the thing they need told about.
+     *
+     * Nothing is written before either check, so the order is a question of
+     * which sentence is more use, not of what gets left behind.
+     */
+    const live = captureStore().current()
+    if (live) {
+      const running = await repos.sessions.byId(live.sessionId)
+      if (running && running.phase !== 'ended') {
+        return no<WorkStarted>(
+          'already-done',
+          'A session is already running. End that one first.',
+        )
+      }
+    }
+
+    /**
+     * Which of the requested sites Propositum has actually been watching.
+     *
+     * Settled before a single row is written, so a request naming nothing
+     * observed cannot leave a project, a document or an approval behind on its
+     * way to being refused. See `observedOriginPatterns` for why the caller's
+     * list is untrustworthy and what the buffer proves instead.
+     *
+     * A site that survives is stored under its normalised pattern, so the
+     * comparison that admitted it and the row that records it are the same
+     * string. Duplicates collapse — the same site named twice is one approval,
+     * not one approval and one discard.
+     */
+    const observed = observedOriginPatterns(threadSignature, Date.now())
+
+    const wanted = new Map<string, string>()
+    let discardedOrigins = 0
+    for (const origin of origins) {
+      const pattern = normaliseOriginPattern(origin)
+      if (pattern === null || !observed.has(pattern)) {
+        discardedOrigins += 1
+        continue
+      }
+      if (!wanted.has(pattern)) {
+        wanted.set(pattern, pattern.replace(/^https?:\/\//, '').replace(/\/\*$/, ''))
+      }
+    }
+
+    if (wanted.size === 0) {
+      // Says the true thing, including when it is unimpressive: Propositum has
+      // no record of this work, so it will not start watching sites on the
+      // strength of being asked to.
+      return no<WorkStarted>(
+        'invalid-input',
+        'Propositum has no record of the work this describes, so there is nothing for it to go on. Browse for a while and it will offer again.',
+      )
+    }
+
+    // The thread names the project — or finds the one this work already
+    // belongs to. Nobody is asked to file anything either way.
+    const chosen = await projectForWork(name, treatAsNewWork === true)
+    if (!chosen.ok) return { ok: false, problem: chosen.problem } as const
+    const { project, joined } = chosen.value
+
+    /**
+     * Approve each surviving site on whichever project this landed in — except
+     * one the person has already withdrawn there.
+     *
+     * Joining an existing project means writing approvals into a workspace with
+     * its own history, and `approveSource` upserts `granted`. Without this
+     * check, a site somebody deliberately withdrew in Chrome comes back as
+     * approved because they happened to read it again — a human act undone by a
+     * convenience, on a screen that promises "it will not ask again unless you
+     * add it back". A revocation outranks a match.
+     *
+     * Keyed by pattern rather than by the caller's spelling of the site. The
+     * carry-over below looks a source up from an OBSERVATION's origin, which is
+     * always `https://host` — so matching on what the link happened to say meant
+     * a link reading `northwind.com` approved the site and then carried none of
+     * its pages, silently.
+     */
+    const withdrawn = new Set(
+      (await repos.projects.approvedSources(project.id))
+        .filter((source) => source.grantState !== 'granted')
+        .map((source) => source.originPattern),
+    )
+
+    const sourceByPattern = new Map<string, string>()
+    let leftWithdrawn = 0
+    for (const [pattern, host] of wanted) {
+      if (withdrawn.has(pattern)) {
+        leftWithdrawn += 1
+        continue
+      }
+      const source = await repos.projects.approveSource({
+        projectId: project.id,
+        originPattern: pattern,
+        label: host,
+      })
+      sourceByPattern.set(pattern, source.id)
+    }
+
+    /**
+     * No document is created here any more, and that is the point of the change.
+     *
+     * ── What this used to do, and what it cost ───────────────────────────
+     *
+     * It created a skeleton `Document` eagerly — two empty headings chosen from
+     * whether the offer said *draft-document* or *deep-research* — before anyone
+     * had agreed to draft anything. Every session was therefore pre-committed to
+     * the drafting workflow at the moment it started, in a product whose stated
+     * ambition is to have no predetermined use cases. A sitting that turned out
+     * to be a comparison, an answer or a browser errand still had a half-written
+     * proposal filed under it, with two headings nobody wrote and nobody would.
+     *
+     * ── Where it moved, and why there ────────────────────────────────────
+     *
+     * To `draftContract`, which is the first moment anything knows what the
+     * shift is FOR. The document is created there iff the contract expects
+     * `document-changes`, and its first version becomes `baseVersionId`.
+     * Otherwise the pin stays null and the gate refuses the document
+     * capabilities, which is the honest encoding of "there is no document" —
+     * rather than a document existing so the schema would let the person hand
+     * work over.
+     *
+     * The existing project's document, when there is one, is still carried
+     * forward. That is most of what joining a project is for, and it happens at
+     * the same later seam: `draftContract` takes `documents[0]`, and finds
+     * yesterday's half-written draft exactly where it left it.
+     */
+    const session = await repos.sessions.start(project.id)
+    const startedAtMs = Date.now()
+    captureStore().start(session.id, startedAtMs)
+
+    /**
+     * What was already seen becomes the session's own record — but only the
+     * pages that were part of the THREAD.
+     *
+     * This used to carry everything from each approved origin, which meant a
+     * hiking trip arrived with "nissan altima - Google Search" and a "Warmup
+     * Page" as evidence, because those were also on google.com. The detector
+     * knew exactly which five pages mattered and the answer threw that away.
+     *
+     * Falling back to the origin when no signature is supplied would quietly
+     * restore the bug, so the fallback is to carry NOTHING: a session with a
+     * thin record is recoverable, and a reading built on the wrong pages is
+     * worse than one built on none.
+     */
+    const ambient = ambientStore()
+    const threadPages = threadSignature ? ambient.pagesOfThread(threadSignature) : []
+
+    /**
+     * One row per PAGE, not one per observation.
+     *
+     * ── What carrying every observation actually produced ────────────────
+     *
+     * The content script reports engagement for whichever page has focus every
+     * fifteen seconds, and every report is a separate row in the ambient
+     * buffer. So a page read for five minutes is about twenty observations of
+     * one URL — which is exactly right for the buffer, because `engagedByUrl`
+     * takes the largest report and needs them all.
+     *
+     * It is exactly wrong for the ledger. This loop turned each one into an
+     * `ObservationEvent` saying "opened this page", so accepting an offer wrote
+     * twenty "opened" rows for one page, in a row, seconds apart. An end-to-end
+     * run of four pages produced forty events. The timeline reads as somebody
+     * frantically reopening the same tab, the `SessionReading` is built from
+     * that, and neither is what happened.
+     *
+     * So the pages are collapsed first, and the collapse keeps the two facts
+     * worth keeping: the EARLIEST time, because that is when they arrived, and
+     * whether the page was ever a query, because that is what decides the kind.
+     * The title is taken from whichever report had one — the first report often
+     * lands before the document has a title at all.
+     *
+     * Dwell is deliberately NOT carried across. An `engaged` row means the
+     * dwell-and-scroll bar was cleared inside a session somebody started, and
+     * manufacturing one here from ambient metadata would put a claim about
+     * attention into a ledger that is supposed to hold only what was observed
+     * under the ordinary rules.
+     */
+    interface CarriedPage {
+      readonly url: string
+      title: string
+      at: number
+      searched: boolean
+      readonly sourceId: string
+    }
+
+    const byUrl = new Map<string, CarriedPage>()
+    for (const observation of ambient.forUrls(threadPages, startedAtMs)) {
+      const pattern = normaliseOriginPattern(observation.origin)
+      const sourceId = pattern === null ? undefined : sourceByPattern.get(pattern)
+      if (!sourceId) continue
+
+      const existing = byUrl.get(observation.url)
+      if (!existing) {
+        byUrl.set(observation.url, {
+          url: observation.url,
+          title: observation.title,
+          at: observation.at,
+          searched: observation.kind === 'query',
+          sourceId,
+        })
+        continue
+      }
+
+      existing.at = Math.min(existing.at, observation.at)
+      existing.searched = existing.searched || observation.kind === 'query'
+      if (existing.title === '') existing.title = observation.title
+    }
+
+    let carriedOver = 0
+    for (const page of [...byUrl.values()].sort((a, b) => a.at - b.at)) {
+      const appended = await ledger.append(session.id, {
+        kind: page.searched ? 'queried' : 'visited',
+        observedAt: new Date(page.at),
+        elapsedMs: 0,
+        approvedSourceId: page.sourceId,
+        attested: { url: page.url, title: page.title, ambient: true },
+      })
+      if (appended.ok) carriedOver += 1
+    }
+    ambient.clear()
+
+    refresh()
+    return ok({
+      projectId: project.id,
+      projectName: project.name,
+      sessionId: session.id,
+      documentId: (await repos.documents.forProject(project.id))[0]?.id ?? null,
+      carriedOver,
+      joinedExisting: joined,
+      discardedOrigins,
+      leftWithdrawn,
+    })
+  })
+}
+
+/* ══════════════════════════════════════════ the offer, and accepting it ══ */
+
+/**
+ * The thread signature is the ONLY thing a link carries, and this is why.
+ *
+ * ── What wave one had to fix defensively ─────────────────────────────────
+ *
+ * `/start?subject=Invoices&origins=https://attacker.example` approved a site
+ * nobody had ever visited. The fix was to intersect the requested list against
+ * the ambient buffer — correct, and still in place above as
+ * `observedOriginPatterns`. But it is a filter on a request that should never
+ * have been able to ask, and a filter is a thing somebody can later widen "just
+ * for this one caller".
+ *
+ * So the parameter is gone. A link says `?thread=<signature>` and nothing else;
+ * the subject, the offer, the grounds and the sites are all read back off the
+ * server-side buffer against that key. There is no field for an origin, so
+ * there is nothing to intersect and nothing to widen.
+ *
+ * ── Why the intersection stays anyway ────────────────────────────────────
+ *
+ * Because the two guards answer different questions, and losing either one is a
+ * different bug. Removing the parameter answers *can a link ask for a site?* —
+ * no, structurally. The intersection answers *can anything that reaches the
+ * accept path approve a site the buffer does not hold?* — no, arithmetically,
+ * whatever the caller is. The ticked-sites control below is a real caller-
+ * supplied list, and it is exactly the shape of input the intersection exists
+ * for: it can only ever NARROW the observed set, because the result is
+ * `observed ∩ ticked` and an entry that is not in `observed` contributes
+ * nothing. Belt, and braces, and they are not the same garment.
+ */
+export interface OfferedSite {
+  /** What would be stored, so what is checked and what is written are one
+   *  string. */
+  readonly pattern: string
+  /** The hostname, as a person would say it. */
+  readonly host: string
+  /**
+   * This project has this site WITHDRAWN, and accepting will leave it that way.
+   *
+   * Said before the click rather than counted after it. Wave one added the
+   * count (`WorkStarted.leftWithdrawn`) and it arrived on the next screen — so
+   * the offer still listed every site as though it were about to be approved,
+   * including one the person had deliberately switched off. A revocation
+   * outranks a match, and the list has to say so while it is still a list of
+   * what will happen.
+   */
+  readonly leftWithdrawn: boolean
+}
+
+/** Everything the offer screen renders, read off the buffer by signature. */
+export interface OfferOnScreen {
+  readonly thread: string
+  readonly subject: string
+  readonly origins: readonly OfferedSite[]
+  /** The detector's own sentences. Rendered verbatim, above the model's. */
+  readonly grounds: readonly string[]
+  /** Null when the grounds bar was not met, when composing has not finished,
+   *  or when there is no API key. The screen degrades; it does not dead-end. */
+  readonly offer: {
+    readonly title: string
+    readonly rationale: string
+    readonly outline: readonly string[]
+    readonly produces: string
+    readonly excludes: readonly string[]
+  } | null
+  /** The deterministic sentence, which is what the degraded form shows. */
+  readonly sentence: string
+  readonly because: string
+  /** The project this would join, if Propositum thinks it recognises the work.
+   *  Stated before the click, because a merge nobody was told about is the
+   *  expensive failure `match-project.ts` names. */
+  readonly backOn: CarriedProject | null
+}
+
+/** The words behind a signature, when nothing has named it yet. Ugly and true
+ *  beats absent — `world+models+labs` is at least recognisable. */
+function subjectFromSignature(signature: string): string {
+  return signature.split('+').filter((word) => word !== '').join(' ')
+}
+
+/**
+ * What to show for `/start?thread=…`.
+ *
+ * Everything is derived server-side. Nothing about this answer depends on
+ * anything the request said beyond which thread it is asking about, which is
+ * the property the whole shape exists for.
+ */
+export async function offerForThread(threadSignature: string): Promise<
+  ActionResult<OfferOnScreen | null>
+> {
+  return attempt(async () => {
+    const thread = threadSignature.trim()
+    if (thread === '') return ok<OfferOnScreen | null>(null)
+
+    const ambient = ambientStore()
+    const now = Date.now()
+    const patterns = [...observedOriginPatterns(thread, now)]
+    if (patterns.length === 0) return ok<OfferOnScreen | null>(null)
+
+    const named = ambient.nameFor(thread)
+    const composed = ambient.offerFor(thread)
+    const subject = (named?.subject ?? '').trim() || subjectFromSignature(thread)
+
+    /**
+     * The grounds and the sentence, recomputed from the buffer.
+     *
+     * A composed offer froze the grounds that permitted it, and those are what
+     * the durable row will hold, so they win when there is one. Without an
+     * offer the screen still owes the person the reasons, and re-deriving them
+     * is cheap arithmetic over the same observations the detector just read.
+     */
+    const observations = ambient.since(now)
+    const detected = detectWork(observations, now)
+    const stillThisThread = detected !== null && signatureOf(detected.terms) === thread
+    const grounds =
+      composed?.grounds.sentences ??
+      (stillThisThread && detected
+        ? groundsFor(detected, threadPagesOf(observations, detected, now)).sentences
+        : [])
+
+    const describedFor = stillThisThread && detected ? describeWork(detected, thread, named) : null
+    const sentence =
+      describedFor?.sentence ?? `You have been looking into ${subject}.`
+    const because = describedFor?.because ?? `Across ${patterns.length} sites.`
+
+    const candidate = await carryOnCandidate(subject)
+    const backOn = candidate.ok ? candidate.value : null
+
+    /**
+     * Which of these the destination has already withdrawn.
+     *
+     * Only a project being JOINED can have withdrawn anything — a project about
+     * to be created has no history to have refused with.
+     */
+    const withdrawn = new Set<string>()
+    if (backOn) {
+      const { repos } = await appContext()
+      for (const source of await repos.projects.approvedSources(backOn.projectId)) {
+        if (source.grantState !== 'granted') withdrawn.add(source.originPattern)
+      }
+    }
+
+    return ok<OfferOnScreen | null>({
+      thread,
+      subject,
+      origins: patterns.map((pattern) => ({
+        pattern,
+        host: pattern.replace(/^https?:\/\//, '').replace(/\/\*$/, ''),
+        leftWithdrawn: withdrawn.has(pattern),
+      })),
+      grounds,
+      offer: composed
+        ? {
+            title: composed.title,
+            rationale: composed.rationale,
+            outline: composed.outline,
+            produces: composed.produces,
+            excludes: composed.excludes,
+          }
+        : null,
+      sentence,
+      because,
+      backOn,
+    })
+  })
+}
+
+export interface OfferAccepted extends WorkStarted {
+  /** True when a composed offer was on screen and is now a durable row. False
+   *  is the degraded path, which starts the session and writes no offer —
+   *  there was nothing composed to write down. */
+  readonly offerRecorded: boolean
+}
+
+/**
+ * Saying yes.
+ *
+ * ── What this takes, and what it refuses to take ─────────────────────────
+ *
+ * A thread signature, the sites the person left ticked, and whether they said
+ * this is new work. That is all. The subject, the offer, the grounds and the
+ * set of sites Propositum may approve are read off the buffer here, server-
+ * side, keyed by the signature — see `OfferedSite` above for why that is a
+ * structural property rather than a validation step.
+ *
+ * `ticked` can only narrow. The approved set is `observed ∩ ticked`, so a site
+ * nobody browsed contributes nothing however it arrives, and a site somebody
+ * unticked is left out. Neither direction can widen what Propositum may watch.
+ *
+ * ── And what accepting still does not do ─────────────────────────────────
+ *
+ * It does not start a run. It sets the work up and stops at the agreement,
+ * where the objective is filled in from what they were doing and nothing
+ * happens until they ratify it. Removing setup friction is not the same as
+ * removing consent, and this is the line between them.
+ */
+export async function acceptWorkOffer(
+  threadSignature: string,
+  ticked: readonly string[],
+  treatAsNewWork?: boolean,
+): Promise<ActionResult<OfferAccepted>> {
+  return attempt(async () => {
+    const thread = threadSignature.trim()
+    if (thread === '') {
+      return no<OfferAccepted>(
+        'invalid-input',
+        'Propositum could not tell what this was meant to be about. Browse for a while and it will offer again.',
+      )
+    }
+
+    const ambient = ambientStore()
+    const composed = ambient.offerFor(thread)
+    const named = ambient.nameFor(thread)
+    const subject = (named?.subject ?? '').trim() || subjectFromSignature(thread)
+
+    const observed = [...observedOriginPatterns(thread, Date.now())]
+
+    // Narrowing only. Anything in `ticked` that is not in `observed` falls out
+    // of the intersection, so an added site is not filtered — it is absent.
+    const wanted = new Set<string>()
+    for (const raw of ticked) {
+      const pattern = normaliseOriginPattern(raw)
+      if (pattern !== null) wanted.add(pattern)
+    }
+    const chosen = observed.filter((pattern) => wanted.has(pattern))
+
+    if (observed.length > 0 && chosen.length === 0) {
+      return no<OfferAccepted>(
+        'invalid-input',
+        'Nothing is ticked, so there would be nothing for Propositum to watch. Leave at least one site ticked.',
+      )
+    }
+
+    /**
+     * Which skeleton the document gets.
+     *
+     * Deterministic, from the outcome kinds the offer says it expects. The
+     * model does not pick a template and never has — `expects` is a statement
+     * about the shape of the result, and this is code reading it. Without an
+     * offer, research is the honest default: nobody has said anything is being
+     * written yet.
+     */
+    const intent =
+      composed && composed.expects.includes('document-changes') ? 'draft-document' : 'deep-research'
+
+    const started = await startFromSuggestion(subject, chosen, intent, thread, treatAsNewWork)
+    if (!started.ok) return { ok: false, problem: started.problem } as const
+
+    /**
+     * The offer becomes durable at the moment it is accepted, and not before.
+     *
+     * An offer nobody answered leaves no row, by the same rule the ambient
+     * buffer lives under: a record of every guess Propositum made about what
+     * somebody was doing IS a profile. The grounds are frozen here rather than
+     * recomputed later because the buffer they came from is bounded by a
+     * thirty-minute window, and "why did it offer me this" is the first
+     * question anybody asks when an offer was wrong.
+     */
+    if (composed) {
+      const { repos } = await appContext()
+      await repos.offers.create({
+        sessionId: started.value.sessionId,
+        threadSignature: thread,
+        promptVersion: composed.promptVersion,
+        title: composed.title,
+        rationale: composed.rationale,
+        outline: composed.outline,
+        produces: composed.produces,
+        excludes: composed.excludes,
+        originPatterns: chosen,
+        expectedKinds: composed.expects,
+        grounds: {
+          kinds: [...composed.grounds.kinds],
+          sentences: [...composed.grounds.sentences],
+          sufficient: composed.grounds.sufficient,
+        },
+      })
+    }
+
+    refresh()
+    return ok<OfferAccepted>({ ...started.value, offerRecorded: composed !== null })
+  })
+}
+
+/**
+ * Re-filing, and the two shapes it takes.
+ *
+ * ── Why this is not optional ─────────────────────────────────────────────
+ *
+ * Propositum decides where a sitting goes, and it will sometimes be wrong.
+ * Automatic filing is only defensible if it is correctable — otherwise the
+ * arithmetic above is not a helpful guess, it is a decision imposed on someone
+ * about their own work with no way back. So both directions exist: put this
+ * sitting under a project that already exists, or take it out into one of its
+ * own.
+ *
+ * ── What moves, and what deliberately does not ───────────────────────────
+ *
+ * The sitting moves. Its ObservationEvents do not: the ledger is append-only,
+ * and rewriting recorded history to tidy a filing decision is precisely what
+ * append-only exists to refuse. Those rows keep pointing at the sources they
+ * were recorded under, which stays true — that IS where Propositum was looking
+ * when it saw them.
+ *
+ * What is carried instead is the permission going forward: the origins this
+ * sitting is entitled to, approved on the destination, so what Propositum may
+ * see there matches what it could see here.
+ *
+ * ── Which origins those are, and why it is not just the observed ones ────
+ *
+ * The obvious rule — the sources this sitting's events already cite — is right
+ * for a sitting that has ENDED and silently wrong for one that is still
+ * running. Capture resolves an incoming page against the sources of the
+ * session's CURRENT project (`api/capture/events`), so moving a live sitting
+ * into a project holding none of them makes every subsequent signal
+ * unattributable, and it is dropped. The person pressed a button labelled "this
+ * is new work" and Propositum stopped watching, with nothing said.
+ *
+ * So an open sitting carries every granted source of the project it is leaving:
+ * those are exactly what capture was resolving against a moment ago, and
+ * narrowing that set at the moment of a move is a change to what Propositum can
+ * see that nobody asked for. An ended sitting carries the tighter set, because
+ * nothing is arriving and least privilege costs nothing.
+ *
+ * ── A withdrawal is never undone by a move ───────────────────────────────
+ *
+ * `approveSource` upserts `granted`, so carrying a source into a project that
+ * had REVOKED it would flip it back — a permission the person deliberately
+ * withdrew in Chrome, restored because a sitting moved house. Those are skipped
+ * and counted. Propositum then cannot see that site there, which is true, and
+ * the person is the only one who may change it back.
+ */
+async function carrySourcesAcross(
+  sessionId: string,
+  fromProjectId: string,
+  toProjectId: string,
+): Promise<{ carried: number; leftWithdrawn: number }> {
+  const { repos } = await appContext()
+
+  const session = await repos.sessions.byId(sessionId)
+  const stillOpen = session !== null && session.phase !== 'ended'
+
+  const events = await repos.events.bySession(sessionId)
+  const observed = new Set<string>()
+  for (const event of events) {
+    if (event.approvedSourceId !== null) observed.add(event.approvedSourceId)
+  }
+
+  const withdrawn = new Set(
+    (await repos.projects.approvedSources(toProjectId))
+      .filter((source) => source.grantState !== 'granted')
+      .map((source) => source.originPattern),
+  )
+
+  const sources = await repos.projects.approvedSources(fromProjectId)
+  let carried = 0
+  let leftWithdrawn = 0
+
+  for (const source of sources) {
+    const entitled = observed.has(source.id) || (stillOpen && source.grantState === 'granted')
+    if (!entitled) continue
+
+    if (withdrawn.has(source.originPattern)) {
+      leftWithdrawn += 1
+      continue
+    }
+
+    await repos.projects.approveSource({
+      projectId: toProjectId,
+      originPattern: source.originPattern,
+      label: source.label,
+    })
+    carried += 1
+  }
+
+  return { carried, leftWithdrawn }
+}
+
+export interface SessionRefiled {
+  readonly sessionId: string
+  readonly projectId: string
+  readonly projectName: string
+  /** Origins approved on the destination so it can see what this sitting was
+   *  recorded against, and — while it is still running — go on seeing it. */
+  readonly sourcesCarried: number
+  /** Origins the destination had withdrawn, left withdrawn. */
+  readonly leftWithdrawn: number
+}
+
+/**
+ * "Carry on with it" — put this sitting under a project that already exists.
+ *
+ * The same act the acceptance path performs on its own when the arithmetic is
+ * confident, available to a person who saw it split something that should not
+ * have been. It takes a session and a project and nothing else, so the offer
+ * screen and the project screen can both call it unchanged.
+ */
+export async function refileSession(
+  sessionId: string,
+  projectId: string,
+): Promise<ActionResult<SessionRefiled>> {
+  return attempt(async () => {
+    const { repos } = await appContext()
+
+    const session = await repos.sessions.byId(sessionId)
+    if (!session) return no<SessionRefiled>('not-found', "That sitting isn't there any more.")
+
+    const destination = await repos.projects.byId(projectId)
+    if (!destination) return no<SessionRefiled>('not-found', "That project doesn't exist any more.")
+
+    if (session.projectId === projectId) {
+      return no<SessionRefiled>('already-done', `This is already filed under ${destination.name}.`)
+    }
+
+    const carried = await carrySourcesAcross(sessionId, session.projectId, projectId)
+    await repos.sessions.refile(sessionId, projectId)
+
+    refresh()
+    return ok({
+      sessionId,
+      projectId,
+      projectName: destination.name,
+      sourcesCarried: carried.carried,
+      leftWithdrawn: carried.leftWithdrawn,
+    })
+  })
+}
+
+/**
+ * "No — this is new work."
+ *
+ * The one control the whole automatic-filing story rests on. Propositum joined
+ * this sitting to something it had already seen; the person says it is not that
+ * at all, and it leaves with a project of its own.
+ *
+ * ── Why this is answerable afterwards and not only before ────────────────
+ *
+ * The offer screen can ask before anything durable exists, and it should — it
+ * has the person's attention and a spare click. But a person accepting an offer
+ * is not reading carefully, which is the point of a one-click offer, so the
+ * question has to survive being missed. Everything here is one row moved and
+ * two rows written; nothing is lost, and the sitting's own record is untouched.
+ *
+ * The name is passed in rather than re-derived: by the time someone presses
+ * this, the subject Propositum guessed is the thing they are disagreeing with.
+ */
+export async function splitIntoNewProject(
+  sessionId: string,
+  name: string,
+): Promise<ActionResult<SessionRefiled>> {
+  return attempt(async () => {
+    const { repos } = await appContext()
+
+    const session = await repos.sessions.byId(sessionId)
+    if (!session) return no<SessionRefiled>('not-found', "That sitting isn't there any more.")
+
+    const siblings = await repos.sessions.forProject(session.projectId)
+    if (siblings.length <= 1) {
+      return no<SessionRefiled>(
+        'already-done',
+        'This is the only sitting here, so it already has a project to itself. Rename it if the name is wrong.',
+      )
+    }
+
+    // Deliberately NOT `projectForWork`: the person has just said this is not
+    // the work Propositum matched it to, and running the match again would be
+    // the software arguing with them.
+    const created = await createProject(name)
+    if (!created.ok) return { ok: false, problem: created.problem } as const
+
+    const carried = await carrySourcesAcross(sessionId, session.projectId, created.value.id)
+    await repos.sessions.refile(sessionId, created.value.id)
+
+    /**
+     * And something to work in, because otherwise this is a dead end.
+     *
+     * The document stays with the project it was written in — it may hold the
+     * earlier sittings' work, and this sitting has just been declared to be
+     * about something else. But `draftContract` refuses outright when a project
+     * has no document, so leaving the new one empty would mean the correction
+     * button dropped the person somewhere they cannot hand anything over from.
+     * The same skeleton the acceptance path writes, for the same reason.
+     */
+    const skeleton = normalise(`# ${created.value.name}\n\n## What I found\n\n## Open questions\n`)
+    await repos.documents.create({
+      projectId: created.value.id,
+      title: created.value.name,
+      content: skeleton,
+      contentHash: hashContent(skeleton),
+    })
+
+    refresh()
+    return ok({
+      sessionId,
+      projectId: created.value.id,
+      projectName: created.value.name,
+      sourcesCarried: carried.carried,
+      leftWithdrawn: carried.leftWithdrawn,
+    })
+  })
+}
+
+/** The person says no. Forget it, and stay quiet about that site for a while. */
+export async function declineOffer(origin: string): Promise<ActionResult<{ origin: string }>> {
+  return attempt(async () => {
+    ambientStore().decline(origin, Date.now())
+    refresh()
+    return ok({ origin })
+  })
+}
+
+/**
+ * Start a sitting on a project that already exists.
  *
  * `src/app/api/session/route.ts` does the same two things over HTTP for the
  * extension, and issues it a bearer token besides. The overlap is deliberate
  * and duplicated rather than shared: the route owns a credential this action
  * has no business minting, and pulling the common half into a helper would mean
  * editing a file this change does not own. See the report.
+ *
+ * This does NOT create anything. It is reached from one button on a project
+ * Propositum already identified — the person choosing to sit down at work that
+ * is already there, which is a different act from declaring that the work
+ * exists.
  */
 export async function startSession(projectId: string): Promise<ActionResult<SessionStarted>> {
   return attempt(async () => {
@@ -811,7 +1957,14 @@ export interface ContractDrafted {
   readonly suggestedTimeLimitMinutes: number
   readonly approvedSourceIds: readonly string[]
   readonly allowedActionKinds: readonly ActionKind[]
-  readonly documentTitle: string
+  /**
+   * The document this Shift may change, or NULL when it pins none.
+   *
+   * Null is a real state now rather than an error on the way to one: a Shift
+   * that answers a question or acts in a browser has no document, and the
+   * agreement screen must say what it can change without inventing a place.
+   */
+  readonly documentTitle: string | null
   /**
    * Constraints the reading found in page text. Display-only, structurally
    * barred from the agreement — without the attribution beside them, a quoted
@@ -852,19 +2005,61 @@ export async function draftContract(readingId: string): Promise<ActionResult<Con
     const session = await repos.sessions.byId(reading.sessionId)
     if (!session) return no<ContractDrafted>('not-found', "That session isn't there any more.")
 
-    const documents = await repos.documents.forProject(session.projectId)
-    const document = documents[0]
-    if (!document) {
-      return no<ContractDrafted>(
-        'blocked',
-        'There is no document in this project yet. Paste one in first, so Propositum has something to work on.',
-      )
-    }
+    /**
+     * The document, created here or not at all.
+     *
+     * ── Why this is the seam, and not the moment work started ────────────
+     *
+     * `startFromSuggestion` used to open a skeleton document the instant a
+     * sitting began, which pre-committed every session to the drafting workflow
+     * before anybody had chosen one. This is the first point at which anything
+     * knows what the shift is FOR, so it is the first point at which creating a
+     * document is a decision rather than a default.
+     *
+     * ── How it knows, and what it does when it does not ──────────────────
+     *
+     * From `WorkOffer.expectedKinds` for this session — the `ShiftOutcomeKind`s
+     * the offer said the work would produce. Nothing writes a `WorkOffer` yet
+     * (`tests/reachability.test.ts` asserts exactly that), so today there is
+     * never one and the fallback runs every time. The fallback is
+     * `document-changes`, which reproduces the old behaviour precisely: a
+     * document is created, its first version is pinned, and every existing
+     * drafting path works as it did.
+     *
+     * That is deliberate. The seam moves in this change; WHAT DECIDES at the
+     * seam arrives with the accept path that composes offers. Making the
+     * fallback anything else would have changed behaviour on the strength of a
+     * column no code fills.
+     */
+    const offer = await repos.offers.forSession(reading.sessionId)
+    const expectsDocument =
+      offer === null || offer.expectedKinds.length === 0
+        ? true
+        : offer.expectedKinds.includes('document-changes')
 
-    const base = await repos.documents.latestVersion(document.id)
-    if (!base) {
+    const project = await repos.projects.byId(session.projectId)
+
+    /**
+     * The project's existing document, and only if this shift is for one.
+     *
+     * `expectsDocument` gates the LOOKUP, not just the creation, and that is the
+     * whole correctness of it. Gating creation alone would mean an offer that
+     * said *answer* still pinned yesterday's draft whenever the project happened
+     * to have one — which is the normal case for a joined project, and precisely
+     * what the carry-forward above exists to produce. The offer's stated shape
+     * would be silently overridden by the presence of an old file.
+     */
+    const existing = expectsDocument ? (await repos.documents.forProject(session.projectId))[0] : undefined
+    const base = existing === undefined ? null : await repos.documents.latestVersion(existing.id)
+
+    if (existing !== undefined && base === null) {
       return no<ContractDrafted>('blocked', 'That document has no saved text yet.')
     }
+
+    // The title the handoff boundary writes an objective about. The project's
+    // own name when there is no document — the thread already chose it, and it
+    // beats inventing a document to have something to name.
+    const subject = existing?.title ?? project?.name ?? 'this work'
 
     /* ── the sources this sitting actually touched ──────────────────────── */
 
@@ -925,7 +2120,7 @@ export async function draftContract(readingId: string): Promise<ActionResult<Con
           ...(c.confidence === null ? {} : { confidence: c.confidence }),
         })),
         sources: handled.map((s) => ({ handle: s.handle, label: s.label })),
-        documentTitle: document.title,
+        documentTitle: subject,
       },
     )
 
@@ -962,10 +2157,65 @@ export async function draftContract(readingId: string): Promise<ActionResult<Con
         }
       })
 
+    /* ── the document, created last of all ──────────────────────────────── */
+
+    /**
+     * Written here, after every branch that can still refuse.
+     *
+     * Everything above this line can return `blocked` — no approved sources, no
+     * API key, a failed handoff call — and a document created before them would
+     * survive the refusal. Combined with the reading screen no longer disabling
+     * the button when a project has no document, that meant someone could click
+     * through, be told "Propositum saw no approved sources in this session", and
+     * have the project quietly acquire a two-heading skeleton nobody asked for.
+     *
+     * So creation is the last thing before the write it exists for. The skeleton
+     * is two empty headings named after the project the thread already named:
+     * Propositum works on the person's words and never starts from a blank page,
+     * so this is a place to put them rather than a draft of anything.
+     */
+    let pinned = base
+    let documentTitle = existing?.title ?? null
+
+    if (expectsDocument && pinned === null) {
+      const title = project?.name ?? 'Untitled'
+      const skeleton = normalise(`# ${title}\n\n## What this is\n\n## What to do about it\n`)
+      const created = await repos.documents.create({
+        projectId: session.projectId,
+        title,
+        content: skeleton,
+        contentHash: hashContent(skeleton),
+      })
+      pinned = { id: created.versionId, content: skeleton, contentHash: hashContent(skeleton), ordinal: 1 }
+      documentTitle = title
+    }
+
     /* ── persist the draft ──────────────────────────────────────────────── */
 
-    // Full capability at draft time; the Output dial removes `draft-section` at
-    // ratification. Defaults are static product constants, never model-proposed.
+    /**
+     * The DOCUMENT capability, granted only when there is a document.
+     *
+     * `DOCUMENT_ACTION_KINDS` used to be granted unconditionally, which was
+     * harmless while every contract pinned a base and is not now. The gate
+     * refuses `read-document` and `draft-section` with `no_document_pinned`
+     * regardless — but the agreement panel builds its list from the granted
+     * kinds, so an unpinned shift would have shown *"Read the document"* and
+     * *"Draft a section"* under **What Propositum may do**, one section below
+     * its own sentence saying there is no document. A permission screen that
+     * lists a capability the gate will refuse is the screen teaching people not
+     * to read it.
+     *
+     * Not `ACTION_KINDS` either: the enum holds the browser-driving verbs now,
+     * and a person drafting a proposal has no business granting *"Click
+     * something on the page"*. A browser handoff grants those deliberately, from
+     * the path that offers one.
+     *
+     * Full document capability at draft time; the Output dial removes
+     * `draft-section` at ratification. Defaults are static product constants,
+     * never model-proposed.
+     */
+    const allowedActionKinds = pinned === null ? [] : [...DOCUMENT_ACTION_KINDS]
+
     const controls = DEFAULT_CONTROLS
     const contract = await repos.contracts.createDraft({
       sessionId: reading.sessionId,
@@ -974,8 +2224,8 @@ export async function draftContract(readingId: string): Promise<ActionResult<Con
       definitionOfDone: drafted.value.definitionOfDone,
       guidance: [],
       approvedSourceIds,
-      allowedActionKinds: [...ACTION_KINDS],
-      baseVersionId: base.id,
+      allowedActionKinds,
+      baseVersionId: pinned === null ? null : pinned.id,
       initiative: controls.initiative,
       progress: controls.progress,
       output: controls.output,
@@ -990,8 +2240,8 @@ export async function draftContract(readingId: string): Promise<ActionResult<Con
       definitionOfDone: drafted.value.definitionOfDone,
       suggestedTimeLimitMinutes: minutes,
       approvedSourceIds,
-      allowedActionKinds: [...ACTION_KINDS],
-      documentTitle: document.title,
+      allowedActionKinds,
+      documentTitle,
       quotedConstraints,
     })
   })
@@ -1117,8 +2367,8 @@ export async function acceptContract(
     // again at run time; both agreeing is the point, not redundancy.
     const allowedActionKinds: ActionKind[] =
       controls.output === 'suggestions-only'
-        ? ACTION_KINDS.filter((k) => k !== 'draft-section')
-        : [...ACTION_KINDS]
+        ? DOCUMENT_ACTION_KINDS.filter((k) => k !== 'draft-section')
+        : [...DOCUMENT_ACTION_KINDS]
 
     const unchanged =
       draft.objective === objective &&
@@ -1246,11 +2496,131 @@ export async function recordVerdict(
   })
 }
 
-export interface ReviewFinished {
-  readonly versionId: string
-  readonly ordinal: number
-  readonly kept: number
-  readonly discarded: number
+export interface OutcomeVerdictRecorded {
+  readonly outcomeId: string
+  readonly verdict: 'accept' | 'reject' | 'edit'
+}
+
+/**
+ * The person decides on one whole thing a Shift produced.
+ *
+ * ── This refuses on a landed outcome, and the refusal is the point ───────
+ *
+ * `reversibility` is checked BEFORE anything else — before the kind, before the
+ * shape of the input, before the unique index gets a chance to have an opinion.
+ * A `landed` outcome is already outside Propositum: a form was submitted, a
+ * message was sent. There is no verdict to record, and recording one would put
+ * a row in the database saying a person rejected something that had already
+ * happened.
+ *
+ * The interface renders no control at all for these (`src/ui/outcome.tsx`), so
+ * on the honest path this branch is unreachable. It exists because interfaces
+ * drift and servers do not: some future refactor that reintroduces a Reject
+ * button beside a sent message must produce a refusal a person can read, not a
+ * silent write. ADR-0009 calls this out as two mechanisms for one truth and
+ * argues for it on exactly these grounds — the one screen the trust model rests
+ * on must not be able to tell somebody their sent message was rejected.
+ *
+ * ── And on a document outcome, for a different reason ────────────────────
+ *
+ * A `document-changes` outcome's decidable units are its ProposedChanges, each
+ * addressed by offsets into an immutable base and each carrying its own
+ * ChangeVerdict. A whole-outcome verdict beside them would be a second decision
+ * surface over one thing, and the fold has no way to read it. The two verdict
+ * tables are deliberately separate; this is the line between them, enforced.
+ *
+ * Only a human writes one of these. No model, worker run or reviewer run may,
+ * and there is no column that could record otherwise.
+ */
+export async function recordOutcomeVerdict(
+  outcomeId: string,
+  verdict: 'accept' | 'reject' | 'edit',
+  editedText?: string,
+): Promise<ActionResult<OutcomeVerdictRecorded>> {
+  return attempt(async () => {
+    const { repos } = await appContext()
+
+    const shiftOutcome = await repos.outcomes.byId(outcomeId)
+    if (!shiftOutcome) {
+      return no<OutcomeVerdictRecorded>('not-found', "That isn't there any more.")
+    }
+
+    // First, and deliberately before the input is even looked at.
+    if (!isDecidable(shiftOutcome.reversibility)) {
+      return no<OutcomeVerdictRecorded>(
+        'blocked',
+        'This already happened, outside Propositum. There is nothing here to accept or reject — Propositum cannot undo it, and it will not pretend it can.',
+      )
+    }
+
+    if (shiftOutcome.kind === 'document-changes') {
+      return no<OutcomeVerdictRecorded>(
+        'blocked',
+        'These are changes to your document. Decide on each one where it appears, below.',
+      )
+    }
+
+    if (verdict !== 'accept' && verdict !== 'reject' && verdict !== 'edit') {
+      return no<OutcomeVerdictRecorded>('invalid-input', 'Choose accept, reject, or edit.')
+    }
+
+    const clean = editedText?.trim()
+    if (verdict === 'edit' && !clean) {
+      return no<OutcomeVerdictRecorded>('invalid-input', 'Write what it should say instead.')
+    }
+    if (verdict !== 'edit' && clean) {
+      return no<OutcomeVerdictRecorded>(
+        'invalid-input',
+        'Replacement text only goes with an edit. Choose Edit to keep it.',
+      )
+    }
+
+    try {
+      await repos.outcomes.recordVerdict({
+        outcomeId,
+        verdict,
+        ...(verdict === 'edit' && clean ? { editedText: clean } : {}),
+      })
+    } catch (error) {
+      // One verdict per outcome, enforced by a unique index — the same shape
+      // ChangeVerdict uses, for the same reason. Changing your mind is a thing
+      // the interface has to say out loud rather than something a second silent
+      // write papers over.
+      const message = error instanceof Error ? error.message : String(error)
+      if (/unique|P2002/i.test(message)) {
+        // Refreshed even though nothing was written, and BECAUSE nothing was
+        // written. Reaching here means the durable record holds a verdict the
+        // screen does not know about — a second tab, or a decision made and
+        // then the page left open — so the screen is the stale half. Without
+        // this it goes on offering Accept and Reject over something already
+        // decided, and every further click produces the same sentence.
+        refresh()
+        return no<OutcomeVerdictRecorded>('already-done', "You've already decided on this.")
+      }
+      throw error
+    }
+
+    refresh()
+    return ok({ outcomeId, verdict })
+  })
+}
+
+export interface ShiftFinished {
+  /**
+   * The version the kept changes became, when this Shift produced document
+   * changes. `null` when it did not — a Shift that answered a question or
+   * collected a list writes nothing here, and saying so with an absence is
+   * truer than inventing a version number for it.
+   */
+  readonly document: {
+    readonly versionId: string
+    readonly ordinal: number
+    readonly kept: number
+    readonly discarded: number
+  } | null
+  /** Held outcomes that carried a decision when this finished. Counted so the
+   *  screen can say what the act covered without re-reading anything. */
+  readonly decided: number
 }
 
 /**
@@ -1269,6 +2639,29 @@ export interface ReviewFinished {
  * all, and the interface said so in its own copy: "Whatever you decide here is
  * yours to fold into the document."
  *
+ * ── What generalising this did NOT change ────────────────────────────────
+ *
+ * This used to be `finishReview` and used to assume that finishing a Shift and
+ * folding a changeset were the same act. They are not, now that a run can
+ * answer a question or collect a list without touching a document. So this
+ * refuses while anything HELD is still undecided — a change or a whole outcome,
+ * the two verdict tables counted together because the person cannot tell them
+ * apart and should not have to — and then folds the document changes if there
+ * are any.
+ *
+ * The fold below is byte-for-byte the code that was here before: the same drift
+ * check against the same immutable base, the same `materialise`, the same
+ * `committedFromChangesetId` that IS the already-reviewed flag by virtue of
+ * being unique. Nothing about the document path was made conditional on the
+ * outcome rows, and a Shift that produced a changeset and no `ShiftOutcome` —
+ * which is every Shift that has ever run — takes exactly the path it took
+ * before. That was the hard requirement of this change and it is worth stating
+ * where the code is rather than in a commit message.
+ *
+ * A `landed` outcome records nothing here. It has no verdict to fold and
+ * nothing waiting on it; it was reported, and reporting is finished the moment
+ * the person has read it.
+ *
  * ── Drift is checked twice, and both are real ────────────────────────────
  *
  * The shift screen checks it to decide which screen to render. This checks it to
@@ -1277,45 +2670,78 @@ export interface ReviewFinished {
  * ADR-0003 §4 says the document is never locked, so their edit wins and this
  * refuses.
  */
-export async function finishReview(contractId: string): Promise<ActionResult<ReviewFinished>> {
+export async function finishShift(contractId: string): Promise<ActionResult<ShiftFinished>> {
   return attempt(async () => {
     const { repos } = await appContext()
 
     const changeset = await repos.changesets.forContract(contractId)
-    if (!changeset) {
-      return no<ReviewFinished>('not-found', 'There are no changes to put into your document.')
+    const outcomes = await repos.outcomes.forContract(contractId)
+
+    // Held, and decidable as a whole. The document outcome is excluded because
+    // its decidable units are the changes, which are counted separately below —
+    // counting it twice would make a fully-decided review refuse itself.
+    const held = outcomes.filter(
+      (shiftOutcome) =>
+        isDecidable(shiftOutcome.reversibility) && shiftOutcome.kind !== 'document-changes',
+    )
+    const undecidedOutcomes = held.filter((shiftOutcome) => shiftOutcome.verdict === null)
+
+    if (!changeset && outcomes.length === 0) {
+      // The old copy — "there are no changes to put into your document" — was
+      // true when a document was the only thing a Shift could produce. It reads
+      // as a document problem, and this case is not one.
+      return no<ShiftFinished>('not-found', 'There is nothing waiting on you.')
     }
-    if (changeset.settledAsVersionId !== null) {
-      return no<ReviewFinished>(
+    if (changeset && changeset.settledAsVersionId !== null) {
+      return no<ShiftFinished>(
         'already-done',
         "You've already put these into your document. What's there now is yours to edit.",
       )
     }
 
-    const undecided = changeset.changes.filter((change) => change.verdict === null)
-    if (undecided.length > 0) {
-      const count = undecided.length === 1 ? 'one change' : `${undecided.length} changes`
-      return no<ReviewFinished>(
+    const undecidedChanges = (changeset?.changes ?? []).filter((change) => change.verdict === null)
+    const waiting = undecidedChanges.length + undecidedOutcomes.length
+    if (waiting > 0) {
+      // Said in changes when only changes are waiting, because that is what the
+      // person is looking at. Said in things when the two are mixed, because
+      // "3 changes" would be a miscount of a set that is not all changes.
+      if (undecidedOutcomes.length === 0) {
+        const count = waiting === 1 ? 'one change' : `${waiting} changes`
+        return no<ShiftFinished>(
+          'blocked',
+          `Decide on ${count} still waiting, and Propositum will put the rest in.`,
+        )
+      }
+      const count = waiting === 1 ? 'one thing' : `${waiting} things`
+      return no<ShiftFinished>(
         'blocked',
-        `Decide on ${count} still waiting, and Propositum will put the rest in.`,
+        `Decide on ${count} still waiting, and Propositum will finish up.`,
       )
+    }
+
+    if (!changeset) {
+      // Everything held has a decision, and none of it was document-shaped.
+      // Nothing is written: the verdicts already are the durable record, and a
+      // version chain has nothing to grow from.
+      refresh()
+      return ok<ShiftFinished>({ document: null, decided: held.length })
     }
 
     const base = await repos.documents.version(changeset.baseVersionId)
     if (!base) {
-      return no<ReviewFinished>('not-found', 'The version this shift worked from is gone.')
+      return no<ShiftFinished>('not-found', 'The version this shift worked from is gone.')
     }
 
     const latest = await repos.documents.latestVersion(base.documentId)
     if (!latest) {
-      return no<ReviewFinished>('not-found', 'That document has no saved text.')
+      return no<ShiftFinished>('not-found', 'That document has no saved text.')
     }
 
     // The human's own edit always wins. Nothing is written, and nothing they
     // decided is lost — the verdicts stay on the record.
     const drift = checkDrift(latest.content, changeset.baseHash)
     if (!drift.ok) {
-      return no<ReviewFinished>(
+      return no<ShiftFinished>(
         'blocked',
         'You changed this document while Propositum was working, so these changes no longer line up with it. Yours is the one that counts — nothing was overwritten.',
       )
@@ -1339,11 +2765,193 @@ export async function finishReview(contractId: string): Promise<ActionResult<Rev
     })
 
     refresh()
-    return ok({
-      versionId: version.id,
-      ordinal: version.ordinal,
-      kept,
-      discarded: decisions.length - kept,
+    return ok<ShiftFinished>({
+      document: {
+        versionId: version.id,
+        ordinal: version.ordinal,
+        kept,
+        discarded: decisions.length - kept,
+      },
+      decided: held.length,
     })
+  })
+}
+
+/* ══════════════════════════════════════════ saying yes to one thing ══ */
+
+/**
+ * The three human answers to a paused run: yes, no, and stop.
+ *
+ * ── Why these are here and the logic is not ──────────────────────────────
+ *
+ * This file is `'use server'`, so every export becomes a callable endpoint. The
+ * worker process needs the same decisions and is a different Node process that
+ * never imports `src/server/db`, so the durable work lives in
+ * `./confirmations` and these are the human-facing skin over it.
+ *
+ * ── The verbs, which must not drift ──────────────────────────────────────
+ *
+ * The gate REFUSES · the human REJECTS · the model DECLINES · the human
+ * CONFIRMS. `ConfirmationVerdict` holds `confirmed | rejected` and never
+ * `approved`, which belongs to `ApprovedSource` and means something else
+ * entirely. A screen that used one word for rejecting a paragraph and for
+ * authorising something irreversible would be asking somebody to do the second
+ * with the control they learned on the first.
+ *
+ * ── There is no notification-side yes ────────────────────────────────────
+ *
+ * The notification has ONE button and it says *Show me*. Approving from a
+ * notification is approving without seeing what you are approving, and the
+ * entire trust story here rests on the human review being real. So these are
+ * reachable only from a screen showing the attested facts, the verbatim text
+ * and the picture.
+ */
+
+/** What the person gets back after answering. */
+export interface ConfirmationAnswered {
+  readonly requestId: string
+  /** The run that will pick the work up, or null when they said no. */
+  readonly continuationRunId: string | null
+}
+
+/**
+ * They said yes to this one thing.
+ *
+ * **One of exactly two writers of a `ConfirmationVerdict`, and this one is
+ * reached only from a human's click on a screen showing what they are
+ * authorising.** No model, no worker run and no reviewer run may reach it. That
+ * cannot be enforced by a column — the database cannot see who is holding the
+ * keyboard — so it is enforced by the writer being here and by this sentence,
+ * which the next person to want a confirmation resolved from inside a run has
+ * to delete before they can break the rule.
+ */
+export async function confirmOnePendingRequest(
+  requestId: string,
+): Promise<ActionResult<ConfirmationAnswered>> {
+  return attempt(async () => {
+    const ctx = await appContext()
+    const answered = await confirmRequest(ctx, requestId, new Date())
+
+    if (!answered.ok) {
+      if (answered.reason === 'not-found') {
+        return no<ConfirmationAnswered>('not-found', 'That question is no longer here.')
+      }
+      if (answered.reason === 'already-answered') {
+        return no<ConfirmationAnswered>('already-done', 'You have already answered this one.')
+      }
+      // Expiry never approves. A yes that arrives a day late is not converted
+      // into a yes; it is turned down, and the person is told plainly why.
+      return no<ConfirmationAnswered>(
+        'blocked',
+        'This question sat unanswered for a day, so Propositum stopped waiting. Nothing was done. Hand the work over again if you still want it.',
+      )
+    }
+
+    refresh()
+    return ok<ConfirmationAnswered>({ requestId, continuationRunId: answered.continuationRunId })
+  })
+}
+
+/**
+ * They said no.
+ *
+ * Recorded rather than dropped, because the absence of a row and a `rejected`
+ * row are identical to the gate and different in the report: one says *"you
+ * said no"*, the other says *"I asked and you never saw it"*. Nothing is
+ * enqueued — the run that asked has ended, and the thing it wanted stays
+ * refused.
+ */
+export async function rejectOnePendingRequest(
+  requestId: string,
+): Promise<ActionResult<ConfirmationAnswered>> {
+  return attempt(async () => {
+    const ctx = await appContext()
+    const answered = await rejectRequest(ctx, requestId, new Date())
+
+    if (!answered.ok) {
+      if (answered.reason === 'not-found') {
+        return no<ConfirmationAnswered>('not-found', 'That question is no longer here.')
+      }
+      return no<ConfirmationAnswered>('already-done', 'You have already answered this one.')
+    }
+
+    refresh()
+    return ok<ConfirmationAnswered>({ requestId, continuationRunId: null })
+  })
+}
+
+/** What "Take back control" reports. */
+export interface ControlTaken {
+  readonly runId: string
+  /** False when there was nothing still running to stop. */
+  readonly stopped: boolean
+  /**
+   * Actions abandoned by a run that had ALREADY ended, now recorded as
+   * unverified.
+   *
+   * ── Almost always zero, and that is correct ──────────────────────────────
+   *
+   * `settleAbandonedIntents` returns 0 for any run in `pending | claimed |
+   * running`, by a deliberate guard. So pressing this on a live run — the
+   * ordinary case — settles nothing, and `unfinished` is 0.
+   *
+   * **Do not "fix" that to make this number more interesting.** An intent with
+   * no outcome on a LIVE run is in flight, not abandoned: the worker is about
+   * to write the real outcome, `ActionOutcome.intentId` is unique, and a
+   * recovery row written first makes the worker's write throw, propagate out of
+   * the loop, and complete a healthy shift as `failed / error`. Pressing "Take
+   * back control" would be the thing that broke the run.
+   *
+   * It is non-zero in the case it was written for: a run that already ended —
+   * because Chrome's infobar Cancel or the tab overlay chip removed the
+   * capability mid-action, which detaches before any POST and does not come
+   * through here — and left an intent nobody came back to. Otherwise the
+   * startup sweep settles it once the lease expires.
+   */
+  readonly unfinished: number
+}
+
+/**
+ * Take back control — the third kill switch, and the only one that needs the
+ * app.
+ *
+ * ── Three switches, and this is the weakest on purpose ───────────────────
+ *
+ * Chrome's own infobar Cancel ends the debugger attachment and cannot be
+ * suppressed or styled by us. The tab overlay chip and the side panel Stop
+ * detach first and tell the app afterwards, so they work with the app closed,
+ * the dev server restarting, or the machine offline. This one requires the app
+ * to be up, which is exactly why it is not the only one: a stop that has to
+ * reach a server before it takes effect is not a stop.
+ *
+ * What it adds is reach. It is the switch available to somebody on the "While
+ * you were away" screen who is not looking at the tab, and it is the one that
+ * writes the durable flag the run reads at its next action boundary.
+ *
+ * ── A flag, not a kill ───────────────────────────────────────────────────
+ *
+ * Nothing here interrupts anything. `cancelRequested` is a column; the run
+ * re-reads it at every action boundary and halts itself. That is the only way
+ * to stop cleanly when the thing being stopped may be mid-navigation in
+ * somebody's real browser — and it is why the two switches that remove the
+ * capability outright exist alongside it.
+ */
+export async function takeBackControl(runId: string): Promise<ActionResult<ControlTaken>> {
+  return attempt(async () => {
+    const ctx = await appContext()
+
+    /**
+     * The same implementation `POST /api/act/halt` uses.
+     *
+     * One behaviour behind two doors: this one, and the one the tab overlay
+     * chip and the side panel Stop reach after they have already detached. Two
+     * implementations of "stop" would be two things to keep in agreement about
+     * a run that is driving somebody's browser, and they would disagree first
+     * on the part nobody looks at — flag, revoke, settle, in that order.
+     */
+    const { stopped, unfinished } = await haltRun(ctx, runId)
+
+    refresh()
+    return ok<ControlTaken>({ runId, stopped, unfinished })
   })
 }

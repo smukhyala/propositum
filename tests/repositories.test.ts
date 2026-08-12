@@ -230,6 +230,52 @@ describe('the run queue', () => {
     expect((await repos.runs.byId(run.id))?.status).toBe('interrupted')
   })
 
+  it('mints a control token on claim and clears it at terminal', async () => {
+    /**
+     * ADR-0010 gives a run a `controlToken` so the browser control channel can
+     * answer *is this the run the extension agreed to take instructions from?*
+     * The column landed in wave 1 and nothing ever wrote it, which left the
+     * dispatch route's status check as the only thing between an arbitrary
+     * local caller and a channel that presses buttons in a signed-in browser.
+     *
+     * It is not an authorization — the gate still decides every action. It is
+     * an identity, and its lifetime must be the claim's: a finished run holding
+     * a valid credential is a standing key held by nothing and revoked by
+     * nobody.
+     */
+    const run = await makeRun()
+    await repos.runs.claim({
+      leaseUntil: new Date(60_000),
+      startedAt: new Date(0),
+      controlToken: 'tok-abcdefghijklmnopqrstuvwxyz012345',
+    })
+
+    expect((await repos.runs.byId(run.id))?.controlToken).toBe(
+      'tok-abcdefghijklmnopqrstuvwxyz012345',
+    )
+
+    await repos.runs.complete(run.id, 'succeeded', new Date(1_000))
+    expect((await repos.runs.byId(run.id))?.controlToken).toBeNull()
+  })
+
+  it('clears the control token on an abandoned run, which is the half that matters', async () => {
+    // These are the runs whose process is GONE — the Mac slept, the worker was
+    // killed — so nothing is coming back to tidy up. A credential left on an
+    // abandoned row is the one an attacker has time to use.
+    const run = await makeRun()
+    await repos.runs.claim({
+      leaseUntil: new Date(1_000),
+      startedAt: new Date(0),
+      controlToken: 'tok-abcdefghijklmnopqrstuvwxyz012345',
+    })
+    expect((await repos.runs.byId(run.id))?.controlToken).toBeTruthy()
+
+    await repos.runs.sweepExpiredLeases(new Date(10_000))
+
+    expect((await repos.runs.byId(run.id))?.status).toBe('interrupted')
+    expect((await repos.runs.byId(run.id))?.controlToken).toBeNull()
+  })
+
   it('returns null when nothing is pending', async () => {
     // Drain whatever earlier tests left behind.
     while (await repos.runs.claim({ leaseUntil: new Date(60_000), startedAt: new Date(0) })) {

@@ -10,7 +10,44 @@ depth rather than a boundary, this document says so.
 
 ## Data collected
 
-Only during an explicitly started `WorkSession`, and only from sources the person approved.
+There are **three modes**, and they collect very different things. *(Amended 2026-08-11 —
+[ADR-0008](./adr/0008-ambient-detection.md). This section previously said "only during an
+explicitly started WorkSession, and only from sources the person approved", which is no longer
+true and is the reason this amendment leads rather than follows. Amended again the same day —
+[ADR-0010](./adr/0010-acting-in-the-browser.md) — because an agent that acts in your browser sees
+far more per turn than the watching does in an hour, and a document that did not say so would be
+false in the place it can least afford to be.)*
+
+### 1. Ambient — always, every `https` site, metadata only
+
+Propositum watches continuously so it can notice work you have not told it about. What it keeps
+while doing so is deliberately thin:
+
+| Collected | Detail |
+|---|---|
+| Cleaned URL | credentials and tracking parameters stripped |
+| Page title | as the page reports it |
+| Interaction shape | dwell time and scroll depth |
+
+**No page text. No selections. No excerpt.** There is no field in the ambient schema that could
+carry any, and a test asserts it.
+
+Where it goes matters as much as what it is:
+
+- **In memory only.** It never reaches the database. It dies when the app process does.
+- **Bounded twice** — a rolling 30-minute window *and* a 500-row cap.
+- **Discarded by default.** Declining an offer drops it. Accepting one folds it into the session
+  you just started, where it becomes an ordinary `ObservationEvent` marked `ambient: true`.
+
+The extension holds `host_permissions: ["https://*/*"]`, so Chrome shows **"Read and change all your
+data on all websites"** at install. That warning is accurate. What limits the exposure is no longer
+the permission — it is the behaviour above, enforced in three places and tested. ADR-0008 states
+plainly that this is a weaker kind of guarantee than the one it replaced.
+
+### 2. Session — only when you started one, only on approved sources
+
+Everything below is collected **only** during an explicitly started `WorkSession`, and only from
+sources the person approved. This is where page text begins.
 
 | Collected | Detail |
 |---|---|
@@ -27,18 +64,100 @@ Only during an explicitly started `WorkSession`, and only from sources the perso
 expensive to change: `ObservationEvent`s are append-only, so raising or lowering it invalidates every
 fixture already captured.
 
+### 3. Acting — only under an agreement you ratified, only in a tab Propositum opened
+
+When you hand work over and Propositum acts in your browser, it has to see the page it is acting on.
+That is a different kind of collection from the two above and it is kept in a different place.
+
+| Collected | Detail |
+|---|---|
+| The accessibility tree | the page as the browser describes it to assistive technology — text, controls, labels — **at most 60,000 characters per turn** |
+| A screenshot | **only when the tree is insufficient**, and only of the tab Propositum opened |
+| What it dispatched | which element, which kind of input, and what the browser attested about the request |
+
+This is `ActionEvidence`, and four things about it are the whole promise:
+
+- **60,000 characters is a published product constant, not a tuning knob** — the same standing as
+  the 2,000 above, and it is named `SNAPSHOT_BUDGET_CHARS` in the code. The promise is the artifact
+  and the number is downstream of the promise sentence. It exists because an accessibility tree is
+  ten to a hundred times an article excerpt and arrives every turn, so an unbounded one would quietly
+  become the largest thing Propositum stores.
+
+  **Thirty times larger is a real cost and this document is not going to bury it.** A run is capped
+  at 40 actions, so the ceiling is about 2.4 million characters of page text per run — where the same
+  person browsing the same sites unaided would leave 2,000 characters per source. The mitigations are
+  that it happens only under an agreement you ratified, only in a tab Propositum opened, and that it
+  is swept; none of those makes it small.
+
+- **It is a separate ledger from your browsing, and they never join.** `EXCERPT_BUDGET_CHARS`
+  governs what Propositum retains about **your own browsing**; `ActionEvidence` is what the agent saw
+  **while acting under an agreement you ratified**. Nothing in it is read by inference, joined to an
+  observation event, or shown on a session timeline. This is not a loophole around the 2,000 — it is
+  a different promise about a different thing, and it works only because it is written down here
+  rather than assumed.
+
+- **Almost all of it is kept for at most seven days, and usually far less.** Two rules, and the
+  first is the one that normally fires:
+
+  | | |
+  |---|---|
+  | **When you have decided** | once you have accepted or rejected everything a Shift produced, its evidence is deleted at the next sweep — within the hour. For a Shift that edited a document, "decided" means every proposed change has a verdict |
+  | **Seven days, regardless** | the backstop for a run that failed, was interrupted, or is waiting on a question nobody answered. `ACTION_EVIDENCE_RETENTION_DAYS = 7` |
+
+  Seven, rather than one, because a run stopped for your confirmation can be answered days later —
+  asked Friday evening, answered Monday morning — and the screen asking you to authorise an effect
+  has to be able to show you the page it is about. Seven, rather than thirty, because a week-old
+  accessibility tree of a page you were signed into answers a question nobody is asking. The sweep
+  runs in the worker process, at startup and hourly.
+
+- **One class of evidence is kept indefinitely, and this document is not going to round that down
+  to seven days.** If Propositum stopped and asked you to authorise an irreversible action, the
+  snapshot you were looking at while you decided is **never deleted** — not after you answer, not
+  after the run ends, not after the window.
+
+  Why it cannot be deleted: the question Propositum asked you is an append-only audit row that
+  points at that snapshot. Deleting the snapshot would either break that record or require editing
+  it, and the record of *what a person was shown when they authorised an irreversible effect* is the
+  single most important row in this ledger. It is also, unavoidably, the row most likely to be a
+  **screenshot of a page you were signed into** — which is the worst possible thing to keep forever,
+  and is why this is stated here in full rather than left as a footnote to a seven-day promise.
+
+  It is bounded by how rarely it happens: one snapshot per confirmation question, and a confirmation
+  question is a deliberate stop, not a routine turn. Every sweep counts these rows rather than
+  silently skipping them. Recorded as a revisit condition in
+  [ADR-0010](./adr/0010-acting-in-the-browser.md).
+
+- **It is the one durable table that can be deleted at all.** Everything else in the ledger is
+  guarded by triggers against `UPDATE` and `DELETE` alike. `ActionEvidence` keeps the guard against
+  being **rewritten** — what you were shown must stay what you were shown — and deliberately drops
+  the guard against being **removed**, because a no-`DELETE` trigger and a retention sweep cannot
+  both be true. What stands in for the missing trigger is three tests: the ORM delete exists in one
+  place, that place is reachable only through the sweep, and no raw SQL goes round it. That is
+  weaker than a trigger — it is a check on our own code rather than a refusal by the database — and
+  it is the strongest thing available once a sweep has to exist.
+
 ## Data explicitly not collected
 
 Not "not yet" — these are design commitments, and several are structurally impossible rather than
 merely unimplemented.
 
-- **Full page text.** Only the bounded excerpt above.
-- **Anything from a source you have not approved.** The extension is not granted `tabs`,
-  `webNavigation`, or `history`, so Chrome will not hand it the URL, title, or tab of any other
-  page. It cannot learn what else you were doing. This is enforced by the browser, not by our code.
+- **Full page text.** Only the bounded excerpt above, and — while acting — the bounded accessibility
+  tree of the tab Propositum opened.
+- **A list of your open tabs.** The extension is not granted `tabs`, `webNavigation` or `history`,
+  and the acting agent never calls `chrome.debugger.getTargets`. There is no call it can make that
+  returns a tab it did not create itself. **This one is still enforced by the browser rather than by
+  our code.** *(Amended 2026-08-11: this bullet used to say "anything from a source you have not
+  approved". Since [ADR-0008](./adr/0008-ambient-detection.md) the extension holds broad host
+  permission and does see every `https` page you visit — as metadata, in memory. What Chrome still
+  refuses to hand over is the existence of any other tab, which is a narrower promise than the one
+  this bullet used to make, and it is the true one.)*
 - **Keystrokes.** No key logging anywhere.
-- **Screen contents.** No screenshots, no screen recording, no video.
-- **Other applications.** Chrome only, approved sources only.
+- **Your screen.** No screen recording, no video, and no screenshot of anything you are doing. The
+  only images Propositum ever takes are of the tab it opened itself, while acting under an agreement
+  you ratified, when the accessibility tree was not enough to act on — and those are swept.
+  *(Amended 2026-08-11. This bullet said "no screenshots" flatly, and that stopped being true with
+  [ADR-0010](./adr/0010-acting-in-the-browser.md).)*
+- **Other applications.** Chrome only.
 - **Passwords, form contents, or clipboard contents** not deliberately selected in an approved
   source.
 - **Telemetry, analytics, or crash reports.** There is no server to send them to.
@@ -70,7 +189,17 @@ Mac sleeps.
 Observation events and the action ledger are **append-only** and cannot be edited. Deleting a
 `Project` deletes its sessions, events, documents, and ledger.
 
-There is no automatic expiry in slice 0. Everything persists until you delete it.
+**One thing expires on its own: `ActionEvidence`.** *(Amended 2026-08-11 —
+[ADR-0010](./adr/0010-acting-in-the-browser.md). This section said "there is no automatic expiry.
+Everything persists until you delete it", which was true of a product that only watched. It is not
+true of one that keeps whole page trees and screenshots of your authenticated session, and a
+document that still said it would be false in the place it can least afford to be.)*
+
+| | |
+|---|---|
+| Everything else | persists until you delete it |
+| `ActionEvidence` | deleted once you have decided what the Shift produced, and in any case after **seven days** — see *Acting*, above |
+| `ActionEvidence` attached to a confirmation question | **kept indefinitely.** The one exception, argued in full above |
 
 Export is not implemented. The database is a single SQLite file you own and can copy.
 
@@ -105,12 +234,42 @@ decision.
 
 ### Capabilities that do not exist
 
-Propositum cannot send a message or email, purchase or book anything, publish a document, delete a
-file, or control your computer.
+*(Rewritten 2026-08-11 — [ADR-0010](./adr/0010-acting-in-the-browser.md). The previous version of
+this section said Propositum "cannot send a message or email, purchase or book anything, publish a
+document, delete a file, or control your computer". That is no longer true, and the honest version
+is below. This is the section of this document most likely to be quoted, so it says the weaker thing
+plainly rather than the stronger thing carefully.)*
 
-These are **absent from the `ActionKind` enum entirely**, not denied by a rule. A prohibition
-implemented as a missing capability cannot be misconfigured or re-enabled by a policy bug. An
-architecture test asserts the functions do not exist.
+Propositum can now act in your browser: it can click, type, and submit, in a tab it opened, under an
+agreement you ratified. So it **can** press a button that sends something.
+
+What still does not exist, and what replaced what did:
+
+| | |
+|---|---|
+| **Still absent entirely** | any capability outside your browser — your filesystem, your other applications, your computer. There is no tool, and an architecture test asserts none exists |
+| **Still absent entirely** | any way for Propositum to run its own JavaScript in a page you are signed into. No `Runtime.evaluate`, no `element.click()`. Clicks are synthesised input at coordinates |
+| **Still absent entirely** | any way to learn that another tab exists, or to act in one |
+| **Replaced by a confirmation** | sending, submitting, buying, publishing, deleting. These used to be absent from the `ActionKind` enum. They are now reachable by a click, and every action the browser attests as irreversible stops and asks you first |
+
+**A confirmation is weaker than an absence, and this document is not going to pretend otherwise.** An
+absence cannot be misconfigured or clicked through; a question can be. What holds it up:
+
+- **Irreversibility is decided by the browser, not by a model and not by the page.** An action needs
+  your confirmation when Chrome is about to send a non-`GET` request, or a request to a site outside
+  the agreement. Chrome attests the method, so page text cannot forge it.
+- **A word list over the button's own label can only make Propositum more cautious**, never less.
+- **No dial can pre-approve one.** There is no setting, anywhere, that grants irreversible actions in
+  advance. The acknowledgement is per action.
+- **Time cannot approve one.** A question that expires produces no answer and no permission. There is
+  no path from elapsed time to *yes*.
+- **What already happened is never dressed up as reviewable.** If something landed out there,
+  Propositum reports it and offers you no verdict, because a Reject button that cannot reject is a
+  lie told by the one screen this whole model rests on.
+
+**The honest hole:** a `GET` request can be irreversible — an unsubscribe link, a one-click
+confirmation — and the network mechanism does not see those at all. The word list is English-only.
+Both are stated in ADR-0010 as the largest uncovered case in this design.
 
 ## Prompt injection
 
@@ -170,8 +329,13 @@ to, whereas silent resistance looks identical to not having been attacked.
 
 ## Trust boundaries in the browser
 
-- The extension talks to `127.0.0.1` over a WebSocket with a per-session bearer token, an `Origin`
-  check pinned to the extension id, and `application/json` plus a custom header.
+- The extension talks to `127.0.0.1` over **HTTP**, with a per-session bearer token, an `Origin`
+  check pinned to the extension id, and `application/json` plus a custom header. *(Corrected
+  2026-08-11: this said "a WebSocket", as does [ADR-0002](./adr/0002-observation-capture.md)'s
+  decision table. The shipped extension uses `fetch` plus a 30-second `chrome.alarms` heartbeat, and
+  the code is authoritative — a socket is the wrong shape for a service worker that dies every 30
+  seconds, and the security argument was never about the transport being a socket. It was about the
+  four controls, and all four hold on the HTTP path.)*
 - **CORS protects nothing here.** `POST` with `Content-Type: text/plain` is CORS-safelisted, so a
   forged event from a hostile page would be *delivered and executed* — only the response is
   withheld, and fire-and-forget forgery needs no response. Hence all four controls above.
@@ -184,11 +348,15 @@ to, whereas silent resistance looks identical to not having been attacked.
 Every action is an `ActionIntent` (reason, before) and an `ActionOutcome` (result, after), both
 append-only. Refusals are recorded too.
 
-Append-only is enforced by **three SQLite triggers per table**, reinstalled *and verified* at every
-startup — Prisma's migrations drop triggers on any table rebuild, silently, so the guard is a runtime
-invariant rather than a migration artifact. Startup **fails** if a guard is missing: a database that
-accepts an `UPDATE` on the ledger is worse than an application that will not boot, because the first
-one is silent.
+Append-only is enforced by **three SQLite triggers per table** — no `UPDATE`, no `DELETE`, and no
+`INSERT OR REPLACE`, which walks straight through the first two — reinstalled *and verified* at every
+startup, because Prisma's migrations drop triggers on any table rebuild, silently. Startup **fails**
+if a guard is missing: a database that accepts an `UPDATE` on the ledger is worse than an application
+that will not boot, because the first one is silent.
+
+**`ActionEvidence` has two of the three**, and that is the only exception in the schema. It is
+guarded against being rewritten and not against being removed, because it is the one table that is
+swept. See *Retention and deletion*.
 
 Any sentence in a reviewed draft traces back through changeset → contract → reading → claim →
 evidence → the originating observation event. Every hop is a foreign key, and no step requires a

@@ -8,6 +8,15 @@
  * from `ContractScope.allowedActionKinds`, so a worker that proposes document
  * text is refused by the same deny-by-default path as any unauthorized kind.
  *
+ * As of 2026-08-12 it removes every kind that can OPERATE a page as well —
+ * `click-element`, `type-text`, `press-key` — leaving only the ones that read:
+ * `observe-page`, `navigate`, `capture-screen`. That matters to this panel
+ * specifically, because "Research only — don't write" is the label a cautious
+ * person reaches for, and under the narrower rule that label sat above a
+ * worker that could still press buttons in their signed-in browser. The panel
+ * renders from `compilePolicy`, so it already tells the truth about this
+ * without a second edit — but the label now means what it appears to mean.
+ *
  * So "What I can change" is not a relabelling of the same list. It is rendered
  * from `compilePolicy` — the very function the gate evaluates — and flipping
  * Output visibly moves "Draft a section" out of what Propositum may do and into
@@ -139,6 +148,12 @@ const ACTION_LABEL: Readonly<Record<ActionKind, string>> = {
   'read-approved-source': 'Read the sources you approved',
   'read-document': 'Read your document',
   'draft-section': 'Draft a section of your document',
+  'observe-page': 'Look at the page you are on',
+  navigate: 'Open another page on a site you approved',
+  'click-element': 'Click something on the page',
+  'type-text': 'Type into a box on the page',
+  'press-key': 'Press Enter, Tab or Escape',
+  'capture-screen': 'Take a picture of the page',
 }
 
 /**
@@ -148,6 +163,25 @@ const ACTION_LABEL: Readonly<Record<ActionKind, string>> = {
  * the same group as a dialled-down permission would tell the person the two are
  * the same kind of promise, and they are not: one is a choice, the other is an
  * absence.
+ *
+ * ── This list becomes FALSE the moment a contract grants `click-element` ──
+ *
+ * Read this before granting a browser capability from any handoff path.
+ *
+ * `ActionKind` now also holds the browser-driving verbs, and `click-element`
+ * can press the page's own *Send*, *Buy* or *Delete* button. So *"Propositum
+ * has no way to do them, and no setting on this page turns one on"* stops being
+ * true for any contract that grants it. The claim survives today only because
+ * `draftContract` grants `DOCUMENT_ACTION_KINDS`, which excludes every browser
+ * verb — so no contract this code can currently produce makes the panel lie.
+ *
+ * When a browser handoff ships, this panel must change with it: the honest
+ * version says what stands between a click and an order, which is the
+ * confirmation pause, not an absence. Two other sentences in this component go
+ * false at the same moment and are named here so they are found together —
+ * *"Nothing lands in the document itself"* (a click lands immediately, with no
+ * review step) and *"If a page it reads links somewhere else, it cannot follow
+ * the link"* (`navigate` follows links within an approved source).
  */
 const ABSENT: readonly string[] = [
   'Send an email or a message',
@@ -197,10 +231,15 @@ export function Agreement({ draft, defaults, sourceLabels, onBack, onHandedOver 
   /**
    * `compilePolicy` is the function the gate itself evaluates, so this panel
    * cannot drift from what is enforced. It takes a `ContractScope`, and the
-   * base version is not part of what a person is being asked to approve here —
-   * the compiler never reads it, and the empty string keeps this call honest
-   * about using the real compiler rather than re-implementing its one rule in
-   * the interface.
+   * base version is not part of what a person is being asked to approve here.
+   * The empty string keeps this call honest about using the real compiler
+   * rather than re-implementing its rules in the interface.
+   *
+   * The compiler now DOES read it — an empty base compiles to
+   * `documentBasePinned: false` — but only the gate consults that field, and
+   * this panel renders the allowlist. So the empty string still costs nothing
+   * here. If a future panel starts rendering document permissions, it will need
+   * the real base id rather than this placeholder.
    */
   const controls: AutonomyControls = {
     initiative,
@@ -304,9 +343,19 @@ export function Agreement({ draft, defaults, sourceLabels, onBack, onHandedOver 
       </Section>
 
       <Section title="What I can change" index={3}>
+        {/* A Shift that pins no document has to say so rather than name a place
+            that does not exist. The second sentence survives either way: nothing
+            lands anywhere until the person decides on it. */}
         <p className="ag-hint-tight">
-          In <strong>{draft.documentTitle}</strong>, and nowhere else. Nothing lands in the document
-          itself — Propositum proposes changes and you decide on each one when you get back.
+          {draft.documentTitle === null ? (
+            <>Nothing yet — this shift has no document under it. </>
+          ) : (
+            <>
+              In <strong>{draft.documentTitle}</strong>, and nowhere else.{' '}
+            </>
+          )}
+          Nothing lands anywhere on its own — Propositum proposes and you decide on each one when
+          you get back.
         </p>
 
         <h3 className="ag-group-head">What Propositum may do</h3>

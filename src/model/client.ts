@@ -1,10 +1,11 @@
 /**
  * The model boundary.
  *
- * Six places in Propositum call a model: session-reading inference, handoff
- * generation, planning, worker action proposals, review, and shift-report
- * narration. All six go through this one interface, so provider calls never
- * appear in UI or domain code.
+ * Eight places in Propositum call a model: session-reading inference, handoff
+ * generation, planning, worker action proposals, review, shift-report
+ * narration, naming a detected thread, and composing what to offer to do about
+ * it. All eight go through this one interface, so provider calls never appear
+ * in UI or domain code.
  *
  * ── Two shapes, deliberately separated ───────────────────────────────────
  *
@@ -28,7 +29,7 @@
 
 import type { ZodType } from 'zod'
 
-/** The six. Used as `ModelCallRecord.boundary`. */
+/** The eight. Used as `ModelCallRecord.boundary`. */
 export const BOUNDARY_NAMES = [
   'session-reading',
   'handoff',
@@ -36,6 +37,16 @@ export const BOUNDARY_NAMES = [
   'worker-action',
   'review',
   'shift-report',
+  /** Naming a detected thread. Runs with no session and no contract — gated
+   *  behind deterministic detection, sees titles only, and grants nothing.
+   *  See ADR-0008 and boundaries/subject.ts. */
+  'subject',
+  /** Composing what Propositum would do about a named thread. The same gating
+   *  as `subject` and a higher bar in front of it: deterministic OfferGrounds
+   *  must be sufficient before it runs at all. It writes prose, names no place
+   *  and no ActionKind, and grants nothing. See ADR-0009 and
+   *  boundaries/offer.ts — including why it is a separate call. */
+  'offer',
 ] as const
 export type BoundaryName = (typeof BOUNDARY_NAMES)[number]
 
@@ -49,6 +60,38 @@ export const NON_STREAMING_MAX_TOKENS = 21_333
 export interface PromptParts {
   readonly system?: string | undefined
   readonly user: string
+  /**
+   * Pictures that travel WITH `user`, in the same turn.
+   *
+   * ── Why this field had to exist ──────────────────────────────────────
+   *
+   * `capture-screen` is its own `ActionKind` with its own grant, and the
+   * hybrid perception model it belongs to is deliberate: the accessibility
+   * tree first, a screenshot when the tree is not enough. It only fires
+   * because a run already decided the tree was insufficient.
+   *
+   * Until this field, there was no image path at all. `PromptParts` was
+   * `{ system, user }`, the client sent `content: prompt.user` — a bare
+   * string — and a boundary that said *"a screenshot is attached"* was
+   * telling the model something untrue. The likely behaviour is the worst
+   * kind: the agent looks again, gets nothing again, and spends its action
+   * cap discovering that the capability does not work. A prompt that claims
+   * an attachment it does not send is worse than one that admits it cannot
+   * see, because only the second lets the model change strategy.
+   *
+   * ── Base64 rather than a URL, and why that is not a limitation ───────
+   *
+   * The alternative is `source: { type: 'url' }`, which asks Anthropic's
+   * servers to fetch an address. The only images this project has are pixels
+   * of a page inside somebody's signed-in browser; publishing them at a URL
+   * so a third party can fetch them is a data flow nobody agreed to. Bytes
+   * in the request body go exactly where the rest of the prompt goes.
+   *
+   * `image/png` only, and that is a deliberate narrowing rather than an
+   * oversight: it is what the browser control channel produces, and a wider
+   * union here would be a union the rest of the code cannot supply.
+   */
+  readonly images?: ReadonlyArray<{ mediaType: 'image/png'; base64: string }> | undefined
 }
 
 /**

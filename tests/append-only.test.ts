@@ -94,9 +94,95 @@ describe('guard installation', () => {
 
   it('covers every append-only table named in the schema', () => {
     const tables = new Set(REQUIRED_GUARDS.map(([, table]) => table))
-    for (const table of ['observation_event', 'action_intent', 'action_outcome', 'model_call_record', 'change_verdict', 'document_version']) {
+    for (const table of [
+      'observation_event',
+      'action_intent',
+      'action_outcome',
+      'model_call_record',
+      'change_verdict',
+      'document_version',
+      // The computer-use tables. Listed here as well as in REQUIRED_GUARDS
+      // because this list is the one a reader checks against the schema, and a
+      // new append-only table that is absent from it is unguarded in exactly
+      // the way nobody notices.
+      'work_offer',
+      'shift_outcome',
+      'outcome_verdict',
+      'confirmation_request',
+      'confirmation_verdict',
+      'action_evidence',
+    ]) {
       expect(tables).toContain(table)
     }
+  })
+
+  it('does not guard the claim targets, which are mutable by design', () => {
+    // `agent_run` and `action_dispatch` are both claim targets, and a claim is
+    // a mutation. Guarding either would make the queue unusable — and the
+    // append-only record of what a dispatch was for is its `action_intent`,
+    // which IS guarded and is committed before the dispatch exists.
+    const tables = new Set(REQUIRED_GUARDS.map(([, table]) => table))
+    expect(tables).not.toContain('agent_run')
+    expect(tables).not.toContain('action_dispatch')
+  })
+})
+
+describe('work_offer is insert-only', () => {
+  // The smallest of the new guarded tables to exercise end to end — it needs
+  // only a session — and the one where a silent overwrite would be worst,
+  // because `grounds` is the frozen record of why Propositum asked and the
+  // ambient buffer it came from cannot reproduce it an hour later.
+  async function insertOffer(id: string) {
+    return prisma.workOffer.create({
+      data: {
+        id,
+        sessionId: `${sessionId}`,
+        threadSignature: 'sig-1',
+        promptVersion: 'offer@1',
+        title: 'Original title',
+        rationale: 'because',
+        outline: ['one'],
+        produces: 'an answer',
+        excludes: [],
+        originPatterns: ['https://example.com/*'],
+        expectedKinds: ['answer'],
+        grounds: { pages: 3 },
+      },
+    })
+  }
+
+  it('rejects an UPDATE, leaving the row untouched', async () => {
+    await insertOffer('offer-update')
+
+    await expect(
+      prisma.workOffer.update({ where: { id: 'offer-update' }, data: { title: 'rewritten' } }),
+    ).rejects.toThrow()
+
+    const after = await prisma.workOffer.findUniqueOrThrow({ where: { id: 'offer-update' } })
+    expect(after.title).toBe('Original title')
+  })
+
+  it('rejects a DELETE', async () => {
+    // `sessionId` is unique, so the previous row has to go first — except it
+    // cannot, which is the assertion.
+    await expect(prisma.workOffer.delete({ where: { id: 'offer-update' } })).rejects.toThrow()
+
+    expect(await prisma.workOffer.findUnique({ where: { id: 'offer-update' } })).not.toBeNull()
+  })
+
+  it('rejects INSERT OR REPLACE — the case a two-trigger design misses', async () => {
+    await expect(
+      prisma.$executeRawUnsafe(
+        `INSERT OR REPLACE INTO work_offer
+           (id, sessionId, threadSignature, promptVersion, title, rationale, outline,
+            produces, excludes, originPatterns, expectedKinds, grounds, createdAt)
+         VALUES ('offer-update', '${sessionId}', 'sig-1', 'offer@1', 'overwritten', 'x',
+                 '[]', 'y', '[]', '[]', '[]', '{}', 0)`,
+      ),
+    ).rejects.toThrow()
+
+    const after = await prisma.workOffer.findUniqueOrThrow({ where: { id: 'offer-update' } })
+    expect(after.title).toBe('Original title')
   })
 })
 

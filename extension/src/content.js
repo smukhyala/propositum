@@ -41,8 +41,80 @@ const BUDGET = 2000 // published product constant, see SECURITY_AND_PRIVACY.md
 // When this page became visible. Engagement is measured from here, and the app
 // discards anything under its dwell threshold — so a glance costs a message and
 // no row, rather than becoming a false "they read this".
-const ARRIVED_AT = Date.now()
+/**
+ * A page Chrome preloaded and the person never saw is not a page they visited.
+ *
+ * Typing in the omnibox makes Chrome prerender `google.com/search/warmup.html`
+ * in a hidden document, and this script fired on it exactly like a real page.
+ * In one recorded session that stub was THE most-captured page in a piece of
+ * research about a waterfall — 13 of 45 events — and the classifier dutifully
+ * reported `returnedTo` for somewhere nobody had been once.
+ *
+ * So nothing is reported until the document is actually visible. Two cases:
+ *
+ *   - `document.prerendering` — Chrome says outright that this is a preload.
+ *     Wait for activation, and reset the dwell clock to it, because time spent
+ *     prerendering is not time spent reading.
+ *   - hidden at load — a background tab opened from a link. It becomes real
+ *     when it is looked at, and not before.
+ *
+ * A page that is never activated reports nothing at all, which is correct: it
+ * was never seen.
+ */
+function whenSeen(run) {
+  if (document.prerendering) {
+    document.addEventListener('prerenderingchange', () => whenSeen(run), { once: true })
+    return
+  }
+  if (document.visibilityState === 'hidden') {
+    document.addEventListener(
+      'visibilitychange',
+      () => {
+        if (document.visibilityState !== 'hidden') whenSeen(run)
+      },
+      { once: true },
+    )
+    return
+  }
+  run()
+}
 
+/** Reset when the page is finally shown — prerender time is not reading time. */
+let seenAt = Date.now()
+
+/**
+ * Has this page ever actually been looked at?
+ *
+ * ── The overnight background tab, reported as attention ──────────────────
+ *
+ * `whenSeen` gates the navigation signal, but the `pagehide` listener below is
+ * registered at module scope and fired unconditionally. So a tab opened in the
+ * background from a middle-click and never looked at reported, on close, a
+ * dwell of `Date.now() - seenAt` measured from MODULE LOAD — hours of it.
+ *
+ * The hidden-time subtraction did not save it: `hiddenSince` is only ever set
+ * by a `visibilitychange` event, and a tab that starts hidden and stays hidden
+ * never fires one. So the correction was zero and the figure was full wall
+ * clock.
+ *
+ * That lands in the ambient path, which has no engagement threshold of its own
+ * and takes the LARGEST report per URL — so one such tab becomes the most
+ * confident-looking evidence in the buffer, for a page nobody read. `Dwell`
+ * is the input to two of the three investment grounds.
+ *
+ * A page that was never seen now reports nothing at all, which is what
+ * `whenSeen`'s own comment already promised.
+ */
+let wasSeen = false
+
+/**
+ * Everything goes to the worker, which decides where it belongs.
+ *
+ * This script does not know whether a session is running, and must not — a
+ * content script asking "am I being recorded?" is a question a hostile page
+ * could learn the answer to by timing. The worker knows, and it is the worker
+ * that strips page text when the answer is no.
+ */
 function send(signal) {
   chrome.runtime.sendMessage({ signal }).catch(() => {
     /* the worker may be asleep; the buffer survives in session storage */
@@ -55,14 +127,19 @@ function readableExcerpt() {
   return (main.innerText ?? '').slice(0, BUDGET)
 }
 
-send({
-  signal: 'navigation',
-  at: new Date().toISOString(),
-  url: location.href,
-  title: document.title,
-  referrer: document.referrer || undefined,
-  navigationType: performance.getEntriesByType('navigation')[0]?.type,
-  text: readableExcerpt(),
+whenSeen(() => {
+  seenAt = Date.now()
+  wasSeen = true
+
+  send({
+    signal: 'navigation',
+    at: new Date().toISOString(),
+    url: location.href,
+    title: document.title,
+    referrer: document.referrer || undefined,
+    navigationType: performance.getEntriesByType('navigation')[0]?.type,
+    text: readableExcerpt(),
+  })
 })
 
 document.addEventListener('selectionchange', () => {
@@ -80,14 +157,56 @@ document.addEventListener('selectionchange', () => {
 })
 
 let deepest = 0
+let interacted = false
+
+/**
+ * Scroll, from ANY element — not just the window.
+ *
+ * `window.scrollY` was the only thing measured, and modern sites scroll inside
+ * a container, so it stayed at 0 no matter how far someone read. TripAdvisor
+ * was read seven times across several minutes and produced a scroll fraction of
+ * zero, which made the engagement rule reject it forever.
+ *
+ * Scroll events do not bubble, but they DO fire during capture — so listening
+ * at the document with `capture: true` catches a scrolling div the window knows
+ * nothing about.
+ */
 addEventListener(
   'scroll',
-  () => {
+  (event) => {
+    interacted = true
+
+    const target = event.target
+    const el = target === document || target === document.documentElement ? null : target
+
+    if (el && typeof el.scrollTop === 'number' && el.scrollHeight > el.clientHeight) {
+      deepest = Math.max(deepest, el.scrollTop / (el.scrollHeight - el.clientHeight))
+      return
+    }
+
     const height = document.documentElement.scrollHeight - innerHeight
     if (height > 0) deepest = Math.max(deepest, scrollY / height)
   },
-  { passive: true },
+  { passive: true, capture: true },
 )
+
+/**
+ * Reading is not only scrolling.
+ *
+ * The scroll requirement existed to separate reading from a tab left open, and
+ * it is a poor proxy: a short page read fully, or a long one read above the
+ * fold, involves no scrolling at all. What actually distinguishes the two is a
+ * PERSON BEING THERE, so any deliberate act counts.
+ */
+for (const kind of ['click', 'keydown', 'selectionchange', 'wheel']) {
+  document.addEventListener(
+    kind,
+    () => {
+      interacted = true
+    },
+    { passive: true, capture: true },
+  )
+}
 
 /**
  * Dwell stops accruing when the tab is hidden.
@@ -96,7 +215,7 @@ addEventListener(
  * engagement, which is both false and the most confident-looking row in the
  * session.
  */
-let hiddenSince = document.visibilityState === 'hidden' ? ARRIVED_AT : null
+let hiddenSince = null
 let hiddenMs = 0
 
 document.addEventListener('visibilitychange', () => {
@@ -108,14 +227,51 @@ document.addEventListener('visibilitychange', () => {
   }
 })
 
-addEventListener('pagehide', () => {
+/**
+ * Report while the page is still open, not only when it closes.
+ *
+ * This used to fire on `pagehide` alone, which meant dwell was reported only
+ * when you LEFT a page — so someone reading four tabs they had not closed yet
+ * produced no engagement at all, and detection could never fire while the
+ * reading was still happening. That is precisely when the offer is worth
+ * making.
+ *
+ * Every report carries CUMULATIVE dwell for this page, not a delta. A delta
+ * would be lost for good if a message failed while the service worker was
+ * asleep; a cumulative figure is self-correcting — the next report carries the
+ * time the missed one would have. The app takes the largest report per URL
+ * rather than summing them, which is what makes resending safe.
+ */
+function engagedMs() {
   const hidden = hiddenMs + (hiddenSince === null ? 0 : Date.now() - hiddenSince)
+  return Math.max(0, Date.now() - seenAt - hidden)
+}
+
+function reportEngagement() {
+  // Never seen, never read. See `wasSeen`: this is the guard that stops a
+  // background tab's `pagehide` reporting hours of imaginary attention.
+  if (!wasSeen) return
 
   send({
     signal: 'engagement',
     at: new Date().toISOString(),
     url: location.href,
-    dwellMs: Math.max(0, Date.now() - ARRIVED_AT - hidden),
+    dwellMs: engagedMs(),
     scrollFraction: Math.round(deepest * 100) / 100,
+    interacted,
   })
-})
+}
+
+/** Often enough to notice a person mid-read, rarely enough not to be chatter. */
+const REPORT_EVERY_MS = 15_000
+
+setInterval(() => {
+  // A hidden tab is not being read. Reporting anyway would let a backgrounded
+  // tab accumulate a claim on attention it never had.
+  if (document.visibilityState === 'hidden') return
+  reportEngagement()
+}, REPORT_EVERY_MS)
+
+// Still report on the way out, so the final few seconds are not lost and a page
+// read for less than one interval is still counted.
+addEventListener('pagehide', reportEngagement)

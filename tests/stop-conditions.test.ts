@@ -1,9 +1,13 @@
 import { describe, it, expect } from 'vitest'
 import {
+  CONFIRMATION_EXPIRY_HOURS,
   HALT_TIMING,
+  MAX_PAUSE_CREDIT_MINUTES,
   NO_PROGRESS_LIMIT,
+  PAUSING_RULES,
   REFUSAL_LOOP_LIMIT,
   STOP_RULES,
+  deadlineFor,
   effectOfRaisedQuestion,
   evaluateStructuralStops,
   shouldStop,
@@ -94,7 +98,9 @@ describe('the shape of the rule set', () => {
     const raised = Object.values(STOP_RULES).filter((r) => r.origin === 'model-raised')
 
     expect(structural.map((r) => r.id).sort()).toEqual([
+      'action-limit',
       'budget-exhausted',
+      'control-lost',
       'no-progress',
       'refusal-loop',
     ])
@@ -121,6 +127,183 @@ describe('the shape of the rule set', () => {
     const decision = shouldStop(p({ nowEpochMs: 10_000 }), 'stop-when-uncertain', false)
 
     expect(decision.consumerLabels).toEqual(['I ran out of the time you gave me.'])
+  })
+})
+
+describe('the browser-era structural rules', () => {
+  it('does not fire either of them on a run that supplies neither fact', () => {
+    // The unwired caller. Absent facts must leave behaviour exactly as it was,
+    // not invent a halt out of a missing field.
+    expect(evaluateStructuralStops(fine)).toEqual([])
+  })
+
+  it('fires when the tab is gone', () => {
+    expect(evaluateStructuralStops(p({ controlLost: true }))).toContain('control-lost')
+    expect(evaluateStructuralStops(p({ controlLost: false }))).toEqual([])
+  })
+
+  it('fires when the run has done as much as it may', () => {
+    expect(evaluateStructuralStops(p({ actionsTaken: 40, maxActions: 40 }))).toContain(
+      'action-limit',
+    )
+    expect(evaluateStructuralStops(p({ actionsTaken: 41, maxActions: 40 }))).toContain(
+      'action-limit',
+    )
+    expect(evaluateStructuralStops(p({ actionsTaken: 39, maxActions: 40 }))).toEqual([])
+  })
+
+  it('needs both terms, because a count with no cap is not a limit', () => {
+    expect(evaluateStructuralStops(p({ actionsTaken: 9_000 }))).toEqual([])
+    expect(evaluateStructuralStops(p({ maxActions: 1 }))).toEqual([])
+  })
+
+  it('keeps running out of actions distinct from running out of time', () => {
+    // Different things to be told, leading to different next moves.
+    expect(STOP_RULES['action-limit'].consumerLabel).not.toEqual(
+      STOP_RULES['budget-exhausted'].consumerLabel,
+    )
+    expect(STOP_RULES['action-limit'].terminalReason).toBe('stop-condition')
+  })
+
+  it('cannot be switched off by either interruption setting', () => {
+    for (const dial of ['stop-when-uncertain', 'stop-only-when-blocked'] as const) {
+      expect(shouldStop(p({ controlLost: true }), dial, false).halt).toBe(true)
+      expect(shouldStop(p({ actionsTaken: 1, maxActions: 1 }), dial, false).halt).toBe(true)
+    }
+  })
+})
+
+describe('a pause is not a loop', () => {
+  it('names confirmation_required as a pausing rule, so it is not counted as a refusal', () => {
+    // Counting it would make a run that correctly asked three times look like
+    // one going in circles — and halt it just as the person was about to answer.
+    expect(PAUSING_RULES.has('confirmation_required')).toBe(true)
+  })
+
+  it('does not sweep ordinary refusals into the pausing set', () => {
+    for (const rule of [
+      'action_kind_not_allowed',
+      'source_not_approved',
+      'off_plan',
+      'stale_snapshot',
+      'password_field',
+      'budget_exhausted',
+    ]) {
+      expect(PAUSING_RULES.has(rule)).toBe(false)
+    }
+  })
+
+  it('still halts a genuine refusal loop, so the filter cannot hide one', () => {
+    expect(evaluateStructuralStops(p({ consecutiveRefusals: REFUSAL_LOOP_LIMIT }))).toContain(
+      'refusal-loop',
+    )
+  })
+})
+
+describe('a confirmation pause does not eat the shift', () => {
+  const acceptedAtEpochMs = 1_000_000
+  const timeLimitMinutes = 30
+
+  it('ends at accepted + limit when nobody was ever asked', () => {
+    expect(deadlineFor({ acceptedAtEpochMs, timeLimitMinutes, pauses: [] })).toBe(
+      acceptedAtEpochMs + 30 * 60_000,
+    )
+  })
+
+  it('credits back the time the person took to answer', () => {
+    // Asked at +5 min, answered at +65 min. An hour of that was waiting, and
+    // waiting is not working.
+    const deadline = deadlineFor({
+      acceptedAtEpochMs,
+      timeLimitMinutes,
+      pauses: [
+        {
+          requestedAtEpochMs: acceptedAtEpochMs + 5 * 60_000,
+          decidedAtEpochMs: acceptedAtEpochMs + 65 * 60_000,
+        },
+      ],
+    })
+
+    expect(deadline).toBe(acceptedAtEpochMs + (30 + 60) * 60_000)
+  })
+
+  it('sums several pauses', () => {
+    const deadline = deadlineFor({
+      acceptedAtEpochMs,
+      timeLimitMinutes,
+      pauses: [
+        { requestedAtEpochMs: 0, decidedAtEpochMs: 10 * 60_000 },
+        { requestedAtEpochMs: 0, decidedAtEpochMs: 5 * 60_000 },
+      ],
+    })
+
+    expect(deadline).toBe(acceptedAtEpochMs + (30 + 15) * 60_000)
+  })
+
+  it('caps the credit, so a weekend pause does not hand back a weekend', () => {
+    const deadline = deadlineFor({
+      acceptedAtEpochMs,
+      timeLimitMinutes,
+      pauses: [{ requestedAtEpochMs: 0, decidedAtEpochMs: 72 * 60 * 60_000 }],
+    })
+
+    expect(deadline).toBe(acceptedAtEpochMs + (30 + MAX_PAUSE_CREDIT_MINUTES) * 60_000)
+  })
+
+  it('never shortens a shift, however wrong the timestamps are', () => {
+    // Clock skew or a bad row. An input error that silently took time away from
+    // someone would be very hard to see, so it is clamped rather than trusted.
+    const deadline = deadlineFor({
+      acceptedAtEpochMs,
+      timeLimitMinutes,
+      pauses: [{ requestedAtEpochMs: 60 * 60_000, decidedAtEpochMs: 0 }],
+    })
+
+    expect(deadline).toBe(acceptedAtEpochMs + 30 * 60_000)
+  })
+
+  it('is stable across restarts, which is what the no-stored-deadline rule protected', () => {
+    // Every term is an immutable timestamp on a durable row. Recomputing it a
+    // thousand times gives the same number — unlike a deadline derived from
+    // "now at startup", which would hand a crash loop a fresh budget each time.
+    const input = {
+      acceptedAtEpochMs,
+      timeLimitMinutes,
+      pauses: [{ requestedAtEpochMs: 100, decidedAtEpochMs: 100_000 }],
+    }
+
+    const answers = new Set<number>()
+    for (let restart = 0; restart < 1000; restart += 1) answers.add(deadlineFor(input))
+
+    expect(answers.size).toBe(1)
+  })
+
+  it('gives an unanswered pause nothing, because crediting one would need a clock', () => {
+    // An open pause is simply not in the list. The run is not spending budget
+    // while it waits, so it loses nothing by earning nothing.
+    expect(deadlineFor({ acceptedAtEpochMs, timeLimitMinutes, pauses: [] })).toBe(
+      deadlineFor({
+        acceptedAtEpochMs,
+        timeLimitMinutes,
+        pauses: [{ requestedAtEpochMs: 5, decidedAtEpochMs: 5 }],
+      }),
+    )
+  })
+})
+
+describe('expiry never approves', () => {
+  it('is a bounded window rather than an open one', () => {
+    expect(CONFIRMATION_EXPIRY_HOURS).toBe(24)
+  })
+
+  it('has no path that turns a timeout into a yes', () => {
+    // The property is structural rather than behavioural, so it is asserted
+    // where it lives: an expired confirmation is simply absent from the run's
+    // confirmed set, and the gate refuses an absent one with
+    // `confirmation_required` — identical to never having asked. There is no
+    // "expired" state anywhere that authorization could read as consent.
+    // tests/policy-gate.test.ts proves the gate side of that.
+    expect(PAUSING_RULES.has('confirmation_required')).toBe(true)
   })
 })
 

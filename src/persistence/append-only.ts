@@ -47,6 +47,15 @@ export interface RawExecutor {
  * `verifyAppendOnlyGuards` checks one against the other — so adding a trigger
  * to the SQL without adding it here (or vice versa) fails loudly at startup
  * rather than leaving a table quietly unguarded.
+ *
+ * That loudness is the feature and it is worth defending, because the failure
+ * mode it prevents is silent. If you arrived here because startup threw, the
+ * fix is to add the missing half, never to shorten this list.
+ *
+ * `agent_run` and `action_dispatch` are ABSENT ON PURPOSE. Both are claim
+ * targets, and a claim is by definition a mutation. The append-only record of
+ * what a dispatch was for is its `action_intent`, which is guarded and is
+ * committed before the dispatch exists.
  */
 export const REQUIRED_GUARDS: ReadonlyArray<readonly [string, string]> = [
   ['observation_event_no_update', 'observation_event'],
@@ -69,6 +78,45 @@ export const REQUIRED_GUARDS: ReadonlyArray<readonly [string, string]> = [
   ['document_version_no_replace', 'document_version'],
   ['handoff_contract_frozen_once_accepted', 'handoff_contract'],
   ['handoff_contract_no_delete_accepted', 'handoff_contract'],
+  ['work_offer_no_update', 'work_offer'],
+  ['work_offer_no_delete', 'work_offer'],
+  ['work_offer_no_replace', 'work_offer'],
+  ['shift_outcome_no_update', 'shift_outcome'],
+  ['shift_outcome_no_delete', 'shift_outcome'],
+  ['shift_outcome_no_replace', 'shift_outcome'],
+  ['outcome_verdict_no_update', 'outcome_verdict'],
+  ['outcome_verdict_no_delete', 'outcome_verdict'],
+  ['outcome_verdict_no_replace', 'outcome_verdict'],
+  ['confirmation_request_no_update', 'confirmation_request'],
+  ['confirmation_request_no_delete', 'confirmation_request'],
+  ['confirmation_request_no_replace', 'confirmation_request'],
+  ['confirmation_verdict_no_update', 'confirmation_verdict'],
+  ['confirmation_verdict_no_delete', 'confirmation_verdict'],
+  ['confirmation_verdict_no_replace', 'confirmation_verdict'],
+  /**
+   * `action_evidence` has TWO guards, not three, and `action_evidence_no_delete`
+   * is absent on purpose.
+   *
+   * This is the only entry in this list that needs an argument, so here it is.
+   * ActionEvidence is the one durable table that is SWEPT: ADR-0010's retention
+   * section states plainly that "a no-DELETE trigger and a sweep cannot both be
+   * true", and CONTEXT.md's ActionEvidence entry says the same. The trigger
+   * shipped anyway, which made a published retention promise unenforceable at
+   * the storage layer while a green suite read as though it were enforced.
+   *
+   * The two remaining guards carry the whole of what append-only was protecting
+   * here: a ConfirmationRequest points at one of these rows as the thing the
+   * person was looking at when they authorised an effect, and a row that can be
+   * rewritten is not a record of what they were shown. Immutability is about
+   * rewriting history. Retention is about how long history is kept. Only the
+   * second needs DELETE.
+   *
+   * `prisma/triggers.sql` still DROPs the old trigger every startup, so a
+   * database created before this change is corrected rather than left with a
+   * sweep that fails on one machine and works on another.
+   */
+  ['action_evidence_no_update', 'action_evidence'],
+  ['action_evidence_no_replace', 'action_evidence'],
 ] as const
 
 export class AppendOnlyGuardError extends Error {

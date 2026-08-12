@@ -36,10 +36,12 @@ import { checkDrift, diff, materialise } from '@/domain/document/changeset'
 import type { ChangeScale, FoldableChange } from '@/domain/document/changeset'
 import { linesOf, normalise } from '@/domain/document/normalise'
 import { MUTATING_ACTION_KINDS } from '@/domain/handoff/policy'
+import { asShiftOutcomeKind, isDecidable, readOutcomeDetail } from '@/domain/outcome/shift-outcome'
 import { BackLink, Empty, Masthead, Sheet } from '@/ui/primitives'
 import { Away } from '@/ui/sprites'
 import { DriftedShift, ShiftReport } from '@/ui/shift-report'
 import type { DecisionView, LogRow, ShiftWindow } from '@/ui/shift-report'
+import type { OutcomeView } from '@/ui/outcome'
 import type { ChangeView } from '@/ui/diff'
 
 /** Every line here is read out of the database on the way past. There is
@@ -253,10 +255,17 @@ export default async function ShiftPage({ params }: { params: Promise<{ contract
 
   /* ── the document, and whether it moved ───────────────────────────────── */
 
-  const baseRow = await db.prisma.documentVersion.findUnique({
-    where: { id: contract.baseVersionId },
-    select: { id: true, ordinal: true, content: true, documentId: true, document: { select: { title: true } } },
-  })
+  // `baseVersionId` is nullable now: a Shift that acted in a browser pins no
+  // document. Everything below already copes with `baseRow` being absent — it
+  // was written for the case where the version was deleted — so the only new
+  // thing is not asking for a row when there is no id to ask about.
+  const baseRow =
+    contract.baseVersionId === null
+      ? null
+      : await db.prisma.documentVersion.findUnique({
+          where: { id: contract.baseVersionId },
+          select: { id: true, ordinal: true, content: true, documentId: true, document: { select: { title: true } } },
+        })
   const baseContent = normalise(baseRow?.content ?? '')
   const headings = headingsOf(baseContent)
   const latest = baseRow ? await repos.documents.latestVersion(baseRow.documentId) : null
@@ -323,6 +332,55 @@ export default async function ShiftPage({ params }: { params: Promise<{ contract
       reason: change.reason,
       verdict:
         verdict === 'accept' || verdict === 'reject' || verdict === 'edit' ? verdict : null,
+    }
+  })
+
+  /* ── what the shift made ──────────────────────────────────────────────── */
+
+  /**
+   * Every `ShiftOutcome` this Shift produced, turned into something renderable.
+   *
+   * Deterministic, and every field of it is a column: the headline and the
+   * reason are stored on the row, which is why the one-minute list can be built
+   * without touching the ledger and why it goes on reading the same after the
+   * person has rejected everything in it. Nothing here is model prose assembled
+   * on the way past.
+   *
+   * The three narrowings — kind, reversibility, detail — all go through
+   * `src/domain/outcome/shift-outcome.ts`, so this screen, the card and the
+   * server action cannot form three different opinions about what `landed`
+   * means. The one thing worth repeating here: `landed` is decided by
+   * `isDecidable` returning false, which is deny-by-default, so a reversibility
+   * nobody recognises is reported rather than offered a verdict.
+   *
+   * Empty for every Shift that ran before the table had a writer, and the note
+   * renders exactly as it did before when it is.
+   */
+  const outcomes = await repos.outcomes.forContract(contractId)
+
+  const made: OutcomeView[] = outcomes.map((shiftOutcome) => {
+    const kind = asShiftOutcomeKind(shiftOutcome.kind)
+    const detail = readOutcomeDetail(shiftOutcome.detail)
+    const verdict = shiftOutcome.verdict?.verdict
+    return {
+      id: shiftOutcome.id,
+      kind,
+      landed: !isDecidable(shiftOutcome.reversibility),
+      headline: shiftOutcome.headline,
+      reason: shiftOutcome.reason,
+      items: detail.items,
+      body: detail.body,
+      addressedTo: detail.addressedTo,
+      where: detail.where,
+      whatYouCanDo: detail.whatYouCanDo,
+      verdict:
+        verdict === 'accept' || verdict === 'reject' || verdict === 'edit' ? verdict : null,
+      // Only the document outcome points at the review below, and only when
+      // there is one to point at. A count of nothing would read as a promise
+      // the rest of the page does not keep — and a run can say it produced
+      // document changes while its changeset failed to write, which is exactly
+      // when "0 changes below" would appear.
+      changeCount: kind === 'document-changes' && changes.length > 0 ? changes.length : null,
     }
   })
 
@@ -467,6 +525,28 @@ export default async function ShiftPage({ params }: { params: Promise<{ contract
 
   /* ── the drifted shift is a different note ────────────────────────────── */
 
+  /**
+   * What a drifted Shift still made.
+   *
+   * A drifted document says nothing about anything else the run produced. A
+   * collection or an answer is not addressed by offsets into a version, so it
+   * cannot have drifted, and it still needs deciding — without this it would
+   * vanish along with the review that could not be applied, and the person
+   * would never learn it existed.
+   *
+   * The document outcome is dropped, because the whole point of this screen is
+   * that its changes are set aside and the sentence above says so.
+   */
+  const madeBesidesTheDocument = made.filter(
+    (shiftOutcome) => shiftOutcome.kind !== 'document-changes',
+  )
+
+  /** The same list, minus what already happened. "Pick up at…" has to name
+   *  something a person can act on, and a landed outcome is a report. */
+  const waitingBesidesTheDocument = madeBesidesTheDocument.filter(
+    (shiftOutcome) => !shiftOutcome.landed,
+  )
+
   if (changeset && !drift.ok) {
     return (
       <DriftedShift
@@ -476,6 +556,7 @@ export default async function ShiftPage({ params }: { params: Promise<{ contract
         tally={tally}
         decisions={decisions}
         setAside={changes.length}
+        made={madeBesidesTheDocument}
         did={did}
         didnt={didnt}
         missed={missed}
@@ -498,12 +579,19 @@ export default async function ShiftPage({ params }: { params: Promise<{ contract
       window={shiftWindow}
       tally={tally}
       decisions={decisions}
+      made={made}
       changes={changes}
       noChangesNext={
         live
           ? 'Propositum is still working. Anything it proposes appears here when it stops.'
           : contract.output === 'suggestions-only'
-            ? "You set it to research only, so it couldn't propose document text at all. What it found is below."
+            ? // "Research only" removes every kind that could write into the
+              // document, so no text was ever going to appear here. Where the
+              // rest of it is depends on whether this Shift produced anything
+              // else — the list above, or the account of the work below.
+              `You set it to research only, so it couldn't propose document text at all. What it ${
+                madeBesidesTheDocument.length > 0 ? 'made is above' : 'found is below'
+              }.`
             : 'It stopped before it had anything to propose. What it did get to is below.'
       }
       did={did}
@@ -511,9 +599,11 @@ export default async function ShiftPage({ params }: { params: Promise<{ contract
       missed={missed}
       stopped={stopped}
       resume={
-        changes.length === 0
-          ? null
-          : `Pick up at ${changes[0]?.where ?? 'the top of the document'}, where the first change is waiting.`
+        changes.length > 0
+          ? `Pick up at ${changes[0]?.where ?? 'the top of the document'}, where the first change is waiting.`
+          : waitingBesidesTheDocument.length > 0
+            ? 'Pick up at what Propositum made, above.'
+            : null
       }
       up={up}
       contractId={contract.id}

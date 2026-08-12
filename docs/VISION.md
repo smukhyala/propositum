@@ -60,6 +60,10 @@ drafted before the pricing section.
 **Now.** Control transfers in one direction, once: you hand off, Propositum works, you come back.
 One `Shift` per session. Re-entry ends at accept or reject.
 
+One exception, added 2026-08-11: if the browser attests that the next action is irreversible,
+Propositum stops and asks. That is still one `Shift` and one agreement — it asks for *more* consent,
+not less — but it means a shift can now span your coffee break rather than ending while you are out.
+
 **Later.** Genuine shift changes — *keep going*, *redirect*, several handoffs across one long piece
 of work. Deliberately deferred, because continuation requires replanning against a `Document` that
 moved between shifts, and shipping that unsolved produces a second shift that confidently
@@ -89,14 +93,22 @@ the widening to be a visible, revocable, human act.
 
 ## Observation
 
-**Now.** A Chrome MV3 extension, scoped by `optional_host_permissions` to sources you approved,
-emitting semantic `ObservationEvent`s. It keeps page titles, cleaned URLs, text you deliberately
-selected, and at most 2,000 characters of readable article text per source.
+**Now.** A Chrome MV3 extension. It watches every `https` site as **metadata only** — cleaned URL,
+title, dwell, scroll — held in memory and discarded, so it can notice work you have not told it
+about. Page text begins only inside a session you started, on a source you approved: titles, cleaned
+URLs, text you deliberately selected, and at most 2,000 characters of readable article text per
+source.
 
-It is **structurally incapable** of seeing anything else — Chrome will not hand over the URL, title,
-or tab for a source you have not approved. That is the point of the vehicle: the constraint is
-enforced by the browser, not by our code being correct. Rewind's exclusion controls were sincere,
-documented, and leaked anyway, because exclusions built on a see-everything vehicle leak.
+*(Corrected 2026-08-11. This section said the extension was scoped by `optional_host_permissions` and
+**structurally incapable** of seeing anything else. [ADR-0008](./adr/0008-ambient-detection.md) traded
+that guarantee from structural to behavioural and said plainly that behavioural is weaker; this
+document had not caught up, which is exactly the drift the Now/Later split exists to prevent.)*
+
+What Chrome still refuses to hand over is the existence of any **other tab** — no `tabs` permission,
+and the acting agent never enumerates targets. Rewind's exclusion controls were sincere, documented,
+and leaked anyway, because exclusions built on a see-everything vehicle leak. That warning now
+applies to us in the part that is behavioural, and it is quoted here against ourselves rather than
+against them.
 
 **Later.** Structured integrations with the tools people actually work in. Editors, note apps,
 calendars — each with the same posture: least privilege, enforced by the platform where possible.
@@ -108,14 +120,32 @@ every application. These are not sequencing decisions.
 
 ## Computer use
 
-**Now.** None. The worker acts through a small closed set of `ActionKind`s: read an approved
-source, read the document, draft a section. Capabilities the brief excludes — send a message,
-purchase, publish, delete — are **absent from the enum entirely** rather than denied by a rule.
+~~**Now.** None.~~ **Moved from Later to Now, 2026-08-11
+([ADR-0010](./adr/0010-acting-in-the-browser.md)).** This is the line in this document that moved
+furthest and fastest, and it moved by a reversal rather than by a plan.
+
+**Now.** A computer-use agent acts in your real Chrome, in a tab Propositum opened, driven by the
+extension over the debugger protocol. It perceives the page as an **accessibility tree** and asks for
+a screenshot only when the tree is not enough. It observes, acts, and observes again, rather than
+following a list written before it looked. `ActionKind` now enumerates **mechanisms** rather than
+effects, so a click can press *Send* — and every action the browser attests as irreversible stops and
+asks you first.
+
+**The stated preference order below is honoured, and this is the one line of this document the new
+design satisfies rather than contradicts.** Structure first, pixels only as a fallback: the
+accessibility tree is the browser's own semantic description of the page, and a screenshot is what
+happens when that description fails. Propositum never runs its own JavaScript inside a page you are
+signed into.
 
 **Later.** Preference order stays: native APIs, then structured integrations, then browser DOM
 tools, and only then visual computer use. Visual computer use is the last resort, not the goal —
 it is the least inspectable and least reversible way to act, and both properties are load-bearing
 here.
+
+**The honest cost of moving this line.** Absence of capability was the strongest prohibition
+available, and it has been spent. A confirmation pause is weaker than an absence: it can be
+misconfigured and it can be clicked through. ADR-0010 opens by saying so, and this document is not
+going to be the place that says it more comfortably.
 
 ---
 
@@ -153,8 +183,12 @@ convention.
 **Everything is recorded, including refusals.** `ActionIntent` before, `ActionOutcome` after, both
 append-only, enforced by database triggers reinstalled and verified at every startup.
 
-**Everything is reversible.** The base is immutable for the whole review; review produces decisions,
-never documents.
+**Everything is reversible by default.** The base is immutable for the whole review; review produces
+decisions, never documents. *(Amended 2026-08-11.)* An **irreversible** capability may now exist, and
+only as a landing `ActionKind` the browser attests: no dial pre-approves one, no elapsed time
+approves one, the acknowledgement is per action and human, and what already landed is reported
+rather than offered a verdict — because a Reject button that cannot reject is worse than the action
+it pretends to undo.
 
 ### Honest limits, today
 
@@ -166,6 +200,9 @@ never documents.
   switch it off.
 - Spotlighting and datamarking are **depth, not a boundary.** OWASP 2026 cites adaptive attack
   success above 90% against twelve recent defences. They are deployed; they are not relied on.
+- **That depth is now spread roughly a hundred times thinner.** An acting agent reads a whole
+  accessibility tree every turn, and every label in it is written by the page. The boundary is
+  unchanged; the surface behind it is not.
 - Everything is local. There is no cloud, no telemetry, and no account. That is a privacy property
   today and a limitation tomorrow — it is also why a run stops when your Mac sleeps.
 
