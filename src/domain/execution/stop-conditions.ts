@@ -57,11 +57,72 @@ export const NO_PROGRESS_LIMIT = 3
  *  things it cannot do. Retrying a fourth time has never helped. */
 export const REFUSAL_LOOP_LIMIT = 3
 
+/**
+ * Refusals that mean "ask the person", not "the worker is stuck".
+ *
+ * A pause is not a loop. `confirmation_required` is the gate working exactly as
+ * designed — the worker proposed something irreversible, we stopped to ask —
+ * and counting it toward `refusal-loop` would make a run that correctly asked
+ * for permission three times look like one going in circles. It would then halt
+ * the run at the precise moment the person was about to answer, and report the
+ * halt as *"I kept needing things the agreement does not allow"*, which is both
+ * wrong and discouraging about a behaviour we want.
+ *
+ * Typed as `ReadonlySet<string>` rather than `ReadonlySet<RefusalRule>` because
+ * the domain layer may not import from `policy` — the rule ids are the gate's
+ * vocabulary, and this is the one place the domain needs to name one. The
+ * looseness is deliberate; a wrong string here fails safe by counting a pause
+ * as a refusal, which is the pre-existing behaviour.
+ */
+export const PAUSING_RULES: ReadonlySet<string> = new Set(['confirmation_required'])
+
+/**
+ * How long a confirmation stays answerable.
+ *
+ * **Expiry never approves.** An expired confirmation is simply absent from
+ * `RunContext.confirmedRequestIds`, so the gate refuses again with
+ * `confirmation_required` — identical to never having asked. A timeout that
+ * decayed into "yes" would be the exact failure this whole mechanism exists to
+ * prevent: an irreversible act happening because nobody was watching, dressed
+ * up as consent.
+ *
+ * ── It is longer than the budget can honour, and that is worth knowing ───
+ *
+ * A review caught the interaction. Twenty-four hours is how long a confirmation
+ * stays ANSWERABLE; `MAX_PAUSE_CREDIT_MINUTES` is only four hours of budget
+ * credited back. So a question asked at 09:05 on a thirty-minute shift and
+ * answered at 18:00 is accepted as a valid yes, and every proposal after it is
+ * refused `budget_exhausted` — the "asking permission destroyed the run"
+ * failure that `deadlineFor` exists to prevent, moved from thirty minutes out
+ * to four and a half hours out rather than removed.
+ *
+ * The two constants are deliberately not reconciled by shortening the expiry,
+ * because a confirmation that expires while someone is still willing to answer
+ * pushes them toward answering fast rather than reading. The right resolution
+ * lives in the interface: a person answering a question whose shift has already
+ * ended should be TOLD that, and offered a fresh shift, rather than having
+ * their yes accepted into a dead run. Whoever builds the confirmation screen
+ * owns that; recording it here so it is a decision rather than a surprise.
+ */
+export const CONFIRMATION_EXPIRY_HOURS = 24
+
+/**
+ * The most waiting time a shift will credit back, however long the pauses ran.
+ *
+ * Uncapped credit would make the time limit meaningless: a run paused over a
+ * weekend would wake with three days of budget and no longer resemble anything
+ * the person agreed to. Four hours restores an afternoon's interruption while
+ * keeping *"I gave it thirty minutes"* recognisably true.
+ */
+export const MAX_PAUSE_CREDIT_MINUTES = 240
+
 export type StopRuleId =
   | 'budget-exhausted'
   | 'no-progress'
   | 'refusal-loop'
   | 'decision-needed'
+  | 'control-lost'
+  | 'action-limit'
 
 export type StopOrigin = 'structural' | 'model-raised'
 
@@ -105,6 +166,36 @@ export const STOP_RULES: Readonly<Record<StopRuleId, StopRule>> = {
     terminalReason: 'stop-condition',
     consumerLabel: 'I stopped because this needs a decision only you can make.',
   },
+  /**
+   * The tab went away — closed, navigated by the person, or the debugger
+   * attachment dropped. Structural, and deterministic: it is an observed fact
+   * about the browser, not an inference about the work.
+   *
+   * It has to be its own rule rather than a failure, because "the page I was
+   * working in is gone" is the one halt where the person can see for themselves
+   * exactly what happened, and telling them that is far better than a generic
+   * error. It also means any half-finished interaction is theirs now.
+   */
+  'control-lost': {
+    id: 'control-lost',
+    origin: 'structural',
+    terminalReason: 'stop-condition',
+    consumerLabel: 'I lost the tab I was working in.',
+  },
+  /**
+   * The run reached `EnforcedPolicy.maxActions`.
+   *
+   * Distinct from `budget-exhausted` on purpose: running out of TIME and running
+   * out of PERMITTED ACTIONS are different things to be told, and lead to
+   * different next moves — one says "give me longer", the other says "this is
+   * taking more steps than expected, look at what it is doing".
+   */
+  'action-limit': {
+    id: 'action-limit',
+    origin: 'structural',
+    terminalReason: 'stop-condition',
+    consumerLabel: "I did as much as I'm allowed to do in one go.",
+  },
 } as const
 
 /** Everything the rules need about the run so far. All facts, no judgment. */
@@ -115,8 +206,25 @@ export interface RunProgress {
   readonly deadlineEpochMs: number
   /** Consecutive completed actions that changed no artifact. */
   readonly consecutiveNoProgress: number
-  /** Consecutive gate refusals. */
+  /** Consecutive gate refusals. **Refusals in `PAUSING_RULES` must not be
+   *  counted here** — the caller filters, because only the caller sees rules. */
   readonly consecutiveRefusals: number
+
+  /**
+   * The browser-era facts, optional for the same reason `RunContext`'s are: the
+   * run path that builds this is owned by the unit wiring the executor, and
+   * making them required would break that file before it can supply them.
+   *
+   * Both absences mean the corresponding rule cannot fire, which leaves an
+   * unwired caller with exactly the behaviour it had before these rules existed
+   * rather than a spurious halt.
+   */
+  readonly controlLost?: boolean | undefined
+  /** Authorized actions so far, counted off ActionIntent rows. */
+  readonly actionsTaken?: number | undefined
+  /** `EnforcedPolicy.maxActions`. Passed rather than imported so this file
+   *  stays a rule set over facts and never reaches for a policy. */
+  readonly maxActions?: number | undefined
 }
 
 /**
@@ -131,8 +239,69 @@ export function evaluateStructuralStops(progress: RunProgress): StopRuleId[] {
   if (progress.nowEpochMs >= progress.deadlineEpochMs) fired.push('budget-exhausted')
   if (progress.consecutiveNoProgress >= NO_PROGRESS_LIMIT) fired.push('no-progress')
   if (progress.consecutiveRefusals >= REFUSAL_LOOP_LIMIT) fired.push('refusal-loop')
+  if (progress.controlLost === true) fired.push('control-lost')
+
+  // Both terms or neither. A cap with no count, or a count with no cap, is not
+  // a limit — and guessing a default for either would invent a limit nobody set.
+  if (
+    progress.actionsTaken !== undefined &&
+    progress.maxActions !== undefined &&
+    progress.actionsTaken >= progress.maxActions
+  ) {
+    fired.push('action-limit')
+  }
 
   return fired
+}
+
+/**
+ * When this shift actually ends, with confirmation pauses credited back.
+ *
+ * ── The problem ─────────────────────────────────────────────────────────
+ *
+ * A confirmation pause would otherwise eat the shift. Someone asked at 09:05
+ * whether to press *Place order*, who answers at 12:00, returns to a run whose
+ * thirty minutes expired at 09:30 — so every remaining proposal is refused with
+ * `budget_exhausted` and the work they just approved never happens. The person
+ * did nothing wrong, the system did nothing wrong, and the outcome is that
+ * asking permission destroyed the run. That makes the safest behaviour the most
+ * expensive one, which is how safeguards get switched off.
+ *
+ * ── Why this is not the stored deadline that was forbidden ───────────────
+ *
+ * `EnforcedPolicy` deliberately has no `deadlineAt` field, because recomputing
+ * a deadline on restart would reset the budget on every crash loop — a run that
+ * dies and resumes ten times would get eleven full budgets.
+ *
+ * **This does not, and the reason is structural rather than careful.** Every
+ * term is an immutable timestamp on a durable row: `acceptedAt` on the
+ * contract, and a `(requestedAt, decidedAt)` pair per answered confirmation.
+ * None of them is "now", none is written by this function, and none changes
+ * when a process restarts. So it recomputes to the SAME NUMBER after any number
+ * of restarts, which is exactly the property the original rule was protecting.
+ * It looks like the forbidden thing; it is its opposite.
+ *
+ * Pure and total. An open pause — requested but not yet decided — is simply not
+ * in the list, and therefore earns nothing: crediting one would need the clock,
+ * and the run is not spending budget while it waits anyway.
+ */
+export function deadlineFor(input: {
+  readonly acceptedAtEpochMs: number
+  readonly timeLimitMinutes: number
+  readonly pauses: ReadonlyArray<{ requestedAtEpochMs: number; decidedAtEpochMs: number }>
+}): number {
+  let waitedMs = 0
+  for (const pause of input.pauses) {
+    const elapsed = pause.decidedAtEpochMs - pause.requestedAtEpochMs
+    // Clamped at zero. A decision timestamped before its request is clock skew
+    // or a bad row, and neither should ever SHORTEN a shift — an input error
+    // that silently took time away from someone would be very hard to see.
+    if (elapsed > 0) waitedMs += elapsed
+  }
+
+  const creditMs = Math.min(waitedMs, MAX_PAUSE_CREDIT_MINUTES * 60_000)
+
+  return input.acceptedAtEpochMs + input.timeLimitMinutes * 60_000 + creditMs
 }
 
 export type RaisedQuestionEffect = 'halt' | 'record-and-continue'
