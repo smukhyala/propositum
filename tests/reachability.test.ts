@@ -513,6 +513,18 @@ describe('the safety machinery is reachable from the product', () => {
       'nothing reads answered confirmations off durable rows',
     ).toContain('src/server/execute-run.ts')
 
+    // ...through the shared helpers rather than a second query of its own. Two
+    // readers of one truth drift, and they drift in the direction that decides
+    // whether somebody's yes counts.
+    expect(
+      callersOf('confirmedRequestIdsFor(', 'src/server/confirmations.ts'),
+      'the run path queries verdicts itself instead of using the shared reader',
+    ).toContain('src/server/execute-run.ts')
+    expect(
+      callersOf('confirmationForIntent(', 'src/server/confirmations.ts'),
+      'nothing walks from a refused intent to the confirmation covering it',
+    ).toContain('src/server/execute-run.ts')
+
     // ...and the model has nowhere to name one. A `confirmationId` field on the
     // proposal schema would be a model granting itself permission.
     const boundary = readFileSync(join(repo, 'src/model/boundaries/worker-action.ts'), 'utf8')

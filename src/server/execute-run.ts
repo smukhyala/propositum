@@ -43,12 +43,12 @@
 
 import { runWorker } from '../runtime/worker-loop'
 import type { RunLedger, WorkerJob, WorkerResult } from '../runtime/worker-loop'
-import type { HistoryReader } from '../runtime/history'
+import type { ConfirmedAction, HistoryReader } from '../runtime/history'
 import { STOP_RULES } from '../domain/execution/stop-conditions'
 import { allowlisted } from '../policy/fetcher'
 import type { SourceFetcher } from '../policy/fetcher'
 import { readableCause } from './problem'
-import { creditedDeadlineFor, settleAbandonedIntents } from './confirmations'
+import { confirmationForIntent, confirmedRequestIdsFor, creditedDeadlineFor, settleAbandonedIntents } from './confirmations'
 import type { RunFence } from '../runtime/worker-process'
 import { FINDING_KINDS, reviewBoundary, reviewHandlesFor } from '../model/boundaries/review'
 import type { ReviewedOutcome } from '../model/boundaries/review'
@@ -233,38 +233,54 @@ function historyReaderFor(ctx: AppContext): HistoryReader {
     },
 
     /**
-     * Only the ones a human said YES to.
+     * The confirmations a human answered YES to, paired with what they covered.
      *
-     * The `verdict` filter is the whole query. A request with no verdict, a
-     * rejected one, and one that timed out are the same thing to the gate —
-     * *not permitted* — and returning all three would put the job of telling
-     * them apart on a caller. **Expiry never approves**, and an unanswered
-     * request simply has no `ConfirmationVerdict` row, so it cannot arrive here
-     * at all. That is the property being protected: there is no elapsed-time
-     * path to permission, because time does not write rows.
+     * -- Two helpers, and why both --------------------------------------
      *
-     * The refused intent's own `kind` and `params` come back with it, because
-     * they are what the person was shown — the question was built by code from
-     * attested facts about that intent, so a yes covers that action and no
-     * other. See `confirmationIdFor`.
+     * `confirmedRequestIdsFor` is the membership set the gate checks.
+     * `confirmationForIntent` is the deterministic injection point: it walks
+     * from a REFUSED intent to the request a person answered about it. Both are
+     * contract-scoped on purpose -- the yes is answered against the run that
+     * asked and honoured by the continuation, so a run-scoped lookup would lose
+     * it at exactly the moment it is needed.
+     *
+     * Only `confirmed` counts in either. A rejected verdict and an absent one
+     * are indistinguishable here on purpose: all three mean *not permitted*, and
+     * **expiry never approves**, because an unanswered request has no verdict
+     * row and time does not write rows.
+     *
+     * The refused intent's own `kind` and `params` ride along because they are
+     * what the person was SHOWN -- the question was built by code from attested
+     * facts about that intent -- so `confirmationIdFor` can require a proposal
+     * to match it before attaching the id.
+     *
+     * The walk covers this contract's refused intents only, and runs at all only
+     * when something is confirmed, so the common case is one query returning
+     * nothing.
      */
     async confirmationsForContract(contractId) {
-      const rows = await ctx.db.prisma.confirmationRequest.findMany({
-        where: { run: { contractId }, verdict: { verdict: 'confirmed' } },
-        orderBy: { createdAt: 'asc' },
-        select: {
-          id: true,
-          intentId: true,
-          intent: { select: { kind: true, params: true } },
-        },
+      const confirmedIds = await confirmedRequestIdsFor(ctx, contractId)
+      if (confirmedIds.size === 0) return []
+
+      const refused = await ctx.db.prisma.actionIntent.findMany({
+        where: { run: { contractId }, authorized: false },
+        orderBy: [{ createdAt: 'asc' }, { seq: 'asc' }],
+        select: { id: true, kind: true, params: true },
       })
 
-      return rows.map((row) => ({
-        requestId: row.id,
-        intentId: row.intentId,
-        kind: row.intent.kind,
-        params: (row.intent.params ?? {}) as Record<string, unknown>,
-      }))
+      const covered: ConfirmedAction[] = []
+      for (const intent of refused) {
+        const requestId = await confirmationForIntent(ctx, intent.id)
+        if (requestId === null || !confirmedIds.has(requestId)) continue
+
+        covered.push({
+          requestId,
+          intentId: intent.id,
+          kind: intent.kind,
+          params: (intent.params ?? {}) as Record<string, unknown>,
+        })
+      }
+      return covered
     },
   }
 }
