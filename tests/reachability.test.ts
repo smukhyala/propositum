@@ -439,6 +439,48 @@ describe('the safety machinery is reachable from the product', () => {
     ).toContain('src/server/execute-run.ts')
   })
 
+  it("the run path reads the person's yes, or a confirmed action is refused twice", () => {
+    /**
+     * The consumer half of the confirmation pause.
+     *
+     * `RunContext.confirmedRequestIds` defaults to empty and `authorize()` never
+     * queries, so without a caller supplying it the gate refuses a confirmed
+     * action with `confirmation_required` a second time. The run fails safe and
+     * presents as *Propositum ignored my answer*, which costs more trust than a
+     * refusal does.
+     *
+     * `params.confirmationId` must be attached by DETERMINISTIC CODE, never
+     * proposed: a model that could name a confirmation id could confirm its own
+     * action, and granting is the one thing a model may never do. So the
+     * assertion is on the loop, not on the boundary schema — and the boundary
+     * schema is checked below for the absence of any field that could carry one.
+     *
+     * The producer half stays deferred; see the pairing note in that block.
+     */
+    expect(
+      callersOf('confirmedRequestIds', 'src/policy/gate.ts'),
+      'nothing supplies confirmedRequestIds — a confirmed action is refused a second time',
+    ).toContain('src/runtime/worker-loop.ts')
+
+    expect(
+      callersOf('confirmationsForContract', 'src/runtime/history.ts'),
+      'nothing reads answered confirmations off durable rows',
+    ).toContain('src/server/execute-run.ts')
+
+    // ...and the model has nowhere to name one. A `confirmationId` field on the
+    // proposal schema would be a model granting itself permission.
+    const boundary = readFileSync(join(repo, 'src/model/boundaries/worker-action.ts'), 'utf8')
+    const schema = boundary.slice(
+      boundary.indexOf('export const workerActionSchema'),
+      boundary.indexOf('export type WorkerActionOutput'),
+    )
+    expect(schema.length).toBeGreaterThan(200)
+    expect(
+      schema,
+      'the action schema can name a confirmation — a model that names one confirms itself',
+    ).not.toMatch(/confirmation/i)
+  })
+
   it('the browser tools are reachable from the run path, or the six kinds cannot act', () => {
     /**
      * `ACTION_KINDS` gained six members in wave 2 and the loop threw on all of
@@ -607,9 +649,27 @@ describe('deferred, and asserted as deferred', () => {
   })
 
   it('and no human can answer one, so a raised request would strand its run', () => {
+    /**
+     * ── Read the pair below before promoting this ────────────────────────
+     *
+     * The CONSUMER half is wired: `historyForContract` reads answered
+     * confirmations off durable rows, `runContext` puts the ids on
+     * `RunContext.confirmedRequestIds`, and deterministic code attaches
+     * `params.confirmationId` to a proposal the person actually said yes to.
+     * That half is asserted in the reachable section above.
+     *
+     * The PRODUCER half is not: nothing writes a `ConfirmationRequest` and
+     * nothing records a `ConfirmationVerdict`, so the set the gate checks is
+     * always empty in production and the pause has nothing to release it.
+     *
+     * **Promote the two together or neither.** Moving this row up on its own
+     * would make the flow look finished while the person's yes still has
+     * nowhere to be written — which is exactly the shape of the three defects
+     * at the top of this file: correct, tested, and unreachable.
+     */
     expect(
       callersOf('confirmations.recordVerdict', repos),
-      'confirmations are answerable now — move this into the section above',
+      'confirmations are answerable now — move this into the section above, together with the consumer assertion',
     ).toEqual([])
   })
 

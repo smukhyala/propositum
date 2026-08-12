@@ -177,6 +177,41 @@ function historyReaderFor(ctx: AppContext): HistoryReader {
           : null,
       }))
     },
+
+    /**
+     * Only the ones a human said YES to.
+     *
+     * The `verdict` filter is the whole query. A request with no verdict, a
+     * rejected one, and one that timed out are the same thing to the gate —
+     * *not permitted* — and returning all three would put the job of telling
+     * them apart on a caller. **Expiry never approves**, and an unanswered
+     * request simply has no `ConfirmationVerdict` row, so it cannot arrive here
+     * at all. That is the property being protected: there is no elapsed-time
+     * path to permission, because time does not write rows.
+     *
+     * The refused intent's own `kind` and `params` come back with it, because
+     * they are what the person was shown — the question was built by code from
+     * attested facts about that intent, so a yes covers that action and no
+     * other. See `confirmationIdFor`.
+     */
+    async confirmationsForContract(contractId) {
+      const rows = await ctx.db.prisma.confirmationRequest.findMany({
+        where: { run: { contractId }, verdict: { verdict: 'confirmed' } },
+        orderBy: { createdAt: 'asc' },
+        select: {
+          id: true,
+          intentId: true,
+          intent: { select: { kind: true, params: true } },
+        },
+      })
+
+      return rows.map((row) => ({
+        requestId: row.id,
+        intentId: row.intentId,
+        kind: row.intent.kind,
+        params: (row.intent.params ?? {}) as Record<string, unknown>,
+      }))
+    },
   }
 }
 

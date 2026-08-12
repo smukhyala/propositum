@@ -28,7 +28,7 @@ import { describe, it, expect } from 'vitest'
 import { runWorker } from '../src/runtime/worker-loop'
 import type { RunLedger, WorkerDeps, WorkerJob } from '../src/runtime/worker-loop'
 import { historyForContract, recoverOrphanedIntents } from '../src/runtime/history'
-import type { HistoryReader, LedgerIntentRow } from '../src/runtime/history'
+import type { ConfirmedAction, HistoryReader, LedgerIntentRow } from '../src/runtime/history'
 import type { BrowserControl, BrowserReport, PageObservation } from '../src/runtime/browser-control'
 import { FakeModelClient } from '../src/model/fake'
 import type { ScriptedReply } from '../src/model/fake'
@@ -953,6 +953,113 @@ describe('a confirmation pause is not a run going in circles', () => {
     // on turns, not the one on permitted actions.
     expect(result.actionsTaken).toBe(1)
     expect(result.refusals).toBe(MAX_ACTIONS_PER_RUN - 1)
+  })
+})
+
+/* ── 6b. the person's yes actually lands ───────────────────────────────── */
+
+describe("a confirmed action is not asked about twice", () => {
+  /**
+   * The end-to-end bug this closes, in one sentence: `confirmRequest` records
+   * the yes, the continuation run proposes the same action, and the gate refuses
+   * it `confirmation_required` all over again — because nothing populated
+   * `RunContext.confirmedRequestIds` and no proposal ever carried an id. It
+   * fails safe, and it reads to the person as *Propositum ignored my answer*.
+   */
+  const confirmed = (over: Partial<ConfirmedAction> = {}): ConfirmedAction => ({
+    requestId: 'confreq-1',
+    intentId: 'i-refused',
+    kind: 'click-element',
+    params: { ref: 'r1', snapshotId: 'snap-OLD' },
+    ...over,
+  })
+
+  const readerWith = (confirmations: readonly ConfirmedAction[]): HistoryReader => ({
+    intentsForContract: async () => [],
+    confirmationsForContract: async () => confirmations,
+  })
+
+  const proposeClick = (): ScriptedReply<unknown>[] => [
+    plan('press it'),
+    act({ kind: 'observe-page' }),
+    act({ kind: 'click-element', ref: 'r1', snapshotId: 'snap-1' }),
+    done(),
+  ]
+
+  it('carries the yes onto the proposal, and the gate allows it', async () => {
+    // `blind` — no element evidence, so the classifier escalates and the action
+    // needs a confirmation. With one on file, it goes through.
+    const d = deps(
+      proposeClick(),
+      [
+        { ok: true, observation: observed(1) },
+        { ok: true, observation: observed(2) },
+      ],
+      { elementEvidence: undefined, history: readerWith([confirmed()]) },
+    )
+
+    await runWorker(job(), d)
+
+    expect(d.recorded.intents[1]).toMatchObject({ kind: 'click-element', authorized: true })
+    // Deterministic code attached it — the model has no field to propose it in.
+    expect(d.recorded.intents[1]?.params.confirmationId).toBe('confreq-1')
+  })
+
+  it('does not let a yes about one control cover a different one', async () => {
+    // The person was shown `r9`. A yes about that is not a yes about `r1`, and
+    // the match is on the identifying params rather than on the kind alone.
+    const d = deps(
+      proposeClick(),
+      [{ ok: true, observation: observed(1) }],
+      {
+        elementEvidence: undefined,
+        history: readerWith([confirmed({ params: { ref: 'r9' } })]),
+      },
+    )
+
+    await runWorker(job(), d)
+
+    expect(d.recorded.intents[1]?.refusedRule).toBe('confirmation_required')
+    expect(d.recorded.intents[1]?.params.confirmationId).toBeUndefined()
+  })
+
+  it('does not require the snapshot to match, because a continuation has a new one', async () => {
+    // The confirmed intent names `snap-OLD`; the continuation observed the page
+    // again and is on `snap-1`. Requiring equality would mean no confirmation
+    // ever applied to anything.
+    const d = deps(
+      proposeClick(),
+      [
+        { ok: true, observation: observed(1) },
+        { ok: true, observation: observed(2) },
+      ],
+      { elementEvidence: undefined, history: readerWith([confirmed()]) },
+    )
+
+    await runWorker(job(), d)
+
+    expect(d.recorded.intents[1]?.authorized).toBe(true)
+  })
+
+  it('rebuilds the id set the gate checks membership of', async () => {
+    const rebuilt = await historyForContract('contract-1', {
+      ledger: readerWith([confirmed(), confirmed({ requestId: 'confreq-2' })]),
+      mutatingKinds: MUTATING_ACTION_KINDS,
+    })
+
+    expect([...rebuilt.confirmedRequestIds]).toEqual(['confreq-1', 'confreq-2'])
+  })
+
+  it('treats an absent reader as nothing confirmed', async () => {
+    // A drafting run has no confirmation story and must not be obliged to have
+    // one. Absent resolves to the same state the gate defaults to.
+    const rebuilt = await historyForContract('contract-1', {
+      ledger: { intentsForContract: async () => [] },
+      mutatingKinds: MUTATING_ACTION_KINDS,
+    })
+
+    expect(rebuilt.confirmedRequestIds.size).toBe(0)
+    expect(rebuilt.confirmations).toEqual([])
   })
 })
 

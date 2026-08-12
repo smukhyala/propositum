@@ -102,8 +102,8 @@ import {
   typeText,
 } from '../policy/tools'
 import type { BrowserDeps, NavigateDeps, ReadDocumentDeps, ReadSourceDeps } from '../policy/tools'
-import { historyForContract, recoverOrphanedIntents } from './history'
-import type { HistoryReader, HistoryTurn } from './history'
+import { confirmationIdFor, historyForContract, recoverOrphanedIntents } from './history'
+import type { ConfirmedAction, HistoryReader, HistoryTurn } from './history'
 import { BrowserControlError, UNVERIFIED_FAILURES } from './browser-control'
 import type { PageObservation, ScreenCapture } from './browser-control'
 import {
@@ -425,7 +425,14 @@ export async function runWorker(job: WorkerJob, deps: WorkerDeps): Promise<Worke
         // path, not three" requires.
         excludeRunId: job.runId,
       })
-    : { turns: [] as HistoryTurn[], actionsTaken: 0, mutatingActionsTaken: 0, orphanedIntentIds: [] }
+    : {
+        turns: [] as HistoryTurn[],
+        actionsTaken: 0,
+        mutatingActionsTaken: 0,
+        orphanedIntentIds: [],
+        confirmations: [] as ConfirmedAction[],
+        confirmedRequestIds: new Set<string>(),
+      }
 
   const recovered = await recoverOrphanedIntents(rebuilt.orphanedIntentIds, deps.ledger)
 
@@ -656,6 +663,25 @@ export async function runWorker(job: WorkerJob, deps: WorkerDeps): Promise<Worke
       ...(job.documentId === undefined ? {} : { documentId: job.documentId }),
     }
 
+    /**
+     * The person's yes, attached by DETERMINISTIC CODE.
+     *
+     * Never proposed by the model, and the schema has no field for it — a model
+     * that could name a `confirmationId` could confirm its own action, which is
+     * a grant, and grants are the one thing a model may never make. This looks
+     * the id up from `ConfirmationVerdict` rows and attaches it only when the
+     * proposal matches the action the person was actually shown.
+     *
+     * Without this the whole pause is a dead end: `confirmRequest` records the
+     * yes, the continuation run proposes the same action, and the gate refuses
+     * it `confirmation_required` all over again — because `confirmedRequestIds`
+     * is empty and no proposal ever carries an id. It fails safe, and it reads
+     * to the person as *Propositum ignored my answer*, which costs more trust
+     * than a refusal does.
+     */
+    const confirmationId = confirmationIdFor(proposal.kind, params, rebuilt.confirmations)
+    if (confirmationId !== undefined) params.confirmationId = confirmationId
+
     const toolProposal: ToolProposal = {
       kind: proposal.kind,
       params: params as ToolProposal['params'],
@@ -691,6 +717,11 @@ export async function runWorker(job: WorkerJob, deps: WorkerDeps): Promise<Worke
           page !== null && proposal.ref
             ? deps.elementEvidence?.({ snapshotId: page.snapshotId, ref: proposal.ref }) ?? null
             : null,
+        // Read off durable `ConfirmationVerdict` rows before the call, because
+        // the gate never queries. Membership is all it checks: an id absent from
+        // this set has been never asked, declined, or expired, and the gate must
+        // not distinguish them — **expiry never approves**.
+        confirmedRequestIds: rebuilt.confirmedRequestIds,
       }),
       intentId,
     )
@@ -949,6 +980,7 @@ function runContext(
     actionsTaken: number
     mutatingActionsTaken: number
     targetEvidence: ElementEvidence | null
+    confirmedRequestIds: ReadonlySet<string>
   },
 ): RunContext {
   return {

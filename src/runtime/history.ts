@@ -77,11 +77,43 @@ export interface LedgerIntentRow {
   } | null
 }
 
+/**
+ * A confirmation the person actually answered YES to, with the action it was
+ * about.
+ *
+ * Carries the REFUSED INTENT's own `kind` and `params` — not the continuation's
+ * — because that is what the person was shown. The question they answered was
+ * built by code from attested facts about that intent, so the only action their
+ * yes covers is one that matches it.
+ */
+export interface ConfirmedAction {
+  /** The `ConfirmationRequest` id. What the gate checks membership of. */
+  readonly requestId: string
+  /** The refused `ActionIntent` the request was raised against. */
+  readonly intentId: string
+  readonly kind: string
+  readonly params: Record<string, unknown>
+}
+
 export interface HistoryReader {
   /** Every authorized-or-refused intent under this contract, in the order they
    *  were committed. Ordering is the caller's to guarantee, because only the
    *  caller knows whether it is reading one run or several. */
   intentsForContract(contractId: string): Promise<readonly LedgerIntentRow[]>
+  /**
+   * Confirmations under this contract that a human ANSWERED YES to.
+   *
+   * Deliberately not "requests" — a request with no verdict, a rejected one and
+   * an expired one are all the same thing to the gate, which is *not
+   * permitted*, and a reader that returned all three would invite a caller to
+   * tell them apart itself. **Expiry never approves**, and the cheapest way to
+   * keep that true is for the unanswered ones never to arrive here.
+   *
+   * Optional so a caller with no confirmation story — every existing drafting
+   * run — is not obliged to implement it. Absent means nothing is confirmed,
+   * which is the same state the gate defaults to.
+   */
+  confirmationsForContract?(contractId: string): Promise<readonly ConfirmedAction[]>
 }
 
 export interface HistoryDeps {
@@ -152,6 +184,16 @@ export interface RebuiltHistory {
    * the two leaves exactly this.
    */
   readonly orphanedIntentIds: readonly string[]
+  /**
+   * What the person has said yes to under this contract.
+   *
+   * Two shapes of the same fact, because the gate and the loop need different
+   * halves of it: the gate checks MEMBERSHIP of `confirmedRequestIds`, and the
+   * loop needs the action each id was about so deterministic code can decide
+   * which proposal a yes covers.
+   */
+  readonly confirmedRequestIds: ReadonlySet<string>
+  readonly confirmations: readonly ConfirmedAction[]
 }
 
 /**
@@ -166,6 +208,7 @@ export async function historyForContract(
   deps: HistoryDeps,
 ): Promise<RebuiltHistory> {
   const rows = await deps.ledger.intentsForContract(contractId)
+  const confirmations = (await deps.ledger.confirmationsForContract?.(contractId)) ?? []
 
   const turns: HistoryTurn[] = []
   const orphanedIntentIds: string[] = []
@@ -207,7 +250,14 @@ export async function historyForContract(
     })
   }
 
-  return { turns, actionsTaken, mutatingActionsTaken, orphanedIntentIds }
+  return {
+    turns,
+    actionsTaken,
+    mutatingActionsTaken,
+    orphanedIntentIds,
+    confirmations,
+    confirmedRequestIds: new Set(confirmations.map((c) => c.requestId)),
+  }
 }
 
 export interface RecoveryWriter {
@@ -280,4 +330,70 @@ export async function recoverOrphanedIntents(
   }
 
   return orphanedIntentIds.length
+}
+
+/**
+ * Which confirmation, if any, covers this proposal.
+ *
+ * ── Deterministic code decides this, and that is the whole point ─────────
+ *
+ * The obvious shape is to let the model name the confirmation it is acting
+ * under. That is a **grant**: a model that can name a `confirmationId` can
+ * confirm its own action, and granting is the one thing a model may never do.
+ * ADR-0007's asymmetry is exact — declining withholds, permitting does not — so
+ * the id is injected here, from durable rows, keyed on what the person was
+ * actually shown.
+ *
+ * ── What must match, and the one thing that cannot ──────────────────────
+ *
+ * The kind and every identifying parameter must be equal to the refused
+ * intent's: the same element, the same text, the same key. `snapshotId` is
+ * excluded and CANNOT be included — the continuation is a new run that observed
+ * the page again, so its snapshot is necessarily different, and requiring
+ * equality would mean no confirmation ever applied to anything.
+ *
+ * **That exclusion is a real residual risk and is not closed here.** A page
+ * that re-rendered between the question and the answer can move `ref` onto a
+ * different control, so a yes given about *Track shipment* could attach to
+ * whatever took its place. ADR-0010 §5 designs this flow — the continuation
+ * proposes the action again and is allowed — and it records the adjacent hazard
+ * ("re-clicking after approval may double-fire") without closing this one. What
+ * bounds it today is that the gate still refuses a stale snapshot, still runs
+ * the classifier against the NEW element's evidence, and still counts the
+ * action against the mutating cap. What would close it is the request carrying
+ * the element's attested identity and this function requiring that to match
+ * too; that needs the evidence the confirmation was raised with, which is
+ * another unit's to plumb.
+ */
+export function confirmationIdFor(
+  kind: string,
+  params: Record<string, unknown>,
+  confirmations: readonly ConfirmedAction[],
+): string | undefined {
+  for (const confirmed of confirmations) {
+    if (confirmed.kind !== kind) continue
+    if (!identifyingParamsMatch(confirmed.params, params)) continue
+    return confirmed.requestId
+  }
+  return undefined
+}
+
+/**
+ * The parameters that say WHICH action this is, compared exactly.
+ *
+ * A closed list rather than a whole-object comparison, and the direction of the
+ * risk decides which: an over-broad list makes a confirmation apply to fewer
+ * things (the person is asked again — annoying), while a missing field makes it
+ * apply to MORE (the person's yes covers something they were not shown). So a
+ * field is included unless there is a reason it cannot be, and `snapshotId` is
+ * the only such reason — see above.
+ */
+function identifyingParamsMatch(
+  confirmed: Record<string, unknown>,
+  proposed: Record<string, unknown>,
+): boolean {
+  for (const field of ['ref', 'inputText', 'key', 'path', 'approvedSourceId', 'sectionPath']) {
+    if (confirmed[field] !== proposed[field]) return false
+  }
+  return true
 }
