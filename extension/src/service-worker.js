@@ -23,12 +23,33 @@
 
 import { patternCovers } from './match-pattern.js'
 import { looksLikeSearch } from './search-url.js'
+import {
+  INDICATOR_GRACE_MS,
+  clearControlState,
+  controlState,
+  detachControl,
+  openControlledTab,
+  originOf,
+  performCommand,
+  registerControlListeners,
+} from './cdp.js'
 
 const APP_ORIGIN = 'http://127.0.0.1:3117'
 const HEARTBEAT_ALARM = 'propositum-heartbeat'
 const HEARTBEAT_MINUTES = 0.5
 
 const CUSTOM_HEADER = 'x-propositum-capture'
+
+/**
+ * The acting channel's own header.
+ *
+ * Separate from the capture header on purpose. They are different
+ * conversations with different consequences — one reports what a person
+ * looked at, the other asks what to do in their browser — and a route that
+ * accepted either would be one `if` away from letting a forged capture event
+ * ask for an instruction.
+ */
+const ACT_HEADER = 'x-propositum-act'
 
 /**
  * How long "Not now" buys, for notifications only.
@@ -116,7 +137,10 @@ async function verifyReachable() {
       headers: { [CUSTOM_HEADER]: '1' },
     })
     if (!response.ok) throw new Error(`status ${response.status}`)
-    await chrome.action.setBadgeText({ text: '' })
+    // Not while something is being worked on. Clearing the badge here would
+    // take down the acting indicator's third layer every thirty seconds, which
+    // is the same class of mistake as an indicator that can be lost silently.
+    if (!(await acting())) await chrome.action.setBadgeText({ text: '' })
     return true
   } catch (error) {
     // Visible, not logged-and-forgotten.
@@ -289,6 +313,10 @@ async function flush() {
  * is mid-sentence. A dot on the toolbar icon waits until they look.
  */
 async function showSuggestionBadge() {
+  // An offer is a "when you have a moment"; work in progress is a "right now".
+  // The second wins the badge, and the offer is still there when it ends.
+  if (await acting()) return
+
   try {
     const response = await fetch(`${APP_ORIGIN}/api/session/current`, {
       headers: { [CUSTOM_HEADER]: '1' },
@@ -396,6 +424,469 @@ async function showSuggestionBadge() {
   }
 }
 
+/* ══ acting in the person's own browser — ADR-0010 ══════════════════════ */
+
+/**
+ * ── The long poll, and why there are two keepalives ──────────────────────
+ *
+ * `GET /api/act/next` hangs for up to 25 seconds on the app side, which is
+ * deliberately below MV3's 30-second idle window, and this file re-arms it the
+ * moment it returns. Two mechanisms keep the worker around, and **neither is
+ * load-bearing on its own**:
+ *
+ *  1. **The awaited fetch.** A service worker with an outstanding `await` on a
+ *     network request is not idle, so in principle it is not killed. In
+ *     principle. ADR-0010 lists this in its risks: MV3 lifetime under a held
+ *     socket across an agent turn is **undocumented for exactly this case**,
+ *     and the failure mode — an agent that stops mid-run for no visible
+ *     reason — is one of the worst-shaped bugs available.
+ *  2. **The 30-second alarm.** `chrome.alarms` is the resurrector, not the
+ *     driver. It brings the worker back if it died anyway, and the first thing
+ *     it does is re-arm the poll.
+ *
+ * So this is designed for the keepalive turning out to be wrong. Nothing is
+ * held in a module variable, the in-flight intent id is in session storage,
+ * and a resurrected worker can pick up from what it finds there. If the
+ * awaited-fetch keepalive works, the alarm costs one no-op every 30 seconds.
+ * If it does not, the alarm is the whole mechanism and the run continues with
+ * a stutter rather than dying.
+ */
+const POLL_TIMEOUT_MS = 25_000
+const POLL_ABORT_MS = POLL_TIMEOUT_MS + 5_000
+
+/**
+ * The floor between two polls that returned nothing.
+ *
+ * If the app answers instantly rather than hanging — an older build, a route
+ * that does not exist yet, a misconfiguration — an immediate re-arm is a hot
+ * loop against loopback that pins a core and never stops. One second is
+ * invisible against a 25-second hang and turns a spin into a poll.
+ */
+const POLL_FLOOR_MS = 1_000
+
+/**
+ * Only one poll may be in flight, and the lease is what says so.
+ *
+ * A module variable would be the obvious guard and would be wrong: the worker
+ * dies, the variable goes with it, and the alarm starts a second poll beside
+ * the first. Session storage survives the worker; a lease that expires
+ * survives a worker that died holding it.
+ */
+const POLL_LEASE_MS = POLL_ABORT_MS + 5_000
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
+async function claimPollLease() {
+  const { pollLeaseUntil = 0 } = await chrome.storage.session.get(['pollLeaseUntil'])
+  if (Date.now() < pollLeaseUntil) return false
+
+  await chrome.storage.session.set({ pollLeaseUntil: Date.now() + POLL_LEASE_MS })
+  return true
+}
+
+async function releasePollLease() {
+  await chrome.storage.session.set({ pollLeaseUntil: 0 })
+}
+
+function actFetch(path, init) {
+  return fetch(`${APP_ORIGIN}${path}`, {
+    ...init,
+    headers: { ...(init?.headers ?? {}), [ACT_HEADER]: '1' },
+  })
+}
+
+/**
+ * Tell the app what happened, exactly once.
+ *
+ * ── A rejection must never be permanent ──────────────────────────────────
+ *
+ * The extension bounds the accessibility tree before it leaves the browser and
+ * the app bounds it again at the ledger; neither trusts the other. Wave 2
+ * shipped that same pairing with the numbers the wrong way round and it
+ * WEDGED: the sender kept 200 observations against a route that accepted 100,
+ * cleared its buffer only on success, and so ambient detection was dead for
+ * the life of that session storage.
+ *
+ * Two things make that impossible here. There is no buffer at all — a report
+ * is produced, sent once, and forgotten. And a 4xx is not retried with the
+ * same bytes; it is answered with a *minimal* failure report for the same
+ * intent, which carries no page-derived content and therefore cannot be
+ * refused for the same reason twice.
+ *
+ * The point of that fallback is not to salvage the observation. It is that the
+ * intent must never become an orphan: an ActionIntent with no ActionOutcome is
+ * indistinguishable from a crash, and gets reported to the person as `unknown`
+ * when we know perfectly well what happened.
+ */
+async function postReport(intentId, report) {
+  const send = (body) =>
+    actFetch('/api/act/report', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ intentId, ...body }),
+    })
+
+  try {
+    const response = await send(report)
+    if (response.ok) return
+    if (response.status < 400 || response.status >= 500) return
+
+    console.warn('[propositum] the app refused a report, saying so plainly instead:', response.status)
+    await send({
+      ok: false,
+      failure: 'not-reported',
+      detail: `the app would not accept what Propositum saw (${response.status})`,
+    }).catch(() => {})
+  } catch {
+    // The app is unreachable. Its own recovery sweep is what writes the
+    // outcome in that case, marked as recovery rather than inferred — see
+    // ADR-0010 §7. Retrying here would be this file guessing on its behalf.
+  }
+}
+
+/**
+ * Stop, and say so afterwards.
+ *
+ * `POST` last, always. Detaching is the removal of the capability, and it has
+ * to work with the app closed, the dev server restarting, or the machine
+ * offline. A stop that has to reach a server before it takes effect is not a
+ * stop.
+ */
+async function postHalt(runId, reason) {
+  await actFetch('/api/act/halt', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ runId, reason }),
+  }).catch(() => {})
+}
+
+/* ── the indicator, layer 2 of 3 ───────────────────────────────────────── */
+
+/**
+ * Put the marker back on the page.
+ *
+ * Called after attach and again on every `Page.loadEventFired`, because
+ * navigation destroys it. On success the marker is live as of now, and the
+ * overlay's own heartbeat renews it twice a second from there.
+ *
+ * On FAILURE the grace window is cleared rather than left to expire, so the
+ * very next command is refused instead of one that happens to arrive inside
+ * the remaining grace. An indicator that can be lost silently is worse than
+ * none: it teaches the person to read its absence as "nothing is happening".
+ */
+async function showIndicator(tabId) {
+  try {
+    await chrome.scripting.executeScript({ target: { tabId }, files: ['src/overlay.js'] })
+    await chrome.storage.session.set({ indicatorAliveAt: Date.now() })
+    return true
+  } catch (error) {
+    console.warn('[propositum] could not mark the tab it is working in:', error)
+    await chrome.storage.session.set({ indicatorGraceUntil: 0 })
+    return false
+  }
+}
+
+async function hideIndicator(tabId) {
+  await chrome.tabs.sendMessage(tabId, { propositumIndicator: 'clear' }).catch(() => {})
+}
+
+/**
+ * The watchdog.
+ *
+ * Runs while the worker is alive and something is attached. It does not need
+ * to survive worker death: if the worker is gone then nothing is dispatching
+ * commands either, and the first thing a resurrected worker does is check the
+ * marker before it dispatches anything.
+ */
+async function watchIndicator() {
+  const state = await controlState()
+  if (state.tabId === null) return
+
+  const quiet = Date.now() - state.indicatorAliveAt > INDICATOR_GRACE_MS
+  if (quiet && Date.now() > state.indicatorGraceUntil) {
+    console.warn('[propositum] the working-here marker went quiet — letting go of the tab')
+    await stopActing('control-lost')
+    return
+  }
+
+  setTimeout(() => void watchIndicator(), Math.floor(INDICATOR_GRACE_MS / 2))
+}
+
+/* ── the third badge state ─────────────────────────────────────────────── */
+
+/**
+ * A third state beside `!` (cannot reach the app) and `•` (there is an offer).
+ *
+ * Layer 3 of the indicator, and the weakest of the three: it is the one you
+ * see when you are not looking at the tab being worked in. It exists so that
+ * "is Propositum doing something right now" is answerable from anywhere in
+ * Chrome without hunting for a tab.
+ */
+const ACTING_BADGE = '▶'
+
+async function acting() {
+  const { controlledTabId } = await chrome.storage.session.get(['controlledTabId'])
+  return typeof controlledTabId === 'number'
+}
+
+async function showActingBadge() {
+  await chrome.action.setBadgeText({ text: ACTING_BADGE })
+  await chrome.action.setBadgeBackgroundColor({ color: '#7c6cf0' })
+  await chrome.action.setTitle({
+    title:
+      'Propositum is working in a tab it opened.\n' +
+      'Open that tab and press Stop to end it, or use Chrome’s own Cancel bar.',
+  })
+}
+
+async function clearActingBadge() {
+  await chrome.action.setBadgeText({ text: '' })
+  await chrome.action.setTitle({ title: 'Propositum' })
+}
+
+/* ── the control session ───────────────────────────────────────────────── */
+
+/**
+ * Let go of the tab, then tell the app.
+ *
+ * One path for all three ways of stopping — Chrome's infobar Cancel, the
+ * overlay chip, and the app — because control is gone the instant Chrome says
+ * so and there is nothing to be gained by treating the three differently.
+ * `chrome.debugger.detach` raises `onDetach`, which is where the clean-up
+ * actually happens, so this function is a request rather than the act.
+ */
+async function stopActing(reason) {
+  const state = await controlState()
+  if (state.tabId === null) return
+
+  await hideIndicator(state.tabId)
+  await detachControl(state.tabId)
+
+  // Belt and braces: if the detach never raised `onDetach` — because the tab
+  // had already gone, say — the clean-up still has to happen.
+  await releaseControl(state, reason)
+}
+
+/**
+ * Clean up after control has gone, whoever ended it.
+ *
+ * ── Order is the whole design ────────────────────────────────────────────
+ *
+ * State first, POSTs second. Clearing `controlledTabId` and the snapshot is
+ * what makes every subsequent CDP call impossible, and it must not be
+ * conditional on the app being reachable.
+ *
+ * Then the in-flight intent is reported as `control-lost` **so it never
+ * becomes an orphan**, and only then is the run halted. Both are best-effort:
+ * if they fail, the app's own recovery sweep writes the outcome, which is
+ * exactly the arrangement ADR-0010 §7 describes — the abandoning worker does
+ * not write the outcome, the app does, and it may only record what it can
+ * prove.
+ */
+let releasing = false
+
+async function releaseControl(state, reason) {
+  if (releasing) return
+  releasing = true
+
+  try {
+    await clearControlState()
+    await releasePollLease()
+    await clearActingBadge()
+
+    if (state.inFlightIntentId !== null) {
+      await postReport(state.inFlightIntentId, {
+        ok: false,
+        failure: 'control-lost',
+        detail: reason,
+      })
+    }
+
+    await postHalt(state.runId, reason)
+  } finally {
+    releasing = false
+  }
+}
+
+/**
+ * Everything the CDP layer needs from this file, in one place.
+ *
+ * Registered at the TOP LEVEL below, because MV3 only wakes a terminated
+ * worker for listeners installed synchronously during module evaluation. A
+ * `Fetch.requestPaused` that arrives after a worker death and is never
+ * answered would leave the person's tab hanging forever with no explanation,
+ * since `Fetch.enable` holds every request until somebody replies.
+ */
+const controlHandlers = {
+  patternCovers,
+
+  onPageLoaded: async (tabId) => {
+    await showIndicator(tabId)
+  },
+
+  onDetached: async (state, reason) => {
+    // `target_closed`, `canceled_by_user`, `replaced_with_devtools` — treated
+    // identically on purpose. Control is gone the instant Chrome says so, and
+    // sorting out why is not a thing to do while still holding a tab.
+    await releaseControl(state, reason ?? 'control-lost')
+  },
+
+  onIndicatorLost: async () => {
+    await stopActing('control-lost')
+  },
+
+  /**
+   * The browser held a request it was about to send that this run may not make.
+   *
+   * Reported and then stopped, in that order. The request itself is already
+   * failed at the network by the time this runs, so nothing left the machine —
+   * which is what makes the stop clean rather than mid-effect.
+   */
+  onIrreversibleBlocked: async (failure, detail) => {
+    const state = await controlState()
+    if (state.inFlightIntentId !== null) {
+      await postReport(state.inFlightIntentId, {
+        ok: false,
+        failure,
+        detail: `${detail.method} ${detail.origin}`,
+      })
+    }
+    await stopActing(failure)
+  },
+}
+
+/* ── one command, start to finish ──────────────────────────────────────── */
+
+/**
+ * Open the tab, if this run has not got one yet.
+ *
+ * The FIRST command of a run must be `navigate`, and that is a consequence of
+ * the guarantee rather than a protocol quirk: the only tab Propositum may
+ * touch is one it created, so there is nothing to click in until it has
+ * opened one and gone somewhere.
+ *
+ * ── Where the approved origins come from ─────────────────────────────────
+ *
+ * The command envelope is `{ intentId, kind, params }` and this file has no
+ * other channel, so the run's identity and its approved sources travel in
+ * `params`. Read tolerantly from either spelling, because the pin is on the
+ * envelope and not on what is inside it.
+ *
+ * When the app sends none, the set is seeded with the origin of the URL it
+ * asked us to open. That is sound rather than a shortcut: the app gated that
+ * navigation before dispatching it, so the destination is app-attested. What
+ * it is NOT is a widening — the extension can only ever narrow from what the
+ * app told it.
+ */
+async function ensureControlledTab(command) {
+  const params = command.params ?? {}
+  const runId = command.runId ?? params.runId ?? null
+  const declared = params.approvedOrigins ?? params.origins ?? null
+
+  if (command.kind !== 'navigate') {
+    return {
+      ok: false,
+      failure: 'control-lost',
+      detail: 'Propositum has not opened a tab for this work yet',
+    }
+  }
+
+  const seeded =
+    Array.isArray(declared) && declared.length > 0
+      ? declared
+      : [originOf(params.url)].filter((origin) => origin !== null)
+
+  if (seeded.length === 0) {
+    return { ok: false, failure: 'off-origin', detail: 'that is not a web address' }
+  }
+
+  const tabId = await openControlledTab({ runId, approvedOrigins: seeded })
+  await showActingBadge()
+  setTimeout(() => void watchIndicator(), INDICATOR_GRACE_MS)
+
+  return { tabId }
+}
+
+async function runCommand(command) {
+  await chrome.storage.session.set({ inFlightIntentId: command.intentId })
+
+  try {
+    const state = await controlState()
+    if (state.tabId === null) {
+      const opened = await ensureControlledTab(command)
+      if (opened.ok === false) {
+        await postReport(command.intentId, opened)
+        return
+      }
+    }
+
+    await postReport(command.intentId, await performCommand(command, controlHandlers))
+  } catch (error) {
+    // Nothing may escape this. An unreported intent is an orphan, and an
+    // orphan is indistinguishable from a crash to everything downstream.
+    await postReport(command.intentId, {
+      ok: false,
+      failure: 'not-delivered',
+      detail: String(error?.message ?? error),
+    })
+  } finally {
+    await chrome.storage.session.remove(['inFlightIntentId'])
+  }
+}
+
+async function pollOnce() {
+  const startedAt = Date.now()
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), POLL_ABORT_MS)
+
+  try {
+    const response = await actFetch('/api/act/next', { signal: controller.signal })
+    if (!response.ok) return 'stop'
+
+    const { command } = await response.json()
+    if (!command || typeof command.intentId !== 'string') {
+      // Nothing to do. If the app answered instantly rather than hanging,
+      // wait before asking again — see POLL_FLOOR_MS.
+      if (Date.now() - startedAt < POLL_FLOOR_MS) await sleep(POLL_FLOOR_MS)
+      return 'continue'
+    }
+
+    await runCommand(command)
+    return 'continue'
+  } catch {
+    // Unreachable, aborted, or answering something that is not JSON. The alarm
+    // brings this back in thirty seconds; spinning here would not make the app
+    // come up any sooner.
+    return 'stop'
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+async function pollForWork() {
+  if (!(await claimPollLease())) return
+
+  try {
+    for (;;) {
+      if ((await pollOnce()) === 'stop') return
+
+      // Refresh the lease rather than re-taking it: this loop still holds it,
+      // and letting it lapse mid-loop would let the alarm start a second one.
+      await chrome.storage.session.set({ pollLeaseUntil: Date.now() + POLL_LEASE_MS })
+    }
+  } finally {
+    await releasePollLease()
+  }
+}
+
+/**
+ * Registered here, at the top level, and not inside `wake()`.
+ *
+ * See `controlHandlers`. A listener installed later does not wake a dead
+ * worker, and a `Fetch.requestPaused` nobody answers hangs the tab.
+ */
+registerControlListeners(controlHandlers)
+
 /* ── lifecycle ─────────────────────────────────────────────────────────── */
 
 async function wake() {
@@ -411,6 +902,27 @@ async function wake() {
   // be withdrawn while this worker is dead. Reconcile rather than assume.
   await reconcileContentScripts()
   chrome.alarms.create(HEARTBEAT_ALARM, { periodInMinutes: HEARTBEAT_MINUTES })
+
+  /**
+   * A worker that came back holding a tab it no longer drives.
+   *
+   * `chrome.debugger` attachments belong to the extension rather than to this
+   * worker instance, so `controlledTabId` can survive a restart the attachment
+   * did not — and an extension RELOAD detaches everything without raising
+   * `onDetach` in the new worker. Left alone, that state is a tab id nothing
+   * is attached to, an indicator nobody is renewing, and an intent that would
+   * never be reported. Reconciling rather than assuming is the same rule the
+   * content-script registration follows two lines up.
+   */
+  const state = await controlState()
+  if (state.tabId !== null) {
+    await hideIndicator(state.tabId)
+    await detachControl(state.tabId)
+    await releaseControl(state, 'control-lost')
+  }
+
+  // Last, because it does not return while the app has work to hand out.
+  await pollForWork()
 }
 
 chrome.runtime.onStartup.addListener(wake)
@@ -431,14 +943,28 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
   await showSuggestionBadge()
 
   const session = await loadSession()
-  if (!session) return
-
-  await flush()
-  try {
-    await post('/api/capture/heartbeat', {}, session)
-  } catch {
-    /* the app will notice the silence */
+  if (session) {
+    await flush()
+    try {
+      await post('/api/capture/heartbeat', {}, session)
+    } catch {
+      /* the app will notice the silence */
+    }
   }
+
+  /**
+   * The resurrector, and it comes last.
+   *
+   * `pollForWork` does not return while the app has work to hand out, so
+   * anything after it would never run. Reaching it unconditionally — outside
+   * the session gate above — matters because acting happens under a ratified
+   * contract, and whether a capture session is also running is a different
+   * question this file has no business conflating with it.
+   *
+   * Two alarm handlers overlapping is normal and is what the poll lease is
+   * for: the second finds the lease held and does the heartbeat half only.
+   */
+  await pollForWork()
 })
 
 /** The human left. No CDP equivalent for either of these signals. */
@@ -460,11 +986,74 @@ chrome.idle.onStateChanged.addListener(async (state) => {
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   ;(async () => {
+    /**
+     * The working-here marker, and its Stop.
+     *
+     * Checked FIRST, and checked against `controlledTabId` before anything is
+     * believed. Every other page in Chrome can send this extension a message —
+     * the content script runs on every https origin — so an unchecked
+     * `propositumIndicator: 'alive'` from any tab would let a hostile page
+     * renew a marker it is not displaying, which is the precise failure the
+     * grace window exists to catch.
+     *
+     * The tab id comes from `sender`, which Chrome fills in and the page
+     * cannot forge. Reading it needs no `tabs` permission: it is our own
+     * script reporting, not an enumeration.
+     */
+    if (message?.propositumIndicator !== undefined) {
+      const state = await controlState()
+      if (state.tabId === null || sender.tab?.id !== state.tabId) {
+        return sendResponse({ ok: false })
+      }
+
+      if (message.propositumIndicator === 'alive') {
+        await chrome.storage.session.set({ indicatorAliveAt: Date.now() })
+        return sendResponse({ ok: true })
+      }
+
+      if (message.propositumIndicator === 'stop') {
+        // A user gesture, so it may do everything — and what it does is give
+        // up the tab before it tells anyone, so Stop works with the app shut.
+        await stopActing('canceled_by_user')
+        return sendResponse({ ok: true })
+      }
+
+      return sendResponse({ ok: false })
+    }
+
     // The panel asks; everything else reports.
     if (message?.ask === 'grants') return sendResponse(await grantState())
+    if (message?.ask === 'acting') {
+      const state = await controlState()
+      return sendResponse({ acting: state.tabId !== null })
+    }
+    if (message?.ask === 'stop-acting') {
+      await stopActing('canceled_by_user')
+      return sendResponse({ acting: false })
+    }
     if (message?.ask === 'reconcile') {
       await reconcileContentScripts()
       return sendResponse(await grantState())
+    }
+
+    /**
+     * Nothing the agent browses is anything the PERSON browsed.
+     *
+     * The capture content script runs on every granted origin, and the tab
+     * Propositum opened is on one of them — so without this line every page
+     * the agent visited would arrive here as an ordinary observation, and the
+     * person's own browsing record would fill up with somewhere they never
+     * went. Detection would then offer them work off the back of work they had
+     * already handed over.
+     *
+     * It is also the standing rule from ADR-0010's retention section: the two
+     * ledgers are disjoint. `EXCERPT_BUDGET_CHARS` governs what Propositum
+     * retains about a person's own browsing; `ActionEvidence` is what the
+     * agent saw while acting under a ratified contract. Nothing crosses.
+     */
+    const control = await controlState()
+    if (control.tabId !== null && sender.tab?.id === control.tabId) {
+      return sendResponse({ ok: true, ignored: true })
     }
 
     const session = await loadSession()
