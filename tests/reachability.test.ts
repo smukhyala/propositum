@@ -198,6 +198,22 @@ describe('the safety machinery is reachable from the product', () => {
     ).not.toEqual([])
   })
 
+  it('a run records what it produced, or a Shift can still only make a document', () => {
+    // Moved up out of *deferred, and asserted as deferred* when the outcome
+    // spine landed. The table's whole point is that the document path is one
+    // kind among five; with no writer it was still the only kind, and a run that
+    // read three pages and answered a question had nowhere to say so.
+    const callers = callersOf('outcomes.create', 'src/persistence/repositories/index.ts')
+
+    expect(callers, 'nothing writes a ShiftOutcome — a run can only produce a document').not.toEqual(
+      [],
+    )
+    expect(
+      callers,
+      'the outcome writers must be the only caller, so kind and reversibility have one author',
+    ).toEqual(['src/server/outcomes/index.ts'])
+  })
+
   it('the reviewer actually runs, or assumption 4 stays unanswerable', () => {
     // `reviewBoundary` was built and tested with zero callers, and `runs.enqueue`
     // was only ever called with role 'worker'. docs/MVP.md assumption 4 asks
@@ -327,14 +343,35 @@ describe('deferred, and asserted as deferred', () => {
     ).toEqual([])
   })
 
-  it('nothing writes a ShiftOutcome, so a Shift can still only produce a document', () => {
-    // The whole point of the table is that the document path is one kind among
-    // five. With no writer it is still the only kind, and a run that read three
-    // pages and answered a question has nowhere to say so.
+  it('nothing lands, so an external-effect outcome cannot occur', () => {
+    /**
+     * `LANDING_ACTION_KINDS` is EMPTY, and that is a claim rather than an
+     * oversight.
+     *
+     * `ShiftOutcomeKind` has five members and `external-effect` is the only one
+     * that is not `held` — the only one a person is offered no verdict on,
+     * because it already happened out in the world. Nothing today can produce
+     * one: every ActionKind that exists is a read or a draft, and even
+     * `click-element`, which can press a page's own Send button, is not a
+     * landing kind. Landing is about whose act put the effect into the world.
+     *
+     * So `src/server/outcomes/external-effect.ts` drops everything it is handed,
+     * by design, and the drop is the enforcement rather than a fallback. The day
+     * someone adds a landing kind this goes RED — which is the point. A mutating
+     * capability whose effects leave Propositum is not a line in a set; it is a
+     * person being shown work they cannot undo, and the claim has to move up
+     * into the reachable section deliberately rather than slip in with the enum.
+     */
+    const policy = readFileSync(join(repo, 'src/domain/handoff/policy.ts'), 'utf8')
+    const declaration = /LANDING_ACTION_KINDS[^=]*=\s*new Set<ActionKind>\(([\s\S]*?)\)\s*$/m.exec(
+      policy,
+    )
+
+    expect(declaration, 'LANDING_ACTION_KINDS is not declared the way this test reads it').not.toBeNull()
     expect(
-      callersOf('outcomes.create', repos),
-      'shift outcomes are written now — move this into the section above',
-    ).toEqual([])
+      declaration?.[1]?.trim(),
+      'a kind lands now — external-effect is reachable, so move this into the section above',
+    ).toBe('')
   })
 
   it('no OutcomeVerdict is recordable, so a production cannot be accepted or rejected', () => {

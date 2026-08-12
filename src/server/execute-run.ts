@@ -22,6 +22,23 @@
  * a routine outcome rather than an exotic one.
  *
  * So the runner returns a `WorkerResult` and this file turns it into rows.
+ *
+ * ── What this file used to assume, and no longer may ─────────────────────
+ *
+ * It used to load a version, split its content on `## ` headings, hand the
+ * worker a title and a section list, and turn the prose that came back into a
+ * `Changeset`. Every one of those steps was correct and every one of them said
+ * the same thing: *a run works on a document*. A run that did anything else had
+ * nowhere to put its result, because the result WAS the changeset.
+ *
+ * So the spine is generic now. A run produces `ShiftOutcome`s, of which
+ * `document-changes` is one kind among five, and the machinery that knows about
+ * Markdown lives in `./outcomes/document-changes.ts` where it can be the special
+ * case rather than the shape of everything.
+ *
+ * The check that this actually happened, rather than the assumption moving one
+ * directory over: **this file contains no Markdown, no `##`, no `diff(` and no
+ * `Document` import.** That is greppable, and it is grepped.
  */
 
 import { runWorker } from '../runtime/worker-loop'
@@ -29,9 +46,12 @@ import type { RunLedger, WorkerJob, WorkerResult } from '../runtime/worker-loop'
 import { STOP_RULES } from '../domain/execution/stop-conditions'
 import { allowlisted } from '../policy/fetcher'
 import type { SourceFetcher } from '../policy/fetcher'
-import { diff } from '../domain/document/changeset'
 import { readableCause } from './problem'
-import { FINDING_KINDS, changeHandlesFor, reviewBoundary } from '../model/boundaries/review'
+import { FINDING_KINDS, reviewBoundary, reviewHandlesFor } from '../model/boundaries/review'
+import type { ReviewedOutcome } from '../model/boundaries/review'
+import { loadWorkspace } from './outcomes/workspace'
+import { recordOutcomes } from './outcomes/index'
+import { sectionTitleFor } from './outcomes/document-changes'
 import type { AppContext } from './db'
 import type { ModelClient } from '../model/client'
 import type { ActionKind } from '../domain/handoff/policy'
@@ -110,27 +130,23 @@ export async function executeRun(runId: string, deps: ExecuteDeps): Promise<void
     return
   }
 
-  // `HandoffContract.baseVersionId` is nullable now, because a Shift that acts
-  // in a browser pins no document. This runner is the DOCUMENT runner — it
-  // diffs prose against an immutable base and its whole shape assumes one — so
-  // it refuses rather than inventing an empty base and drafting against it.
-  //
-  // Nothing writes a null yet, so this branch is unreachable today. It is here
-  // rather than as an `as string`, because the unit that starts writing nulls
-  // should find a refusal to replace, not a cast that already lied for it.
-  const baseVersionId = contract.baseVersionId
-  if (baseVersionId === null) {
-    await ctx.repos.runs.complete(runId, 'failed', new Date(deps.now()), 'error')
-    return
-  }
-
-  const version = await ctx.repos.documents.version(baseVersionId)
-  const document = version ? await ctx.repos.documents.byId(version.documentId) : null
-
-  const sources = await ctx.db.prisma.approvedSource.findMany({
-    where: { id: { in: contract.approvedSourceIds } },
-    select: { id: true, label: true, originPattern: true },
-  })
+  /**
+   * Everything the ratified contract gives this run to work with — and the
+   * branch that used to be a refusal.
+   *
+   * Wave 1 left a refusal here: `baseVersionId` had just become nullable, and a
+   * runner whose entire shape assumed a document declined the null rather than
+   * casting it away. It was unreachable, because nothing wrote a null yet, and
+   * it was there so that whoever started writing them would find a refusal to
+   * replace instead of a cast that had already lied on their behalf.
+   *
+   * This is that replacement. A missing base is now an ordinary state that
+   * `loadWorkspace` returns and everything downstream holds: the gate refuses
+   * the document capabilities with `no_document_pinned`, the outcome writers
+   * drop a `section-prose` production they cannot apply, and the run completes
+   * normally having produced whatever else it produced.
+   */
+  const workspace = await loadWorkspace(ctx, contract)
 
   // The deadline is DERIVED from an immutable pair, never stored — a
   // crash-restart loop must not be able to silently reset the budget.
@@ -145,7 +161,11 @@ export async function executeRun(runId: string, deps: ExecuteDeps): Promise<void
     scope: {
       approvedSourceIds: contract.approvedSourceIds,
       allowedActionKinds: contract.allowedActionKinds as ActionKind[],
-      baseVersionId,
+      // Still the contract's own pin, still the only thing that fixes which
+      // version a tool may read. `undefined` rather than `null` because the
+      // scope's optional field is what `compilePolicy` reads to decide whether
+      // the document capability exists at all.
+      ...(contract.baseVersionId === null ? {} : { baseVersionId: contract.baseVersionId }),
     },
     controls: {
       initiative: contract.initiative as 'follow-closely' | 'use-judgment',
@@ -154,13 +174,14 @@ export async function executeRun(runId: string, deps: ExecuteDeps): Promise<void
       interruption: contract.interruption as 'stop-when-uncertain' | 'stop-only-when-blocked',
       timeLimitMinutes: contract.timeLimitMinutes,
     },
-    documentTitle: document?.title ?? 'the document',
-    // The real `Document.id`, resolved through the pinned version just above.
-    // Undefined when that version is gone, which the gate turns into a
-    // `document_missing` refusal rather than a run that drafts into nothing.
-    documentId: document?.id,
-    sections: sectionsOf(version?.content ?? ''),
-    sourceLabels: sources.map((s) => ({ id: s.id, label: s.label })),
+    context: workspace.context,
+    expects: workspace.expects,
+    // Resolved through the pinned version. Undefined when nothing is pinned, or
+    // when the pin no longer resolves — the gate turns those into
+    // `no_document_pinned` and `document_missing` respectively, rather than a
+    // run that drafts into nothing.
+    documentId: workspace.documentId,
+    sourceLabels: workspace.sources.map((s) => ({ id: s.id, label: s.label })),
     deadlineEpochMs,
   }
 
@@ -170,15 +191,18 @@ export async function executeRun(runId: string, deps: ExecuteDeps): Promise<void
       model: deps.model,
       ledger: ledgerFor(ctx, runId),
       readSource: {
-        fetcher: allowlisted(deps.fetcher, sources.map((s) => s.originPattern)),
+        fetcher: allowlisted(deps.fetcher, workspace.sources.map((s) => s.originPattern)),
         sources: {
           urlFor: async (id) => {
-            const source = sources.find((s) => s.id === id)
+            const source = workspace.sources.find((s) => s.id === id)
             return source ? source.originPattern.replace(/\/\*$/, '/') : null
           },
         },
       },
-      readDoc: { versions: { byId: (id) => ctx.repos.documents.version(id) }, baseVersionId },
+      readDoc: {
+        versions: { byId: (id) => ctx.repos.documents.version(id) },
+        ...(contract.baseVersionId === null ? {} : { baseVersionId: contract.baseVersionId }),
+      },
       now: deps.now,
       renewLease: (id) => ctx.repos.runs.renewLease(id, new Date(deps.now() + 60_000)),
     })
@@ -188,30 +212,17 @@ export async function executeRun(runId: string, deps: ExecuteDeps): Promise<void
     return
   }
 
-  /* ── the changeset, computed deterministically from the worker's prose ── */
+  /* ── what the run produced, whatever kind of thing that was ──────────── */
 
-  if (result.drafts.length > 0 && version) {
-    let proposed = version.content
-    for (const draft of result.drafts) proposed = replaceSection(proposed, draft.section, draft.prose)
-
-    const { baseHash, changes } = diff(version.content, proposed, 'Drafted while you were away.')
-    if (changes.length > 0) {
-      await ctx.repos.changesets.create({
-        contractId: contract.id,
-        baseVersionId: version.id,
-        baseHash,
-        changes: changes.map((c) => ({
-          startOffset: c.startOffset,
-          endOffset: c.endOffset,
-          prefix: c.prefix,
-          exact: c.exact,
-          suffix: c.suffix,
-          replacement: c.replacement,
-          reason: c.reason,
-        })),
-      })
-    }
-  }
+  // Deterministic code decides what each production IS. The worker returned
+  // shapes; nothing it returned named a kind, claimed a reversibility, or
+  // asserted which of its own actions supports what.
+  const recorded = await recordOutcomes(ctx, {
+    run: { id: runId },
+    contract: { id: contract.id },
+    workspace,
+    produced: result.produced,
+  })
 
   await ctx.repos.runs.complete(
     runId,
@@ -222,7 +233,11 @@ export async function executeRun(runId: string, deps: ExecuteDeps): Promise<void
 
   /* ── the second pass ─────────────────────────────────────────────────── */
 
-  await review(ctx, deps, contract)
+  // Runs when there is at least one HELD outcome, which is the generalisation of
+  // "if there is a changeset". A `landed` outcome is deliberately excluded: the
+  // reviewer's whole output is advice to somebody who still has a decision to
+  // make, and there is no decision left on something that already happened.
+  if (recorded.heldOutcomeIds.length > 0) await review(ctx, deps, contract, runId)
 
   /* ── the note ───────────────────────────────────────────────────────── */
 
@@ -268,10 +283,23 @@ async function review(
   ctx: AppContext,
   deps: ExecuteDeps,
   contract: { id: string; objective: string; definitionOfDone: string; guidance: readonly string[] },
+  workerRunId: string,
 ): Promise<void> {
   try {
+    const produced = await ctx.repos.outcomes.forRun(workerRunId)
+    const held = produced.filter((outcome) => outcome.reversibility === 'held')
+    if (held.length === 0) return
+
+    /**
+     * The changes belonging to the `document-changes` outcome, if there is one.
+     *
+     * Read by contract rather than by outcome, because `changesets.forContract`
+     * is the accessor that already exists and the changeset kept its contract
+     * link for exactly this sort of reason. At most one `document-changes`
+     * outcome exists per run — its writer groups every drafted section into
+     * one — so there is no ambiguity to resolve here.
+     */
     const changeset = await ctx.repos.changesets.forContract(contract.id)
-    if (!changeset || changeset.changes.length === 0) return
 
     // Its own run row, so the second pass is visible in the ledger as a thing
     // that happened rather than folded into the worker's record.
@@ -279,53 +307,76 @@ async function review(
 
     // The model sees handles, never ids — the same rule every other boundary
     // follows, and a Zod refinement resolves them back.
-    const handles = changeset.changes.map((change, index) => ({
-      handle: `C${index + 1}`,
-      changeId: change.id,
-      section: sectionTitleFor(change.exact) ?? 'the document',
-      replacement: change.replacement,
-      reason: change.reason,
-    }))
+    const changeIdByHandle = new Map<string, string>()
+    const outcomeIdByHandle = new Map<string, string>()
 
-    const outcome = await deps.model.run(reviewBoundary(changeHandlesFor(handles)), {
+    const handles: ReviewedOutcome[] = held.map((outcome, index) => {
+      const handle = `O${index + 1}`
+      outcomeIdByHandle.set(handle, outcome.id)
+
+      const changes =
+        outcome.kind === 'document-changes' && changeset
+          ? changeset.changes.map((change, position) => {
+              const changeHandle = `C${position + 1}`
+              changeIdByHandle.set(changeHandle, change.id)
+              return {
+                handle: changeHandle,
+                section: sectionTitleFor(change.exact) ?? 'the document',
+                replacement: change.replacement,
+                reason: change.reason,
+              }
+            })
+          : undefined
+
+      return {
+        handle,
+        headline: outcome.headline,
+        reason: outcome.reason,
+        summary: outcome.headline,
+        ...(changes === undefined ? {} : { changes }),
+      }
+    })
+
+    const judged = await deps.model.run(reviewBoundary(reviewHandlesFor(handles)), {
       objective: contract.objective,
       definitionOfDone: contract.definitionOfDone,
       guidance: contract.guidance,
-      changes: handles,
+      outcomes: handles,
       // Empty, and see the note above. Not a bug to fix here.
       sourcesRead: [],
     })
 
-    if (!outcome.ok) {
+    if (!judged.ok) {
       await ctx.repos.runs.complete(run.id, 'failed', new Date(deps.now()), 'error')
       return
     }
 
-    const byHandle = new Map(handles.map((h) => [h.handle, h.changeId]))
     const kinds = new Set<string>(FINDING_KINDS)
 
-    const findings = outcome.value.findings
+    const findings = judged.value.findings
       // A kind outside the closed list is dropped rather than stored. The
       // grammar enforces shape only, so `kind` is a free string at the wire and
       // the constraint has to be applied here.
       .filter((finding: { kind: string }) => kinds.has(finding.kind))
-      .map((finding: { changeHandle: string; kind: string; detail: string }) => ({
-        changeId: byHandle.get(finding.changeHandle) ?? null,
-        kind: finding.kind,
-        detail: finding.detail,
-      }))
+      .map((finding: { handle: string; kind: string; detail: string }) => {
+        // At most one of the two is set, and that is a property of the handle
+        // spaces being disjoint rather than a rule applied afterwards. A finding
+        // that resolves to neither is about the run as a whole, which is already
+        // how a null `changeId` behaved.
+        const changeId = changeIdByHandle.get(finding.handle) ?? null
+        return {
+          changeId,
+          outcomeId: changeId === null ? outcomeIdByHandle.get(finding.handle) ?? null : null,
+          kind: finding.kind,
+          detail: finding.detail,
+        }
+      })
 
     await ctx.repos.findings.create({ runId: run.id, findings })
     await ctx.repos.runs.complete(run.id, 'succeeded', new Date(deps.now()))
   } catch {
     // Deliberately silent. The note is the thing the person came back for.
   }
-}
-
-/** The `## ` heading a change sits under, if the anchor happens to carry one. */
-function sectionTitleFor(exact: string): string | null {
-  const heading = /^#{2,3}\s+(.+)$/m.exec(exact)
-  return heading?.[1]?.trim() ?? null
 }
 
 async function writeReport(
@@ -362,32 +413,4 @@ async function writeReport(
       ordinal: i,
     })),
   })
-}
-
-/** Markdown `## ` headings, in order. */
-function sectionsOf(content: string): string[] {
-  return content
-    .split('\n')
-    .filter((l) => /^#{2,3}\s/.test(l.trim()))
-    .map((l) => l.replace(/^#+\s*/, '').trim())
-}
-
-/** Replace a named section's body with new prose, leaving its heading. Appends
- *  when the section does not exist — a worker drafting a section the document
- *  lacks is a planning error the reviewer should see, not something to drop. */
-function replaceSection(content: string, section: string, prose: string): string {
-  const lines = content.split('\n')
-  const start = lines.findIndex((l) => /^#{2,3}\s/.test(l.trim()) && l.replace(/^#+\s*/, '').trim() === section)
-
-  if (start === -1) return `${content.trimEnd()}\n\n## ${section}\n\n${prose}\n`
-
-  let end = lines.length
-  for (let i = start + 1; i < lines.length; i += 1) {
-    if (/^#{2,3}\s/.test(lines[i]!.trim())) {
-      end = i
-      break
-    }
-  }
-
-  return [...lines.slice(0, start + 1), '', prose, '', ...lines.slice(end)].join('\n')
 }

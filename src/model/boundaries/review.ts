@@ -37,25 +37,68 @@ export const FINDING_KINDS = [
   'outside-agreement',
 ] as const
 
+/**
+ * One thing the run produced, as the reviewer sees it.
+ *
+ * ── Why the handles are nested rather than flat ──────────────────────────
+ *
+ * A run used to produce exactly one thing — a `Changeset` — so a flat list of
+ * change handles `C1…Cn` was the whole surface. It now produces `ShiftOutcome`s,
+ * and only one of the five kinds decomposes into independently decidable parts.
+ * A collection has items; an answer is one thing; a message draft is one thing.
+ *
+ * Flattening everything to `C1…Cn` would have meant inventing a change handle
+ * for a message that has no parts, and the reviewer would then be annotating a
+ * unit the person is never shown a control for. So the outcome is the handle,
+ * and the `document-changes` case carries its changes underneath — which is the
+ * only case where "this specific paragraph is unsupported" is a sentence the
+ * interface can render next to something.
+ */
+export interface ReviewedOutcome {
+  /** `O1`, `O2`, … */
+  readonly handle: string
+  readonly headline: string
+  readonly reason: string
+  /** A one-line rendering shaped by the kind — "6 changes to Q3 proposal", "11
+   *  rates", "a message to Northwind, unsent". Code-composed, never the model's
+   *  own words about its own work. */
+  readonly summary: string
+  /** Present only for `document-changes`, where the decidable unit is smaller
+   *  than the outcome. */
+  readonly changes?:
+    | ReadonlyArray<{ handle: string; section: string; replacement: string; reason: string }>
+    | undefined
+}
+
 export interface ReviewInput {
   readonly objective: string
   readonly definitionOfDone: string
   readonly guidance: readonly string[]
-  readonly changes: ReadonlyArray<{ handle: string; section: string; replacement: string; reason: string }>
+  readonly outcomes: readonly ReviewedOutcome[]
   readonly sourcesRead: ReadonlyArray<{ label: string; content: Datamarked }>
 }
 
-export function reviewSchema(changeHandles: ReadonlySet<string>) {
+/**
+ * `handle`, one field, resolving to either an outcome or a change.
+ *
+ * Two fields — `outcomeHandle` and `changeHandle` — was the obvious shape and is
+ * worse: the model would have to decide which one to fill, both-set and
+ * neither-set would be representable at the wire, and the resolver would need a
+ * precedence rule with no principled answer. One field with one closed set makes
+ * "at most one of `changeId` and `outcomeId` is set" a property of the mapping
+ * rather than a rule someone enforces.
+ */
+export function reviewSchema(handles: ReadonlySet<string>) {
   return z.object({
     findings: z
       .array(
         z.object({
-          changeHandle: z
+          handle: z
             .string()
-            .refine((h) => changeHandles.has(h), {
-              message: 'must be one of the change handles shown in the prompt',
+            .refine((h) => handles.has(h), {
+              message: 'must be one of the handles shown in the prompt',
             })
-            .describe('Which change this is about.'),
+            .describe('Which thing this is about. One of the handles in the prompt.'),
           kind: z
             .string()
             .describe(`One of: ${FINDING_KINDS.join(', ')}. Anything else is dropped.`),
@@ -68,7 +111,7 @@ export function reviewSchema(changeHandles: ReadonlySet<string>) {
 
 export type ReviewOutput = z.infer<ReturnType<typeof reviewSchema>>
 
-const PROMPT_VERSION = 'review@1'
+const PROMPT_VERSION = 'review@2'
 
 const SYSTEM = `You are checking work done on someone's behalf while they were away, before they see it.
 
@@ -82,20 +125,27 @@ Check the things a machine cannot:
 Rules:
 - Report only real problems. An empty list is a good outcome.
 - One sentence per finding, and make it actionable.
-- You cannot block anything. Your findings are shown beside the changes; the person decides.
+- Cite the most specific handle you can. Where a thing is broken into parts, name the part; otherwise name the thing.
+- You cannot block anything. Your findings are shown beside the work; the person decides.
 
 ${UNTRUSTED_CONTENT_RULE}`
 
 export const reviewBoundary = (
-  changeHandles: ReadonlySet<string>,
+  handles: ReadonlySet<string>,
 ): ModelBoundary<ReviewInput, ReviewOutput> => ({
   name: 'review',
   promptVersion: PROMPT_VERSION,
-  schema: reviewSchema(changeHandles),
+  schema: reviewSchema(handles),
   maxTokens: 4096,
   buildPrompt(input) {
-    const changes = input.changes
-      .map((c) => `${c.handle} — ${c.section}\n  reason: ${c.reason}\n  text: ${c.replacement}`)
+    const produced = input.outcomes
+      .map((o) => {
+        const head = `${o.handle} — ${o.summary}\n  why: ${o.reason}`
+        const changes = (o.changes ?? [])
+          .map((c) => `  ${c.handle} — ${c.section}\n    reason: ${c.reason}\n    text: ${c.replacement}`)
+          .join('\n')
+        return changes ? `${head}\n${changes}` : head
+      })
       .join('\n\n')
 
     const sources = input.sourcesRead.length
@@ -112,7 +162,7 @@ export const reviewBoundary = (
         `Objective: ${input.objective}`,
         `Done means: ${input.definitionOfDone}${guidance}`,
         '',
-        `Proposed changes:\n\n${changes}`,
+        `What was produced:\n\n${produced}`,
         '',
         `What was read:\n\n${sources}`,
       ].join('\n'),
@@ -120,6 +170,20 @@ export const reviewBoundary = (
   },
 })
 
-export function changeHandlesFor(changes: ReadonlyArray<{ handle: string }>): ReadonlySet<string> {
-  return new Set(changes.map((c) => c.handle))
+/**
+ * Every handle the model may cite — outcome handles, plus the change handles
+ * nested under any `document-changes` outcome.
+ *
+ * One set, so the Zod refinement has one membership test and the resolver in
+ * `execute-run` has one map to look in. A finding citing a handle that was never
+ * shown fails validation rather than resolving to null and being stored against
+ * nothing.
+ */
+export function reviewHandlesFor(outcomes: readonly ReviewedOutcome[]): ReadonlySet<string> {
+  const handles = new Set<string>()
+  for (const outcome of outcomes) {
+    handles.add(outcome.handle)
+    for (const change of outcome.changes ?? []) handles.add(change.handle)
+  }
+  return handles
 }

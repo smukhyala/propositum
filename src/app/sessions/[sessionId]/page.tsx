@@ -236,7 +236,6 @@ export default async function SessionPage({
         when={loaded.when}
         reading={loaded.reading}
         sources={loaded.sources}
-        documentTitle={loaded.documentTitle}
         shiftContractId={loaded.shiftContractId}
       />
     </Sheet>
