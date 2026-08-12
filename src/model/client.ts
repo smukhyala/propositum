@@ -1,10 +1,11 @@
 /**
  * The model boundary.
  *
- * Six places in Propositum call a model: session-reading inference, handoff
- * generation, planning, worker action proposals, review, and shift-report
- * narration. All six go through this one interface, so provider calls never
- * appear in UI or domain code.
+ * Eight places in Propositum call a model: session-reading inference, handoff
+ * generation, planning, worker action proposals, review, shift-report
+ * narration, naming a detected thread, and composing what to offer to do about
+ * it. All eight go through this one interface, so provider calls never appear
+ * in UI or domain code.
  *
  * ── Two shapes, deliberately separated ───────────────────────────────────
  *
@@ -28,7 +29,7 @@
 
 import type { ZodType } from 'zod'
 
-/** The seven. Used as `ModelCallRecord.boundary`. */
+/** The eight. Used as `ModelCallRecord.boundary`. */
 export const BOUNDARY_NAMES = [
   'session-reading',
   'handoff',
@@ -36,10 +37,16 @@ export const BOUNDARY_NAMES = [
   'worker-action',
   'review',
   'shift-report',
-  /** Naming a detected thread. The only one that runs with no session and no
-   *  contract — gated behind deterministic detection, sees titles only, and
-   *  grants nothing. See ADR-0008 and boundaries/subject.ts. */
+  /** Naming a detected thread. Runs with no session and no contract — gated
+   *  behind deterministic detection, sees titles only, and grants nothing.
+   *  See ADR-0008 and boundaries/subject.ts. */
   'subject',
+  /** Composing what Propositum would do about a named thread. The same gating
+   *  as `subject` and a higher bar in front of it: deterministic OfferGrounds
+   *  must be sufficient before it runs at all. It writes prose, names no place
+   *  and no ActionKind, and grants nothing. See ADR-0009 and
+   *  boundaries/offer.ts — including why it is a separate call. */
+  'offer',
 ] as const
 export type BoundaryName = (typeof BOUNDARY_NAMES)[number]
 

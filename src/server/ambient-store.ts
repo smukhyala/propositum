@@ -29,6 +29,8 @@
 
 import { FAST_DETECT, WINDOW_MS } from '../domain/detection/detect'
 import type { AmbientObservation, PauseDetected, WorkDetected } from '../domain/detection/detect'
+import type { OfferGrounds } from '../domain/detection/grounds'
+import type { ShiftOutcomeKind } from '../domain/execution/outcome-kinds'
 
 /**
  * A hard ceiling independent of the window.
@@ -47,19 +49,91 @@ export interface NamedThread {
   readonly signature: string
   readonly subject: string
   readonly confident: boolean
-  readonly offer: string
-  readonly offerLabel: string
+}
+
+/**
+ * What Propositum would do about a named thread, before anybody has said yes.
+ *
+ * ── In memory, and durable only on acceptance ────────────────────────────
+ *
+ * This never touches SQLite until a person accepts it, which is the same rule
+ * the header above applies to ambient observations and it is there for the same
+ * reason: a durable row saying "Propositum thought you were job-hunting" about
+ * an offer NOBODY ACCEPTED is exactly the profile this buffer refuses to
+ * become. Declining has to cost nothing and leave nothing behind, or the honest
+ * thing to do with the feature is turn it off.
+ *
+ * ── It grants nothing ────────────────────────────────────────────────────
+ *
+ * Every field except `grounds` and `expects` is prose a model wrote, and
+ * nothing reads any of it to decide anything. There is no field for a URL, a
+ * host, an origin or a source id — the sites come from the buffer, keyed by
+ * this thread's signature, on the accept path. See `boundaries/offer.ts`.
+ */
+export interface WorkOffer {
+  readonly signature: string
+  /** Recorded so an accepted offer can say which prompt composed it. */
+  readonly promptVersion: string
+  readonly title: string
+  readonly rationale: string
+  /** OfferOutline — ordered one-line intentions. Display only: these never
+   *  become PlanSteps, and no gate reads them. */
+  readonly outline: readonly string[]
+  readonly produces: string
+  /** What the offer says it will NOT do. `excludes` rather than CONTEXT.md's
+   *  `willNotDo`, because the column that stores it on acceptance is already
+   *  called `excludes` — one word for one concept, and the schema is the side
+   *  that is harder to change. */
+  readonly excludes: readonly string[]
+  /** ShiftOutcomeKinds, already coerced against the closed set. A statement
+   *  about the shape of a result, never about what may be done. */
+  readonly expects: readonly ShiftOutcomeKind[]
+  /** What the deterministic bar saw, frozen here because the buffer it was
+   *  computed from is bounded by a window and a cap and will not hold the
+   *  answer an hour later. */
+  readonly grounds: OfferGrounds
+  /** False when the reading did not add up to one thing worth doing. The
+   *  interface must render that as vagueness rather than suppress it. */
+  readonly confident: boolean
 }
 
 export interface AmbientStore {
   /** The name for this thread, if one has been produced. */
   nameFor(signature: string): NamedThread | null
+  /** Record a name. Dropped if `clear()` ran while the call was in flight —
+   *  see the implementation, and `startNaming` must precede it. */
   remember(named: NamedThread): void
-  /** True if naming is already in flight for this thread, so a poll every 30
-   *  seconds cannot start a second call for the same subject. */
+  /** True while a naming call is actually in flight. For an interface that
+   *  wants to say "working it out" rather than showing nothing. */
   isNaming(signature: string): boolean
+  /**
+   * True once naming has been ATTEMPTED at all — in flight, finished with a
+   * name, or finished with nothing.
+   *
+   * This is the question the caller has to ask, and asking the other one is the
+   * defect it replaced: `nameFor() || isNaming()` was false again the moment a
+   * failed call cleared its marker, so a model that kept failing was re-called
+   * on every 30-second poll, forever. Measured at about sixty retries.
+   */
+  attemptedNaming(signature: string): boolean
   startNaming(signature: string): void
+  /** The attempt concluded with no name. Clears the in-flight marker and leaves
+   *  the attempt recorded, so it is never made again for this thread. */
   finishNaming(signature: string): void
+
+  /** The offer for this thread, if one has been composed. */
+  offerFor(signature: string): WorkOffer | null
+  /** Record an offer. Dropped if `clear()` ran while the call was in flight. */
+  rememberOffer(signature: string, offer: WorkOffer): void
+  /** True while a composing call is in flight. */
+  isComposing(signature: string): boolean
+  /** True once composing has been attempted at all. Same shape and same reason
+   *  as `attemptedNaming` — a failure is a settled outcome, not a reason to
+   *  ask the same model the same thing again in thirty seconds. */
+  attemptedOffer(signature: string): boolean
+  startComposing(signature: string): void
+  /** The attempt concluded with no offer. */
+  finishComposing(signature: string): void
   /** The pages that formed a thread, kept so accepting carries the THREAD
    *  rather than everything from the same sites. */
   rememberThread(signature: string, urls: readonly string[]): void
@@ -85,7 +159,20 @@ export function createAmbientStore(): AmbientStore {
   const declined = new Map<string, number>()
   const names = new Map<string, NamedThread>()
   const naming = new Set<string>()
+  const offers = new Map<string, WorkOffer>()
+  const composing = new Set<string>()
   const threads = new Map<string, readonly string[]>()
+
+  /**
+   * Every thread a model has been asked about, whatever came back.
+   *
+   * Separate from the in-flight sets on purpose. "Is a call running" and "has a
+   * call ever been made" are different questions, and conflating them is the
+   * whole of the retry defect: the second one is what decides whether to spend
+   * money, and it has to stay true after a failure clears the first.
+   */
+  const attemptedNames = new Set<string>()
+  const attemptedOffers = new Set<string>()
 
   const trim = (nowMs: number) => {
     observations = observations.filter((o) => nowMs - o.at <= WINDOW_MS)
@@ -106,8 +193,31 @@ export function createAmbientStore(): AmbientStore {
       return observations
     },
 
+    /**
+     * Forget everything, and mean everything.
+     *
+     * This used to drop the observations and keep the names — so a subject
+     * Propositum had worked out about somebody survived the session start that
+     * was supposed to fold it in, and would have survived a decline. With a
+     * composed offer in here too, that gap stops being untidy: an offer is a
+     * paragraph about what somebody appeared to be doing, and one that outlives
+     * "no thanks" is the profile this whole object refuses to become.
+     *
+     * The attempt memory goes with it, and that is right rather than a
+     * loophole. It exists to stop the SAME still-detected thread being asked
+     * about on every poll; a clear only happens when a person has started a
+     * session or turned an offer down, and whatever browsing comes afterwards
+     * is genuinely new.
+     */
     clear() {
       observations = []
+      names.clear()
+      naming.clear()
+      offers.clear()
+      composing.clear()
+      attemptedNames.clear()
+      attemptedOffers.clear()
+      threads.clear()
     },
 
     decline(origin, nowMs) {
@@ -138,16 +248,52 @@ export function createAmbientStore(): AmbientStore {
     },
 
     nameFor: (signature) => names.get(signature) ?? null,
+    /**
+     * Record a name, unless the buffer was forgotten while the call was in
+     * flight.
+     *
+     * A model call takes about fifteen seconds and a person can decline or
+     * start a session inside that. `clear()` empties the in-flight marker along
+     * with everything else, so its absence here means exactly one thing: this
+     * result is about a buffer that no longer exists, and writing it would put
+     * a subject back that somebody has just been promised was thrown away.
+     */
     remember(named) {
+      if (!naming.has(named.signature)) return
       names.set(named.signature, named)
       naming.delete(named.signature)
+      attemptedNames.add(named.signature)
     },
     isNaming: (signature) => naming.has(signature),
+    attemptedNaming: (signature) => attemptedNames.has(signature),
     startNaming(signature) {
       naming.add(signature)
+      attemptedNames.add(signature)
     },
     finishNaming(signature) {
       naming.delete(signature)
+      attemptedNames.add(signature)
+    },
+
+    offerFor: (signature) => offers.get(signature) ?? null,
+    /** Dropped when the buffer was forgotten mid-call, for the reason given on
+     *  `remember` — and it matters more here, because an offer says more about
+     *  a person than a name does. */
+    rememberOffer(signature, offer) {
+      if (!composing.has(signature)) return
+      offers.set(signature, offer)
+      composing.delete(signature)
+      attemptedOffers.add(signature)
+    },
+    isComposing: (signature) => composing.has(signature),
+    attemptedOffer: (signature) => attemptedOffers.has(signature),
+    startComposing(signature) {
+      composing.add(signature)
+      attemptedOffers.add(signature)
+    },
+    finishComposing(signature) {
+      composing.delete(signature)
+      attemptedOffers.add(signature)
     },
 
     size: () => observations.length,

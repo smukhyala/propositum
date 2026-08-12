@@ -1,5 +1,5 @@
 /**
- * Boundary 7 of 7 — naming what someone has been looking into.
+ * Boundary 7 of 8 — naming what someone has been looking into.
  *
  * ── This is the model call CONTEXT.md §2 banned, narrowed until it is safe ──
  *
@@ -29,19 +29,35 @@
  *
  * A title is written by whoever wrote the page, so it is exactly the injection
  * surface ADR-0006 is about. Every one is datamarked. The output is a phrase
- * shown to a person and a choice of two fixed actions — it grants nothing,
- * names no source, and cannot widen what anything is permitted to do.
+ * shown to a person — it grants nothing, names no source, and cannot widen what
+ * anything is permitted to do.
+ *
+ * ── This call names, and no longer offers ────────────────────────────────
+ *
+ * It used to do both: a subject, plus one of `OFFERABLE = ['draft-document',
+ * 'deep-research']`, plus a label for the button. ADR-0009 deletes that list,
+ * and the proposal moved to `boundaries/offer.ts` as a second call rather than
+ * two more fields here.
+ *
+ * The decisive reason is that the two are gated differently. Naming runs at the
+ * `detectWork` bar, which is deliberately low, because the cost of a wrong
+ * subject line is a sentence nobody agrees with — and because a name that
+ * arrives inside thirty seconds is what makes the poll feel alive rather than
+ * blank. Proposing runs at the `OfferGrounds` bar, which is deliberately
+ * higher, because an offer asks for a person's attention and then their
+ * sources, their Chrome and their time.
+ *
+ * One call would have had to pick one bar: dragging the name up to the strong
+ * one loses the early name, and dragging the proposal down to the weak one is
+ * the false positive ADR-0008 calls the expensive failure. Secondarily, two
+ * calls mean a failed proposal cannot take a name that already succeeded with
+ * it.
  */
 
 import { z } from 'zod'
 import type { ModelBoundary } from '../client'
 import { UNTRUSTED_CONTENT_RULE } from '../untrusted'
 import type { Datamarked } from '../untrusted'
-
-/** What Propositum can offer to do next. A closed list — the model chooses
- *  between them and cannot invent a third. */
-export const OFFERABLE = ['draft-document', 'deep-research'] as const
-export type Offerable = (typeof OFFERABLE)[number]
 
 export interface SubjectInput {
   /** Recurring words from the thread. Code-derived, not page-authored. */
@@ -66,20 +82,14 @@ export const subjectSchema = z.object({
     .describe(
       'False when the pages do not agree on a subject. A wrong guess said plainly is worse than admitting the pages were mixed.',
     ),
-  offer: z
-    .string()
-    .describe(`One of: ${OFFERABLE.join(', ')}. Anything else is ignored and the offer falls back.`),
-  offerLabel: z
-    .string()
-    .max(80)
-    .describe(
-      'The offer as a question, naming the subject. "Want me to draft a doc on projects you could build with world models?"',
-    ),
 })
 
 export type SubjectOutput = z.infer<typeof subjectSchema>
 
-const PROMPT_VERSION = 'subject@1'
+/** Bumped when the offer left this call: a telemetry row recorded against
+ *  `subject@1` was produced by a prompt that also chose between two use cases,
+ *  and a version that cannot distinguish the two prompts is not traceability. */
+const PROMPT_VERSION = 'subject@2'
 
 const SYSTEM = `You are naming what someone has been reading about, from the titles of the pages they visited and anything they typed into a search box.
 
@@ -89,10 +99,7 @@ Rules:
 - Two to five words. "world models", "series A term sheets", "General Intuition".
 - If the pages do not agree on one subject, say so with confident: false rather than picking the loudest.
 - Never invent specificity the titles do not support. "machine learning" is a worse answer than admitting you are not sure.
-- Then choose ONE thing to offer:
-  - draft-document — they seem to be gathering material toward something they will write.
-  - deep-research — they seem to be still finding out, and would want more read for them.
-- Write the offer as a short question naming the subject.
+- Name the subject and stop. You are not being asked what to do about it.
 
 ${UNTRUSTED_CONTENT_RULE}`
 
@@ -116,9 +123,4 @@ export const subjectBoundary: ModelBoundary<SubjectInput, SubjectOutput> = {
       ].join('\n'),
     }
   },
-}
-
-/** The model writes a free string; the closed list is applied here. */
-export function offerableOf(raw: string): Offerable {
-  return (OFFERABLE as readonly string[]).includes(raw) ? (raw as Offerable) : 'deep-research'
 }
