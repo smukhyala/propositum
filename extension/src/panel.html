@@ -24,6 +24,9 @@
   #offer-what { font-size: 15px; margin-bottom: 0.35rem; }
   .offer-acts { display: flex; gap: 0.5rem; margin-top: 0.75rem; }
   #offer-yes { border-color: #7c6cf0; }
+  #acting { border: 1px solid rgba(124,108,240,0.5); border-radius: 4px; padding: 0.9rem; margin-bottom: 1.25rem; }
+  #acting h2 { margin-top: 0; }
+  #acting-stop { border-color: #7c6cf0; margin-top: 0.6rem; }
 </style>
 
 <h1>Propositum</h1>
@@ -31,6 +34,21 @@
 <p class="off" id="warning" hidden>
   Can’t reach the app — capture is off. Nothing is being recorded.
 </p>
+
+<!--
+  Layer three of the working-here indicator, and the one you find rather than
+  the one that finds you.
+
+  Chrome's own attachment bar is unsuppressible but browser-scoped and written
+  in developer vocabulary; the chip in the tab is legible but only visible if
+  you are looking at that tab. This is what answers "is Propositum doing
+  something right now" from anywhere in Chrome.
+-->
+<div id="acting" hidden>
+  <h2>Right now</h2>
+  <p>Propositum is working in a tab it opened. It cannot touch any other tab.</p>
+  <button id="acting-stop">Stop</button>
+</div>
 
 <div id="offer" hidden>
   <h2>Propositum noticed</h2>
@@ -246,8 +264,35 @@
     }
   }
 
+  /**
+   * Whether anything is being worked on, and the third way to stop it.
+   *
+   * A click here is a user gesture, so it can do everything — the same
+   * asymmetry that made the in-tab chip's Stop able to detach outright while
+   * an alarm handler could not so much as open this panel.
+   */
+  async function renderActing() {
+    const acting = document.getElementById('acting')
+    let working = false
+
+    try {
+      ;({ acting: working } = await chrome.runtime.sendMessage({ ask: 'acting' }))
+    } catch {
+      /* the worker is asleep, which means nothing is being driven either */
+    }
+
+    acting.hidden = !working
+    if (!working) return
+
+    document.getElementById('acting-stop').onclick = async () => {
+      await chrome.runtime.sendMessage({ ask: 'stop-acting' })
+      acting.hidden = true
+    }
+  }
+
   await render()
   await renderOffer()
+  await renderActing()
 
   const badge = await chrome.action.getBadgeText({})
   warning.hidden = badge !== '!'

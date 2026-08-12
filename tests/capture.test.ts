@@ -44,13 +44,20 @@ describe('the manifest asks for nothing frightening', () => {
     host_permissions?: string[]
   }
 
-  it('requests only warning-free permissions', () => {
+  it('requests only warning-free permissions, and one that is not', () => {
     // `notifications` is warning-free and is the ONLY way to surface an offer
     // nobody asked for. `sidePanel.open()` needs a user gesture, so calling it
     // from an alarm silently throws — which is what happened: the app named
     // "hiking to Kauai's Secret Falls" correctly and the person saw a dot.
+    //
+    // `debugger` is the exception, and this list is the second place that says
+    // so out loud. ADR-0002 refused it — "would make every constraint below
+    // advisory" — and ADR-0010 grants it anyway, stating in its opening
+    // paragraph that it is the first decision in the series whose net effect
+    // on safety is negative. The test below is the half that still holds:
+    // `debugger` WITHOUT `tabs` is confined to a tab Propositum opened.
     expect(manifest.permissions.sort()).toEqual(
-      ['alarms', 'idle', 'notifications', 'scripting', 'sidePanel', 'storage'].sort(),
+      ['alarms', 'debugger', 'idle', 'notifications', 'scripting', 'sidePanel', 'storage'].sort(),
     )
   })
 
@@ -95,10 +102,17 @@ describe('the manifest asks for nothing frightening', () => {
     expect(worker).toContain('notifications.onClicked')
   })
 
-  it('does not request tabs, webNavigation, history or debugger', () => {
+  it('does not request tabs, webNavigation or history', () => {
     // Without `tabs`, the extension is structurally incapable of learning the
     // person visited anything they did not approve. Chrome enforces it.
-    for (const forbidden of ['tabs', 'webNavigation', 'history', 'debugger']) {
+    //
+    // `debugger` used to be in this list and was moved out by ADR-0010. Its
+    // absence from here makes THIS assertion carry more than it used to, not
+    // less: `chrome.debugger.attach` needs a tab id, and without `tabs` the
+    // only tab id the extension can obtain is one `chrome.tabs.create`
+    // returned. `tests/extension-cdp.test.ts` closes the other door by
+    // asserting `chrome.debugger.getTargets` is never called.
+    for (const forbidden of ['tabs', 'webNavigation', 'history']) {
       expect(manifest.permissions).not.toContain(forbidden)
     }
   })
