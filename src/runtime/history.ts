@@ -99,6 +99,32 @@ export interface HistoryDeps {
    * crashed run.
    */
   readonly mutatingKinds: ReadonlySet<string>
+  /**
+   * A run whose own intents must never be reported as orphaned.
+   *
+   * ── The hazard this closes, and the larger one it does not ───────────
+   *
+   * An orphan is an authorized intent with no outcome, and that is
+   * indistinguishable from an action THAT IS STILL IN FLIGHT. Writing a
+   * recovery outcome for one of those would put a `failed / unverified` row
+   * against an action that is about to succeed — and, because `intentId` is
+   * unique on `action_outcome`, the real outcome would then fail to insert and
+   * take the run down with it.
+   *
+   * Passing the caller's own run id makes this function safe to call from
+   * inside a live run, which is the entire point of there being one rebuild
+   * path rather than three: the continuation, the crash sweep and the startup
+   * sweep all use it, and only the last of them runs when nothing is live.
+   *
+   * **It does not close the cross-run case, and that is not a gap this file can
+   * close.** Two worker processes holding the same contract — a stale lease
+   * re-claimed while the first is still alive — would let one recover the
+   * other's in-flight intents. The fence for that is `AgentRun.claimedBy`,
+   * which CONTEXT.md §4 has described since the vocabulary was written and
+   * which nothing reads yet. Naming it here rather than papering over it: when
+   * that fence lands, this comment is where the interaction is written down.
+   */
+  readonly excludeRunId?: string | undefined
 }
 
 /** What one earlier action looks like to the model. Deliberately the same shape
@@ -164,7 +190,9 @@ export async function historyForContract(
     if (deps.mutatingKinds.has(row.kind)) mutatingActionsTaken += 1
 
     if (row.outcome === null) {
-      orphanedIntentIds.push(row.id)
+      // Not an orphan if it belongs to the run doing the asking — that is an
+      // action in flight, and the run that owns it will write its outcome.
+      if (row.runId !== deps.excludeRunId) orphanedIntentIds.push(row.id)
       // Said in the words the ledger will shortly record, so the model reads the
       // same sentence whether it is looking at a rebuilt history or at a fresh
       // one. "We do not know" is the fact; it is not softened.

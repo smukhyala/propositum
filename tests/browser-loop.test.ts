@@ -500,6 +500,34 @@ describe('the history is rebuilt from the ledger, not carried in a process', () 
     expect(rebuilt.turns[3]?.outcome).toMatch(/unknown/i)
   })
 
+  it('never calls its own in-flight action an orphan', async () => {
+    // An orphan and an action in flight are the same row. Recovering one that
+    // belongs to the asking run would write `failed` against something about to
+    // succeed — and, because `intentId` is unique on `action_outcome`, the real
+    // outcome would then fail to insert and take the run down with it.
+    const inFlight: LedgerIntentRow = {
+      id: 'i9',
+      runId: 'run-1',
+      seq: 1,
+      kind: 'click-element',
+      reason: 'happening right now',
+      authorized: true,
+      refusedRule: null,
+      outcome: null,
+    }
+
+    const rebuilt = await historyForContract('contract-1', {
+      ledger: reader(rows([inFlight])),
+      mutatingKinds: MUTATING_ACTION_KINDS,
+      excludeRunId: 'run-1',
+    })
+
+    expect(rebuilt.orphanedIntentIds).toEqual([])
+    // It still counts. Excluding it from RECOVERY is not excluding it from the
+    // blast radius — it was authorized, and it may well have landed.
+    expect(rebuilt.actionsTaken).toBe(3)
+  })
+
   it('writes a recovery outcome that records the gap rather than guessing', async () => {
     const { ledger: led, recorded } = ledger()
 

@@ -418,6 +418,11 @@ export async function runWorker(job: WorkerJob, deps: WorkerDeps): Promise<Worke
     ? await historyForContract(job.contractId, {
         ledger: deps.history,
         mutatingKinds: MUTATING_ACTION_KINDS,
+        // This run's own intents are never orphans. None exist yet at this
+        // point, so today it changes nothing — it is what makes the rebuild
+        // safe to call from a live process at all, which is what "one code
+        // path, not three" requires.
+        excludeRunId: job.runId,
       })
     : { turns: [] as HistoryTurn[], actionsTaken: 0, mutatingActionsTaken: 0, orphanedIntentIds: [] }
 
