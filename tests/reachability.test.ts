@@ -359,6 +359,34 @@ describe('deferred, and asserted as deferred', () => {
     ).toEqual([])
   })
 
+  it('an outcome-scoped ReviewFinding is written and not yet rendered', () => {
+    /**
+     * The reviewer can now annotate a whole production, not only one change.
+     *
+     * `review@2` shows it outcome handles `O1…On` with change handles nested
+     * under the `document-changes` case, and the system prompt tells it to cite
+     * the most specific handle it can. A finding that cites `O1` is stored with
+     * `outcomeId` set and `changeId` null — and the only reader on the re-entry
+     * screen is `findings.forChangeset`, which joins through `changeId` and
+     * therefore cannot see it.
+     *
+     * So those rows exist and nobody is shown them. That is a real gap with a
+     * real consequence: the second pass says something true about the set of
+     * changes as a whole, and the person never reads it. It is asserted here
+     * rather than left implicit, because a finding written and never rendered is
+     * indistinguishable in a green suite from a finding never written — which is
+     * the exact shape of every defect the section above exists to remember.
+     *
+     * The fix is on the render side and the query it needs already exists:
+     * `findings.forRun` returns `outcomeId` beside `changeId`. Wiring it turns
+     * this red.
+     */
+    expect(
+      callersOf('findings.forRun', repos),
+      'outcome-scoped findings are rendered now — move this into the section above',
+    ).toEqual([])
+  })
+
   it('nothing lands, so an external-effect outcome cannot occur', () => {
     /**
      * `LANDING_ACTION_KINDS` is EMPTY, and that is a claim rather than an

@@ -1692,35 +1692,28 @@ export async function draftContract(readingId: string): Promise<ActionResult<Con
         : offer.expectedKinds.includes('document-changes')
 
     const project = await repos.projects.byId(session.projectId)
-    const documents = await repos.documents.forProject(session.projectId)
-    let document = documents[0]
 
-    if (!document && expectsDocument) {
-      // The skeleton `startFromSuggestion` used to write, written here instead
-      // and named after the project the thread already named. Two empty headings
-      // and nothing else: Propositum works on the person's words and never
-      // starts from a blank page, so this is a place to put them rather than a
-      // draft of anything.
-      const title = project?.name ?? 'Untitled'
-      const skeleton = normalise(`# ${title}\n\n## What this is\n\n## What to do about it\n`)
-      const created = await repos.documents.create({
-        projectId: session.projectId,
-        title,
-        content: skeleton,
-        contentHash: hashContent(skeleton),
-      })
-      document = { id: created.id, title }
-    }
+    /**
+     * The project's existing document, and only if this shift is for one.
+     *
+     * `expectsDocument` gates the LOOKUP, not just the creation, and that is the
+     * whole correctness of it. Gating creation alone would mean an offer that
+     * said *answer* still pinned yesterday's draft whenever the project happened
+     * to have one — which is the normal case for a joined project, and precisely
+     * what the carry-forward above exists to produce. The offer's stated shape
+     * would be silently overridden by the presence of an old file.
+     */
+    const existing = expectsDocument ? (await repos.documents.forProject(session.projectId))[0] : undefined
+    const base = existing === undefined ? null : await repos.documents.latestVersion(existing.id)
 
-    // A shift with no document pins nothing, and the gate refuses
-    // `read-document` and `draft-section` with `no_document_pinned`. That is the
-    // whole mechanism — there is no second flag saying "this one has no
-    // document" that could disagree with the missing pin.
-    const base = document === undefined ? null : await repos.documents.latestVersion(document.id)
-
-    if (document !== undefined && base === null) {
+    if (existing !== undefined && base === null) {
       return no<ContractDrafted>('blocked', 'That document has no saved text yet.')
     }
+
+    // The title the handoff boundary writes an objective about. The project's
+    // own name when there is no document — the thread already chose it, and it
+    // beats inventing a document to have something to name.
+    const subject = existing?.title ?? project?.name ?? 'this work'
 
     /* ── the sources this sitting actually touched ──────────────────────── */
 
@@ -1781,10 +1774,7 @@ export async function draftContract(readingId: string): Promise<ActionResult<Con
           ...(c.confidence === null ? {} : { confidence: c.confidence }),
         })),
         sources: handled.map((s) => ({ handle: s.handle, label: s.label })),
-        // The project's own name when nothing is pinned. The handoff boundary
-        // needs a subject to write an objective about, and this is the one the
-        // thread already chose — not an invented document standing in for one.
-        documentTitle: document?.title ?? project?.name ?? 'this work',
+        documentTitle: subject,
       },
     )
 
@@ -1821,16 +1811,65 @@ export async function draftContract(readingId: string): Promise<ActionResult<Con
         }
       })
 
+    /* ── the document, created last of all ──────────────────────────────── */
+
+    /**
+     * Written here, after every branch that can still refuse.
+     *
+     * Everything above this line can return `blocked` — no approved sources, no
+     * API key, a failed handoff call — and a document created before them would
+     * survive the refusal. Combined with the reading screen no longer disabling
+     * the button when a project has no document, that meant someone could click
+     * through, be told "Propositum saw no approved sources in this session", and
+     * have the project quietly acquire a two-heading skeleton nobody asked for.
+     *
+     * So creation is the last thing before the write it exists for. The skeleton
+     * is two empty headings named after the project the thread already named:
+     * Propositum works on the person's words and never starts from a blank page,
+     * so this is a place to put them rather than a draft of anything.
+     */
+    let pinned = base
+    let documentTitle = existing?.title ?? null
+
+    if (expectsDocument && pinned === null) {
+      const title = project?.name ?? 'Untitled'
+      const skeleton = normalise(`# ${title}\n\n## What this is\n\n## What to do about it\n`)
+      const created = await repos.documents.create({
+        projectId: session.projectId,
+        title,
+        content: skeleton,
+        contentHash: hashContent(skeleton),
+      })
+      pinned = { id: created.versionId, content: skeleton, contentHash: hashContent(skeleton), ordinal: 1 }
+      documentTitle = title
+    }
+
     /* ── persist the draft ──────────────────────────────────────────────── */
 
-    // Full DOCUMENT capability at draft time; the Output dial removes
-    // `draft-section` at ratification. Defaults are static product constants,
-    // never model-proposed.
-    //
-    // `DOCUMENT_ACTION_KINDS`, not `ACTION_KINDS`: the enum now also holds the
-    // browser-driving verbs, and a person drafting a proposal has no business
-    // granting *"Click something on the page"*. A browser handoff grants those
-    // deliberately, from the path that offers one.
+    /**
+     * The DOCUMENT capability, granted only when there is a document.
+     *
+     * `DOCUMENT_ACTION_KINDS` used to be granted unconditionally, which was
+     * harmless while every contract pinned a base and is not now. The gate
+     * refuses `read-document` and `draft-section` with `no_document_pinned`
+     * regardless — but the agreement panel builds its list from the granted
+     * kinds, so an unpinned shift would have shown *"Read the document"* and
+     * *"Draft a section"* under **What Propositum may do**, one section below
+     * its own sentence saying there is no document. A permission screen that
+     * lists a capability the gate will refuse is the screen teaching people not
+     * to read it.
+     *
+     * Not `ACTION_KINDS` either: the enum holds the browser-driving verbs now,
+     * and a person drafting a proposal has no business granting *"Click
+     * something on the page"*. A browser handoff grants those deliberately, from
+     * the path that offers one.
+     *
+     * Full document capability at draft time; the Output dial removes
+     * `draft-section` at ratification. Defaults are static product constants,
+     * never model-proposed.
+     */
+    const allowedActionKinds = pinned === null ? [] : [...DOCUMENT_ACTION_KINDS]
+
     const controls = DEFAULT_CONTROLS
     const contract = await repos.contracts.createDraft({
       sessionId: reading.sessionId,
@@ -1839,8 +1878,8 @@ export async function draftContract(readingId: string): Promise<ActionResult<Con
       definitionOfDone: drafted.value.definitionOfDone,
       guidance: [],
       approvedSourceIds,
-      allowedActionKinds: [...DOCUMENT_ACTION_KINDS],
-      baseVersionId: base === null ? null : base.id,
+      allowedActionKinds,
+      baseVersionId: pinned === null ? null : pinned.id,
       initiative: controls.initiative,
       progress: controls.progress,
       output: controls.output,
@@ -1855,8 +1894,8 @@ export async function draftContract(readingId: string): Promise<ActionResult<Con
       definitionOfDone: drafted.value.definitionOfDone,
       suggestedTimeLimitMinutes: minutes,
       approvedSourceIds,
-      allowedActionKinds: [...DOCUMENT_ACTION_KINDS],
-      documentTitle: document?.title ?? null,
+      allowedActionKinds,
+      documentTitle,
       quotedConstraints,
     })
   })

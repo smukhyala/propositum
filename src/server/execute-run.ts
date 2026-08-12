@@ -243,7 +243,7 @@ export async function executeRun(runId: string, deps: ExecuteDeps): Promise<void
 
   const stopLabel = result.stoppedBy.length ? STOP_RULES[result.stoppedBy[0]!].consumerLabel : null
 
-  await writeReport(ctx, contract.id, stopLabel, result.decisions)
+  await writeReport(ctx, contract.id, stopLabel, result.decisions, undefined, recorded.dropped)
 
   // The session goes back to the person. Without this it stays `away` forever,
   // and every control that offers to hand it back is a promise the product
@@ -388,9 +388,28 @@ async function writeReport(
   stopLabel: string | null,
   decisions: ReadonlyArray<{ question: string; whyItMatters: string }>,
   failureDetail?: string,
+  /**
+   * Productions the outcome writers could not realise.
+   *
+   * Nearly always zero, and it has to be SAID when it is not. The writers count
+   * every drop precisely so the count is evidence that the closed set of kinds
+   * is wrong — and a count returned to a caller that reads only the held ids is
+   * a count nobody has. That is the same shape as the swallowed notification and
+   * the blank report: the software knew something was lost and told no one.
+   *
+   * It is one sentence, not a number on a screen. "Two things it made could not
+   * be kept" is actionable — the person knows to ask. A tally of dropped
+   * productions is an internal metric wearing consumer clothes.
+   */
+  dropped?: number,
 ): Promise<void> {
   const existing = await ctx.repos.reports.forContract(contractId)
   if (existing) return
+
+  const lost =
+    dropped === undefined || dropped === 0
+      ? ''
+      : ` ${dropped === 1 ? 'One thing it made' : `${dropped} things it made`} could not be kept, so ${dropped === 1 ? 'it is' : 'they are'} not below.`
 
   await ctx.repos.reports.create({
     contractId,
@@ -408,7 +427,11 @@ async function writeReport(
      */
     narrative: failureDetail
       ? `Propositum stopped before it could finish, and nothing was changed. (${readableCause(failureDetail)})`
-      : stopLabel,
+      : stopLabel === null
+        ? lost === ''
+          ? null
+          : lost.trim()
+        : `${stopLabel}${lost}`,
     decisions: decisions.map((d, i) => ({
       question: d.question,
       whyStopped: d.whyItMatters,

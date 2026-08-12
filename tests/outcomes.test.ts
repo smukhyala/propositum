@@ -356,6 +356,53 @@ describe('a citation is a join, not a claim', () => {
     expect((await repos.outcomes.forRun(runId)).length).toBe(before)
   })
 
+  it('says so in the report when something it made could not be kept', async () => {
+    /**
+     * A drop that nobody is told about is not a counted drop.
+     *
+     * The writers count every production they cannot realise, precisely so the
+     * count is evidence that the closed set of kinds is wrong. A count returned
+     * to a caller that reads only the held ids is a count nobody has — the same
+     * shape as the swallowed notification and the blank report, where the
+     * software knew something was lost and told no one.
+     */
+    const { contractId } = await acceptedContract(true)
+
+    // A real drop, through the whole spine: the worker drafts prose IDENTICAL to
+    // what the section already says. The production is genuine, `diff()` finds
+    // nothing to change, and an empty changeset is no row — so the production
+    // cannot be realised and is dropped.
+    const runId = await run(contractId, [
+      {
+        kind: 'ok' as const,
+        value: { steps: [{ intent: 'Draft Commercials.', targetSection: 'Commercials' }] },
+      },
+      {
+        kind: 'ok' as const,
+        value: {
+          kind: 'draft-section',
+          reason: 'It already says the right thing.',
+          targetSection: 'Commercials',
+          prose: 'We propose a partnership on standard terms.',
+        },
+      },
+    ])
+
+    expect(await repos.outcomes.forRun(runId)).toEqual([])
+    expect(await repos.changesets.forContract(contractId)).toBeNull()
+
+    const report = await repos.reports.forContract(contractId)
+    expect(report?.narrative).toContain('could not be kept')
+  })
+
+  it('says nothing about drops when there were none', async () => {
+    const { contractId } = await acceptedContract(true)
+    await run(contractId, [...DRAFTS, NO_FINDINGS])
+
+    const report = await repos.reports.forContract(contractId)
+    expect(report?.narrative ?? '').not.toContain('could not be kept')
+  })
+
   it('drops section prose when the shift pins nothing to apply it to', async () => {
     const { contractId } = await acceptedContract(false)
     const runId = await run(contractId, DRAFTS)
