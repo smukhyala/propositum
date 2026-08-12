@@ -113,21 +113,36 @@ export interface ConfirmationDetail {
   /** Past its shift's credited deadline. Their yes will still be recorded as a
    *  yes; the work will still not carry on. Said BEFORE they press. */
   readonly pastDeadline: boolean
+  /**
+   * What CHROME asserted. Nothing page-authored may join this group, however
+   * naturally it would sit beside the URL: the panel's whole claim is that a
+   * page cannot make Chrome report a `POST` as a `GET`, and one page-written
+   * value stated flatly among them retires that claim for all of them.
+   */
   readonly attested: {
     readonly origin: string | null
     readonly url: string | null
     /** Browser-attested at the network. Absent until the request-pausing path
      *  supplies it, and absent renders as absent rather than as a guess. */
     readonly method: string | null
-    readonly tabTitle: string | null
     readonly actionKind: string
   }
   /** Verbatim. Escaped by React and shown in a block that cannot be mistaken
    *  for Propositum's own prose. */
   readonly typedText: string | null
-  /** PAGE-AUTHORED. Rendered as an attributed quotation and read back by
-   *  nothing. */
-  readonly elementName: string | null
+  /**
+   * PAGE-AUTHORED, both. Rendered as attributed quotations and read back by
+   * nothing.
+   *
+   * `tabTitle` is `document.title`, which a hostile page sets to whatever
+   * reassures — *Gmail — Drafts* over a checkout it is about to submit. It is
+   * worth showing, because it is what the person would have seen in their own
+   * tab strip; it is not worth stating as a fact.
+   */
+  readonly pageAuthored: {
+    readonly elementName: string | null
+    readonly tabTitle: string | null
+  }
   /** A `data:` URI, or null. Inlined rather than served by id, because a
    *  screenshot of somebody's authenticated session is the most sensitive
    *  byte-string in this product and an endpoint for it is a second door. */
@@ -201,7 +216,6 @@ export function ConfirmationScreen({ detail, goAhead, dont }: ConfirmationScreen
               Cancel on a button that posts an order; it cannot make Chrome
               report a POST as a GET. */}
           <Fact label="Sends" value={detail.attested.method} />
-          <Fact label="Tab" value={detail.attested.tabTitle} />
           <Fact label="Doing" value={detail.attested.actionKind} />
         </ul>
 
@@ -215,16 +229,26 @@ export function ConfirmationScreen({ detail, goAhead, dont }: ConfirmationScreen
           </>
         )}
 
-        {detail.elementName === null ? null : (
+        {detail.pageAuthored.elementName === null && detail.pageAuthored.tabTitle === null ? null : (
           <>
-            <p className="cf-h3">What the button says</p>
+            <p className="cf-h3">What the page says about itself</p>
             {/*
-              Page-authored, so attributed. The site's words in the site's
-              voice — and it is worth the person knowing a page is free to
-              write anything here, which is exactly why the method above comes
-              from Chrome and this does not.
+              Page-authored, so attributed — the site's words in the site's
+              voice, never in Propositum's. The heading says whose words these
+              are before either quotation arrives, because a page is free to
+              write anything here and that is exactly why the method above
+              comes from Chrome and these do not.
             */}
-            <Quotation text={detail.elementName} said={detail.attested.origin} />
+            {detail.pageAuthored.elementName === null ? null : (
+              <Quotation text={detail.pageAuthored.elementName} said={detail.attested.origin}>
+                <span className="cf-verbatim-note"> &mdash; the control it would press</span>
+              </Quotation>
+            )}
+            {detail.pageAuthored.tabTitle === null ? null : (
+              <Quotation text={detail.pageAuthored.tabTitle} said={detail.attested.origin}>
+                <span className="cf-verbatim-note"> &mdash; the name on the tab</span>
+              </Quotation>
+            )}
           </>
         )}
 

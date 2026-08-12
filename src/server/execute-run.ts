@@ -47,6 +47,8 @@ import { STOP_RULES } from '../domain/execution/stop-conditions'
 import { allowlisted } from '../policy/fetcher'
 import type { SourceFetcher } from '../policy/fetcher'
 import { readableCause } from './problem'
+import { creditedDeadlineFor, settleAbandonedIntents } from './confirmations'
+import type { RunFence } from '../runtime/worker-process'
 import { FINDING_KINDS, reviewBoundary, reviewHandlesFor } from '../model/boundaries/review'
 import type { ReviewedOutcome } from '../model/boundaries/review'
 import { loadWorkspace } from './outcomes/workspace'
@@ -61,13 +63,65 @@ export interface ExecuteDeps {
   readonly model: ModelClient
   readonly fetcher: SourceFetcher
   readonly now: () => number
+  /**
+   * The claim fence, from the process that claimed this run.
+   *
+   * REQUIRED, not optional, and that is the difference between the fence
+   * existing and the fence being a paragraph. CONTEXT.md §4 has said for a long
+   * time that "every action boundary re-reads `status` and `claimedBy`; a
+   * Runner that no longer holds the claim aborts without writing" — and until
+   * the columns landed there was nothing to read. An optional dep defaulting to
+   * "carry on" would put it straight back into the state where the sentence is
+   * true of the documentation and false of the software.
+   */
+  readonly fence: RunFence
+}
+
+/**
+ * The fence said stop, so the run stopped without writing the intent.
+ *
+ * A sentinel rather than an ordinary failure, because "another process owns
+ * this run now" and "this run crashed" must not produce the same report. It is
+ * thrown from inside `recordIntent`, which is the action boundary itself: the
+ * intent is committed BEFORE any effect, so refusing to write it is refusing to
+ * take the action, and nothing has happened out in the world at that point.
+ */
+class ClaimFenced extends Error {
+  constructor(readonly fenceReason: 'claim-lost' | 'cancel-requested' | 'run-ended') {
+    super(`run fenced: ${fenceReason}`)
+    this.name = 'ClaimFenced'
+  }
 }
 
 /** A ledger backed by real rows. The worker writes intents before effects
  *  through this, so a run that dies mid-action still shows what it attempted. */
-function ledgerFor(ctx: AppContext, runId: string): RunLedger {
+function ledgerFor(ctx: AppContext, runId: string, fence: RunFence): RunLedger {
   return {
     async recordIntent(input) {
+      /**
+       * THE action boundary, and the only place the fence needs to be checked.
+       *
+       * An `ActionIntent` is committed before any effect. So the instant before
+       * writing one is the instant before the run does anything out in the
+       * world, and a halt landing here lands exactly where ADR-0007 requires:
+       * at the next action boundary, never mid-action, never leaving an intent
+       * with no outcome.
+       *
+       * Putting the check in the ledger rather than in the loop is deliberate.
+       * The loop can be rewritten, and a check the loop owns is a check the
+       * next rewrite can drop; a run physically cannot take an action without
+       * coming through here first, because coming through here is what makes an
+       * action auditable at all.
+       *
+       * A lost claim then "aborts WITHOUT writing", in CONTEXT.md's own words.
+       * That matters more than it sounds: two workers writing interleaved
+       * intents into an append-only ledger under one `AgentRun` cannot be
+       * untangled afterwards, and the loser is the one holding stale beliefs
+       * about a live page.
+       */
+      const verdict = await fence.check()
+      if (!verdict.proceed) throw new ClaimFenced(verdict.reason)
+
       const row = await ctx.db.prisma.actionIntent.create({
         data: {
           runId: input.runId,
@@ -148,10 +202,33 @@ export async function executeRun(runId: string, deps: ExecuteDeps): Promise<void
    */
   const workspace = await loadWorkspace(ctx, contract)
 
-  // The deadline is DERIVED from an immutable pair, never stored — a
-  // crash-restart loop must not be able to silently reset the budget.
+  /**
+   * The deadline is DERIVED, never stored — a crash-restart loop must not be
+   * able to silently reset the budget — and it now includes confirmation waits.
+   *
+   * ── Why the two clocks had to be reconciled here ─────────────────────────
+   *
+   * `admitRun` lets a continuation into the loop when its CREDITED deadline is
+   * still ahead. If this line then computed `acceptedAt + timeLimit` without the
+   * credit, the run would be admitted and every proposal inside it refused with
+   * `budget_exhausted` — a shift accepted at 09:00 for thirty minutes, asked at
+   * 09:05, answered at 09:35, admitted against 10:00 and then starved against
+   * 09:30. That is precisely the failure `continuation.ts` names as the worst
+   * of its options: a run that appears to resume and then silently does
+   * nothing, with the only evidence being refusal rows written in the gate's
+   * vocabulary rather than the person's.
+   *
+   * `creditedDeadlineFor` sums immutable `(requestedAt, decidedAt)` pairs, so
+   * this stays a pure function of durable timestamps and recomputes to the same
+   * number after any number of restarts — the property the missing `deadlineAt`
+   * field was protecting. It falls back to the uncredited value only when the
+   * contract has no `acceptedAt`, which is the same case the old line guessed
+   * at with the clock.
+   */
   const acceptedAt = contract.acceptedAt?.getTime() ?? deps.now()
-  const deadlineEpochMs = acceptedAt + contract.timeLimitMinutes * 60_000
+  const deadlineEpochMs =
+    (await creditedDeadlineFor(ctx, contract.id)) ??
+    acceptedAt + contract.timeLimitMinutes * 60_000
 
   const job: WorkerJob = {
     runId,
@@ -189,7 +266,7 @@ export async function executeRun(runId: string, deps: ExecuteDeps): Promise<void
   try {
     result = await runWorker(job, {
       model: deps.model,
-      ledger: ledgerFor(ctx, runId),
+      ledger: ledgerFor(ctx, runId, deps.fence),
       readSource: {
         fetcher: allowlisted(deps.fetcher, workspace.sources.map((s) => s.originPattern)),
         sources: {
@@ -207,6 +284,49 @@ export async function executeRun(runId: string, deps: ExecuteDeps): Promise<void
       renewLease: (id) => ctx.repos.runs.renewLease(id, new Date(deps.now() + 60_000)),
     })
   } catch (error) {
+    /**
+     * A fenced run is not a failed run, and must not be reported as one.
+     *
+     * Three endings, three different sentences, and the difference is what the
+     * person actually did.
+     */
+    if (error instanceof ClaimFenced) {
+      // Another process holds the claim. Abort WITHOUT WRITING — not the
+      // status, not a report, not anything. The row belongs to the winner now,
+      // and the loser's last useful act is to touch nothing.
+      if (error.fenceReason === 'claim-lost') return
+
+      if (error.fenceReason === 'cancel-requested') {
+        await ctx.db.prisma.agentRun.update({
+          where: { id: runId },
+          data: { status: 'interrupted', terminalReason: 'cancelled', endedAt: new Date(deps.now()) },
+        })
+      }
+
+      /**
+       * Settle anything the run left in flight, now that it is terminal.
+       *
+       * The stop landed at an action boundary, so ordinarily there is nothing:
+       * the intent that would have been abandoned is the one that was never
+       * written. It runs anyway because the OTHER kill switches — Chrome's
+       * infobar, the tab overlay chip — remove the capability mid-action and do
+       * not come through here at all, and a run cancelled just after one of
+       * those really can have an intent with no outcome.
+       */
+      await settleAbandonedIntents(ctx, runId)
+
+      await writeReport(
+        ctx,
+        contract.id,
+        error.fenceReason === 'cancel-requested'
+          ? 'You stopped me, so I put everything down where it was.'
+          : 'Something else ended this before I finished.',
+        [],
+      )
+      await ctx.repos.sessions.markObserving(contract.sessionId)
+      return
+    }
+
     await ctx.repos.runs.complete(runId, 'failed', new Date(deps.now()), 'error')
     await writeReport(ctx, contract.id, null, [], error instanceof Error ? error.message : String(error))
     return

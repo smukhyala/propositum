@@ -99,7 +99,7 @@ export default async function ConfirmPage({
           pastDeadline: view.pastDeadline,
           attested: view.attested,
           typedText: view.typedText,
-          elementName: view.elementName,
+          pageAuthored: view.pageAuthored,
           imageSrc,
         }}
         goAhead={goAhead}

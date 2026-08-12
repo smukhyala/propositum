@@ -790,6 +790,183 @@ describe('taking back control', () => {
   })
 })
 
+/* ═══════════════════════════════ the ways this was got wrong once ══ */
+
+describe('the near-misses, kept red', () => {
+  it('does not warn about the deadline in the ordinary case', async () => {
+    // Asked at 09:05, opened at 09:40, thirty-minute shift accepted at 09:00.
+    // Computed WITHOUT crediting the pause being answered, the shift looks over
+    // and the screen shows a red warning — then the verdict credits 35 minutes,
+    // the run carries on perfectly well, and the warning was wrong in exactly
+    // the situation it was written for.
+    const paused = await pausedShift({
+      acceptedAt: new Date('2026-02-01T09:00:00Z'),
+      askedAt: new Date('2026-02-01T09:05:00Z'),
+      timeLimitMinutes: 30,
+    })
+
+    const view = await confirmationView(ctx, paused.requestId, Date.parse('2026-02-01T09:40:00Z'))
+    expect(view?.pastDeadline).toBe(false)
+
+    // And the projection agrees with what actually happens next.
+    const answered = await confirmRequest(ctx, paused.requestId, new Date('2026-02-01T09:40:00Z'))
+    if (!answered.ok || answered.continuationRunId === null) throw new Error('expected a run')
+    expect(await admitRun(ctx, answered.continuationRunId, new Date('2026-02-01T09:40:00Z'))).toBe(
+      'proceed',
+    )
+  })
+
+  it('shows the text about to be typed untrimmed', async () => {
+    const typed = '  Yes — go ahead.\n'
+    const paused = await pausedShift({
+      acceptedAt: new Date('2026-02-02T09:00:00Z'),
+      askedAt: new Date('2026-02-02T09:05:00Z'),
+      inputText: typed,
+    })
+
+    // The screen says "exactly these characters, nothing added and nothing
+    // trimmed". A trimmed value makes that sentence false about the one value
+    // it is written about.
+    const view = await confirmationView(ctx, paused.requestId, Date.parse('2026-02-02T09:06:00Z'))
+    expect(view?.typedText).toBe(typed)
+  })
+
+  it('keeps whitespace-only text visible rather than hiding the section', async () => {
+    const paused = await pausedShift({
+      acceptedAt: new Date('2026-02-03T09:00:00Z'),
+      askedAt: new Date('2026-02-03T09:05:00Z'),
+      inputText: '   ',
+    })
+
+    // Trimming to null would remove "The words it would type" entirely — the
+    // person authorising text the screen never showed them.
+    const view = await confirmationView(ctx, paused.requestId, Date.parse('2026-02-03T09:06:00Z'))
+    expect(view?.typedText).toBe('   ')
+  })
+
+  it('refuses to settle intents belonging to a run that is still alive', async () => {
+    const sessionId = (await repos.sessions.start(projectId)).id
+    const reading = await repos.readings.create({ sessionId, throughSeq: 0, claims: [] })
+    const contract = await repos.contracts.createDraft({
+      sessionId,
+      readingId: reading.id,
+      objective: 'Anything.',
+      definitionOfDone: 'Done.',
+      guidance: [],
+      approvedSourceIds: [],
+      allowedActionKinds: ['click-element'],
+      baseVersionId: null,
+      initiative: 'use-judgment',
+      progress: 'remaining-plan',
+      output: 'draft-changes',
+      interruption: 'stop-when-uncertain',
+      timeLimitMinutes: 30,
+    })
+    const run = await repos.runs.enqueue({ contractId: contract.id, role: 'worker' })
+    await repos.runs.advanceProgress(run.id, 1)
+
+    const inFlight = await db.prisma.actionIntent.create({
+      data: {
+        runId: run.id,
+        seq: 1,
+        kind: 'click-element',
+        reason: 'Mid-action right now.',
+        params: {},
+        authorized: true,
+      },
+      select: { id: true },
+    })
+
+    // `ActionOutcome.intentId` is unique. A recovery row written over a live
+    // run's in-flight intent makes the worker's real write throw, which
+    // propagates out and completes a healthy shift as failed — pressing "Take
+    // back control" would be the thing that broke the run.
+    expect(await settleAbandonedIntents(ctx, run.id)).toBe(0)
+    expect(await db.prisma.actionOutcome.findUnique({ where: { intentId: inFlight.id } })).toBeNull()
+  })
+
+  it('adds the expiry note to a report the shift already has', async () => {
+    const askedAt = new Date('2026-02-04T09:05:00Z')
+    const paused = await pausedShift({ acceptedAt: new Date('2026-02-04T09:00:00Z'), askedAt })
+
+    // An earlier run already wrote one, which is ordinary: `executeRun` writes
+    // a report at the end of every run.
+    await repos.reports.create({
+      contractId: paused.contractId,
+      narrative: 'I read three pages.',
+      decisions: [],
+    })
+
+    await expireConfirmations(ctx, new Date(askedAt.getTime() + 25 * HOUR))
+
+    const report = await repos.reports.forContract(paused.contractId)
+    expect(report?.narrative).toContain('I read three pages.')
+    // Dropping this sentence would lose exactly the note the sweep exists to
+    // write, on the screen the person actually reads.
+    expect(report?.narrative).toContain('went unanswered')
+
+    // And a second sweep does not say it twice.
+    await expireConfirmations(ctx, new Date(askedAt.getTime() + 26 * HOUR))
+    const again = await repos.reports.forContract(paused.contractId)
+    expect(again?.narrative?.match(/went unanswered/g)).toHaveLength(1)
+  })
+
+  it('finds a fresh question behind a pile of stale ones', async () => {
+    const stale = new Date('2026-01-01T09:00:00Z')
+    for (let i = 0; i < 12; i += 1) {
+      await pausedShift({ acceptedAt: stale, askedAt: new Date(stale.getTime() + i * MINUTE) })
+    }
+
+    const fresh = await pausedShift({
+      acceptedAt: new Date('2026-01-05T09:00:00Z'),
+      askedAt: new Date('2026-01-05T09:05:00Z'),
+    })
+
+    // Paging the oldest ten and filtering in JavaScript made twelve dead
+    // questions enough to hide every answerable one, forever and invisibly.
+    const found = await oldestPendingConfirmation(ctx, Date.parse('2026-01-05T09:06:00Z'))
+    expect(found?.requestId).toBe(fresh.requestId)
+  })
+
+  it('sweeps again while idle, so a question does not wait for a restart', async () => {
+    let sweeps = 0
+    let handle: ReturnType<typeof startWorkerProcess>
+    let clock = 0
+
+    const deps = {
+      sweepExpiredLeases: vi.fn(async () => {
+        sweeps += 1
+        if (sweeps >= 3) handle.stop()
+        return 0
+      }),
+      claimNext: vi.fn(async (): Promise<{ id: string } | null> => null),
+      admit: vi.fn(async (): Promise<'proceed' | 'settled'> => 'proceed'),
+      readRun: vi.fn(
+        async (): Promise<{
+          status: string
+          claimedBy: string | null
+          cancelRequested: boolean
+        } | null> => null,
+      ),
+      execute: vi.fn(async (): Promise<void> => undefined),
+      // Time moves, because the idle sweep is rate-limited on it.
+      now: () => new Date((clock += 10 * MINUTE)),
+      sleep: vi.fn(async (ms: number) => {
+        await new Promise((resolve) => setTimeout(resolve, ms))
+      }),
+    }
+
+    handle = startWorkerProcess(deps, { idlePollMs: 1, sweepEveryMs: MINUTE })
+    await handle.done
+
+    // A run parked on `awaiting-confirmation` holds no lease, so the lease
+    // sweep cannot see it — and expiring the question ran exactly once per
+    // worker lifetime. On a worker left up for a week the question never
+    // expired: no ending, and no re-entry note.
+    expect(sweeps).toBeGreaterThanOrEqual(3)
+  })
+})
+
 /* ════════════════════════════════════════════ 8. the screen itself ══ */
 
 describe('the confirmation screen', () => {
@@ -808,11 +985,14 @@ describe('the confirmation screen', () => {
     if (!view) return
 
     expect(view.typedText).toBe(typed)
-    expect(view.elementName).toBe('Send')
     expect(view.attested.origin).toBe('https://mail.example.test')
     expect(view.attested.method).toBe('POST')
-    expect(view.attested.tabTitle).toBe('Re: Q1 partnership terms')
     expect(view.hasImage).toBe(true)
+
+    // Both page-authored values are on the page-authored side. `document.title`
+    // is not a fact Chrome vouched for, however naturally it reads beside a URL.
+    expect(view.pageAuthored.elementName).toBe('Send')
+    expect(view.pageAuthored.tabTitle).toBe('Re: Q1 partnership terms')
 
     const html = renderToStaticMarkup(
       createElement(ConfirmationScreen, {
@@ -821,7 +1001,7 @@ describe('the confirmation screen', () => {
           pastDeadline: view.pastDeadline,
           attested: view.attested,
           typedText: view.typedText,
-          elementName: view.elementName,
+          pageAuthored: view.pageAuthored,
           imageSrc: 'data:image/png;base64,iVBOR',
         },
         goAhead: () => undefined,
@@ -869,11 +1049,10 @@ describe('the confirmation screen', () => {
             origin: null,
             url: null,
             method: null,
-            tabTitle: null,
             actionKind: 'click-element',
           },
           typedText: null,
-          elementName: null,
+          pageAuthored: { elementName: null, tabTitle: null },
           imageSrc: null,
         },
         goAhead: () => undefined,

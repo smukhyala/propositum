@@ -116,7 +116,24 @@ export interface RunFence {
 export type RunAdmission = 'proceed' | 'settled'
 
 export interface WorkerProcessDeps {
-  /** Reap orphans from a previous life. Runs once, before any claim. */
+  /**
+   * Reap orphans from a previous life. Runs before any claim, and again
+   * whenever the queue is empty.
+   *
+   * ── Why "once at startup" was not enough ─────────────────────────────────
+   *
+   * A run parked on `awaiting-confirmation` holds NO lease, deliberately — a
+   * run waiting overnight for an answer must not be reaped as an orphan and
+   * must not hold a claim while somebody reads. The consequence is that the
+   * lease sweep structurally cannot see it, and the thing that CAN — expiring
+   * the question after a day — was running exactly once per worker lifetime.
+   * On a worker left up for a week, a question nobody answered would never
+   * expire: no ending, no re-entry note, forever. Which is the state the sweep
+   * exists to prevent.
+   *
+   * So it runs on the idle path too, where there is nothing claimed and
+   * therefore nothing to race.
+   */
   sweepExpiredLeases(now: Date): Promise<number>
   /** Claim the oldest pending run, or null. `claimedBy` is written so the fence
    *  below has something to compare against. */
@@ -173,10 +190,15 @@ export interface WorkerProcessOptions {
    * suffix rather than trusting the pid alone, which a container can reuse.
    */
   readonly workerId?: string | undefined
+  /** How often the idle loop re-runs `sweepExpiredLeases`. Tests shorten it. */
+  readonly sweepEveryMs?: number | undefined
 }
 
 const DEFAULT_LEASE_MS = 60_000
 const DEFAULT_IDLE_POLL_MS = 1_000
+/** How often the idle loop re-sweeps. Five minutes, because the shortest thing
+ *  it reaps is a day old and the file it writes to is somebody's laptop. */
+const DEFAULT_SWEEP_EVERY_MS = 5 * 60_000
 
 function defaultWorkerId(): string {
   const pid = typeof process === 'undefined' ? 0 : process.pid
@@ -202,6 +224,7 @@ export function startWorkerProcess(
   const leaseMs = options.leaseMs ?? DEFAULT_LEASE_MS
   const idlePollMs = options.idlePollMs ?? DEFAULT_IDLE_POLL_MS
   const workerId = options.workerId ?? defaultWorkerId()
+  const sweepEveryMs = options.sweepEveryMs ?? DEFAULT_SWEEP_EVERY_MS
   const log = deps.log ?? (() => undefined)
 
   let stopping = false
@@ -258,6 +281,7 @@ export function startWorkerProcess(
   }
 
   const done = (async () => {
+    let lastSweptAtMs = deps.now().getTime()
     const swept = await deps.sweepExpiredLeases(deps.now())
     if (swept > 0) log(`swept ${swept} orphaned run(s) from a previous life`)
 
@@ -274,6 +298,20 @@ export function startWorkerProcess(
       })
 
       if (!claimed) {
+        /**
+         * Nothing to do, so sweep — but not on every poll.
+         *
+         * The idle poll is a second by default and sweeping every second would
+         * be a write-heavy no-op loop against a file somebody's editor is also
+         * touching. `sweepEveryMs` bounds it, and the only thing it delays is
+         * an expiry that is already twenty-four hours old.
+         */
+        if (now.getTime() - lastSweptAtMs >= sweepEveryMs) {
+          lastSweptAtMs = now.getTime()
+          const reaped = await deps.sweepExpiredLeases(now)
+          if (reaped > 0) log(`swept ${reaped} run(s) while idle`)
+        }
+
         await deps.sleep(idlePollMs)
         continue
       }

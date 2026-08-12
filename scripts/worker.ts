@@ -101,8 +101,12 @@ const handle = startWorkerProcess(
         cancelRequested: run.cancelRequested,
       }
     },
-    execute: (runId) =>
+    // The fence is threaded straight through. It is closed over this run's id
+    // and this process's identity, so the executor can neither ask about
+    // another run nor answer the question itself.
+    execute: (runId, fence) =>
       executeRun(runId, {
+        fence,
         ctx,
         model: new AnthropicModelClient({ apiKey }),
         fetcher,

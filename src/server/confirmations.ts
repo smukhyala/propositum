@@ -48,7 +48,7 @@
 import type { PrismaClient } from '@prisma/client'
 
 import type { AppContext } from './db'
-import { deadlineFor } from '../domain/execution/stop-conditions'
+import { CONFIRMATION_EXPIRY_HOURS, deadlineFor } from '../domain/execution/stop-conditions'
 import {
   ANSWERED_TOO_LATE_REPORT,
   CONFIRMATION_EXPIRED,
@@ -72,6 +72,28 @@ export interface ConfirmationContext {
 
 /* ── the credited deadline ──────────────────────────────────────────────── */
 
+type Pause = { requestedAtEpochMs: number; decidedAtEpochMs: number }
+
+/** Every answered pause on this contract, as the immutable pairs
+ *  `deadlineFor` sums. An open pause has no `decidedAt` and no pair. */
+async function answeredPauses(ctx: ConfirmationContext, contractId: string): Promise<Pause[]> {
+  const answered = await ctx.db.prisma.confirmationRequest.findMany({
+    where: { run: { contractId }, verdict: { isNot: null } },
+    select: { createdAt: true, verdict: { select: { decidedAt: true } } },
+  })
+
+  const pauses: Pause[] = []
+  for (const request of answered) {
+    const decidedAt = request.verdict?.decidedAt
+    if (!decidedAt) continue
+    pauses.push({
+      requestedAtEpochMs: request.createdAt.getTime(),
+      decidedAtEpochMs: decidedAt.getTime(),
+    })
+  }
+  return pauses
+}
+
 /**
  * When this contract's shift actually ends, with confirmation waits credited.
  *
@@ -85,7 +107,8 @@ export interface ConfirmationContext {
  * sum, and reaching for the clock to close one would make this function
  * time-dependent — the exact property that would break the restart guarantee.
  * The direction is also the correct one: an unanswered question must not buy a
- * run more time than an answered one.
+ * run more time than an answered one. The one caller that needs the projection
+ * anyway passes it in explicitly, below.
  *
  * Returns `null` for a contract nobody accepted. There is no shift, so there is
  * no deadline, and inventing one from `createdAt` would give an unratified
@@ -94,6 +117,19 @@ export interface ConfirmationContext {
 export async function creditedDeadlineFor(
   ctx: ConfirmationContext,
   contractId: string,
+  /**
+   * A pause that has NOT been answered yet, credited as though it were.
+   *
+   * Used by the confirmation screen and nowhere else. The screen has to answer
+   * "if I say yes right now, will the work carry on?", and the pause it is
+   * asking about is by definition still open — so the honest projection has to
+   * include it. `admitRun` deliberately does NOT pass one: by the time it runs,
+   * the verdict is written and the pause is a real answered pair.
+   *
+   * It cannot make the deadline earlier: `deadlineFor` clamps a negative
+   * interval at zero and the sum only ever grows.
+   */
+  asIfAnswered?: Pause,
 ): Promise<number | null> {
   const contract = await ctx.db.prisma.handoffContract.findUnique({
     where: { id: contractId },
@@ -101,20 +137,8 @@ export async function creditedDeadlineFor(
   })
   if (!contract?.acceptedAt) return null
 
-  const answered = await ctx.db.prisma.confirmationRequest.findMany({
-    where: { run: { contractId }, verdict: { isNot: null } },
-    select: { createdAt: true, verdict: { select: { decidedAt: true } } },
-  })
-
-  const pauses: Array<{ requestedAtEpochMs: number; decidedAtEpochMs: number }> = []
-  for (const request of answered) {
-    const decidedAt = request.verdict?.decidedAt
-    if (!decidedAt) continue
-    pauses.push({
-      requestedAtEpochMs: request.createdAt.getTime(),
-      decidedAtEpochMs: decidedAt.getTime(),
-    })
-  }
+  const pauses = await answeredPauses(ctx, contractId)
+  if (asIfAnswered) pauses.push(asIfAnswered)
 
   return deadlineFor({
     acceptedAtEpochMs: contract.acceptedAt.getTime(),
@@ -137,23 +161,48 @@ export interface ConfirmationView {
   readonly verdict: string | null
   /** True once the question is older than `CONFIRMATION_EXPIRY_HOURS`. */
   readonly expired: boolean
-  /** Past its shift's credited deadline — so answering yes will be honoured as
-   *  a yes and the continuation will still stop. Said on the screen, before
-   *  they press anything. */
+  /**
+   * Even crediting the wait about to be recorded, the shift is over — so
+   * answering yes will be honoured as a yes and the work will still not carry
+   * on. Said on the screen, before they press anything.
+   *
+   * Projected WITH this pause credited, not without it. Computed the other way
+   * it fired on the ordinary case: a question asked at 09:05 and opened at
+   * 09:40 on a thirty-minute shift would warn that the time had run out, and
+   * then the verdict would credit the thirty-five minutes and the run would
+   * carry on perfectly well. A red warning that is wrong in exactly the
+   * situation it was written for is worse than no warning.
+   */
   readonly pastDeadline: boolean
-  /** What the browser attested about where this would land. */
+  /**
+   * What CHROME asserted. Every field here is browser-attested — a page cannot
+   * make Chrome report a `POST` as a `GET`.
+   *
+   * The tab's title is deliberately NOT here, however natural it looks beside
+   * the URL: `document.title` is page-authored, a hostile page sets it to
+   * whatever reassures, and a value stated flatly in this panel is being
+   * offered as something Chrome vouched for.
+   */
   readonly attested: {
     readonly origin: string | null
     readonly url: string | null
     readonly method: string | null
-    readonly tabTitle: string | null
     readonly actionKind: string
   }
-  /** Verbatim, because "type this into that box" is only a meaningful question
-   *  if the person can read the this. */
+  /**
+   * Verbatim and UNTRIMMED, because "type this into that box" is only a
+   * meaningful question if the person can read the this. A trimmed value is a
+   * different string from the one about to be typed, and an all-whitespace one
+   * that came back as `null` would remove the section entirely — authorising
+   * text the screen never showed.
+   */
   readonly typedText: string | null
-  /** Page-authored. Rendered as an attributed quotation and nothing else. */
-  readonly elementName: string | null
+  /** PAGE-AUTHORED, both of them. Rendered as attributed quotations and read
+   *  back by nothing. */
+  readonly pageAuthored: {
+    readonly elementName: string | null
+    readonly tabTitle: string | null
+  }
   readonly evidenceId: string | null
   readonly hasImage: boolean
 }
@@ -220,7 +269,10 @@ export async function confirmationView(
       verdict: { select: { verdict: true } },
       run: { select: { contractId: true } },
       intent: { select: { kind: true, params: true } },
-      evidence: { select: { url: true, untrusted: true, image: true } },
+      // `image` is deliberately NOT selected. It is a multi-megabyte PNG and
+      // this function only needs to know whether there is one; the page reads
+      // the bytes once, when it is about to render them.
+      evidence: { select: { id: true, url: true, untrusted: true } },
     },
   })
   if (!row) return null
@@ -240,7 +292,23 @@ export async function confirmationView(
     }
   }
 
-  const creditedDeadline = await creditedDeadlineFor(ctx, row.run.contractId)
+  // Projected as though this pause were answered right now, because that is
+  // the question the screen is actually asking on the person's behalf.
+  const creditedDeadline = await creditedDeadlineFor(ctx, row.run.contractId, {
+    requestedAtEpochMs: row.createdAt.getTime(),
+    decidedAtEpochMs: nowEpochMs,
+  })
+
+  /**
+   * Untrimmed and unnormalised.
+   *
+   * `textOf` trims, which is right for a label and wrong for this: the screen
+   * says "exactly these characters, nothing added and nothing trimmed", and a
+   * trailing newline or a leading space that vanished on the way here makes
+   * that sentence false about the one value it is written about.
+   */
+  const rawInput = params['inputText']
+  const typedText = typeof rawInput === 'string' ? rawInput : null
 
   return {
     id: row.id,
@@ -262,14 +330,37 @@ export async function confirmationView(
       // page. Absent until the network mechanism writes it; absent renders as
       // absent rather than as a guess.
       method: textOf(params, 'method'),
-      tabTitle: textOf(asRecord(untrusted), 'title'),
       actionKind: row.intent.kind,
     },
-    typedText: textOf(params, 'inputText'),
-    elementName: elementNameOf(untrusted),
+    typedText,
+    pageAuthored: {
+      elementName: elementNameOf(untrusted),
+      tabTitle: textOf(asRecord(untrusted), 'title'),
+    },
     evidenceId: row.evidenceId,
-    hasImage: (row.evidence?.image?.length ?? 0) > 0,
+    hasImage: row.evidence === null ? false : await hasImage(ctx, row.evidence.id),
   }
+}
+
+/**
+ * Is there actually a picture on this evidence row?
+ *
+ * Raw, because the alternative is selecting the blob to ask about its length —
+ * pulling megabytes through Prisma to compute a boolean, and then pulling them
+ * again when the page renders. `LENGTH` on a SQLite BLOB reads the stored size
+ * rather than the bytes.
+ */
+async function hasImage(ctx: ConfirmationContext, evidenceId: string): Promise<boolean> {
+  const rows = await ctx.db.prisma.$queryRaw<Array<{ bytes: unknown }>>`
+    SELECT COALESCE(LENGTH(image), 0) AS bytes
+    FROM action_evidence WHERE id = ${evidenceId}
+  `
+  // SQLite integers arrive as `number` or `bigint` depending on magnitude and
+  // driver, and a comparison written for one silently fails for the other —
+  // which is how this first shipped reporting "no picture" for every row that
+  // had one. `Number()` covers both, and a null row is falsy either way.
+  const bytes = rows[0]?.bytes
+  return Number(bytes ?? 0) > 0
 }
 
 /* ── the two human answers ──────────────────────────────────────────────── */
@@ -387,21 +478,50 @@ export async function rejectRequest(
 /* ── the report, written once ───────────────────────────────────────────── */
 
 /**
- * Write the re-entry note, unless the shift already has one.
+ * Make sure this sentence reaches the re-entry note.
  *
- * One `ShiftReport` per contract, enforced by a unique column. This checks
- * first rather than catching, so a shift that already has a report keeps the
- * one it has: a later note overwriting an earlier one would lose whatever the
- * first run needed to say.
+ * ── Why it appends rather than skipping ──────────────────────────────────
+ *
+ * One `ShiftReport` per contract, enforced by a unique column, and
+ * `executeRun` already writes one at the end of every run under the same
+ * first-one-wins guard. So on a contract whose earlier run finished — a
+ * re-accept, a re-claim after a stale lease — a naive "skip if one exists"
+ * silently DROPS the sentence saying a question went unanswered, and the
+ * person's re-entry screen shows the old narrative with no mention of it.
+ * Losing precisely the note these functions exist to write is the failure this
+ * guard was supposed to prevent.
+ *
+ * So an existing report gains the sentence rather than swallowing it, and a
+ * report that already carries it is left alone — this runs once per sweep and
+ * a sweep may run many times.
+ *
+ * The `ShiftReport` row is not append-only guarded, which is what makes the
+ * update legal. It is a rendering of durable rows, rewritten on return; the
+ * ledger underneath it is the receipt and is untouched here.
  */
-async function writeReportOnce(
+async function noteInReport(
   ctx: ConfirmationContext,
   contractId: string,
   narrative: string,
 ): Promise<void> {
   const existing = await ctx.repos.reports.forContract(contractId)
-  if (existing) return
-  await ctx.repos.reports.create({ contractId, narrative, decisions: [] })
+
+  if (!existing) {
+    await ctx.repos.reports.create({ contractId, narrative, decisions: [] })
+    return
+  }
+
+  if (existing.narrative !== null && existing.narrative.includes(narrative)) return
+
+  await ctx.db.prisma.shiftReport.update({
+    where: { contractId },
+    data: {
+      narrative:
+        existing.narrative === null || existing.narrative.trim() === ''
+          ? narrative
+          : `${existing.narrative} ${narrative}`,
+    },
+  })
 }
 
 /* ── admission: the coordinator's decision, implemented ─────────────────── */
@@ -460,7 +580,7 @@ export async function admitRun(
     data: { status: 'interrupted', terminalReason: admission.terminalReason, endedAt: now },
   })
 
-  await writeReportOnce(ctx, run.contractId, admission.report)
+  await noteInReport(ctx, run.contractId, admission.report)
 
   return 'settled'
 }
@@ -505,7 +625,7 @@ export async function expireConfirmations(ctx: ConfirmationContext, now: Date): 
       where: { id: request.runId },
       data: { status: 'interrupted', terminalReason: CONFIRMATION_EXPIRED, endedAt: now },
     })
-    await writeReportOnce(ctx, request.run.contractId, CONFIRMATION_EXPIRED_REPORT)
+    await noteInReport(ctx, request.run.contractId, CONFIRMATION_EXPIRED_REPORT)
     settled += 1
   }
 
@@ -548,12 +668,33 @@ export async function expireConfirmations(ctx: ConfirmationContext, now: Date): 
  * reported as an ordinary one. The honesty lives in `unverified` and in the
  * detail line, which say plainly that nobody looked.
  *
+ * ── It refuses to touch a run that is still alive ────────────────────────
+ *
+ * A run in `pending | claimed | running` may be MID-ACTION, and its intent with
+ * no outcome is in flight rather than abandoned. Writing a `recovery` row over
+ * it would race the worker about to write the real one — and `ActionOutcome`
+ * has a unique `intentId`, so the worker's write would then fail, propagate out
+ * of the loop, and complete a perfectly healthy shift as `failed / error`.
+ * Pressing "Take back control" would be the thing that broke the run.
+ *
+ * So a live run is skipped and this returns 0. The flag is what stops it; the
+ * fence lands the halt at an action boundary; and if it turns out the worker
+ * was already gone, the startup sweep settles the intent once the lease
+ * expires. Nothing is lost, and nothing is claimed early.
+ *
  * Returns how many intents it settled.
  */
 export async function settleAbandonedIntents(
   ctx: ConfirmationContext,
   runId: string,
 ): Promise<number> {
+  const run = await ctx.db.prisma.agentRun.findUnique({
+    where: { id: runId },
+    select: { status: true },
+  })
+  if (!run) return 0
+  if (run.status === 'pending' || run.status === 'claimed' || run.status === 'running') return 0
+
   const abandoned = await ctx.db.prisma.actionIntent.findMany({
     where: { runId, authorized: true, outcome: { is: null } },
     select: { id: true },
@@ -631,30 +772,35 @@ export interface PendingConfirmation {
  * of interruptions, and the person can only look at one screen anyway — the
  * next one surfaces when this one is answered.
  *
- * Expired requests are excluded. Interrupting somebody about a question that
- * can no longer be answered is the worst kind of notification: it asks for an
- * act that will be refused.
+ * Expired requests are excluded IN THE QUERY, not afterwards. A first version
+ * took the ten oldest and filtered in JavaScript, which meant ten stale
+ * questions were enough to hide every answerable one behind them — the
+ * notification would go quiet exactly when a fresh question was waiting, and
+ * the cause would be invisible.
  */
 export async function oldestPendingConfirmation(
   ctx: ConfirmationContext,
   nowEpochMs: number,
 ): Promise<PendingConfirmation | null> {
-  const rows = await ctx.db.prisma.confirmationRequest.findMany({
-    where: { verdict: { is: null }, run: { status: 'awaiting-confirmation' } },
+  const answerableSince = new Date(nowEpochMs - CONFIRMATION_EXPIRY_HOURS * 3_600_000)
+
+  const row = await ctx.db.prisma.confirmationRequest.findFirst({
+    where: {
+      verdict: { is: null },
+      run: { status: 'awaiting-confirmation' },
+      // Strictly after, matching `confirmationHasExpired`, which expires at the
+      // instant the day is up rather than one tick later.
+      createdAt: { gt: answerableSince },
+    },
     orderBy: { createdAt: 'asc' },
     select: { id: true, summary: true, createdAt: true, run: { select: { contractId: true } } },
-    take: 10,
   })
+  if (!row) return null
 
-  for (const row of rows) {
-    if (confirmationHasExpired({ requestedAtEpochMs: row.createdAt.getTime(), nowEpochMs })) continue
-    return {
-      requestId: row.id,
-      contractId: row.run.contractId,
-      summary: row.summary,
-      askedAtMs: row.createdAt.getTime(),
-    }
+  return {
+    requestId: row.id,
+    contractId: row.run.contractId,
+    summary: row.summary,
+    askedAtMs: row.createdAt.getTime(),
   }
-
-  return null
 }

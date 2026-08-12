@@ -165,6 +165,11 @@ async function runWith(replies: ReadonlyArray<unknown>, contractId: string) {
     ctx,
     model: new FakeModelClient(replies as never),
     fetcher: fixtureFetcher({}),
+    // The claim fence, which `executeRun` now requires. These tests do not
+    // exercise a stale claim, so it always says proceed — spelled out rather
+    // than defaulted, because a fence that defaults to "carry on" is the exact
+    // thing the required dep exists to prevent.
+    fence: { check: async () => ({ proceed: true as const }) },
     now: () => Date.now(),
   })
   return run.id
