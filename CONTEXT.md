@@ -594,6 +594,23 @@ raise open questions, and name next steps, but **may not propose document text a
 `ReviewFinding`, which is the reviewer's advisory output, and with the `answer` ShiftOutcomeKind,
 which is what a `suggestions-only` run actually produces. The permission is unchanged.)*
 
+**Widened 2026-08-12: `suggestions-only` removes every kind that can OPERATE a page, not only
+the one that can write prose.** `click-element`, `type-text` and `press-key` go with
+`draft-section` and every landing kind — the whole of `MUTATING_ACTION_KINDS`. `observe-page`,
+`navigate` and `capture-screen` survive, so a research-only run can cross a site by following
+links and read what it lands on, and cannot operate anything.
+
+The capability lost is real: pagination, expanders, filters, "show full text". A research-only
+browser run can now see the first page of everything and the second page of nothing, and that
+should be expected to bite. It goes anyway, because the alternative made this the one dial in
+the product where the safest-looking option was not the safest. Under the narrower rule, the
+only thing between "research only" and an order being placed was `classifyReversibility` — a
+lexicon over page-authored text, which a page defeats by renaming its own button. ADR-0010
+already concedes once that a pause replaces an absence; conceding it a second time, inside the
+setting whose entire promise is that nothing will be operated, is how a safety story stops
+meaning anything. The pause guards `draft-changes`, where a person has consented to a worker
+that acts. It does not also have to guard the setting that says it will not.
+
 This is the only reading under which the setting enforces something. Because review already
 produces decisions rather than documents, a presentational reading would yield the identical
 artifact either way — and a user who selects the safest-looking option and receives a drafted

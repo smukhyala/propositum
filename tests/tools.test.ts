@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { compilePolicy } from '../src/domain/handoff/policy'
+import { ACTION_KINDS, compilePolicy } from '../src/domain/handoff/policy'
 import { authorize } from '../src/policy/gate'
 import type { AuthorizedAction, RunContext } from '../src/policy/gate'
 import {
@@ -212,6 +212,39 @@ describe('draftSection proposes, it does not write', () => {
     )
 
     expect(result).toEqual({ authorized: false, rule: 'action_kind_not_allowed' })
+  })
+
+  /**
+   * The dial's meaning must not rest on the reversibility classifier.
+   *
+   * `suggestions-only` removes every kind that can operate a page, not only the
+   * one that can write prose. If these came back, a person who picked the
+   * safest-looking option would get a worker that could type into forms and
+   * press buttons, with only `classifyReversibility` — a lexicon over
+   * page-authored text, which a page can defeat by renaming its own button —
+   * standing between that and an order being placed.
+   *
+   * Observation survives, so a research-only run can still cross a site by
+   * following links and read what it lands on. It cannot operate anything.
+   */
+  it('removes every way to operate a page, and keeps every way to read one', () => {
+    const researchOnly = compilePolicy(
+      { approvedSourceIds: [], allowedActionKinds: [...ACTION_KINDS], baseVersionId: 'v' },
+      {
+        initiative: 'follow-closely',
+        progress: 'remaining-plan',
+        output: 'suggestions-only',
+        interruption: 'stop-when-uncertain',
+        timeLimitMinutes: 30,
+      },
+    )
+
+    for (const kind of ['click-element', 'type-text', 'press-key', 'draft-section'] as const) {
+      expect(researchOnly.actionKindAllowlist.has(kind), `${kind} must not survive`).toBe(false)
+    }
+    for (const kind of ['observe-page', 'navigate', 'capture-screen'] as const) {
+      expect(researchOnly.actionKindAllowlist.has(kind), `${kind} must survive`).toBe(true)
+    }
   })
 })
 

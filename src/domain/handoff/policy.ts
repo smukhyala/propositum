@@ -346,24 +346,34 @@ export function compilePolicy(scope: ContractScope, controls: AutonomyControls):
     // kind inherits the rule instead of requiring someone to notice.
     for (const kind of LANDING_ACTION_KINDS) allowed.delete(kind)
 
-    // ── What `suggestions-only` does NOT remove, and why it is arguable ──
+    // ── ...and every kind that can operate a page ────────────────────────
     //
-    // `click-element`, `type-text` and `press-key` survive. A reviewer called
-    // this a hole and the objection is fair: a person who picks the
-    // safest-looking option can still get a worker that types into forms.
+    // `click-element`, `type-text` and `press-key` go too. This was argued the
+    // other way first, and the argument for keeping them was real: clicking is
+    // how you READ a site. Pagination, an expander, a filter, a "show full
+    // text" link — a research-only run that cannot click can see the first page
+    // of everything and the second page of nothing. That capability is
+    // genuinely lost here, and the loss should be expected to bite.
     //
-    // The case for keeping them: clicking is how you READ a site. Pagination,
-    // an expander, a filter, a "show full text" link — a research-only run that
-    // cannot click is a research-only run that can see the first page of
-    // everything and the second page of nothing. Removing them would not make
-    // the dial safer so much as make it useless on a browser handoff, and a
-    // dial people turn off is worth less than a dial that binds a little less
-    // than they hoped.
+    // It goes anyway, because the alternative made this dial the one place in
+    // the product where the safest-looking option was not the safest. Under the
+    // old shape, a person who chose "suggestions only" on a browser handoff got
+    // a worker that could type into forms and press buttons, and the only thing
+    // between that and an order being placed was `classifyReversibility` — a
+    // lexicon over page-authored text that a page can defeat by renaming its
+    // own button. Resting the meaning of a permission on a classifier being
+    // right is exactly the substitution ADR-0010 already concedes once, and
+    // conceding it twice in the same feature is how a safety story stops
+    // meaning anything.
     //
-    // What stands between "research only" and an order being placed is
-    // therefore the confirmation pause, NOT this line — and a pause is weaker
-    // than a removal. If the pause turns out not to hold, this is the first
-    // place to change, and the change is one `delete` per kind.
+    // So the pause guards `draft-changes`, where the person has consented to a
+    // worker that acts. It does not have to also guard the setting whose whole
+    // promise is that it will not.
+    //
+    // What survives is observation: `observe-page`, `navigate` and
+    // `capture-screen`. A research-only run can still cross a site by following
+    // links and read what it lands on. It cannot operate anything.
+    for (const kind of MUTATING_ACTION_KINDS) allowed.delete(kind)
   }
 
   return {

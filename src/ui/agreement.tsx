@@ -8,6 +8,15 @@
  * from `ContractScope.allowedActionKinds`, so a worker that proposes document
  * text is refused by the same deny-by-default path as any unauthorized kind.
  *
+ * As of 2026-08-12 it removes every kind that can OPERATE a page as well —
+ * `click-element`, `type-text`, `press-key` — leaving only the ones that read:
+ * `observe-page`, `navigate`, `capture-screen`. That matters to this panel
+ * specifically, because "Research only — don't write" is the label a cautious
+ * person reaches for, and under the narrower rule that label sat above a
+ * worker that could still press buttons in their signed-in browser. The panel
+ * renders from `compilePolicy`, so it already tells the truth about this
+ * without a second edit — but the label now means what it appears to mean.
+ *
  * So "What I can change" is not a relabelling of the same list. It is rendered
  * from `compilePolicy` — the very function the gate evaluates — and flipping
  * Output visibly moves "Draft a section" out of what Propositum may do and into

@@ -372,5 +372,33 @@ async function perform(
         draftText: drafted.prose,
       }
     }
+
+    /**
+     * The browser kinds, which have a gate but not yet a tool.
+     *
+     * `ACTION_KINDS` gained six members before anything could carry one out, so
+     * for this interval the exhaustiveness guard above is telling the truth: a
+     * capability exists in the vocabulary that this loop cannot perform. The
+     * honest response is to say so and record a failure, not to fall through
+     * and return `undefined` to a caller whose type says otherwise.
+     *
+     * Nothing reaches here today. `draftContract` grants only
+     * `DOCUMENT_ACTION_KINDS`, so no contract can put a browser kind in its
+     * scope, and the gate refuses one that arrives anyway. This is the second
+     * fence, for the day the first one moves.
+     *
+     * It is deliberately NOT a `default:` clause. A `default` would swallow the
+     * next capability someone adds; naming all six means adding a seventh is
+     * still a type error, which is the property the comment above promises.
+     */
+    case 'observe-page':
+    case 'navigate':
+    case 'click-element':
+    case 'type-text':
+    case 'press-key':
+    case 'capture-screen':
+      throw new Error(
+        `${kind} is authorized but this runner cannot carry it out yet — the browser tools are not wired`,
+      )
   }
 }
