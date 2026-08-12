@@ -244,12 +244,15 @@ describe('the run queue', () => {
      * nobody.
      */
     const run = await makeRun()
-    await repos.runs.claim({ leaseUntil: new Date(60_000), startedAt: new Date(0) })
+    await repos.runs.claim({
+      leaseUntil: new Date(60_000),
+      startedAt: new Date(0),
+      controlToken: 'tok-abcdefghijklmnopqrstuvwxyz012345',
+    })
 
-    const claimed = await repos.runs.byId(run.id)
-    expect(claimed?.controlToken).toBeTruthy()
-    // A bearer secret, not an identifier that happens to be hard to guess.
-    expect((claimed?.controlToken ?? '').length).toBeGreaterThanOrEqual(32)
+    expect((await repos.runs.byId(run.id))?.controlToken).toBe(
+      'tok-abcdefghijklmnopqrstuvwxyz012345',
+    )
 
     await repos.runs.complete(run.id, 'succeeded', new Date(1_000))
     expect((await repos.runs.byId(run.id))?.controlToken).toBeNull()
@@ -260,7 +263,11 @@ describe('the run queue', () => {
     // killed — so nothing is coming back to tidy up. A credential left on an
     // abandoned row is the one an attacker has time to use.
     const run = await makeRun()
-    await repos.runs.claim({ leaseUntil: new Date(1_000), startedAt: new Date(0) })
+    await repos.runs.claim({
+      leaseUntil: new Date(1_000),
+      startedAt: new Date(0),
+      controlToken: 'tok-abcdefghijklmnopqrstuvwxyz012345',
+    })
     expect((await repos.runs.byId(run.id))?.controlToken).toBeTruthy()
 
     await repos.runs.sweepExpiredLeases(new Date(10_000))

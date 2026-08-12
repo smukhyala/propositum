@@ -355,6 +355,52 @@ describe('the safety machinery is reachable from the product', () => {
     ).not.toEqual([])
   })
 
+  it('a human can answer a confirmation, or a raised request strands its run', () => {
+    /**
+     * Moved up out of the deferred block below when the confirmation screen
+     * landed — which is that block working as intended.
+     *
+     * This is the one that replaced ADR-0004's missing capability. There is no
+     * `sendMessage`, but `click-element` can press *Send*, so the prohibition
+     * is now a pause — and a pause nobody can answer is not a pause, it is a
+     * run stranded on `awaiting-confirmation` until it expires.
+     */
+    expect(
+      callersOf('confirmations.recordVerdict', 'src/persistence/repositories/index.ts'),
+      'nothing answers a confirmation — a raised request strands its run',
+    ).not.toEqual([])
+  })
+
+  it('a run can be told to stop, or the fence stays a paragraph', () => {
+    /**
+     * `cancelRequested` and `claimedBy` are described in CONTEXT.md §4 — "every
+     * action boundary re-reads `status` and `claimedBy`; a Runner that no
+     * longer holds the claim aborts without writing" — and the columns landed
+     * in the schema long after the sentence did.
+     *
+     * A browser-driving run is the first run where a stale claim can press a
+     * button on a live page, so the sentence had to stop being a sentence.
+     */
+    expect(
+      callersOf('runs.requestCancel', 'src/persistence/repositories/index.ts'),
+      'nothing flags a run for cancellation — "Take back control" cannot work',
+    ).not.toEqual([])
+  })
+
+  it('pause time is credited back, or asking permission destroys the run', () => {
+    /**
+     * Someone asked at 09:05 who answers at noon would otherwise return to a
+     * run whose thirty minutes expired at 09:30 — so every remaining proposal
+     * is refused `budget_exhausted` and the work they just approved never
+     * happens. That makes the safest behaviour the most expensive one, which is
+     * how safeguards get switched off.
+     */
+    expect(
+      callersOf('deadlineFor(', 'src/domain/execution/stop-conditions.ts'),
+      'nothing calls deadlineFor — a slow answer still eats the shift',
+    ).not.toEqual([])
+  })
+
   it('something composes an offer, or the model half of ADR-0009 is unreachable', () => {
     expect(
       callersOf('composeOffer(', 'src/server/compose-offer.ts'),
@@ -481,6 +527,21 @@ describe('the safety machinery is reachable from the product', () => {
     ).not.toMatch(/confirmation/i)
   })
 
+  it('something actually mints a control token, or the channel fence is a comment', () => {
+    /**
+     * `runs.claim` documents the token as minted at claim and takes it as an
+     * OPTIONAL parameter — so the mint site is whoever claims. Until the worker
+     * script passed one, nobody did: `AgentRun.controlToken` was null on every
+     * run in production while the docstring beside it read as proof a fence
+     * existed. That is the exact shape of the three defects at the top of this
+     * file, with the added hazard that the missing thing is a credential.
+     */
+    expect(
+      callersOf('controlToken', 'src/persistence/repositories/index.ts'),
+      'nothing supplies a controlToken to runs.claim — the column is never written',
+    ).toContain('scripts/worker.ts')
+  })
+
   it('the browser tools are reachable from the run path, or the six kinds cannot act', () => {
     /**
      * `ACTION_KINDS` gained six members in wave 2 and the loop threw on all of
@@ -531,15 +592,6 @@ describe('deferred, and asserted as deferred', () => {
     expect(
       callersOf('sweepForGap(', 'src/server/gap-sweeper.ts'),
       'the gap sweeper has a caller now — move this into the section above',
-    ).toEqual([])
-  })
-
-  it('nothing credits pause time back, so a slow answer still eats the shift', () => {
-    // Someone asked at 09:05 who answers at noon returns to a run whose budget
-    // expired at 09:30. `deadlineFor` fixes that and nothing calls it yet.
-    expect(
-      callersOf('deadlineFor(', 'src/domain/execution/stop-conditions.ts'),
-      'deadlineFor has a caller now — move this into the section above',
     ).toEqual([])
   })
 
@@ -648,31 +700,6 @@ describe('deferred, and asserted as deferred', () => {
     ).toEqual([])
   })
 
-  it('and no human can answer one, so a raised request would strand its run', () => {
-    /**
-     * ── Read the pair below before promoting this ────────────────────────
-     *
-     * The CONSUMER half is wired: `historyForContract` reads answered
-     * confirmations off durable rows, `runContext` puts the ids on
-     * `RunContext.confirmedRequestIds`, and deterministic code attaches
-     * `params.confirmationId` to a proposal the person actually said yes to.
-     * That half is asserted in the reachable section above.
-     *
-     * The PRODUCER half is not: nothing writes a `ConfirmationRequest` and
-     * nothing records a `ConfirmationVerdict`, so the set the gate checks is
-     * always empty in production and the pause has nothing to release it.
-     *
-     * **Promote the two together or neither.** Moving this row up on its own
-     * would make the flow look finished while the person's yes still has
-     * nowhere to be written — which is exactly the shape of the three defects
-     * at the top of this file: correct, tested, and unreachable.
-     */
-    expect(
-      callersOf('confirmations.recordVerdict', repos),
-      'confirmations are answerable now — move this into the section above, together with the consumer assertion',
-    ).toEqual([])
-  })
-
   it('nothing records what an agent saw while acting', () => {
     // Without this the second ledger is empty, so a ConfirmationRequest has
     // nothing to show the person before they authorise an effect.
@@ -693,16 +720,6 @@ describe('deferred, and asserted as deferred', () => {
     ).toEqual([])
   })
 
-  it('nothing flags a run for cancellation, so the fence stays a paragraph', () => {
-    // `cancelRequested` and `claimedBy` are described in CONTEXT.md §4 and have
-    // never existed in the schema. They exist now; nothing writes or reads them
-    // yet, so "a Runner that no longer holds the claim aborts without writing"
-    // is still a sentence rather than a behaviour.
-    expect(
-      callersOf('runs.requestCancel', repos),
-      'runs can be cancelled now — move this into the section above',
-    ).toEqual([])
-  })
 })
 
 describe('the extension can actually capture', () => {
