@@ -392,19 +392,55 @@ describe('the safety machinery is reachable from the product', () => {
     ).toContain('scripts/worker.ts')
   })
 
-  it('nothing else deletes action evidence, now that the DELETE guard is gone', () => {
-    // `action_evidence` is the one durable table with no no-DELETE trigger,
-    // because a sweep needs one (ADR-0010). That makes the trigger's job this
-    // test's job: the sweep is the only production deleter, and a second one
-    // would be an unguarded delete on a table the database no longer protects.
-    const deleters = PRODUCTION.filter((f) =>
-      /actionEvidence\.delete(Many)?\(/.test(stripImports(stripComments(readFileSync(f, 'utf8')))),
-    ).map((f) => relative(repo, f))
+  /**
+   * The guard standing where a trigger used to stand.
+   *
+   * `action_evidence` is the one durable table with no no-DELETE trigger,
+   * because a retention sweep needs one (ADR-0010). The database therefore no
+   * longer refuses a delete here, and these three assertions are the whole of
+   * what replaced it. `docs/SECURITY_AND_PRIVACY.md` cites them, so a weaker
+   * check than the sentence describing it is itself a defect.
+   *
+   * The first version WAS weaker: it asserted the deleting FILE was the
+   * repository, which any new `actionEvidence.deleteMany` anywhere in a
+   * 1,500-line file would satisfy, and it could not see raw SQL at all.
+   */
+  describe('nothing but the sweep deletes action evidence', () => {
+    const repos = 'src/persistence/repositories/index.ts'
 
-    expect(
-      deleters,
-      'something other than the sweep deletes ActionEvidence — the table has no DELETE guard',
-    ).toEqual(['src/persistence/repositories/index.ts'])
+    it('the ORM delete lives only in the repository', () => {
+      const deleters = PRODUCTION.filter((f) =>
+        /actionEvidence\.delete(Many)?\(/.test(stripImports(stripComments(readFileSync(f, 'utf8')))),
+      ).map((f) => relative(repo, f))
+
+      expect(
+        deleters,
+        'something outside the repository deletes ActionEvidence — the table has no DELETE guard',
+      ).toEqual([repos])
+    })
+
+    it('and reaching it means calling the sweep, from the sweep module only', () => {
+      // The narrowing the file-level check could not express. Both sweep
+      // methods are the repository's only route to that delete, so if the only
+      // callers are `src/server/evidence-sweep.ts`, the delete is the sweep's.
+      for (const method of ['sweepOlderThan(', 'sweepSettledRuns(']) {
+        expect(
+          callersOf(`evidence.${method}`, repos),
+          `${method} is called from somewhere other than the sweep`,
+        ).toEqual(['src/server/evidence-sweep.ts'])
+      }
+    })
+
+    it('and no raw SQL goes round the repository entirely', () => {
+      // `$executeRawUnsafe('DELETE FROM action_evidence …')` satisfies neither
+      // check above and is exactly what someone reaches for when the ORM path
+      // is inconvenient. Case-insensitive, because SQL is.
+      const raw = PRODUCTION.filter((f) =>
+        /delete\s+from\s+action_evidence/i.test(stripComments(readFileSync(f, 'utf8'))),
+      ).map((f) => relative(repo, f))
+
+      expect(raw, 'raw SQL deletes ActionEvidence, bypassing the sweep entirely').toEqual([])
+    })
   })
 })
 

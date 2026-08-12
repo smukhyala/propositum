@@ -416,15 +416,84 @@ describe('the retention sweep removes what is past the window and nothing else',
     expect(await repos.evidence.byId(fresh)).toBeNull()
   })
 
-  it('keeps — and counts — what a confirmation question points at', async () => {
+  it('settles a document Shift on its change verdicts, not on an outcome verdict it can never get', async () => {
+    /**
+     * The bug this test exists for, because it was wrong in the most expensive
+     * direction available.
+     *
+     * A `document-changes` outcome NEVER receives an `OutcomeVerdict` —
+     * `recordOutcomeVerdict` refuses that kind, because its decidable units are
+     * the individual `ProposedChange`s. A settledness rule written as "held and
+     * no OutcomeVerdict" therefore matches it forever, so the most common thing
+     * a Shift produces was permanently unsettled and rule 1 never fired for the
+     * ordinary case. Accepting every change in the afternoon left the
+     * screenshots of a signed-in session sitting there for the full week.
+     */
+    const runId = await newRun()
+    const fresh = await agedEvidence(runId, 0, 'https://x.example/document')
+
+    const outcome = await db.prisma.shiftOutcome.create({
+      data: {
+        runId,
+        ordinal: 1,
+        kind: 'document-changes',
+        reversibility: 'held',
+        headline: 'Two edits',
+        reason: 'because',
+        citedActionIntentIds: [],
+        detail: {},
+      },
+      select: { id: true },
+    })
+
+    const contractId = (await db.prisma.agentRun.findUniqueOrThrow({ where: { id: runId } })).contractId
+    const document = await repos.documents.create({
+      projectId,
+      title: 'Proposal',
+      content: 'Body.',
+      contentHash: 'h',
+    })
+    const changeset = await db.prisma.changeset.create({
+      data: {
+        contractId,
+        baseVersionId: document.versionId,
+        baseHash: 'h',
+        outcomeId: outcome.id,
+        changes: {
+          create: [
+            { startOffset: 0, endOffset: 4, prefix: '', exact: 'Body', suffix: '.', replacement: 'Text', reason: 'r' },
+          ],
+        },
+      },
+      select: { id: true, changes: { select: { id: true } } },
+    })
+
+    // Undecided change: the person is still looking, so the evidence stays.
+    await sweepActionEvidence({ evidence: repos.evidence, now: () => new Date() })
+    expect(await repos.evidence.byId(fresh)).not.toBeNull()
+
+    const changeId = changeset.changes[0]?.id
+    expect(changeId).toBeDefined()
+    await db.prisma.changeVerdict.create({ data: { changeId: changeId!, verdict: 'accept' } })
+
+    await sweepActionEvidence({ evidence: repos.evidence, now: () => new Date() })
+    expect(await repos.evidence.byId(fresh)).toBeNull()
+  })
+
+  it('keeps INDEFINITELY — and counts — what a confirmation question points at', async () => {
     /**
      * The published exception, asserted rather than discovered.
      *
      * `ConfirmationRequest.evidenceId` is a foreign key to the exact row the
      * person was looking at when they authorised an irreversible effect, and
-     * `confirmation_request` is append-only. Deleting the row would delete the
-     * record of a human being asked, on the one class of action where that
-     * record matters most.
+     * `confirmation_request` is append-only. The sweep can neither delete that
+     * row nor clear the pointer, so it is kept FOREVER — not for seven days,
+     * and not "until the question is resolved".
+     *
+     * The window here is deliberately far past retention. This test is not
+     * describing a grace period; it is pinning an indefinite retention so that
+     * anyone who changes it has to change `docs/SECURITY_AND_PRIVACY.md`, which
+     * says "kept indefinitely" in those words, in the same commit.
      */
     const runId = await newRun()
     const held = await agedEvidence(runId, ACTION_EVIDENCE_RETENTION_DAYS + 30, 'https://x.example/asked')

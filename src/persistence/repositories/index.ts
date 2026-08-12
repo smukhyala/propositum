@@ -1443,6 +1443,48 @@ export interface EvidenceSweepCounts {
   readonly keptForConfirmation: number
 }
 
+/**
+ * How many evidence rows one delete transaction may take.
+ *
+ * Small on purpose. This is a bound on how long SQLite's single write lock is
+ * held, not a throughput setting — see the comment inside `sweep`.
+ */
+const SWEEP_BATCH = 200
+
+/**
+ * A ShiftOutcome that is still waiting on a person.
+ *
+ * Written as data beside the sweep rather than inlined, because it is a claim
+ * about the PRODUCT — what "the person has decided" means — and it has to stay
+ * in step with `recordOutcomeVerdict` and `finishShift`. If a sixth outcome
+ * kind ever settles by some third route, this is the one place that has to
+ * learn about it, and getting it wrong is silent: an outcome that can never
+ * settle keeps a run's screenshots alive, and an outcome wrongly counted as
+ * settled deletes evidence someone was about to look at.
+ */
+const UNSETTLED: Prisma.ShiftOutcomeWhereInput = {
+  // Landed is never waiting: there is no verdict to give.
+  reversibility: { not: 'landed' },
+  OR: [
+    // The four kinds a person accepts or rejects as a whole.
+    { kind: { not: 'document-changes' }, verdict: { is: null } },
+    // Document changes are decided one ProposedChange at a time. A changeset
+    // with an undecided change is waiting; one with none — or an outcome with
+    // no changeset at all — has nothing left to ask.
+    //
+    // Spelt `{ equals: … }` rather than the shorthand deliberately.
+    // `tests/architecture.test.ts` greps for `kind: '<a ShiftOutcomeKind>'` to
+    // prove that exactly one file ASSIGNS an outcome kind, and a Prisma filter
+    // written in the shorthand is indistinguishable from an assignment to that
+    // grep. The long form says "this reads a kind" in a way both a person and
+    // the guard can tell apart from writing one.
+    {
+      kind: { equals: 'document-changes' },
+      changeset: { changes: { some: { verdict: { is: null } } } },
+    },
+  ],
+}
+
 export function actionEvidenceRepository(prisma: PrismaClient): ActionEvidenceRepository {
   /**
    * Delete everything matching `where` that no ConfirmationRequest points at,
@@ -1453,15 +1495,49 @@ export function actionEvidenceRepository(prisma: PrismaClient): ActionEvidenceRe
    * never true at any single moment.
    */
   async function sweep(where: Prisma.ActionEvidenceWhereInput): Promise<EvidenceSweepCounts> {
-    return prisma.$transaction(async (tx) => {
-      const keptForConfirmation = await tx.actionEvidence.count({
-        where: { ...where, requests: { some: {} } },
-      })
-      const { count } = await tx.actionEvidence.deleteMany({
-        where: { ...where, requests: { none: {} } },
-      })
-      return { deleted: count, keptForConfirmation }
+    const keptForConfirmation = await prisma.actionEvidence.count({
+      where: { ...where, requests: { some: {} } },
     })
+
+    /**
+     * Deleted in small batches, and the batching is about the WRITE LOCK rather
+     * than about memory.
+     *
+     * SQLite permits exactly one writer. A single `deleteMany` over a week of
+     * evidence — screenshots included, which are the heaviest rows in the
+     * database — holds that lock for as long as it takes, and every concurrent
+     * `append()` from the app process is an interactive transaction with
+     * Prisma's five-second timeout. `ledger-writer.ts` documents that exact
+     * failure and serialises its own writes to avoid it; the sweep runs in a
+     * different process and cannot join that queue, so it has to be a good
+     * citizen instead. Many short transactions release the lock between
+     * batches; one long one does not.
+     *
+     * Deleting by id rather than re-running the predicate keeps each batch's
+     * work proportional to the batch and makes progress monotone — a row
+     * selected in a batch is either deleted or gone already.
+     */
+    let deleted = 0
+    for (;;) {
+      const batch = await prisma.actionEvidence.findMany({
+        where: { ...where, requests: { none: {} } },
+        select: { id: true },
+        take: SWEEP_BATCH,
+      })
+      if (batch.length === 0) break
+
+      const { count } = await prisma.actionEvidence.deleteMany({
+        where: { id: { in: batch.map((row) => row.id) } },
+      })
+      deleted += count
+
+      // A batch that deleted nothing means something else is holding these rows
+      // — a foreign key added later, most likely. Stopping is right: looping on
+      // an unchanging set is the same wedge shape the ambient buffer had.
+      if (count === 0) break
+    }
+
+    return { deleted, keptForConfirmation }
   }
 
   return {
@@ -1512,20 +1588,27 @@ export function actionEvidenceRepository(prisma: PrismaClient): ActionEvidenceRe
      * outcomes, and none of them is still awaiting a person. Both halves are
      * needed. A run with NO outcomes is not settled — it is unfinished, or it
      * failed, and its evidence is the only account of what it was doing when it
-     * stopped; those rows leave by `sweepOlderThan` instead. `landed` admits no
-     * verdict at all, because there is nothing to accept about something that
-     * already happened out in the world, so it is settled the moment it is
-     * written.
+     * stopped; those rows leave by `sweepOlderThan` instead.
+     *
+     * ── Two kinds of settled, because there are two kinds of verdict ────
+     *
+     * `UNSETTLED` below is the honest predicate and the first version of it was
+     * wrong in the most expensive possible direction. It read *"held, and no
+     * `OutcomeVerdict`"* — which is right for four of the five outcome kinds and
+     * permanently FALSE for `document-changes`, the most common thing a Shift
+     * produces. A document outcome never receives an `OutcomeVerdict` at all:
+     * `recordOutcomeVerdict` refuses that kind outright, because its decidable
+     * units are the individual `ProposedChange`s and each carries its own
+     * `ChangeVerdict`. So the predicate matched it forever, every run that
+     * edited a document counted as unsettled forever, and rule 1 — the one
+     * documented as "the rule that fires in ordinary use" — never fired for the
+     * ordinary use. A person could accept every change in the afternoon and
+     * their screenshots would still sit there for a week.
+     *
+     * `landed` is settled the moment it is written, because there is nothing to
+     * accept about something that already happened out in the world.
      */
-    sweepSettledRuns: () =>
-      sweep({
-        run: {
-          outcomes: {
-            some: {},
-            none: { verdict: { is: null }, reversibility: { not: 'landed' } },
-          },
-        },
-      }),
+    sweepSettledRuns: () => sweep({ run: { outcomes: { some: {}, none: UNSETTLED } } }),
   }
 }
 

@@ -96,12 +96,12 @@ This is `ActionEvidence`, and four things about it are the whole promise:
   a different promise about a different thing, and it works only because it is written down here
   rather than assumed.
 
-- **It is kept for at most seven days, and usually far less.** Two rules, and the second is the one
-  that normally fires:
+- **Almost all of it is kept for at most seven days, and usually far less.** Two rules, and the
+  first is the one that normally fires:
 
   | | |
   |---|---|
-  | **When you have decided** | once you have accepted or rejected everything a Shift produced, its evidence is deleted at the next sweep — within the hour |
+  | **When you have decided** | once you have accepted or rejected everything a Shift produced, its evidence is deleted at the next sweep — within the hour. For a Shift that edited a document, "decided" means every proposed change has a verdict |
   | **Seven days, regardless** | the backstop for a run that failed, was interrupted, or is waiting on a question nobody answered. `ACTION_EVIDENCE_RETENTION_DAYS = 7` |
 
   Seven, rather than one, because a run stopped for your confirmation can be answered days later —
@@ -110,18 +110,31 @@ This is `ActionEvidence`, and four things about it are the whole promise:
   accessibility tree of a page you were signed into answers a question nobody is asking. The sweep
   runs in the worker process, at startup and hourly.
 
-  **The one exception, stated rather than left to be discovered.** If Propositum stopped and asked
-  you to authorise an irreversible action, the snapshot you were shown while deciding is kept for as
-  long as that question is — because deleting it would delete the record of what you were looking at
-  when you said yes, on the one class of action where that record matters most. Those rows are
-  counted by every sweep rather than silently skipped.
+- **One class of evidence is kept indefinitely, and this document is not going to round that down
+  to seven days.** If Propositum stopped and asked you to authorise an irreversible action, the
+  snapshot you were looking at while you decided is **never deleted** — not after you answer, not
+  after the run ends, not after the window.
+
+  Why it cannot be deleted: the question Propositum asked you is an append-only audit row that
+  points at that snapshot. Deleting the snapshot would either break that record or require editing
+  it, and the record of *what a person was shown when they authorised an irreversible effect* is the
+  single most important row in this ledger. It is also, unavoidably, the row most likely to be a
+  **screenshot of a page you were signed into** — which is the worst possible thing to keep forever,
+  and is why this is stated here in full rather than left as a footnote to a seven-day promise.
+
+  It is bounded by how rarely it happens: one snapshot per confirmation question, and a confirmation
+  question is a deliberate stop, not a routine turn. Every sweep counts these rows rather than
+  silently skipping them. Recorded as a revisit condition in
+  [ADR-0010](./adr/0010-acting-in-the-browser.md).
 
 - **It is the one durable table that can be deleted at all.** Everything else in the ledger is
   guarded by triggers against `UPDATE` and `DELETE` alike. `ActionEvidence` keeps the guard against
   being **rewritten** — what you were shown must stay what you were shown — and deliberately drops
   the guard against being **removed**, because a no-`DELETE` trigger and a retention sweep cannot
-  both be true. What stands in for the missing trigger is a test asserting that the sweep is the only
-  code in the repository that deletes from this table.
+  both be true. What stands in for the missing trigger is three tests: the ORM delete exists in one
+  place, that place is reachable only through the sweep, and no raw SQL goes round it. That is
+  weaker than a trigger — it is a check on our own code rather than a refusal by the database — and
+  it is the strongest thing available once a sweep has to exist.
 
 ## Data explicitly not collected
 
@@ -186,6 +199,7 @@ document that still said it would be false in the place it can least afford to b
 |---|---|
 | Everything else | persists until you delete it |
 | `ActionEvidence` | deleted once you have decided what the Shift produced, and in any case after **seven days** — see *Acting*, above |
+| `ActionEvidence` attached to a confirmation question | **kept indefinitely.** The one exception, argued in full above |
 
 Export is not implemented. The database is a single SQLite file you own and can copy.
 

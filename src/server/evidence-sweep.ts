@@ -25,20 +25,26 @@
  *    for the life of the database — and a run that ended badly is exactly the
  *    one that saw a page it should not have.
  *
- * ── The published exception ─────────────────────────────────────────────
+ * ── The published exception, and it is not a small one ──────────────────
  *
  * A `ConfirmationRequest` holds a foreign key to the exact row the person was
- * looking at when they authorised an irreversible effect, and
- * `confirmation_request` is append-only. That row therefore cannot be deleted
- * without deleting the record of a human being asked — which is the single
- * piece of this ledger the audit trail genuinely needs, on the single class of
- * action where it matters most.
+ * looking at when they authorised an irreversible effect. `confirmation_request`
+ * is append-only, so the sweep can neither delete the row it points at nor clear
+ * the pointer — and it never will be able to. Those rows are kept **forever**,
+ * not "as long as the question is". The two are the same thing here, because the
+ * question is kept forever too.
  *
- * So those rows stay, they are counted rather than silently skipped, and the
- * exception is stated in `docs/SECURITY_AND_PRIVACY.md` rather than discovered
- * later by someone reading a row count. An undocumented exception to a
- * published retention promise is the same defect as no sweep at all, arriving
- * with better manners.
+ * Say the cost out loud: this is the row most likely to be a SCREENSHOT OF A
+ * PAGE THE PERSON WAS SIGNED INTO, because a confirmation question is exactly
+ * the moment the accessibility tree was insufficient. A retention module that
+ * kept an indefinite exception quiet would be worse than no retention module,
+ * because the sweep's existence is what makes the seven days believable.
+ *
+ * So the rows stay, they are COUNTED by every pass rather than silently
+ * skipped, `docs/SECURITY_AND_PRIVACY.md` says "kept indefinitely" in those
+ * words, and ADR-0010 carries it as a risk and a revisit condition. The real
+ * fix is for `ConfirmationRequest` to be an audit record without holding a
+ * foreign key to a screenshot, which is a schema change and someone else's ADR.
  */
 
 import type { ActionEvidenceRepository, EvidenceSweepCounts } from '../persistence/repositories/index'

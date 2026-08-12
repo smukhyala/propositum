@@ -353,6 +353,18 @@ a weekend.
 - **CAPTCHAs and bot detection now risk the person's own account**, not a throwaway Playwright
   context. A site that decides the traffic is automated can rate-limit, challenge, or suspend
   something the person actually depends on. Propositum does not solve CAPTCHAs and must not learn to.
+- **The snapshot behind a `ConfirmationRequest` is retained forever, and the retention section above
+  does not cover it.** `ConfirmationRequest.evidenceId` is a foreign key from an append-only table,
+  so the sweep can neither delete the row it points at nor clear the pointer. Every other
+  `ActionEvidence` row is gone within seven days; this one is not, and it is the row most likely to
+  be **a screenshot of a page the person was signed into**, because a confirmation question is
+  exactly the moment a tree was insufficient.
+
+  Keeping it is the lesser evil — the record of what a person was shown when they authorised an
+  irreversible effect is the one row this whole design is accountable to — but it is a permanent
+  retention created by a section headed *retention*, and it is written down here rather than left in
+  the gap between two documents. `docs/SECURITY_AND_PRIVACY.md` states it in the same register
+  rather than rounding it down to seven days.
 
 ## A divergence between ADR-0002 and the shipped extension
 
@@ -377,3 +389,7 @@ about the four controls, which hold. ADR-0002's table is corrected in place;
   ADR's central property being spent, and it needs its own ADR to spend it.
 - **A second browser matters.** Nothing here is Chrome-specific by preference; it is Chrome-specific
   because that is where both the permission model and the debugger protocol we rely on exist.
+- **Confirmation-pinned evidence accumulates.** The rows above are kept forever by construction. If
+  confirmation questions turn out to be common rather than rare, the fix is not a longer sweep — it
+  is for `ConfirmationRequest` to carry what it needs to be an audit record without holding a
+  foreign key to a screenshot, which is a schema change and belongs in its own ADR.
