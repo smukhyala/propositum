@@ -45,6 +45,40 @@ import type { SemanticEvent } from '../capture/semantics'
 export type NavigationClassifier = ReturnType<typeof createNavigationClassifier>
 
 /**
+ * How much more time on a page is worth saying out loud again.
+ *
+ * ── The bug this replaces ────────────────────────────────────────────────
+ *
+ * The dedupe here used to drop EVERY engagement report after the first. The
+ * reasoning was sound — reports arrive every fifteen seconds and the ledger
+ * should not gain forty rows for one page — but the consequence was not
+ * noticed: every report carries CUMULATIVE dwell, so keeping only the first
+ * meant `attested.dwellMs` was frozen at the twenty seconds that produced it.
+ *
+ * `detectPause` sums dwell off those rows and needs `WORKED_MS_FOR_HANDOFF` of
+ * it. Ten minutes of reading recorded as twenty seconds never reaches ten
+ * minutes, however long anyone reads. **The hand-off offer could not fire, at
+ * all, ever** — and nothing was red, because the dedupe's own test asserted the
+ * later reports produced nothing, which was precisely the defect.
+ *
+ * ── Why a step rather than every report, or a doubling ───────────────────
+ *
+ * Every report puts the forty rows back. A doubling (record at 20s, 40s, 80s,
+ * 160s…) keeps the timeline shortest but leaves the recorded dwell up to HALF
+ * the real figure, so a person would have to read for twenty minutes before the
+ * ledger admitted ten — the same failure in a smaller size.
+ *
+ * A fixed step is the honest trade: recorded dwell trails the truth by at most
+ * one step, and a page read for half an hour costs fifteen rows rather than a
+ * hundred and twenty. Two minutes is a guess, in the same sense as every
+ * threshold in `detect.ts` — it is set here, in one place, so tuning it is a
+ * diff. Shortened under fast-detect for the same reason the detector's are:
+ * a feedback loop nobody will wait through is a feedback loop nobody runs.
+ */
+export const ENGAGEMENT_STEP_MS =
+  process.env['PROPOSITUM_FAST_DETECT'] === '1' ? 6_000 : 2 * 60_000
+
+/**
  * What the extension is allowed to send.
  *
  * `kind` is deliberately absent. An extension that could name a kind could name
@@ -131,9 +165,22 @@ export function toSemanticEvent(
       })
 
     case 'engagement': {
-      // One `engaged` row per page per sitting. Reports keep arriving while the
-      // page is open; the first crossing is the fact, the rest restate it.
-      if (classifier.hasEngaged(signal.url)) return null
+      // Reports keep arriving while the page is open, each restating the same
+      // fact with a bigger number on it. A row is worth writing when that
+      // number has actually moved — see `ENGAGEMENT_STEP_MS` for why the answer
+      // is neither "always" nor "once".
+      //
+      // Dwell that went BACKWARDS is a new sitting, not a quiet one: `seenAt`
+      // in the content script is per-document, so reloading or returning to a
+      // page starts it near zero again. Reading `dwellMs - recorded` as a
+      // shortfall there would make the difference negative, therefore always
+      // under the step, and every report of the second sitting would be dropped
+      // for as long as the session lasted.
+      const recorded = classifier.recordedDwell(signal.url)
+      const restarted = recorded !== null && signal.dwellMs < recorded
+      if (recorded !== null && !restarted && signal.dwellMs - recorded < ENGAGEMENT_STEP_MS) {
+        return null
+      }
 
       const engagement = classifyEngagement({
         url: signal.url,
@@ -147,7 +194,7 @@ export function toSemanticEvent(
 
       // Mark only on a real crossing. An early report below the dwell threshold
       // must not claim the page and silence the crossing that follows it.
-      if (engagement !== null) classifier.markEngaged(signal.url)
+      if (engagement !== null) classifier.markEngaged(signal.url, signal.dwellMs)
       return engagement
     }
 

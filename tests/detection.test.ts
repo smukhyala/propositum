@@ -14,12 +14,12 @@
 import { describe, it, expect } from 'vitest'
 import {
   ENGAGED_MS_FOR_WORK,
-  PAGES_FOR_WORK,
   PAUSE_MS,
   WINDOW_MS,
   WORKED_MS_FOR_HANDOFF,
   detectPause,
   detectWork,
+  threadPagesOf,
 } from '../src/domain/detection/detect'
 import type { AmbientObservation } from '../src/domain/detection/detect'
 
@@ -179,6 +179,124 @@ describe('what is work — a subject followed across sites', () => {
     ]
 
     expect(detectWork(repeated, T0 + 8)?.engagedMs).toBe(ENGAGED_MS_FOR_WORK)
+  })
+})
+
+describe('a query is a query, not a question mark', () => {
+  /**
+   * The service worker marks `kind: 'query'` on any URL carrying a `?`, so
+   * `describeWork` was claiming "you searched for it, then read 4 pages" over
+   * browsing where nobody had searched for anything. The domain re-decides,
+   * and the extension cannot widen what counts.
+   */
+  const shaped = (url: string, origin: string): AmbientObservation[] => [
+    { at: T0, origin, url, title: 'World Models', kind: 'query' },
+    { at: T0 + 1, origin: 'https://a.example', url: 'https://a.example/1', title: 'World Models Survey', kind: 'navigation' },
+    { at: T0 + 2, origin: 'https://b.example', url: 'https://b.example/1', title: 'World Models Explained', kind: 'navigation' },
+    // Enough reading that the thread clears the naming bar either way, so what
+    // is being measured here is the search count and nothing else.
+    { at: T0 + 3, origin: 'https://a.example', url: 'https://a.example/1', title: 'World Models Survey', kind: 'engagement', engagedMs: ENGAGED_MS_FOR_WORK },
+  ]
+
+  it('counts a real search', () => {
+    const found = detectWork(
+      shaped('https://www.google.com/search?q=world+models', 'https://www.google.com'),
+      T0 + 3,
+    )
+
+    expect(found?.searches).toBe(1)
+    expect(found?.because).toBe('searched-and-followed')
+  })
+
+  it('does not count a checkout page the extension called a query', () => {
+    const found = detectWork(
+      shaped('https://shop.example.com/cart/checkout?step=2', 'https://shop.example.com'),
+      T0 + 3,
+    )
+
+    // The thread still forms — three pages, three origins, one subject — but
+    // nothing about it may be described as having been searched for.
+    expect(found?.searches).toBe(0)
+    expect(found?.because).toBe('followed-across-sites')
+  })
+})
+
+describe('coming back to a page is a fact about the page', () => {
+  const thread = (extra: AmbientObservation[] = []): AmbientObservation[] => [
+    { at: T0, origin: 'https://a.example', url: 'https://a.example/1', title: 'World Models Survey', kind: 'navigation' },
+    { at: T0 + 1, origin: 'https://b.example', url: 'https://b.example/1', title: 'World Models Explained', kind: 'navigation' },
+    { at: T0 + 2, origin: 'https://c.example', url: 'https://c.example/1', title: 'Training World Models', kind: 'navigation' },
+    // Past the naming bar, so `detectWork` has something to report and the
+    // arrival counts can be read off it.
+    { at: T0 + 10, origin: 'https://a.example', url: 'https://a.example/1', title: 'World Models Survey', kind: 'engagement', engagedMs: ENGAGED_MS_FOR_WORK },
+    ...extra,
+  ]
+
+  /** Through `detectWork` and `threadPagesOf`, which is the pair the offer path
+   *  uses — so these are the counts the grounds will see, not a private view. */
+  const pageIn = (observations: AmbientObservation[], url: string) => {
+    const found = detectWork(observations, T0 + 100)
+    expect(found).not.toBeNull()
+    return threadPagesOf(observations, found!, T0 + 100).find((page) => page.url === url)
+  }
+
+  it('carries only the pages the thread was made of', () => {
+    const observations = thread([
+      { at: T0 + 3, origin: 'https://unrelated.example', url: 'https://unrelated.example/1', title: 'Lasagne', kind: 'navigation' },
+    ])
+    const found = detectWork(observations, T0 + 100)
+
+    expect(threadPagesOf(observations, found!, T0 + 100).map((page) => page.url)).toEqual(found?.urls)
+  })
+
+  it('a page seen once, then returned to, is two arrivals', () => {
+    const observations = thread([
+      { at: T0 + 3, origin: 'https://a.example', url: 'https://a.example/1', title: 'World Models Survey', kind: 'navigation' },
+    ])
+
+    // Reached through the same buffer the offer path reads, so this is the
+    // count `came-back` will see rather than a private one.
+    expect(pageIn(observations, 'https://a.example/1')?.visits).toBe(2)
+  })
+
+  it('a reload is not a return', () => {
+    // Two navigation reports in a row for the same page is one arrival
+    // reported twice. Counting it would make `came-back` fire on any page that
+    // refreshes itself.
+    const observations = thread([
+      { at: T0 + 3, origin: 'https://c.example', url: 'https://c.example/1', title: 'Training World Models', kind: 'navigation' },
+    ])
+
+    expect(pageIn(observations, 'https://c.example/1')?.visits).toBe(1)
+  })
+
+  it('counts arrivals in time order, however the reports arrived', () => {
+    // A service worker that woke up late can deliver two sittings out of
+    // sequence, and an arrival counted against the wrong neighbour is a return
+    // that did not happen.
+    // Delivered a-then-a, which reads as a reload. In TIME order the two
+    // arrivals at a.example have the whole thread between them, which is a
+    // return.
+    const observations: AmbientObservation[] = [
+      { at: T0, origin: 'https://a.example', url: 'https://a.example/1', title: 'World Models Survey', kind: 'navigation' },
+      { at: T0 + 3, origin: 'https://a.example', url: 'https://a.example/1', title: 'World Models Survey', kind: 'navigation' },
+      { at: T0 + 1, origin: 'https://b.example', url: 'https://b.example/1', title: 'World Models Explained', kind: 'navigation' },
+      { at: T0 + 2, origin: 'https://c.example', url: 'https://c.example/1', title: 'Training World Models', kind: 'navigation' },
+      { at: T0 + 10, origin: 'https://a.example', url: 'https://a.example/1', title: 'World Models Survey', kind: 'engagement', engagedMs: ENGAGED_MS_FOR_WORK },
+    ]
+
+    expect(pageIn(observations, 'https://a.example/1')?.visits).toBe(2)
+  })
+
+  it('does not count engagement reports as arrivals', () => {
+    // Engagement arrives every fifteen seconds while a page is open. If those
+    // counted, every page read for a minute would look like a page returned to.
+    const observations = thread([
+      { at: T0 + 3, origin: 'https://a.example', url: 'https://a.example/1', title: 'World Models Survey', kind: 'engagement', engagedMs: 30_000 },
+      { at: T0 + 4, origin: 'https://a.example', url: 'https://a.example/1', title: 'World Models Survey', kind: 'engagement', engagedMs: 60_000 },
+    ])
+
+    expect(pageIn(observations, 'https://a.example/1')?.visits).toBe(1)
   })
 })
 
