@@ -92,8 +92,21 @@ export const READ_DEEPLY_MS = ENGAGED_MS_FOR_WORK / 4
  * already has its own ground above it. Someone who opened a page, went to a
  * meeting and came back to it twenty minutes later has stayed with the subject
  * in a way that ten unbroken minutes of reading does not capture.
+ *
+ * ── Why it is not simply `ENGAGED_MS_FOR_WORK` ───────────────────────────
+ *
+ * It was, and at that value this ground was FREE. `detectWork` already refuses
+ * a thread whose engaged time is below `ENGAGED_MS_FOR_WORK` unless it contains
+ * a search, and wall-clock span is by construction at least the summed engaged
+ * time — so every thread that reached this function by the engagement route had
+ * already satisfied it. "Two investment grounds" quietly meant one, and the
+ * whole argument for two axes rests on the second one costing something.
+ *
+ * Doubling it is a guess in exactly the way the numbers it is derived from are
+ * guesses. What is not a guess is that it has to be strictly greater than the
+ * detector's own threshold, or it measures nothing.
  */
-export const STAYED_WITH_IT_MS = ENGAGED_MS_FOR_WORK
+export const STAYED_WITH_IT_MS = 2 * ENGAGED_MS_FOR_WORK
 
 /** Distinct sites in one thread before breadth is itself evidence. */
 export const ORIGINS_FOR_BREADTH = 3
@@ -185,10 +198,25 @@ export function groundsFor(
    */
   const queries = thread.filter((o) => o.kind === 'query')
   const firstQuery = queries[0]
+
+  /**
+   * Every URL that was ever a query, however it arrives afterwards.
+   *
+   * Filtering on `o.kind !== 'query'` alone is not enough and the gap is not
+   * theoretical: the content script reports engagement for whichever page has
+   * focus every fifteen seconds, so sitting on a results page for half a minute
+   * produces `kind: 'engagement'` observations whose URL is the SEARCH URL.
+   * Those slipped into the count, and "you searched, then read 2 pages of what
+   * came back" was then said to somebody who had read one — halving the bar and
+   * putting a false sentence on the screen whose entire thesis is that every
+   * sentence on it is checkable.
+   */
+  const queryUrls = new Set(queries.map((o) => o.url))
+
   if (firstQuery) {
     const read = new Set<string>()
     for (const o of thread) {
-      if (o.kind === 'query' || o.kind === 'away') continue
+      if (o.kind === 'away' || queryUrls.has(o.url)) continue
       if (o.at >= firstQuery.at) read.add(o.url)
     }
     if (read.size >= PAGES_AFTER_QUERY_FOR_INTENT) {

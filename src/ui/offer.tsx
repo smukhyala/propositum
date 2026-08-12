@@ -77,7 +77,7 @@ export const OFFER_CSS = `
 .of-site input { margin: 0; accent-color: var(--accent); }
 .of-site-host { font-family: var(--mono); font-size: 0.8125rem; }
 .of-site-note { display: block; font-size: 0.8125rem; color: var(--attention); margin-top: 0.15rem; }
-.of-site-off .of-site-host { color: var(--muted); text-decoration: line-through; }
+.of-site-off .of-site-host { color: var(--muted); }
 `
 
 /**
@@ -172,18 +172,36 @@ export interface SiteChoice {
 /**
  * The sites, each one untickable.
  *
- * A withdrawn site is shown, unticked and disabled, with the reason. Hiding it
- * would be tidier and would mean the person is told nothing about a site
- * Propositum is about to go on not seeing; showing it greyed out is the only
- * version where "you turned this off, and it stays off" is a thing they read
- * rather than a thing they later notice.
+ * ── A withdrawn site is shown, and stays tickable ────────────────────────
+ *
+ * Hiding it would be tidier and would mean the person is told nothing about a
+ * site Propositum is about to go on not seeing. So it is listed, with the
+ * reason beside it.
+ *
+ * It is NOT disabled, and that took a second pass to get right. Disabling it
+ * expressed a true thing about one of the two answers on this screen — a
+ * revocation outranks a match, so carrying on with the old project leaves it
+ * withdrawn — and a false thing about the other, because "no, this is new work"
+ * opens a project that has never withdrawn anything and where the site can be
+ * approved perfectly well. Worse, when EVERY observed site had been withdrawn
+ * the screen became unescapable: nothing tickable, and a refusal that said
+ * "leave at least one site ticked" next to a list where none could be.
+ *
+ * So the tick stays available and the note says what each answer will do with
+ * it. The server is the thing that actually refuses — `startFromSuggestion`
+ * skips a withdrawn pattern and counts it — which is where that decision
+ * belongs, because it is the same decision whatever screen asked.
  */
 export function SiteChoices({
   sites,
   name = 'site',
+  joinedProject,
 }: {
   readonly sites: readonly SiteChoice[]
   readonly name?: string
+  /** The project this would join, when there is one. Named in the note, so
+   *  "you switched this off" says where. */
+  readonly joinedProject?: string | undefined
 }) {
   return (
     <ul className="of-sites">
@@ -194,14 +212,14 @@ export function SiteChoices({
             id={`site-${site.pattern}`}
             name={name}
             value={site.pattern}
-            defaultChecked={!site.leftWithdrawn}
-            disabled={site.leftWithdrawn}
+            defaultChecked
           />
           <label htmlFor={`site-${site.pattern}`}>
             <span className="of-site-host">{site.host}</span>
             {site.leftWithdrawn ? (
               <span className="of-site-note">
-                You switched this one off before. It stays off &mdash; only you can put it back.
+                You switched this one off in {joinedProject ?? 'that project'}. Carrying on leaves
+                it off; starting this as new work does not.
               </span>
             ) : null}
           </label>

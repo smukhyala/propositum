@@ -92,8 +92,17 @@ export interface AmbientStore {
   /** The composed offer for this thread, if one has been produced. */
   offerFor(signature: string): ComposedOffer | null
   rememberOffer(offer: ComposedOffer): void
-  /** Same in-flight marker as naming, for the same reason: the poll runs every
-   *  30 seconds and composing takes about 15. */
+  /**
+   * Same in-flight marker as naming, for the same reason: the poll runs every
+   * 30 seconds and composing takes about 15.
+   *
+   * `compose-offer.ts` deliberately does NOT clear this on a failure, so the
+   * marker doubles as "a call has already been made for this thread". Clearing
+   * it there is how one thread the model keeps declining becomes a paid call
+   * every thirty seconds. `finishComposing` therefore has no caller on the
+   * unhappy path by design; it exists for a caller that genuinely wants a
+   * retry to be possible, and there is not one yet.
+   */
   isComposing(signature: string): boolean
   startComposing(signature: string): void
   finishComposing(signature: string): void

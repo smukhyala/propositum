@@ -126,15 +126,20 @@ export async function GET(request: Request) {
     const composed = ambient.offerFor(signature)
 
     /**
-     * Composing needs a NAME first, and the bar met.
+     * Composing needs a CONFIDENT name first, and the bar met.
      *
      * The subject boundary runs on titles and produces the two or three words
      * the offer is about; asking the offer boundary to invent that as well
-     * would be one call doing two jobs, and the vague-subject case
-     * (`confident: false`) would silently become a confident offer about
-     * something nobody was doing.
+     * would be one call doing two jobs.
+     *
+     * `confident: false` means the pages did not agree on a subject, and
+     * `describeWork` already refuses to put an unsure name in a sentence for
+     * exactly that reason. An offer composed on one would undo that at the next
+     * step: `describeOffer` says "Looks like you're working on X" flatly, and
+     * the extension turns it into a notification that interrupts. A hedge that
+     * survives one screen and not the next is not a hedge.
      */
-    if (!composed && named && grounds.sufficient && apiKey) {
+    if (!composed && named?.confident && grounds.sufficient && apiKey) {
       void composeOffer(
         ambient,
         new AnthropicModelClient({ apiKey }),
