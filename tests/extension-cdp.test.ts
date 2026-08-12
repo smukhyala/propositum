@@ -307,6 +307,54 @@ describe('the working-here marker is load-bearing, not decorative', () => {
     expect(cdp).toContain('chrome.debugger.detach')
   })
 
+  it('reads lifecycle events as belonging to a frame, not to the tab', () => {
+    /**
+     * `Page.lifecycleEvent` fires for EVERY frame. Two guards were written as
+     * though it did not, and both were wrong in the permissive direction:
+     *
+     *  - an ad slot reaching `networkIdle` satisfied `waitForSettle`, so a
+     *    click that triggered a top-level navigation could snapshot the
+     *    outgoing document — the thing the settle floor exists to prevent,
+     *    from a direction it does not look in;
+     *  - a subframe's `init` re-opened the indicator grace window every few
+     *    seconds, so once the marker was genuinely lost the watchdog was held
+     *    off indefinitely by a consent manager ticking in the corner.
+     */
+    expect(cdp).toContain('fromMainFrame')
+
+    const idle = cdp.slice(cdp.indexOf("params?.name === 'networkIdle'"))
+    expect(idle.slice(0, 200), 'networkIdle is not scoped to the main frame').toContain(
+      'fromMainFrame',
+    )
+
+    const init = cdp.slice(cdp.indexOf("params?.name === 'init'"))
+    expect(init.slice(0, 400), 'the grace window is not scoped to the main frame').toContain(
+      'fromMainFrame',
+    )
+  })
+
+  it('will not click against a snapshot taken while nothing was on screen', () => {
+    /**
+     * The chain `performCommand` described — a snapshot only exists after a
+     * load, which is the event that injects the marker — was never enforced by
+     * anything. An `observe-page` inside the grace window minted a perfectly
+     * usable ref map, and a `click-element` behind it dispatched real mouse
+     * input on a page carrying no marker.
+     *
+     * Now enforced at both ends: element commands get no grace at all, and no
+     * ref map is written while the marker is quiet.
+     */
+    expect(cdp).toContain('touchesAnElement')
+
+    // The write itself must be conditional, not merely near a variable that
+    // could be. Verified by reverting it: asserting the surrounding block
+    // mentions `markerLive` stayed green with the write made unconditional,
+    // because the declaration is in the same block.
+    expect(cdp, 'the ref map is written whether or not the marker is up').toMatch(
+      /snapshot:\s*markerLive\s*\?/,
+    )
+  })
+
   it('says it in consumer language, and offers a way out', () => {
     expect(overlay).toContain('Propositum is working here')
     expect(overlay).toContain('Stop')
@@ -334,6 +382,59 @@ describe('the working-here marker is load-bearing, not decorative', () => {
     expect(detachAt).toBeGreaterThan(-1)
     expect(postAt).toBeGreaterThan(-1)
     expect(detachAt, 'the halt is posted before control is given up').toBeLessThan(postAt)
+  })
+
+  it('comes down when CHROME ends it, not only when Propositum does', () => {
+    /**
+     * Chrome's infobar Cancel is the primary kill switch in ADR-0010 §7 — the
+     * one that cannot be suppressed or broken. It detaches without going
+     * through `stopActing`, and `stopActing` was the only path that took the
+     * marker down. So the control most likely to be used in a hurry left a
+     * purple border and *"Propositum is working here"* permanently on a live
+     * page with nothing driving it.
+     */
+    const detached = worker.slice(worker.indexOf('onDetached:'))
+    const body = detached.slice(0, detached.indexOf('onIndicatorLost'))
+
+    expect(body, 'a Chrome-initiated detach leaves the marker on the page').toContain(
+      'hideIndicator',
+    )
+  })
+
+  it('lets go by default — only an explicit yes keeps the marker up', () => {
+    /**
+     * There are three ways the heartbeat can be unwanted and the first version
+     * caught one. A synchronous throw and a rejected promise were handled; a
+     * RESOLVED `{ ok: false }` was not — and that is precisely what the worker
+     * replies the instant Chrome's Cancel detaches. Nothing rejected, so the
+     * beat renewed itself every 500ms forever over a page nothing was driving.
+     *
+     * So the test is on the polarity, not on the branches: anything that is
+     * not an explicit `ok === true` has to mean let go.
+     */
+    expect(overlay).toContain('reply.ok !== true')
+    expect(overlay).toContain('isConnected')
+  })
+
+  it('never waits forever on the app, on the path that exists for the app being down', () => {
+    /**
+     * `catch` handles errors. A dev server that accepts the connection
+     * mid-restart and never answers is not an error — it is a promise that
+     * never settles, and it used to pin the `releasing` re-entrancy guard for
+     * the life of the worker, so every later clean-up returned without
+     * clearing `controlledTabId`.
+     */
+    expect(worker).toContain('ACT_POST_TIMEOUT_MS')
+    expect(worker).toContain('AbortController')
+
+    // And the guard must not span the POSTs at all.
+    const release = worker.slice(worker.indexOf('async function releaseControl'))
+    const scope = release.slice(0, release.indexOf('const controlHandlers'))
+
+    expect(
+      scope.indexOf('releasing = false'),
+      'the re-entrancy guard is held across the network calls again',
+    ).toBeLessThan(scope.indexOf('postHalt('))
   })
 
   it('reports the in-flight intent as control-lost, so it is never an orphan', () => {
@@ -401,6 +502,36 @@ describe('one command, one outcome, and one poll', () => {
     // two loops consume the same queue.
     expect(worker).toContain('keepLease')
     expect(worker).toContain('setInterval')
+  })
+
+  it('claims the lease under the same discipline as everything else', () => {
+    /**
+     * `claimPollLease` was a bare `get` → `await` → `set` — the exact shape
+     * `withStorage` exists to eliminate, bypassed at the one call site where
+     * losing the race means two consumers of `/api/act/next` and two commands
+     * racing over one in-flight intent. For a browser action that is a
+     * duplicated click. Reachable on an ordinary browser start.
+     */
+    const claim = worker.slice(worker.indexOf('async function claimPollLease'))
+    const body = claim.slice(0, claim.indexOf('async function renewPollLease'))
+
+    expect(body, 'the lease claim is an unserialised read-modify-write again').toContain(
+      'withStorage',
+    )
+  })
+
+  it('only the holder may release the lease', () => {
+    // Releasing unconditionally needed no race at all: the first loop to exit
+    // freed the second loop's lease and the next alarm started a third. A
+    // lease anybody may release is not a lease.
+    expect(worker).toContain('pollLeaseToken')
+
+    const release = worker.slice(worker.indexOf('async function releasePollLease'))
+    const body = release.slice(0, release.indexOf('function actFetch'))
+
+    expect(body, 'the release does not check who holds the lease').toContain(
+      'pollLeaseToken !== token',
+    )
   })
 
   it('gives the tab up when the work stops, not only when somebody says stop', () => {

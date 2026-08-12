@@ -667,8 +667,30 @@ export function registerControlListeners(handlers) {
       const state = await controlState()
       if (state.tabId === null || source.tabId !== state.tabId) return
 
+      /**
+       * ── Lifecycle events are PER FRAME, and that changes both of these ──
+       *
+       * `Page.lifecycleEvent` fires for every frame in the tab, not just the
+       * tab itself. Both handlers below were written as though it did not, and
+       * both were wrong in the permissive direction.
+       *
+       * For `networkIdle`: an ad slot or an embedded player reaching idle
+       * would satisfy `waitForSettle`, so `observePage` could snapshot the
+       * OUTGOING document after a click that triggered a top-level navigation
+       * — the exact outcome the `floorPassed` comment in `waitForSettle` is
+       * written to prevent, arriving from a direction that comment does not
+       * look in.
+       *
+       * When the main frame is not yet known, neither is honoured: the settle
+       * wait falls through to its ceiling (slow, safe) and the grace window
+       * stays shut (strict, safe). Both failures cost time rather than
+       * guarantees.
+       */
+      const fromMainFrame =
+        typeof state.mainFrameId === 'string' && params?.frameId === state.mainFrameId
+
       if (method === 'Page.lifecycleEvent' && params?.name === 'networkIdle') {
-        networkIdleSince = Date.now()
+        if (fromMainFrame) networkIdleSince = Date.now()
         return
       }
 
@@ -697,6 +719,19 @@ export function registerControlListeners(handlers) {
        * gets ten seconds total and is then let go of.
        */
       if (method === 'Page.lifecycleEvent' && params?.name === 'init') {
+        /**
+         * The main frame only — see the note above about per-frame events.
+         *
+         * The "do not extend an open window" guard below stops a TOP-LEVEL
+         * navigation loop from sliding the deadline forward. It does nothing
+         * about re-OPENING one the moment it closes, which is what an ad
+         * refresh, a consent manager or an embedded player does every few
+         * seconds on an ordinary page. Once the marker has genuinely been lost
+         * — the case this whole mechanism exists for — a subframe ticking away
+         * in the corner would hold the watchdog off indefinitely, and
+         * Propositum would keep acting in a tab showing no sign of it.
+         */
+        if (!fromMainFrame) return
         if (Date.now() < state.indicatorGraceUntil) return
 
         await chrome.storage.session.set({
@@ -960,7 +995,28 @@ export async function observePage(tabId) {
   const url = frameTree?.frame?.url ?? ''
 
   const snapshotId = `s${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`
-  await chrome.storage.session.set({ snapshot: { id: snapshotId, refs, url } })
+
+  /**
+   * A ref map is only written while the marker is actually up.
+   *
+   * This is the enforcement half of the chain `performCommand` describes: a
+   * snapshot taken while the person can see nothing must not become something
+   * a later command can click against. Writing `null` rather than skipping the
+   * write is deliberate — it INVALIDATES the previous map as well, so a turn
+   * observed without a marker cannot leave an older, still-resolvable one
+   * behind it either.
+   *
+   * The tree still goes back to the app. Looking is not the problem; acting on
+   * what was looked at, unseen, is.
+   */
+  // Read fresh rather than taking the caller's snapshot of it: the load event
+  // that injects the marker routinely lands during the two CDP calls above, so
+  // the state at the top of the command is not the state that matters here.
+  const { indicatorAliveAt } = await controlState()
+  const markerLive = Date.now() - indicatorAliveAt <= INDICATOR_GRACE_MS
+  await chrome.storage.session.set({
+    snapshot: markerLive ? { id: snapshotId, refs, url } : null,
+  })
 
   return {
     snapshotId,
@@ -1102,25 +1158,42 @@ export async function performCommand(command, handlers) {
   /**
    * The indicator gates the capability, not the other way round.
    *
-   * The grace window is honoured here as well as in the watchdog, and the
-   * reason it is safe to honour it is worth spelling out rather than
-   * assuming. The window is open in exactly two situations: the tab has just
-   * been created and has no page in it yet, and a navigation is in flight.
-   * In both, there is no rendered document — so the only commands that can do
-   * anything are `observe-page`, `navigate` and `capture-screen`, none of
-   * which change anything out in the world.
+   * ── Two checks, because one of them used to be an assumption ─────────────
    *
-   * Every command that touches an element resolves a ref against a snapshot,
-   * and a snapshot only exists after an `observe-page`, which only happens
-   * after a load, which is the same event that injects the marker. So the
-   * mutating path is guarded by construction: there is no ordering in which
-   * Propositum clicks something on a page that never got a marker.
+   * The grace window exists because a navigation destroys the marker and it
+   * cannot come back until the new document loads. Honouring it here as well
+   * as in the watchdog was justified like this: while the window is open there
+   * is no rendered document, so the only commands that can do anything are
+   * `observe-page`, `navigate` and `capture-screen`, and every ELEMENT command
+   * needs a snapshot, which only exists after an `observe-page`, which only
+   * happens after a load, which is the event that injects the marker.
+   *
+   * **The last step of that chain was never enforced by anything.** Nothing
+   * stopped an `observe-page` inside the grace window from minting a perfectly
+   * usable ref map, and a `click-element` right behind it resolving a ref
+   * against it and dispatching real mouse input — on a page carrying no
+   * marker. Reachable on any page that never fires `load`, and reachable for
+   * the whole of every grace window.
+   *
+   * So the chain is enforced rather than described, in two places:
+   *
+   *  1. Here: an element command requires a LIVE marker. No grace, ever. It is
+   *     the mutating path and there is no reading of the window under which it
+   *     is safe.
+   *  2. In `observePage`: no snapshot is written while the marker is quiet, so
+   *     the grace window cannot leave a usable ref map behind it for the next
+   *     command to find. Refs from such a turn resolve as `stale-snapshot`.
    *
    * If the injection itself fails, `indicatorGraceUntil` is cleared rather
-   * than left to expire, so this refuses on the very next command.
+   * than left to expire, so even the tolerant branch refuses immediately.
    */
   const markerQuiet = Date.now() - state.indicatorAliveAt > INDICATOR_GRACE_MS
-  if (markerQuiet && Date.now() > state.indicatorGraceUntil) {
+  const touchesAnElement =
+    command.kind === 'click-element' ||
+    command.kind === 'type-text' ||
+    command.kind === 'press-key'
+
+  if (markerQuiet && (touchesAnElement || Date.now() > state.indicatorGraceUntil)) {
     await handlers.onIndicatorLost(state)
     return { ok: false, failure: 'control-lost', detail: 'the working-here marker was lost' }
   }

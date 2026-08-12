@@ -112,27 +112,47 @@
   stop.textContent = 'Stop'
 
   /**
-   * Send, and treat every way it can fail the same.
+   * Send, and treat every way of not being wanted the same.
    *
-   * `chrome.runtime.sendMessage` without a callback returns a promise, so the
-   * common failure — "Could not establish connection", i.e. nothing is
-   * listening — arrives as a REJECTION and sails straight past a `try/catch`.
-   * Only a context-invalidated error throws synchronously. Both mean the same
-   * thing here (there is no extension driving this tab any more) and both have
-   * to reach `onGone`, or the border sits there claiming work is in progress
-   * with nothing doing it — the "worse than none" indicator this file is
-   * written against.
+   * There are THREE, and the first version of this handled one of them.
+   *
+   *  1. A synchronous throw — the extension context was invalidated, i.e. it
+   *     was reloaded or disabled underneath this page.
+   *  2. A rejected promise — "Could not establish connection", i.e. nothing is
+   *     listening. `chrome.runtime.sendMessage` without a callback returns a
+   *     promise, so this sails straight past a `try/catch`.
+   *  3. **A resolved `{ ok: false }`** — the worker is alive and listening and
+   *     says this tab is not the one it is working in.
+   *
+   * The third is the one that mattered and was missed, and it is not exotic:
+   * it is what every heartbeat gets the instant Chrome's own infobar Cancel
+   * detaches the debugger. The worker answers, so nothing rejects, so the beat
+   * carried on renewing itself every 500 ms forever, `host.isConnected` stayed
+   * true, and the border stayed up over a page nothing was driving.
+   *
+   * So the rule is inverted: only an explicit `{ ok: true }` counts as being
+   * wanted. Anything else — throw, rejection, refusal, a reply in a shape this
+   * file does not recognise — means let go. An indicator is worth something
+   * only if its default is to disappear.
    */
   function tell(message, onGone) {
+    var sending
     try {
-      var sending = chrome.runtime.sendMessage(message)
-      if (sending !== null && sending !== undefined && typeof sending.catch === 'function') {
-        sending.catch(onGone)
-      }
+      sending = chrome.runtime.sendMessage(message)
     } catch (error) {
       void error
       onGone()
+      return
     }
+
+    if (sending === null || sending === undefined || typeof sending.then !== 'function') {
+      onGone()
+      return
+    }
+
+    sending.then(function (reply) {
+      if (reply === null || typeof reply !== 'object' || reply.ok !== true) onGone()
+    }, onGone)
   }
 
   /**

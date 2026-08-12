@@ -662,23 +662,99 @@ const POLL_LEASE_MS = POLL_ABORT_MS + 5_000
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
+/**
+ * Claim the lease, and take a token proving who holds it.
+ *
+ * ── Both halves of this were broken, and in the same direction ───────────
+ *
+ * The claim was a bare `get` → `await` → `set` — precisely the shape
+ * `withStorage` was introduced to eliminate, whose own header says
+ * "everything goes through here", bypassed at the one call site where losing
+ * the race means TWO consumers of `/api/act/next` and two `runCommand`s over
+ * one in-flight intent. For a browser action a duplicated command is a
+ * duplicated click. It is reachable on an ordinary browser start, where
+ * `onStartup` → `wake()` → `pollForWork` runs beside a persisted alarm firing
+ * into the same function.
+ *
+ * The release was worse, because it needed no race at all: it set the lease to
+ * zero unconditionally, with no check that the caller still held it. So the
+ * first loop to exit freed the SECOND loop's lease and the next alarm started
+ * a third. A lease anybody may release is not a lease.
+ *
+ * A token rather than a flag, because "am I still the holder" has to be
+ * answerable after a worker death and a resurrection — and a module variable
+ * cannot answer it.
+ */
 async function claimPollLease() {
-  const { pollLeaseUntil = 0 } = await chrome.storage.session.get(['pollLeaseUntil'])
-  if (Date.now() < pollLeaseUntil) return false
+  return withStorage(async () => {
+    const { pollLeaseUntil = 0 } = await chrome.storage.session.get(['pollLeaseUntil'])
+    if (Date.now() < pollLeaseUntil) return null
 
-  await chrome.storage.session.set({ pollLeaseUntil: Date.now() + POLL_LEASE_MS })
-  return true
+    const token = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`
+    await chrome.storage.session.set({
+      pollLeaseUntil: Date.now() + POLL_LEASE_MS,
+      pollLeaseToken: token,
+    })
+    return token
+  })
 }
 
-async function releasePollLease() {
-  await chrome.storage.session.set({ pollLeaseUntil: 0 })
+/** Extend the lease, but only while it is still ours. */
+async function renewPollLease(token) {
+  return withStorage(async () => {
+    const { pollLeaseToken } = await chrome.storage.session.get(['pollLeaseToken'])
+    if (pollLeaseToken !== token) return false
+
+    await chrome.storage.session.set({ pollLeaseUntil: Date.now() + POLL_LEASE_MS })
+    return true
+  })
 }
+
+async function releasePollLease(token) {
+  await withStorage(async () => {
+    const { pollLeaseToken } = await chrome.storage.session.get(['pollLeaseToken'])
+    if (pollLeaseToken !== token) return
+
+    await chrome.storage.session.set({ pollLeaseUntil: 0, pollLeaseToken: null })
+  })
+}
+
+/**
+ * How long a report or a halt may take before it is abandoned.
+ *
+ * ── A hung socket is not an error, and that is the whole problem ─────────
+ *
+ * `postReport` and `postHalt` used to be bare `fetch`es. Their `catch`
+ * handlers deal with *errors*; a dev server that accepts the connection
+ * mid-restart and never answers produces no error at all — it produces a
+ * promise that never settles.
+ *
+ * `releaseControl` awaits both of them inside a re-entrancy guard that is only
+ * reset in its `finally`, so one hung socket pinned `releasing = true` for the
+ * life of the worker. Every later clean-up — including the one from a genuine
+ * detach on the NEXT run — then returned immediately without clearing
+ * `controlledTabId`. Downstream of that: the acting badge stuck on, offers
+ * silently suppressed because `showSuggestionBadge` stands down while acting,
+ * and every command reporting `control-lost` against a tab nothing is attached
+ * to. A stop that hangs is worse than a stop that fails, because a failure is
+ * something the next attempt can recover from.
+ *
+ * The poll already arms an `AbortController`. These now do too, and it is the
+ * same argument: this file must never wait forever on the app, on any path,
+ * and least of all on the path whose entire promise is that it works when the
+ * app is unreachable.
+ */
+const ACT_POST_TIMEOUT_MS = 5_000
 
 function actFetch(path, init) {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), init?.timeoutMs ?? POLL_ABORT_MS)
+
   return fetch(`${APP_ORIGIN}${path}`, {
     ...init,
+    signal: init?.signal ?? controller.signal,
     headers: { ...(init?.headers ?? {}), [ACT_HEADER]: '1' },
-  })
+  }).finally(() => clearTimeout(timer))
 }
 
 /**
@@ -779,6 +855,7 @@ async function postReport(intentId, report) {
   const send = (body) =>
     actFetch('/api/act/report', {
       method: 'POST',
+      timeoutMs: ACT_POST_TIMEOUT_MS,
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ intentId, ...body }),
     })
@@ -812,6 +889,7 @@ async function postReport(intentId, report) {
 async function postHalt(runId, reason) {
   await actFetch('/api/act/halt', {
     method: 'POST',
+    timeoutMs: ACT_POST_TIMEOUT_MS,
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ runId, reason }),
   }).catch(() => {})
@@ -822,9 +900,18 @@ async function postHalt(runId, reason) {
 /**
  * Put the marker back on the page.
  *
- * Called after attach and again on every `Page.loadEventFired`, because
- * navigation destroys it. On success the marker is live as of now, and the
- * overlay's own heartbeat renews it twice a second from there.
+ * Called on every `Page.loadEventFired` and only there, because that is the
+ * first moment there is a document to put it in — the tab is created on
+ * `about:blank`, which no host permission covers, so injecting at attach time
+ * would fail and take the grace window down with it. On success the marker is
+ * live as of now, and the overlay's own heartbeat renews it twice a second
+ * from there.
+ *
+ * The consequence is worth stating rather than leaving implicit: between
+ * attach and the first load there is no marker, and what covers that gap is
+ * the grace window plus the rule in `performCommand` that no element command
+ * runs without a live marker. A page that never fires `load` therefore never
+ * gets clicked in, which is the correct outcome.
  *
  * On FAILURE the grace window is cleared rather than left to expire, so the
  * very next command is refused instead of one that happens to arrive inside
@@ -971,19 +1058,36 @@ async function releaseControl(state, reason) {
      * the whole point of detaching before posting is that stopping works with
      * the app closed.
      */
-    const intentId = await claimInFlight()
+    var intentId = await claimInFlight()
 
     await clearControlState()
     await clearActingBadge()
-
-    if (intentId !== null) {
-      await postReport(intentId, { ok: false, failure: 'control-lost', detail: reason })
-    }
-
-    await postHalt(state.runId, reason)
   } finally {
+    /**
+     * The guard covers the LOCAL clean-up and nothing else.
+     *
+     * It used to be held across the two POSTs below, so a socket that hung
+     * rather than failed pinned `releasing = true` for the life of the worker
+     * and every later clean-up returned without clearing `controlledTabId`.
+     * The POSTs now carry their own timeouts as well, but the ordering is the
+     * real fix: what this guard protects is a pair of storage writes, and
+     * nothing about telling the app needs to be inside it.
+     *
+     * Re-entering after this point is harmless. `claimInFlight` has already
+     * taken the intent, so a second caller reports nothing, and `stopActing`
+     * and `onDetached` both return early once `controlledTabId` is gone.
+     */
     releasing = false
   }
+
+  // Telling the app comes last and may fail, hang, or never happen. Letting go
+  // of the tab has already happened, which is the half that must not depend on
+  // anything outside this process.
+  if (intentId !== null) {
+    await postReport(intentId, { ok: false, failure: 'control-lost', detail: reason })
+  }
+
+  await postHalt(state.runId, reason)
 }
 
 /**
@@ -1003,9 +1107,27 @@ const controlHandlers = {
   },
 
   onDetached: async (state, reason) => {
-    // `target_closed`, `canceled_by_user`, `replaced_with_devtools` — treated
-    // identically on purpose. Control is gone the instant Chrome says so, and
-    // sorting out why is not a thing to do while still holding a tab.
+    /**
+     * `target_closed`, `canceled_by_user`, `replaced_with_devtools` — treated
+     * identically on purpose. Control is gone the instant Chrome says so, and
+     * sorting out why is not a thing to do while still holding a tab.
+     *
+     * ── Take the marker down HERE, not only in `stopActing` ──────────────
+     *
+     * This used to go straight to `releaseControl`, which never touches the
+     * overlay — so the two paths that go through `stopActing` (the chip's own
+     * Stop, and the app's) cleaned up, and every Chrome-initiated detach did
+     * not. That is the wrong way round: **Chrome's infobar Cancel is the
+     * primary kill switch** in ADR-0010 §7, the one that cannot be suppressed
+     * or broken. Pressing it left a purple border and a chip reading
+     * *"Propositum is working here"* permanently on a live page with nothing
+     * driving it — the exact inversion `overlay.js` is written against, on the
+     * control most likely to be used in a hurry.
+     *
+     * The detach has already happened by the time this runs, which is fine:
+     * `chrome.tabs.sendMessage` needs a host permission, not a debugger.
+     */
+    await hideIndicator(state.tabId)
     await releaseControl(state, reason ?? 'control-lost')
   },
 
@@ -1191,7 +1313,8 @@ async function pollOnce() {
 }
 
 async function pollForWork() {
-  if (!(await claimPollLease())) return
+  const lease = await claimPollLease()
+  if (lease === null) return
 
   /**
    * Refresh the lease WHILE the loop runs, not between turns.
@@ -1208,17 +1331,24 @@ async function pollForWork() {
    * A timer rather than a check, because the loop is parked inside an `await`
    * for almost all of its life and has nowhere to put a check.
    */
+  let lost = false
   const keepLease = setInterval(() => {
-    void chrome.storage.session.set({ pollLeaseUntil: Date.now() + POLL_LEASE_MS })
+    void renewPollLease(lease).then((held) => {
+      // Somebody else holds it now, which can only mean this loop was
+      // presumed dead. Stand down rather than compete: two consumers of
+      // `/api/act/next` is the thing the lease exists to prevent.
+      if (!held) lost = true
+    })
   }, Math.floor(POLL_LEASE_MS / 3))
 
   try {
     for (;;) {
       if ((await pollOnce()) === 'stop') return
+      if (lost) return
     }
   } finally {
     clearInterval(keepLease)
-    await releasePollLease()
+    await releasePollLease(lease)
   }
 }
 
@@ -1542,19 +1672,36 @@ async function offerFor(thread) {
   return stored[key] ?? null
 }
 
+/**
+ * Take the offer dot down — unless the badge is saying something louder.
+ *
+ * `verifyReachable` was already taught this and `showSuggestionBadge` stands
+ * down while acting, but the notification answers were missed, and they are
+ * the easiest of the three to hit: a notification raised before a run started
+ * sits there with `requireInteraction: true` until somebody answers it, and
+ * answering it wiped the `▶` that the panel and the badge comment both
+ * describe as layer three of the working-here indicator.
+ *
+ * The dot is a "when you have a moment". Work in progress is a "right now".
+ */
+async function clearOfferBadge() {
+  if (await acting()) return
+  await chrome.action.setBadgeText({ text: '' })
+}
+
 async function answeredYes(notificationId) {
   const thread = threadOf(notificationId)
   if (thread === null) return
 
   const params = new URLSearchParams({ thread })
   await chrome.tabs.create({ url: `${APP_ORIGIN}/start?${params.toString()}` })
-  await chrome.action.setBadgeText({ text: '' })
+  await clearOfferBadge()
 }
 
 async function answeredNo(notificationId) {
   const thread = threadOf(notificationId)
   const offer = thread === null ? null : await offerFor(thread)
-  await chrome.action.setBadgeText({ text: '' })
+  await clearOfferBadge()
 
   /**
    * Quiet, before anything else, and whether or not the server hears about it.
