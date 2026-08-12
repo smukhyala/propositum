@@ -673,8 +673,8 @@ function actFetch(path, init) {
  * writer the only writer. The two later paths find nothing in flight and stay
  * quiet, which is right: they have nothing to add.
  */
-async function reportInFlight(body) {
-  const intentId = await withStorage(async () => {
+function claimInFlight() {
+  return withStorage(async () => {
     const { inFlightIntentId } = await chrome.storage.session.get(['inFlightIntentId'])
     if (typeof inFlightIntentId !== 'string') return null
 
@@ -682,7 +682,10 @@ async function reportInFlight(body) {
     await rememberReported(inFlightIntentId)
     return inFlightIntentId
   })
+}
 
+async function reportInFlight(body) {
+  const intentId = await claimInFlight()
   if (intentId === null) return false
 
   await postReport(intentId, body)
@@ -932,18 +935,23 @@ async function releaseControl(state, reason) {
      * `/api/act/next`, two `runCommand`s racing over one in-flight intent. The
      * lease exists to make that impossible, so only its owner may give it up.
      */
-    // Read the in-flight id, then drop ALL of it, and only then reach the
-    // network. Clearing first is what makes every subsequent CDP call
-    // impossible, and it must not be conditional on the app answering. It also
-    // takes `inFlightIntentId` with it, so a later path finds nothing in
-    // flight and cannot overwrite the outcome written below.
-    const { inFlightIntentId } = await chrome.storage.session.get(['inFlightIntentId'])
+    /**
+     * Claim the command, drop the tab, and only then reach the network.
+     *
+     * Claiming first is what makes this the ONE writer for that intent: a
+     * later path finds nothing in flight and cannot overwrite the outcome
+     * below. Clearing the tab state second is what makes every subsequent CDP
+     * call impossible, and neither may be conditional on the app answering —
+     * the whole point of detaching before posting is that stopping works with
+     * the app closed.
+     */
+    const intentId = await claimInFlight()
 
     await clearControlState()
     await clearActingBadge()
 
-    if (typeof inFlightIntentId === 'string') {
-      await postReport(inFlightIntentId, { ok: false, failure: 'control-lost', detail: reason })
+    if (intentId !== null) {
+      await postReport(intentId, { ok: false, failure: 'control-lost', detail: reason })
     }
 
     await postHalt(state.runId, reason)
