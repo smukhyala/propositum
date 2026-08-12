@@ -30,7 +30,7 @@
  * only reads them.
  */
 
-import type { PrismaClient } from '@prisma/client'
+import type { Prisma, PrismaClient } from '@prisma/client'
 import { guarded } from '../errors'
 
 export interface Repositories {
@@ -1452,10 +1452,7 @@ export function actionEvidenceRepository(prisma: PrismaClient): ActionEvidenceRe
    * after, it would race a concurrent confirmation and report a number that was
    * never true at any single moment.
    */
-  async function sweep(where: {
-    runId?: { in: string[] }
-    createdAt?: { lt: Date }
-  }): Promise<EvidenceSweepCounts> {
+  async function sweep(where: Prisma.ActionEvidenceWhereInput): Promise<EvidenceSweepCounts> {
     return prisma.$transaction(async (tx) => {
       const keptForConfirmation = await tx.actionEvidence.count({
         where: { ...where, requests: { some: {} } },
@@ -1500,27 +1497,35 @@ export function actionEvidenceRepository(prisma: PrismaClient): ActionEvidenceRe
 
     sweepOlderThan: (createdBefore) => sweep({ createdAt: { lt: createdBefore } }),
 
-    sweepSettledRuns: async () => {
-      // A run is settled when it has outcomes and none of them is still
-      // awaiting a person. `landed` admits no verdict at all — there is nothing
-      // to accept about something that already happened out in the world — so
-      // it counts as settled the moment it is written.
-      const unsettled = await prisma.shiftOutcome.findMany({
-        where: { verdict: { is: null }, reversibility: { not: 'landed' } },
-        select: { runId: true },
-        distinct: ['runId'],
-      })
-      const blocked = new Set(unsettled.map((o) => o.runId))
-
-      const withOutcomes = await prisma.shiftOutcome.findMany({
-        select: { runId: true },
-        distinct: ['runId'],
-      })
-      const settled = withOutcomes.map((o) => o.runId).filter((id) => !blocked.has(id))
-
-      if (settled.length === 0) return { deleted: 0, keptForConfirmation: 0 }
-      return sweep({ runId: { in: settled } })
-    },
+    /**
+     * Expressed as a relation filter rather than as an id list, and that is a
+     * correctness point rather than a tidiness one.
+     *
+     * The obvious shape — collect every settled run id, then
+     * `runId: { in: [...] }` — grows one parameter per settled run and walks
+     * into SQLite's bound-variable limit on a database that has simply been
+     * used for a few months. The failure arrives late, on the machine with the
+     * most history, in the code path whose whole job is not accumulating
+     * history.
+     *
+     * `some: {}` with `none: {…}` on the same relation is an AND: the run has
+     * outcomes, and none of them is still awaiting a person. Both halves are
+     * needed. A run with NO outcomes is not settled — it is unfinished, or it
+     * failed, and its evidence is the only account of what it was doing when it
+     * stopped; those rows leave by `sweepOlderThan` instead. `landed` admits no
+     * verdict at all, because there is nothing to accept about something that
+     * already happened out in the world, so it is settled the moment it is
+     * written.
+     */
+    sweepSettledRuns: () =>
+      sweep({
+        run: {
+          outcomes: {
+            some: {},
+            none: { verdict: { is: null }, reversibility: { not: 'landed' } },
+          },
+        },
+      }),
   }
 }
 
