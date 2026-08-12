@@ -13,10 +13,10 @@
  * of it — and a retyped copy is exactly how the two would drift.
  */
 
-export declare const QUERY_PARAMS: string[]
+export declare const SEARCH_PARAMS: string[]
 
 /** The search term, if this URL is genuinely a search. Null otherwise. */
-export declare function searchTermOf(raw: string): string | null
+export declare function searchQueryOf(raw: string): string | null
 
 /** Did this page come from searching? */
 export declare function looksLikeSearch(raw: string): boolean
