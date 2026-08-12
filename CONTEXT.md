@@ -22,20 +22,77 @@ this document is provisional; where a term's shape depends on a later ticket, it
 - Observation never executes actions. The two ledgers are disjoint.
 - Every inference carries provenance to its events. Every action carries a reason and a
   record, append-only.
-- Execution is reversible: versions only, and the base is immutable for the whole review.
+- ~~Execution is reversible: versions only, and the base is immutable for the whole review.~~
+  **Amended 2026-08-11 ([ADR-0010](docs/adr/0010-acting-in-the-browser.md)): execution is
+  reversible by default; an irreversible capability may exist only as a landing `ActionKind`,
+  which the gate refuses unless the human acknowledged it individually — not via a dial — and
+  whose ShiftOutcome is reported rather than reviewed.**
 - Agents are ephemeral. Sessions, contracts, documents and ledgers persist.
 - **Bare `action` and bare `Objective` are banned.** Write `ActionKind` or `ActionIntent`;
   write "the reading's objective claim" or "the contract's stated objective".
+
+### Why the reversibility rule was weakened, and what holds it up now
+
+This is the largest concession in the vocabulary and it deserves the most argument, because the
+sentence it replaces was doing more work than any other line in this file.
+
+The original rule was **structural**: nothing Propositum could do was hard to undo, because the only
+thing it could do was propose text against an immutable base. Reversibility was not enforced, it was
+a property of the shape — there was no capability whose exercise left a mark anywhere but in a row a
+person could reject. That is the strongest form available, and it is gone the moment a landing
+`ActionKind` exists, because a sent message is sent. No ledger un-sends it.
+
+**What is not being claimed.** That the pause is as good. It is not. `docs/adr/0010` opens by saying
+so: an absence cannot be misconfigured and a pause can be clicked through. Anyone reading this rule
+as "still reversible, with a confirmation step" has read it wrong.
+
+**What is being claimed**, in four parts, each of which is checkable:
+
+1. **Irreversibility is decided by the browser, not by a model and not by a page.** An action is
+   irreversible when Chrome is about to send a non-`GET` request, or a request outside the
+   contract's approved sources. The method is attested, so page text cannot forge it. The English
+   lexicon over an element's accessible name is **escalation-only** — it can turn `ordinary` into
+   `requires-confirmation` and never the reverse — so the page's own words can make Propositum more
+   cautious and never less.
+2. **A dial can never grant it.** `AutonomyControls` has no setting that pre-approves a landing
+   action, and there is no free-text field that could be read as one. The acknowledgement is per
+   action, in a `ConfirmationVerdict` written by a human, and the run that asked is already over.
+3. **The absence of an acknowledgement is an ordinary refusal**, not a pending state.
+   `ActionIntent.authorization` stays closed at `allowed | refused`. Expiry therefore produces no
+   verdict row and no permission — there is no path from elapsed time to *yes*.
+4. **A `landed` outcome is never offered a verdict.** The interface says *"This already happened,
+   outside Propositum"*. It does not render a Reject button that cannot reject, because the one
+   thing worse than an irreversible action is a screen that implies it was not.
+
+**The cost, stated as a cost.** Two mechanisms now stand where a shape used to. Mechanisms are the
+kind of thing that erode, and the erosion here would be silent: `tests/architecture.test.ts` still
+asserts no `sendMessage` function exists, that assertion still passes, and it no longer means what
+it was written to mean. A future reader who checks the test and stops has been misled by a green
+tick. That is written down in ADR-0010's first paragraph and here, in both of the documents someone
+would consult.
 
 ---
 
 ## 1. Observation
 
 ### Project — *table*
-The single durable workspace the user creates explicitly (`id`, `name`, `createdAt`). Owns
-every ApprovedSource, Document and WorkSession. No objective, no status, **no free-text
-description** — a description that inference reads is a project goal in disguise and would
-silently pre-answer whether the human declares what they are working on.
+The single durable workspace (`id`, `name`, `createdAt`). Owns every ApprovedSource, Document and
+WorkSession. No objective, no status, **no free-text description** — a description that inference
+reads is a project goal in disguise and would silently pre-answer whether the human declares what
+they are working on.
+
+~~The user creates it explicitly.~~ **Amended 2026-08-11
+([ADR-0009](docs/adr/0009-composed-offers.md)): a human never creates one.** A Project is
+auto-created when a WorkOffer is accepted and no existing one matches, auto-named from the thread's
+terms, matched against existing projects by deterministic term overlap so a subject picked up again
+on Thursday continues Tuesday's project rather than founding a duplicate, and **renameable
+afterwards** — which is the correction channel and the only one. The founding brief's exclusion of
+*automatic project recognition* is reversed outright here, for ADR-0008's reason one step on: a
+person who must first create a workspace has been asked to know in advance that what they are about
+to do is worth recording, and that is the bet that already lost.
+
+The no-description rule matters **more** after this change, not less: the offer boundary now runs
+before any person has said anything at all, so the only thing auto-naming may write is `name`.
 *Displaces:* Workspace · Space · Folder · Board · Account · Client · ProjectGoal.
 **Consumer:** Project.
 
@@ -177,6 +234,15 @@ Changing it later is expensive rather than merely awkward. Events are append-onl
 lowering the budget invalidates every fixture already captured and forces the corpus to be
 recorded again. Treat it as settled unless H1 ablation specifically implicates it.
 
+**What this budget does not govern** *(added 2026-08-11,
+[ADR-0010](docs/adr/0010-acting-in-the-browser.md))*. `EXCERPT_BUDGET_CHARS` is a promise about what
+Propositum retains from a person's **own browsing**. An agent acting under a ratified contract reads
+whole accessibility trees, which are ten to a hundred times larger, and keeps them as ActionEvidence
+under a second published constant, `SNAPSHOT_BUDGET_CHARS`. The two ledgers are disjoint — nothing in
+ActionEvidence is read by inference, joined to an ObservationEvent, or rendered on a session
+timeline, and it is swept. Without that distinction written down, the published sentence above
+becomes false the day an agent ships, silently, in the documents whose entire job is being true.
+
 *Displaces:* TrustTier · Trust · trustLevel · sanitized · safe · clean · page-derived (as a
 stored value) · provenance (in the trust sense) · full-text capture · page scrape.
 **Consumer:** **none — this concept has no good consumer word, and that is a finding, not a gap
@@ -201,6 +267,93 @@ The cost of keeping this rule is precise and worth naming: the offer can say **w
 not **what it means**. *"You have been reading northwind.example.com — mostly Tiers"*, never *"you
 are comparing partner tiers"*. Naming the work needs a model, and a model on a timer is the thing
 these two sentences exist to prevent.
+
+### SessionSubject — *value object, not persisted*
+`{ subject, confident }` — what a person appears to have been looking into, in the words a colleague
+would use, plus the model's own admission that the pages did not agree on one. Composed once per
+thread, keyed on the thread signature, from **titles and search terms only**; ambient capture holds
+no page text, so there is none to send.
+
+It names a subject and grants nothing. It reaches no policy decision, no scope, and no schema the
+gate reads. `confident: false` is a real outcome the interface must render as vagueness rather than
+suppress — a confident wrong name is worse than an honest mixed one.
+*Checked against the banned words:* not `SessionState` (that is `SessionReading`), not bare
+`Objective`, not `Intention`, not `Task`.
+*Displaces:* topic · theme · thread name · detected intent · inferred goal · Subject (bare) ·
+NamedThread (as a vocabulary word — it stays the in-memory store's own field name).
+**Consumer:** what you've been looking into.
+
+### WorkOffer — *value object, not persisted until accepted*
+What Propositum would do about a SessionSubject, in its own words:
+`{ title, rationale, outline: OfferOutline, produces, willNotDo: string[], expects: ShiftOutcomeKind[] }`.
+Composed by a model, only once OfferGrounds are sufficient. Replaces the closed two-member list
+`OFFERABLE`, which was two use cases chosen before the product had been used.
+
+**It has no field that could carry a URL, a host, an origin or a source id** — not "must not", *has
+no field*, grep-enforced in `tests/architecture.test.ts`. Sources come from code, off the ambient
+buffer keyed by thread signature. It names no `ActionKind` either: `expects` holds
+ShiftOutcomeKinds, which describe the shape of a result and grant nothing.
+
+**`WorkOffer`, never `Workflow*`.** §4's `ExecutionPlan` already displaces the word "workflow", and
+reintroducing it one lifecycle stage earlier is how a displaced word comes back. Distinct from a
+Suggestion, which says *what was seen*; a WorkOffer says *what Propositum would do about it*.
+*Checked against the banned words:* not `Task`, not `Draft`, not bare `action`, not bare `Objective`.
+*Displaces:* Workflow · WorkflowOffer · Proposal (bare) · Pitch · Plan (as the offer) · Offerable ·
+capability offer · CTA.
+**Consumer:** what I could do about it.
+
+### OfferOutline — *value object on WorkOffer*
+An ordered list of one-line steps naming what Propositum would do, in order. **It authorizes
+nothing.** No gate reads it, it produces no PlanSteps, and no ActionIntent cites it. It exists so a
+person can decline for the right reason rather than declining a title.
+
+Named as an outline, not a plan, precisely so it cannot be mistaken for the ExecutionPlan the run
+later reports — one is a sentence in a proposal, the other is a record of what happened.
+*Checked against the banned words:* not `Task` list, not `Plan` (bare), not `checklist` (already
+displaced by ExecutionPlan).
+*Displaces:* plan (in the offer) · steps · agenda · checklist · roadmap · Task list.
+**Consumer:** how I'd go about it.
+
+### OfferGrounds — *computed view*
+The deterministic arithmetic deciding whether there is enough evidence to offer to **do** work, as
+opposed to merely naming a subject: `{ intent: GroundKind[], investment: GroundKind[] }` over the
+ambient buffer. No model, ever.
+
+> **`sufficient = at least one intent ground AND at least two investment grounds.`**
+
+Two groups rather than k-of-6, because the two axes fail differently and one counter cannot express
+*one of these and two of those*. Intent separates **pursuing** from **receiving** — without it, a
+long absorbing article qualifies, which is the false positive ADR-0008 names as the expensive
+failure. Investment separates **worth an offer** from **a lucky click** — one strong signal is cheap
+to produce by accident; two independent ones are not. The argument in full is in
+[ADR-0009](docs/adr/0009-composed-offers.md) §2.
+
+**`OfferGrounds`, not `Evidence`.** `Evidence` means claim→event and is the most expensive collision
+available here: two things called evidence, one carrying provenance for an inference and one gating
+whether a person is interrupted, is the `ReviewDecision`/`ChangeVerdict` mistake with worse
+consequences.
+*Checked against the banned words:* not `Evidence`, not `EvidenceStrength`, not
+`ConfidenceThreshold` — these are counts of deterministic facts, not a score.
+*Displaces:* Evidence (in the detection sense) · signals · score · threshold · readiness ·
+DetectionConfidence.
+**Consumer:** internal — surfaced only as *why I'm asking now*.
+
+### GroundKind — *value object*
+Closed and code-owned, in two groups that are part of the type rather than a comment:
+
+| Group | Members |
+|---|---|
+| intent | `searched-then-read` · `refined-the-search` · `came-back` |
+| investment | `read-deeply` · `stayed-with-it` · `followed-across` |
+
+Adding a member is a schema change, never configuration. **No `other`.** Never model output, so the
+enum is a genuine constraint rather than a prose hint. The thresholds behind each member are the
+constants in `src/domain/detection/detect.ts` and are guesses set before any real browsing existed —
+ADR-0008 says so and this does not improve on it.
+*Checked against the banned words:* not bare `action`, not `signal` (displaced by ObservationEvent).
+*Displaces:* signal type · heuristic name · rule id (in detection) · trigger · other · misc.
+**Consumer:** internal — rendered as a sentence, never as a name: *"you searched, then read three
+pages, and came back to two of them"*.
 
 ### SessionReading — *table*
 One immutable, versioned interpretation of a WorkSession (`id`, `sessionId`, `revision`,
@@ -273,8 +426,14 @@ high: *"You're writing the Q3 partnership proposal for Northwind."*
 medium: *"It looks like you're writing the Q3 partnership proposal — is that right?"*
 low: *"I couldn't work out what you're aiming for. Tell me in a sentence."*
 
-### Evidence — *value object on a SessionClaim*
+### Evidence — *~~value object on a SessionClaim~~ table*
 The link from one claim to one ObservationEvent, plus an optional verified quote.
+
+**Corrected 2026-08-11.** This entry said *value object* and `prisma/schema.prisma` has had a
+`model Evidence` with its own id since it was written. The schema is authoritative — it has rows and
+an identity, which is what makes something a table — and ADR-0003's "20 tables" was already 21
+before any of this work started. Recorded in [ADR-0009](docs/adr/0009-composed-offers.md) with the
+other document-versus-code divergences.
 
 Model-facing wire form `{ ref, quote? }` where `ref` is a short handle (`E1…En`) from the numbered
 event list in the prompt, resolved against that exact handle set by a Zod refinement — the one
@@ -354,9 +513,26 @@ any other — least privilege, cheap to correct. A model may propose a **narrowi
 deterministically as `proposed ⊆ granted` before the draft renders.
 
 A model may **not** propose `allowedActionKinds` at all: no session-level action grant exists for a
-subset check to compare against, and a vacuous check is worse than none.
+subset check to compare against, and a vacuous check is worse than none. **Preserved verbatim
+2026-08-11** through [ADR-0009](docs/adr/0009-composed-offers.md), which lets a model compose an
+open-ended WorkOffer. The offer names outcome *kinds*, never ActionKinds, and this sentence is not
+reopened by it. Recorded here so it is not relitigated by someone who reads the offer schema and
+assumes the rule moved.
 
 `baseVersionId` pins a **DocumentVersion**, not a Document, and it is explicitly the read-only base.
+
+**`baseVersionId` is optional from 2026-08-11** ([ADR-0009](docs/adr/0009-composed-offers.md)).
+`document-changes` is now one ShiftOutcomeKind among five, and a run that will produce a
+`collection`, an `answer`, a `message-draft` or an `external-effect` has no document to pin — a
+contract forced to name one would either invent a document nobody asked for or fail to be draftable
+at all.
+
+Nothing is loosened by the optionality, because the gate gains a rule rather than losing one:
+`draft-section` (or any kind that addresses a BaseSpan) proposed under a contract with no
+`baseVersionId` is refused with **`no_document_pinned`**. Deny-by-default already covers the case;
+the named rule exists so the refusal reads as a fact about the agreement rather than as a missing
+parameter. The immutable-base property is untouched wherever a base exists, and where none exists
+there is nothing to address.
 *Displaces:* Permissions · Capabilities · Grants · Allowlist · Denylist · ProhibitedActions ·
 Guardrails · Sandbox · ACL · Scope (bare) · approved resources · workingCopyOf.
 **Consumer:** "What I can look at" · "What I can change".
@@ -375,8 +551,21 @@ the autonomy dial itself hijacked.
 | Output | `suggestions-only` · `draft-changes` |
 
 Initiative and Progress are orthogonal and must not collapse into one dial: Initiative governs
-breadth (may the worker act outside the plan), Progress governs depth (may it go past the step in
-flight). Both compile to set-membership tests over plan step ids, never to prompt wording.
+breadth (may the worker act beyond what it said it would do), Progress governs depth (how far it may
+get before coming back). ~~Both compile to set-membership tests over plan step ids~~ — **amended
+2026-08-11 ([ADR-0010](docs/adr/0010-acting-in-the-browser.md))**: plan step ids no longer authorize
+anything, so both compile to tests over **counters the ledger already supports**, never to prompt
+wording. That is the property that mattered; the plan was only ever how it was computed.
+
+**Progress, redefined.** A **step is the interval between two mutating actions.** So
+`current-step-only` compiles to *make at most one change out there, then come back to me*, and
+`remaining-plan` to *up to `MAX_MUTATING_ACTIONS_PER_RUN`*. Under the old definition a step was a
+row; under an agent that observes and then decides, no row written before it looked can bound it.
+
+**A model may not declare a step boundary.** "This is still the same step" is a **grant** — it would
+let a model widen what it may do by describing its own work differently — and a grant is the one
+thing a model may never make. ADR-0007's asymmetry is exact here: declining withholds, and this
+permits.
 
 **"Stop and ask me when…" takes no free text.** A typed sentence beginning with those words will be
 read by every user as a hard stop and cannot be one — the same lie as unenforced guidance, at
@@ -386,8 +575,13 @@ higher stakes. A closed picker of extra compiling triggers is the growth path.
 that plainly. Token limits are banned from consumer surfaces.
 
 **Output is a real permission, not a presentation mode — decided.** `suggestions-only` removes
-`draft-section` from `ContractScope.allowedActionKinds`; the worker may then produce findings, open
-questions, and next steps, but **may not propose document text at all**. `draft-changes` grants it.
+`draft-section` from `ContractScope.allowedActionKinds`; the worker may then produce an `answer`,
+raise open questions, and name next steps, but **may not propose document text at all**.
+`draft-changes` grants it.
+
+*(Reworded 2026-08-11. This sentence said "findings", which now collides twice over — with
+`ReviewFinding`, which is the reviewer's advisory output, and with the `answer` ShiftOutcomeKind,
+which is what a `suggestions-only` run actually produces. The permission is unchanged.)*
 
 This is the only reading under which the setting enforces something. Because review already
 produces decisions rather than documents, a presentational reading would yield the identical
@@ -419,6 +613,17 @@ cannot enforce.
 on restart resets the budget on every crash loop. It is derived from
 `contract.acceptedAt + timeLimitMinutes` — an immutable pair.
 
+**Plus pause credit, from 2026-08-11** ([ADR-0010](docs/adr/0010-acting-in-the-browser.md)): the
+time a Shift spent waiting on a human is not the run's to spend, so the derivation becomes
+`contract.acceptedAt + timeLimitMinutes + Σ(confirmation waits)`. The reasoning that banned the
+field survives unchanged — the sum is over **immutable timestamps on durable rows**
+(`ConfirmationRequest.createdAt` to its `ConfirmationVerdict.decidedAt`, and nothing else), so it
+recomputes to the identical value after any number of restarts. A stored `deadlineAt` would still be
+the wrong shape; a derived one over immutable pairs is the same shape it already was, summed.
+
+A pause with no verdict credits nothing, which is the correct direction: an unanswered question must
+not buy a run more time than an answered one.
+
 The domain is finite (2×2×2 control combinations × the ActionKind set), so an exhaustive
 table-driven test is writable.
 *Displaces:* Policy (bare) · CompiledPolicy · RunPolicy · PolicySnapshot · PolicyVersion ·
@@ -437,6 +642,19 @@ budget per Shift, one "While you were away" per Shift.
 **Slice 0 ships exactly one Shift per WorkSession — decided.** Re-entry ends at accept / reject.
 "Keep going" and "Redirect" are **not** in slice 0, which is an explicit override of the founding
 brief's MVP boundary rather than a quiet disagreement between two documents.
+
+**A confirmation pause is continuation under another name, and it is inside the line, not across it**
+*(added 2026-08-11, [ADR-0010](docs/adr/0010-acting-in-the-browser.md))*. When a run halts for want
+of a human acknowledgement and a new AgentRun continues after the answer, both runs are under **one
+accepted contract** and inside **one Shift**. The cardinality rules are untouched: one Shift per
+accepted contract, one budget, one ShiftReport, one *"While you were away"*.
+
+What has genuinely changed is the **duration**: a Shift now spans a person's coffee break, because
+the second run cannot start until they answer. The boundary the brief was protecting — no autonomous
+action without an explicit handoff — is protected exactly as before, since the pause asks for *more*
+human consent rather than less. "Keep going" and "Redirect" remain out of slice 0: both would mint a
+new contract for work the person has not agreed to, and a confirmation grants one specific action
+they were shown.
 
 The cardinality was never in question — every away period needs its own agreement, so continuation
 could only ever mint a new contract. What it would cost is replanning against a document that moved
@@ -481,6 +699,13 @@ metric.
 longer holds the claim aborts without writing. Otherwise a machine that wakes after its run was
 reaped appends actions to a terminal run inside a shift the human already closed.
 
+**That fence has never existed** *(recorded 2026-08-11)*. `claimedBy` and `cancelRequested` are
+described here and are absent from `prisma/schema.prisma`, and this entry's `status` values disagree
+with the schema's. This vocabulary is authoritative and the columns are owed; until they exist the
+paragraph above is a specification rather than a description, and reading it as a description is how
+a guarantee comes to be believed in without ever having been built.
+[ADR-0009](docs/adr/0009-composed-offers.md) records this with the other divergences.
+
 One handoff produces **two** runs: a worker, then a reviewer whenever the worker completed at least
 one action. The reviewer is **enqueued, not invoked inline** — failure isolation was the reason to
 split them, and inlining recouples them. Two runs rather than two phases also means each run's
@@ -507,6 +732,18 @@ queue consumer · orchestrator · scheduler.
 ### ExecutionPlan — *computed view*
 The ordered PlanSteps of one worker AgentRun.
 
+**Amended 2026-08-11 ([ADR-0010](docs/adr/0010-acting-in-the-browser.md)): the plan stops
+authorizing and becomes reporting.** An agent that perceives a page and then decides cannot be bound
+by a list written before it looked, so the plan is now **what the run said it intended**, rendered in
+the ShiftReport and cited by nothing. No gate rule reads it.
+
+Everything below about *shape* survives — an ordered list, not a graph, for all four of its original
+reasons. What does not survive is the sentence that made it load-bearing, and its two jobs are
+replaced explicitly rather than dropped: blast radius becomes `MAX_ACTIONS_PER_RUN = 40` and
+`MAX_MUTATING_ACTIONS_PER_RUN = 8`, counted off the ledger; the Progress dial is redefined against
+mutating actions rather than step ids. The honest cost stated below gets worse, not better — nobody
+checks a bad plan before it spends the shift, **and now the plan is not even what the run follows**.
+
 **The brief's "bounded graph" is refuted.** Dated deviation, four reasons: one Runner executes one
 action at a time, so no edge has anything to express; an early stop is a prefix truncation, not a
 branch; the Progress control is only coherent as an authorized prefix length over an ordered list;
@@ -529,11 +766,22 @@ Orchestration · task list · checklist · playbook · job graph.
 `id`, `agentRunId`, `ordinal`, `description` (imperative, one line), `target` (a BaseSpan for a
 drafting step, null for a read). Immutable, strictly ordinal, no skipping.
 
-**One PlanStep authorizes exactly one action in slice 0.** This is the only reading under which
-"Finish the current step" is literally true, the authorized prefix is a real bound computed by
-deterministic code, steps and ledger rows line up 1:1, and per-change attribution is exact by
-construction. The cost is stated plainly: research steps get chopped fine and the worker cannot
-revise its own earlier work inside a run.
+~~**One PlanStep authorizes exactly one action in slice 0.**~~ **Amended 2026-08-11
+([ADR-0010](docs/adr/0010-acting-in-the-browser.md)): a PlanStep authorizes nothing.** It is one
+line of what the run said it intended, and an ActionIntent may reference it for attribution or
+reference none at all.
+
+The original sentence bought four things, and each has to be paid for elsewhere now rather than
+quietly lost. *"Finish the current step" is literally true* — replaced by the mutating-action
+definition of a step, which is literal in a different and narrower way: at most one change out
+there. *The authorized prefix is a real bound* — replaced by two ledger-counted caps.
+*Steps and ledger rows line up 1:1* — **gone, and not replaced.** *Per-change attribution is exact
+by construction* — now exact by citation instead, which is weaker: a ProposedChange still carries
+`planStepId` and `citedActionIntentIds`, but the first is a claim about intent rather than a
+structural fact.
+
+The old cost — research steps chopped fine, no revising earlier work inside a run — is the thing
+this amendment buys back, and it is why the amendment exists.
 
 Progress is `AgentRun.lastCompletedStepOrdinal`, advanced **only in the same transaction as the
 durable append of that step's outcome** — never on the heartbeat, or "What I completed" lists a step
@@ -556,17 +804,37 @@ break exactly when the worker does the thing it was asked to do.
 TextQuoteSelector · section id · prefix/suffix quote anchors.
 
 ### ActionKind — *value object*
-Closed and code-owned: `read-approved-source · read-document · draft-section`. The only alphabet
-`ContractScope.allowedActionKinds` draws from, and the only key the gate matches on. Each carries a
-static `mutating` flag so the UI can distinguish "I only read a source, nothing changed" from "your
-proposal may be partially drafted".
+Closed and code-owned. The only alphabet `ContractScope.allowedActionKinds` draws from, and the only
+key the gate matches on. Each carries a static `mutating` flag so the UI can distinguish "I only read
+a source, nothing changed" from "your proposal may be partially drafted".
 
-`materialise-working-copy` is **not** a member: the worker returns prose and materialisation is a
-post-review human fold. Capabilities the brief excludes — send a message, purchase, publish, delete
-a file — are **absent from the enum entirely** rather than denied by a rule. The strongest form of
-prohibition is absence of capability.
+**Amended 2026-08-11 ([ADR-0010](docs/adr/0010-acting-in-the-browser.md)): the members stop naming
+effects and start naming mechanisms**, and each now carries a second static flag, `landing`, marking
+a kind *capable* of leaving a mark outside Propositum. `read-approved-source · read-document ·
+draft-section` are joined by browser mechanisms — perceive a page, click an element, type into one —
+whose final membership stays owned jointly with the policy-gate ticket.
 
-Final membership is owned jointly with the policy-gate ticket.
+`materialise-working-copy` is still **not** a member: the worker returns prose and materialisation is
+a post-review human fold.
+
+~~Capabilities the brief excludes — send a message, purchase, publish, delete a file — are absent
+from the enum entirely rather than denied by a rule. The strongest form of prohibition is absence of
+capability.~~ **This is the sentence ADR-0010 makes false in substance while leaving true in the
+enum.** There is still no `sendMessage`; `tests/architecture.test.ts` still asserts no such function
+exists; the assertion still passes and now covers much less, because `clickElement` can press
+*Send*. Two things survive the reversal and are worth stating precisely, because the difference
+between them is the whole remaining guarantee:
+
+- **The `landing` flag is a real upper bound.** A kind without it — reading a tree, taking a
+  screenshot, scrolling — can never leave a mark outside Propositum, whatever the page contains.
+  Absence still does the coarse work.
+- **Whether *this* dispatch lands is decided per action by the browser**, not by the kind: an action
+  is irreversible when Chrome is about to send a non-`GET` request or a request outside the
+  contract's approved sources. Attested, so page text cannot forge it.
+
+What replaced absence at the fine grain is a confirmation pause, and **a pause is strictly weaker
+than an absence** — it can be misconfigured and it can be clicked through. Said here as well as in
+ADR-0010 because this entry is where someone will come looking.
 
 Model-facing in worker proposals, so the enum reaches the API as a prose hint. If the model returns
 a kind outside the set: Zod rejects → one repair turn quoting the exact issue → the gate
@@ -647,6 +915,128 @@ The brief's four-part ActionRecord is **true as this derivation and false as a r
 **Consumer:** "Done" · "Couldn't finish" · "Not allowed by your settings" · "Started — I don't know
 how this ended".
 
+### ActionDispatch — *not persisted*
+The one concrete browser command an authorized action compiles to, and the only thing the extension
+will execute: an element ref, an ActionKind, and code-built parameters. **A model never authors
+one.** It names an element it can see in the accessibility tree and the kind of thing it wants to do;
+deterministic code turns that into coordinates and an input event. There is no field anywhere that
+carries a command string, and no `Runtime` domain to run one.
+
+**`ActionDispatch`, not `BrowserCommand`.** `Command` is displaced by `ActionKind` and stays
+displaced; a second word for "the thing that gets executed" is how a closed enum quietly acquires a
+free-text sibling.
+*Checked against the banned words:* not `Command`, not `Tool`/`ToolCall`, not bare `action`, not
+`execution trace`.
+*Displaces:* BrowserCommand · CDPCall · Command · ToolCall · instruction · script · keystroke batch.
+**Consumer:** internal — a dispatch never appears in "what I did"; its ActionIntent does.
+
+### ActionEvidence — *table, deliberately unguarded*
+What the agent perceived at one action boundary: the accessibility tree as text, bounded by
+`SNAPSHOT_BUDGET_CHARS`, and a screenshot only when the tree was insufficient. Untrusted by
+construction — every accessible name in it is page-authored.
+
+**It is not the observation ledger and never joins to it.** `EXCERPT_BUDGET_CHARS` governs what
+Propositum retains about a person's **own browsing**; `ActionEvidence` is what the agent saw **while
+acting under a ratified contract**. The two ledgers stay disjoint, which is a standing rule rather
+than a new claim, and it is the reason the published 2,000-character promise stays true after an
+agent starts reading whole page trees.
+
+**Deliberately unguarded** in ADR-0003's sense, and it is the only durable table that is: it is
+**swept** — the startup sweep deletes rows belonging to a settled ShiftOutcome and rows past the
+retention window — and a no-`DELETE` trigger and a sweep cannot both be true. Nothing in the
+ShiftReport renders from it, so nothing depends on it surviving.
+*Checked against the banned words:* not `Evidence` (that is claim→event), not `execution trace`, not
+`context window`, not `screen recording` — it is per-action, not continuous.
+*Displaces:* Evidence (in the perception sense) · snapshot · observation (in the run) · trace ·
+screenshot log · DOM dump · page state.
+**Consumer:** "What I was looking at" — beside a question, never as a record of your browsing.
+
+### ConfirmationRequest — *table*
+One question a run asked before an action the browser attested as irreversible: the refused
+ActionIntent it belongs to, the ActionEvidence it was looking at, an expiry, and a **code-generated**
+question built from attested facts — the method, the host, and the element's accessible name rendered
+as an **attributed quotation**, exactly as an inferred `constraint` claim is.
+
+The question is never model-composed. A model that could write the words asking for its own
+permission is a model that can argue for itself, and the page-authored half is quoted with
+attribution rather than spoken in Propositum's voice.
+*Checked against the banned words:* not bare `action`, not `approval` (displaced by ChangeVerdict),
+not `escalation` (displaced by DecisionNeeded).
+*Displaces:* approval request · permission prompt · escalation · are-you-sure · gate prompt ·
+pending action · DecisionNeeded (which is a judgment call, not a capability question).
+**Consumer:** "I need you to say yes to this one thing."
+
+### ConfirmationVerdict — *table, append-only*
+`confirmed | rejected`, decided by a human, one row, never updated. **Only a human writes one.**
+
+**There is no `expired` member and no third value.** A request that times out produces **no row**, so
+the gate sees the same absence it saw before anyone was asked and refuses. Expiry therefore cannot
+approve anything — there is no code path from elapsed time to permission, because there is no value
+for elapsed time to write. A confirmation that times out into *yes* is the failure mode the whole
+mechanism exists to prevent.
+
+The absence of a row and a `rejected` row are identical to the gate and different in the report: one
+says *"you said no"*, the other says *"I asked and you never saw it"*.
+*Checked against the banned words:* not `ReviewDecision`, not `approval`, not `outcome` as a column.
+Distinct from ChangeVerdict (a decision about proposed text) and from `ActionOutcome.scopeVerdict`
+(code-written, about realised effect) — the noun is shared across levels and the prefix names the
+level, the same shape `ActionIntent`/`StatedIntent` already defends.
+*Displaces:* approval · consent · authorization (as a row) · yes/no · allow (as a verdict).
+**Consumer:** Yes, do it · No, don't.
+
+### ShiftOutcome — *table*
+What a run produced, one row per producing run: `kind`, `reversibility`, a one-line headline, and the
+join to whatever holds the substance. It replaces the sentence *"the run produced a Changeset"* —
+which was true only while the sole capability was drafting prose.
+
+An outcome of kind `document-changes` holds a Changeset of ProposedChanges; the other held kinds hold
+OutcomeProposals; a `landed` outcome holds neither and carries a report of what happened. A run that
+completed no work writes **no row**, exactly as an empty Changeset writes none.
+
+**`ShiftOutcome`, not bare `Outcome`.** A prefix-only difference from `ActionOutcome` is the
+`ReviewDecision`/`ChangeVerdict` collision this vocabulary calls the most expensive available: two
+rows a paragraph apart, one per action and one per shift, told apart by a word that is easy to drop
+in speech. The prefix naming the level is the pattern `ActionIntent`/`StatedIntent` already
+established, and it is defended on exactly those grounds.
+*Checked against the banned words:* **`outcome` as a bare column name stays banned** — this is a
+table, and a foreign key to it is `shiftOutcomeId`. Not `ActionRecord`, not `Artifact`, not `Task`.
+*Displaces:* Outcome (bare) · Result · Deliverable · Product · RunResult · Output (as a noun) ·
+"the changeset" used to mean everything a run made.
+**Consumer:** what I did — "I drafted 6 changes" / "I collected 11 rates" / "I sent it".
+
+### ShiftOutcomeKind — *value object*
+Closed and code-owned: `document-changes · collection · answer · message-draft · external-effect`.
+
+**No `other`.** An `other` kind is a free-text field wearing an enum's clothes: every consumer would
+need a fallback branch, and the fallback branch is where a landed effect gets rendered as a
+reviewable proposal — the one rendering error in this design that lies to somebody.
+
+**`answer`, not `finding`.** `ReviewFinding` owns "finding", and two things called a finding whose
+authorship differs is the collision this document spends a paragraph on.
+
+Adding a member is a schema change plus migration, never configuration. It should feel heavy; if a
+sixth is reached for twice, the kinds are wrong rather than incomplete.
+*Checked against the banned words:* not `Artifact`, not `Task`, not `Draft` (as a type — the
+`message-draft` member is a hyphenated value, not a table).
+*Displaces:* deliverable type · artifact kind · result type · other · custom · misc.
+**Consumer:** phrasing only — "changes to your document" / "a list" / "an answer" / "a message,
+unsent" / "something that happened".
+
+### Reversibility — *value object on ShiftOutcome*
+`held | landed`. **Code-assigned, never model-assigned and never a person's to set**, computed from
+the ledger: `landed` when any completed ActionIntent in the run carried a landing ActionKind. A model
+that could declare its own work reversible would be granting.
+
+`held` means Propositum is holding it and the person decides. `landed` means it is out there.
+**A `landed` outcome is offered no verdict at all** — not a disabled button, not a greyed control.
+The interface reports *"This already happened, outside Propositum"* and the server refuses a verdict
+deterministically, because a person who clicks Reject on a sent message and is told "rejected" has
+been lied to by the one screen the trust model rests on.
+*Checked against the banned words:* not `status` (displaced), not `verificationStatus` (banned), not
+`RiskLevel` (displaced by AutonomyControls).
+*Displaces:* reversible flag · isReversible · undoable · committed · finality · RiskLevel.
+**Consumer:** "You decide" / "This already happened".
+
 ### ModelCallRecord — *table, append-only*
 One row per model call. Its field set is owned by the model-client ticket; this vocabulary fixes
 only the boundary:
@@ -671,8 +1061,18 @@ declining, surfaced as a stop reason. (The gate **refuses**; the human **rejects
 
 The core invariant, from which everything here follows:
 
-> **Review produces decisions, never documents.** The reviewed text is a pure fold
-> `materialise(base, changes, verdicts)`.
+> **Review produces decisions, never documents.** ~~The reviewed text is a pure fold
+> `materialise(base, changes, verdicts)`.~~ **Scoped 2026-08-11
+> ([ADR-0009](docs/adr/0009-composed-offers.md)): for a `document-changes` ShiftOutcome, the reviewed
+> text is a pure fold `materialise(base, changes, verdicts)`.**
+
+The first sentence is unchanged and still governs everything: no review of anything, of any kind,
+writes the thing it is reviewing. The second was always a statement about **documents**, and it is
+now true of one ShiftOutcomeKind out of five — a `collection` has nothing to splice, an `answer` has
+no base, a `message-draft` is held whole rather than addressed by span, and a `landed` outcome is not
+reviewed at all. Scoping it rather than generalising it is deliberate: the fold's guarantees come
+from the immutable base and the stable offsets, and a "generalised fold" over things with no base
+would be the same word covering a weaker property.
 
 ### Document — *table*
 A named unit of prose work in a Project, always Markdown in slice 0:
@@ -824,6 +1224,44 @@ available here.
 *Displaces:* ReviewDecision · approval · acceptance · resolution · vote · accepted flag.
 **Consumer:** Accept / Reject / Edit.
 
+### OutcomeProposal — *table*
+One independently decidable unit of a **held** ShiftOutcome that is not a document change: one rate
+in a `collection`, one paragraph of an `answer`, one `message-draft` held unsent. Carries its own
+label, body, one-sentence reason, and `citedActionIntentIds` validated against its run's own
+completed reads — the same provenance closure ProposedChange has.
+
+**`ProposedChange` is not replaced.** It is the `document-changes` specialisation of this idea and
+keeps its own table, because it carries a BaseSpan and a `before` verifier that an OutcomeProposal
+has no field for. So an outcome holds ProposedChanges **or** OutcomeProposals, never both.
+
+The cost of that, written down rather than discovered: two tables of nearly the same shape against
+two different addressable units, and unifying them later is a migration rather than a rename. It is
+accepted because the alternative — one table with a nullable BaseSpan — makes the immutable-base
+guarantee conditional on a column being non-null, which is exactly the kind of guarantee that stops
+being one.
+
+A `landed` outcome has **no** OutcomeProposals. There is nothing to decide.
+*Checked against the banned words:* not `Task`, not `suggestion` (displaced by Changeset/
+ProposedChange), not `Artifact`, not `finding`.
+*Displaces:* item · row · entry · result item · finding · suggestion · card · Task.
+**Consumer:** the same word the kind uses — "this rate", "this paragraph", "this message".
+
+### OutcomeVerdict — *table, append-only*
+`accepted | rejected | edited` against one OutcomeProposal, with `editedText` iff edited. Never
+updated, never deleted; the current verdict is the most recent row; no row means undecided.
+**Only a human writes one.** ChangeVerdict's shape exactly, one level out, and `edited` is kept for
+the same reason — collapsing edit into accept makes H2 unmeasurable.
+
+**The server refuses a verdict against a `landed` outcome deterministically**, before it checks
+anything else. That refusal is not a UI concern that happens to be enforced twice; it is the one
+place where an interface bug could otherwise tell someone their sent message was rejected.
+*Checked against the banned words:* not `ReviewDecision`, not `approval`, not `outcome` as a column
+name — this is a table, and its foreign key is `outcomeProposalId`. Shares its noun with
+ChangeVerdict, ConfirmationVerdict and `ActionOutcome.scopeVerdict`; in every case the prefix names
+the level, which is the `ActionIntent`/`StatedIntent` pattern and not the `ReviewDecision` mistake.
+*Displaces:* ReviewDecision · approval · acceptance · keep/discard · vote.
+**Consumer:** Accept / Reject / Edit.
+
 ### ReviewFinding — *table*
 The reviewer AgentRun's advisory output: `id`, `runId`, `changesetId`, `changeId` (nullable),
 `verdict: within-agreement | outside-agreement | unclear`, `note`.
@@ -872,7 +1310,8 @@ deterministic rendering of durable rows:**
 | Section | Source |
 |---|---|
 | What I completed / didn't get to | the ledger and the run's plan steps — never a counter |
-| The changes | Changeset + ProposedChanges |
+| What I produced | ShiftOutcome — a Changeset and its ProposedChanges for `document-changes`, OutcomeProposals for the other held kinds, and for a `landed` outcome a report with no verdict controls at all |
+| What I need you to say yes to | an unanswered ConfirmationRequest, quoted with attribution |
 | What I didn't do, and why | refused ActionIntents |
 | What I missed | CaptureGaps |
 | What I need from you | DecisionNeeded |
@@ -907,13 +1346,28 @@ threshold · context window · tool call · execution trace.
 | `WorkingCopy`, `Draft`, `DocumentCopy` | `Document.workingText` (a field) |
 | `ReviewDecision` | ChangeVerdict (human) · ReviewFinding (reviewer) |
 | `outcome` as a column name | `disposition` · `terminalReason` |
+| `Workflow`, `WorkflowStep`, `WorkflowOffer` | `WorkOffer` (what Propositum would do) · `OfferOutline` (how) · `ExecutionPlan` (what it reported doing) |
+| `BrowserCommand`, `CDPCall` | `ActionDispatch` |
+| bare `Outcome` | `ShiftOutcome` (per run) · `ActionOutcome` (per action) |
+| `finding` for what a run produced | the `answer` ShiftOutcomeKind — `ReviewFinding` owns "finding" |
 | `actor` | `observedBy` · `SessionClaim.origin` |
 | `Intention` as a field or type | prose only — allowed in VISION.md |
 | copy, patch, hunk, diff chunk, changeset, anchor, offset, fold, materialise, base version, commit, merge | *(UI copy)* changes · this change · the version you left · Preview · Accept · Reject · Edit |
 | ledger entry, agent run, job, orchestration, allowlist | *(UI copy)* what I did · Propositum · what Propositum can see |
 
-**Three verbs that must not be confused:** the gate **refuses** · the human **rejects** · the model
-**declines**.
+**The `outcome` ban is on a column named `outcome`**, which is ambiguous between `disposition` (what
+happened to one action) and `terminalReason` (why a run ended). It is **not** a ban on a foreign key
+named for the table it points at: `outcomeId`, `shiftOutcomeId` and `outcomeProposalId` are correct
+and say exactly what they hold. The rule is about a column whose name does not tell you which of two
+things it contains, not about the letters.
+
+**Four verbs that must not be confused:** the gate **refuses** · the human **rejects** · the model
+**declines** · the human **confirms**.
+
+The fourth is new, and it is a different act from the third human verb: **rejecting** is a decision
+about work already produced and held, and **confirming** is permission for something that has not
+happened yet and cannot be undone once it has. A UI that used one word for both would be asking
+someone to authorise an irreversible action with the same control they use to bin a paragraph.
 
 ---
 
@@ -936,12 +1390,27 @@ say that it does.
    `allowedActionKinds` at all. Five controls survive; one of them now enforces something.
 6. **Continuation and redirection are out of slice 0.** The brief's MVP boundary lists redirection
    and continuation; the map's destination sentence stops at accept/reject, and the map is the newer
-   and more specific document. Deferred, not cancelled.
+   and more specific document. Deferred, not cancelled. *(Clarified 2026-08-11: a confirmation pause
+   is continuation under another name and is **not** an exception to this. It stays inside one Shift
+   and one accepted contract, and it asks for more human consent rather than less. What it changes
+   is that a Shift can now span a person's coffee break.)*
 7. **"Copy" is banned from the interface.** Three brief passages say "edit a copy". Nothing is
    copied — the Changeset is the copy, and review materialises a projection on demand.
 8. **The page-text retention budget is a published product constant**, not an implementation
    detail: title, cleaned URL, deliberate selections verbatim, and at most 2,000 characters of
-   readable article text per approved source.
+   readable article text per approved source. *(Joined 2026-08-11 by a second published constant,
+   `SNAPSHOT_BUDGET_CHARS`, bounding what an acting agent retains. Two constants, two ledgers, and
+   they stay disjoint.)*
+9. **A human never creates a Project.** The brief excludes *automatic project recognition*;
+   ADR-0008 overrode that exclusion for detection and [ADR-0009](docs/adr/0009-composed-offers.md)
+   reverses it outright. Projects are auto-created, auto-named, matched by deterministic term
+   overlap, and renameable. Recorded as an override rather than absorbed quietly, because it is the
+   second time this exclusion has been walked back.
+10. **An irreversible capability may exist.** The brief excludes sending, purchasing, publishing and
+    deleting, and the vocabulary implemented that by absence. [ADR-0010](docs/adr/0010-acting-in-the-browser.md)
+    replaces absence with a landing `ActionKind` behind a per-action human confirmation. This is the
+    only override in this list that makes the product **less** safe, and the standing-rules section
+    above gives it the argument it needs rather than the argument it would like.
 
 ---
 
@@ -992,6 +1461,21 @@ Recorded so they are found deliberately rather than discovered.
   way; if the finding is wrong we are paying repair turns we did not need.
 - **Budget promises time, not money.** The most common stop in a real overnight run — "I ran out of
   time" — is the one the user can least interpret.
-- **This is 38 terms.** Small against nine brief objects, six model boundaries, an append-only
-  ledger, a diff model and a policy gate. Not small in absolute terms. Roughly six earn their place
-  only marginally, and should be the first cut if the vocabulary starts to feel heavy.
+- **`SessionPhase` has no honest value for a confirmation pause.** The person is at their desk being
+  asked a question, under a screen headed *"While you were away"*. This document refused a `paused`
+  phase with a good argument, made before a run could ask and wait. Keeping `away` is the smaller
+  lie, and it is still a lie. Recorded rather than fixed, because a fifth phase for a state that
+  ends in one click is a worse trade than one inaccurate heading.
+- **A hostile page can force a confirmation storm.** Make every control post, and every action needs
+  a human; the twentieth question gets answered without reading. Habituation is a real attack and
+  there is no third option — failing open on repetition would let an attacker turn confirmation off
+  by asking for it enough times. The mutating-action cap is what actually bounds it.
+- **The injection surface grew by roughly two orders of magnitude**, from a 2,000-character excerpt
+  read once to an accessibility tree read every turn, every accessible name of it page-authored.
+  ADR-0006 says datamarking is depth, not a boundary, and depth scaled a hundredfold is still depth.
+- **~~This is 38 terms.~~ This is 52.** Fourteen were added on 2026-08-11 for composed offers and
+  browser action. Small against nine brief objects, seven model boundaries, an append-only ledger, a
+  diff model, a policy gate and an acting agent. **Not small in absolute terms, and no longer
+  arguably small at all.** The earlier note said roughly six earn their place only marginally; that
+  is now closer to ten, and the first cut should start with the terms that exist to name one field
+  on one row.

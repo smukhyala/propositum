@@ -35,7 +35,8 @@ The cheap one to measure, and the one most at risk of measuring the wrong thing.
 
 ### H2 — Useful progress
 
-> Of the `ProposedChange`s a `Shift` produces, how many does the person accept?
+> Of the decidable units a `Shift` produces — `ProposedChange`s, or `OutcomeProposal`s for the
+> other held `ShiftOutcomeKind`s — how many does the person accept?
 
 **This carries the riskiest assumption in the project.** Stated as a falsifiable claim:
 
@@ -69,8 +70,14 @@ concrete, not to specialise the code.
 
 ## User journey
 
-1. Create a `Project` and approve the sources Propositum may see.
-2. **Start session.** Capture is live; `ObservationEvent`s accumulate.
+1. ~~Create a `Project` and approve the sources Propositum may see.~~ **Work. Propositum is already
+   watching** ([ADR-0008](adr/0008-ambient-detection.md)), and once the deterministic bar is cleared
+   it names the subject and offers to do something about it. Accepting is one click that approves the
+   sources, starts the session, folds in what it already saw, and drafts the agreement.
+   **A human never creates a `Project`** ([ADR-0009](adr/0009-composed-offers.md)): it is
+   auto-created, auto-named, matched to an existing one by term overlap, and renameable afterwards.
+2. **Start session** — still a human act, and still the only thing that turns capture on. It is now
+   reached by accepting an offer rather than by remembering in advance.
 3. Work normally — read approved sources, edit the `Document`, leave notes.
 4. **Take over.** Propositum shows *what I think you're working on*: a `SessionReading` with
    `Evidence` behind every claim, editable.
@@ -78,9 +85,10 @@ concrete, not to specialise the code.
    change, and the four dials. No `AgentRun` starts from an unratified contract, and nothing in
    the dials can switch that off.
 6. Leave. One worker `AgentRun`, then one reviewer `AgentRun`, inside one `Shift`.
-7. Return to *while you were away*: a `ShiftReport`, the `Changeset` as a readable diff, what it
-   could not verify, and *what I need from you*.
-8. Accept or reject each `ProposedChange`.
+7. Return to *while you were away*: a `ShiftReport`, the `ShiftOutcome` — a readable diff for
+   `document-changes`, a list for a `collection`, and for anything that `landed`, a report and no
+   verdict controls at all — what it could not verify, and *what I need from you*.
+8. Accept or reject each decidable unit. A `landed` outcome is never one of them.
 
 Step 8 is where slice 0 ends. See [Out of scope](#out-of-scope).
 
@@ -88,7 +96,9 @@ Step 8 is where slice 0 ends. See [Out of scope](#out-of-scope).
 
 ## In scope
 
-Explicit `Project` creation and source approval · explicit session start and stop · a Chrome MV3
+~~Explicit `Project` creation~~ **auto-created, auto-named, term-matched `Project`s, renameable but
+never created by hand** *(amended 2026-08-11, [ADR-0009](adr/0009-composed-offers.md))* · source
+approval · explicit session start and stop · a Chrome MV3
 `CaptureAdapter` producing real `ObservationEvent`s · manually entered notes · `CaptureGap`
 recording · `SessionReading` with per-claim `Evidence` · an editable `HandoffContract` with four
 dials · a deterministic `EnforcedPolicy` and an unbypassable gate · one worker and one reviewer
@@ -147,12 +157,24 @@ partially useful — it is actively misleading, and everything downstream inheri
 
 ### H2 — acceptance rate
 
-`accepted / (accepted + rejected)`, where a change edited and then kept counts as accepted.
+`accepted / (accepted + rejected)` over **decidable units**, where a unit edited and then kept counts
+as accepted.
+
+*(Generalised 2026-08-11, [ADR-0009](adr/0009-composed-offers.md). The denominator was
+`ProposedChange`s, which was the only thing a run could make. A decidable unit is now a
+`ProposedChange` for a `document-changes` outcome and an `OutcomeProposal` for a `collection`, an
+`answer` or a `message-draft`.)*
+
+**`landed` outcomes are excluded from the denominator entirely** — not counted as accepted, not
+counted as rejected. They were never decidable: nobody was ever offered a verdict, so scoring them
+either way would be inventing a judgment the person did not make. An external effect that should not
+have happened is an H3 failure about stopping, not an H2 datum about usefulness, and putting it in
+this denominator would let a run improve its acceptance rate by acting irreversibly.
 
 **Pass: ≥60%.**
 
 Below that, the useful-progress window is too narrow to build on, whatever H1 says. A run producing
-**zero** `ProposedChange`s under `suggestions-only` is a normal outcome and is excluded from the
+**zero** decidable units under `suggestions-only` is a normal outcome and is excluded from the
 denominator; a run producing zero under `draft-changes` is a failure and scores 0%.
 
 ### H3 — both directions

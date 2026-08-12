@@ -34,7 +34,7 @@ back and the cost stated.
 | **Where that goes** | An in-memory buffer, bounded by a 30-minute window **and** a 500-row cap. Never the ledger. |
 | **How work is recognised** | Arithmetic. No model call. |
 | **What detection produces** | A suggestion. Never a session, never an action. |
-| **What accepting does** | Approves the source, starts the session, folds the buffer in — one click, all three the person's. |
+| **What accepting does** | Approves the source, starts the session, folds the buffer in, **and drafts a contract from the offer** — one click, all four the person's. *(Fourth clause added 2026-08-11 by [ADR-0009](0009-composed-offers.md). The row above it is unchanged and is restated verbatim there.)* |
 | **What declining does** | Drops the observations and snoozes the origin for an hour. |
 
 Two detectors, both deterministic. `detectWork` fires on pages-and-dwell or on query-then-reading.

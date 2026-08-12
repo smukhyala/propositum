@@ -1,7 +1,8 @@
 # ADR-0002 — Chrome MV3 extension for observation; Playwright kept separate
 
 **Status:** accepted · 2026-08-06 · **permission model amended 2026-08-11 by
-[ADR-0008](0008-ambient-detection.md)**
+[ADR-0008](0008-ambient-detection.md)** · **the `debugger` refusal and the separate worker browser
+reversed 2026-08-11 by [ADR-0010](0010-acting-in-the-browser.md)**
 
 > **What changed.** `optional_host_permissions` scoped to `ApprovedSource`s became
 > `host_permissions: ["https://*/*"]` at install. The rest of this ADR stands — the extension over
@@ -31,9 +32,9 @@ process. They are not consolidated.**
 | | |
 |---|---|
 | **Permissions** | `storage`, `alarms`, `idle`, `scripting`, `sidePanel` — all warning-free — plus `optional_host_permissions` scoped to `ApprovedSource`s |
-| **Explicitly NOT** | `tabs`, `webNavigation`, `history`, `debugger` |
-| **Transport** | WebSocket from the service worker to `127.0.0.1`, per-session bearer token, `Origin` pinned to the extension id |
-| **Worker research** | a separate `chromium.launch()` process, own ephemeral context, no credentials, hard URL allowlist |
+| **Explicitly NOT** | `tabs`, `webNavigation`, `history`, ~~`debugger`~~ — *`debugger` is reversed by [ADR-0010](0010-acting-in-the-browser.md); `tabs`, `webNavigation` and `history` still stand* |
+| **Transport** | ~~WebSocket~~ **HTTP** from the service worker to `127.0.0.1`, per-session bearer token, `Origin` pinned to the extension id — *corrected 2026-08-11: the shipped extension uses `fetch` plus a 30-second `chrome.alarms` heartbeat. The code is authoritative; a socket is the wrong shape for a service worker that dies every 30 seconds, and the argument was always about the four controls, which hold* |
+| **Worker research** | a separate `chromium.launch()` process, own ephemeral context, no credentials, hard URL allowlist — *superseded by [ADR-0010](0010-acting-in-the-browser.md)* |
 
 ## Why — and it is a privacy argument, not a technical one
 
