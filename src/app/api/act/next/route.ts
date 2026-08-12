@@ -1,0 +1,109 @@
+/**
+ * The long poll. An MV3 service worker asks for something to do.
+ *
+ * ── The one assertion this file exists to make true ──────────────────────
+ *
+ * **Two pollers can never receive the same instruction.** Handing one out is a
+ * conditional UPDATE `queued → delivered` that reports whether it won, so the
+ * check and the write are one statement with no window between them. Both
+ * pollers read the same row, both attempt the claim, exactly one wins, and the
+ * loser goes back to looking. The database is the only arbiter; nothing in this
+ * process decides.
+ *
+ * That matters more here than the usual queue reason. A redelivered instruction
+ * is not a duplicated job that some idempotency key absorbs later — it is a
+ * second click on someone's live page, on the same button, in a session that is
+ * really theirs.
+ *
+ * ── Why the wait ends where it does ──────────────────────────────────────
+ *
+ * At `POLL_TIMEOUT_MS`, deliberately under Chrome's ~30s idle window, so the
+ * poll ends because the SERVER answered and never because Chrome killed the
+ * worker mid-request. The difference is not latency, it is knowledge: a poll
+ * that dies with the service worker leaves us unable to say whether the answer
+ * arrived, and this channel refuses to hold that state about an instruction that
+ * presses buttons.
+ *
+ * ── There is no run id in the request, on purpose ────────────────────────
+ *
+ * The extension drives one tab and does not know which run is talking to it,
+ * which is a boundary worth keeping: knowing run ids would not help it act and
+ * would give a component that shares a process with every page in the browser
+ * one more thing worth stealing. The runs worth looking at are the ones with a
+ * worker currently blocked on a report, which the act store knows.
+ */
+
+import { NextResponse } from 'next/server'
+
+import { POLL_TIMEOUT_MS, admitControl } from '@/act/channel'
+import type { DispatchableKind } from '@/act/channel'
+import { POLL_TICK_MS, actStore } from '@/server/act-store'
+import { appContext } from '@/server/db'
+import { expectedOrigin } from '@/server/capture-store'
+
+/**
+ * A test may SHORTEN this process's own wait, never lengthen it.
+ *
+ * An integration test that has to sit through twenty-five seconds to prove a
+ * loser gets nothing is a test people stop running. The clamp is what makes the
+ * knob safe: it can only bring the answer forward, so no configuration can push
+ * a poll past the window it was chosen to stay inside.
+ */
+function pollWindowMs(): number {
+  const override = Number(process.env['PROPOSITUM_ACT_POLL_MS'])
+  if (!Number.isFinite(override) || override <= 0) return POLL_TIMEOUT_MS
+  return Math.min(override, POLL_TIMEOUT_MS)
+}
+
+export async function GET(request: Request) {
+  const headers: Record<string, string> = {}
+  request.headers.forEach((value, key) => {
+    headers[key] = value
+  })
+
+  const admission = admitControl(
+    { headers, body: null },
+    { from: 'extension', expectedOrigin: expectedOrigin() },
+    { kind: 'none' },
+  )
+
+  if (!admission.ok) {
+    return NextResponse.json({ ok: false, reason: admission.reason }, { status: 403 })
+  }
+
+  const store = actStore()
+  const { repos } = await appContext()
+  const deadline = Date.now() + pollWindowMs()
+
+  for (;;) {
+    for (const runId of store.waitingRuns()) {
+      const queued = await repos.dispatches.nextQueued(runId)
+      if (!queued) continue
+
+      const won = await repos.dispatches.claim({ id: queued.id, deliveredAt: new Date() })
+      // Lost the race to another poller. Not an error — the other one has it,
+      // and this one keeps looking rather than reporting a failure that did not
+      // happen.
+      if (!won) continue
+
+      return NextResponse.json({
+        command: {
+          intentId: queued.intentId,
+          kind: queued.kind as DispatchableKind,
+          params: (queued.params ?? {}) as Record<string, unknown>,
+        },
+      })
+    }
+
+    const remaining = deadline - Date.now()
+    if (remaining <= 0) break
+
+    // Wake on an announcement, or on the tick — whichever is sooner. The tick
+    // exists so an instruction written by some other process (a second app
+    // instance, a repair script) is still picked up, rather than waiting for an
+    // announcement that only this process can make.
+    await store.awaitAnnouncement(Math.min(remaining, POLL_TICK_MS))
+  }
+
+  return NextResponse.json({ command: null })
+}

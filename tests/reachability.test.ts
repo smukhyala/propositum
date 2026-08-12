@@ -355,6 +355,39 @@ describe('the safety machinery is reachable from the product', () => {
     ).not.toEqual([])
   })
 
+  it('an instruction can actually reach a browser, and is handed out exactly once', () => {
+    // Moved up out of the deferred block below when the control channel landed,
+    // which is that block working as intended.
+    //
+    // The two halves are asserted separately because they fail differently.
+    // Without `enqueue` no instruction is ever written down, so the extension
+    // has nothing to poll for and a run with hands has none. Without `claim` the
+    // poll would hand out whatever it read — and the guarded UPDATE is the ONLY
+    // thing standing between two pollers and two clicks on the same button in
+    // someone's real session. A `nextQueued` read with no claim behind it looks
+    // identical in a green suite and is a different product.
+    expect(
+      callersOf('dispatches.enqueue', 'src/persistence/repositories/index.ts'),
+      'nothing enqueues an ActionDispatch — the worker has no way to reach a browser',
+    ).toContain('src/app/api/act/dispatch/route.ts')
+    expect(
+      callersOf('dispatches.claim', 'src/persistence/repositories/index.ts'),
+      'nothing claims an ActionDispatch — a poll would hand the same command to two callers',
+    ).toContain('src/app/api/act/next/route.ts')
+  })
+
+  it('a halt flags the run, or stopping is a message nothing reads', () => {
+    // Moved up when the halt route landed. `cancelRequested` is written here and
+    // the fence is still only half real: CONTEXT.md §4 requires that every
+    // action boundary RE-READS `status` and `claimedBy` and aborts without
+    // writing, and no run path does that yet. So this asserts the writer exists,
+    // and the reader is still owed — deliberately not asserted as done.
+    expect(
+      callersOf('runs.requestCancel', 'src/persistence/repositories/index.ts'),
+      'nothing flags a run for cancellation — a halt settles sockets and stops nothing',
+    ).toContain('src/app/api/act/halt/route.ts')
+  })
+
   it('something composes an offer, or the model half of ADR-0009 is unreachable', () => {
     expect(
       callersOf('composeOffer(', 'src/server/compose-offer.ts'),
@@ -543,25 +576,35 @@ describe('deferred, and asserted as deferred', () => {
     ).toEqual([])
   })
 
-  it('no instruction reaches a browser, so nothing is ever dispatched or claimed', () => {
+  it('no worker holds the browser control, so the channel has no customer', () => {
+    /**
+     * The control channel is reachable from the extension's side and from
+     * nothing on the worker's side.
+     *
+     * Both ends of it exist: the routes are live and `createBrowserControl` is
+     * the client the worker would use. What is missing is the run path that
+     * builds one — which means the app can hand out instructions nobody has
+     * written, and the four `/api/act/*` routes could be deleted tomorrow with
+     * every test still green. That is precisely the shape of the three defects
+     * at the top of this file, so it is asserted rather than left implicit.
+     *
+     * It goes red the moment a run constructs a BrowserControl. Move it then.
+     */
     expect(
-      callersOf('dispatches.enqueue', repos),
-      'dispatches are enqueued now — move this into the section above',
-    ).toEqual([])
-    expect(
-      callersOf('dispatches.claim', repos),
-      'dispatches are claimed now — move this into the section above',
+      callersOf('createBrowserControl(', 'src/runtime/browser-control.ts'),
+      'a run drives the browser now — move this into the section above',
     ).toEqual([])
   })
 
-  it('nothing flags a run for cancellation, so the fence stays a paragraph', () => {
-    // `cancelRequested` and `claimedBy` are described in CONTEXT.md §4 and have
-    // never existed in the schema. They exist now; nothing writes or reads them
-    // yet, so "a Runner that no longer holds the claim aborts without writing"
-    // is still a sentence rather than a behaviour.
+  it('nothing reads the cancellation flag, so the fence is still half a paragraph', () => {
+    // The halt route WRITES `cancelRequested` — see the section above. Nothing
+    // reads it, and nothing re-reads `claimedBy` at an action boundary, so
+    // CONTEXT.md §4's "a Runner that no longer holds the claim aborts without
+    // writing" remains a sentence. A run that has been asked to stop finds out
+    // only because its next dispatch fails.
     expect(
-      callersOf('runs.requestCancel', repos),
-      'runs can be cancelled now — move this into the section above',
+      callersOf('cancelRequested', repos),
+      'something reads the cancellation flag now — move this into the section above',
     ).toEqual([])
   })
 })
