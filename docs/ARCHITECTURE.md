@@ -57,7 +57,7 @@ only pass slice 0 makes:
 
 Three layers have no stage above them — Intention Graph, Worker Router, Outcome / Learning — and that
 is the actual shape of the change. **Intention Graph is the durable half of something the pipeline
-only ever held for one sitting** — decided in ADR-0011 and not yet a table, per §1 below. The other
+only ever held for one sitting** — decided in ADR-0011 and, since 2026-08-16, a table, per §1 below. The other
 two are new: one has data and no reader, and one is not being built.
 
 ---
@@ -66,7 +66,7 @@ two are new: one has data and no reader, and one is not being built.
 
 | Layer | Status | Owned today by |
 |---|---|---|
-| Intention Graph | **not built** — a decision; no `model Intention` in `prisma/schema.prisma` yet | — ([ADR-0011](./adr/0011-intention-above-worksession.md) authorises it) |
+| Intention Graph | **partial** — one flat table, no graph; `intentionState()` computed and unrendered | `Intention` in `prisma/schema.prisma`, `src/domain/intention/state.ts` ([ADR-0011](./adr/0011-intention-above-worksession.md)) |
 | State Ingestion | **partial** — one sensor, browser only | `ledger-writer.ts`, the MV3 extension |
 | State Reconciler | **partial** — `matchProject` only | `src/domain/detection/match-project.ts` |
 | Progress Reasoner | **partial** — offer grounds, no ranking | `src/domain/detection/grounds.ts` |
@@ -79,16 +79,23 @@ two are new: one has data and no reader, and one is not being built.
 
 ---
 
-### 1. Intention Graph — **not built: a decision, and *graph* is aspirational**
+### 1. Intention Graph — **partial: one flat table, and *graph* is aspirational**
 
 *For:* the persistent source of truth for what a person is trying to accomplish.
 
-**Not built as this file lands, and here is the one-command check that says so:** `grep 'model
+~~**Not built as this file lands, and here is the one-command check that says so:** `grep 'model
 Intention' prisma/schema.prisma` returns nothing, which makes this layer a **decision and not yet a
-table**. The check sits in the first line of the section rather than below the claim it qualifies,
-because "the ADR says so" and "the schema has it" are the two things this document exists to keep
-apart, and a marker a reader meets ten lines late has already done its damage. Re-mark this layer —
-here and in the table above — in the same commit that lands the schema, not before it.
+table**.~~ **Re-marked 2026-08-16, in the commit that landed the schema, which is what the struck
+sentence asked for.** The one-command check now reads the other way, and here is what it returns:
+`grep 'model Intention' prisma/schema.prisma` → `model Intention {`, and
+`grep -c intentionId prisma/schema.prisma` counts both foreign keys. So this layer is **a table, not
+a graph, and not a screen**: the row exists, `intentionState()` exists in
+`src/domain/intention/state.ts` and computes the five members from rows, and **nothing renders
+either** — `tests/reachability.test.ts`'s *deferred, and asserted as deferred* block pins that last
+absence so it cannot be mistaken for wiring. The check sits in the first line of the section rather
+than below the claim it qualifies, because "the ADR says so", "the schema has it" and "a person can
+see it" are three different things this document exists to keep apart, and a marker a reader meets
+ten lines late has already done its damage.
 
 **What [ADR-0011](./adr/0011-intention-above-worksession.md) authorises.** One mutable `Intention`
 row: a desired outcome, a `definitionOfDone` shared with `StatedIntent` — `definitionOfSuccess` is
@@ -104,10 +111,11 @@ is [`MVP.md`](./MVP.md), which marks it *not yet built at the time of writing* i
 as nodes. More than one Intention per Project. Any edge that is not one of those two foreign keys.
 
 **The word *graph* is aspirational here and is kept only so this document and the direction it came
-from can be read side by side.** Two nullable foreign keys pointing at one row will be a table when it
-exists. Calling it a graph would be the single easiest inflation in this file to commit and the
-hardest to notice — and calling it built before the schema has it is the second easiest, which is why
-the check above is the first thing in this section.
+from can be read side by side.** Two nullable foreign keys pointing at one row are a table, which is
+now literally what exists. Calling it a graph would be the single easiest inflation in this file to
+commit and the hardest to notice — and calling it **built** now that the schema has it is the second
+easiest, which is why the marker above says *partial* and names the two things still missing rather
+than the one that landed.
 
 *What would have to exist first:* a second Intention per Project, and something that can create an
 edge between two of them. Neither exists, and direction §8 forbids the generalised graph
@@ -384,11 +392,15 @@ strictly weaker than an absence**.
 `IntentionState` is a **computed view with five members**: `working`, `delegated`, `needs-you`,
 `sleeping`, `done`.
 
-**It is not a type you can import as this file lands.** `IntentionState` appears nowhere in `src/`,
+~~**It is not a type you can import as this file lands.** `IntentionState` appears nowhere in `src/`,
 for the same reason `model Intention` appears nowhere in `prisma/schema.prisma` — §1's check covers
-both. What follows is the shape [ADR-0011](./adr/0011-intention-above-worksession.md) fixes, so that
-the argument for five members is written down before the union is, rather than after somebody has
-already typed six.
+both.~~ **Amended 2026-08-16, with §1:** it is a type you can import.
+`src/domain/intention/state.ts` exports `IntentionStateId`, `IntentionStateRule`, `IntentionFacts`
+and `INTENTION_STATES`, and `intentionState(facts, now)` computes a member from rows. **What is still
+true is the half that mattered: nothing calls it.** No screen renders a state, the consumer labels
+below are rendered by nothing, and `tests/reachability.test.ts` asserts that absence deliberately so
+a green suite cannot be read as a wired one. The argument for five members below is unchanged, and it
+was written down before the union was rather than after somebody had already typed six.
 
 Computed, not stored, following unanimous precedent — `EnforcedPolicy`, `Shift` and `ActionStatus` are
 all computed views on the argument that **two stores for one truth is exactly how a UI comes to

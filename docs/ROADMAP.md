@@ -14,12 +14,13 @@ these stages come from, archived at
 
 ## Stage 1 — Guided Intention Continuation
 
-**Now, except the `Intention`.** An explicit `Intention` — decided in
-[ADR-0011](./adr/0011-intention-above-worksession.md), **not yet a table** — a `WorkSession`, a
-ratified `HandoffContract`, one bounded worker, one reviewer, and re-entry. Everything in that list
-except the `Intention` was built before this change; the `Intention` is the one thing this stage is
-still adding, and [`ARCHITECTURE.md`](./ARCHITECTURE.md) §1 carries the one-command check that says
-whether it is a table yet or still a decision.
+**Now, except the screen that shows the `Intention`.** An explicit `Intention` — decided in
+[ADR-0011](./adr/0011-intention-above-worksession.md) and ~~**not yet a table**~~ **a table as of
+2026-08-16** — a `WorkSession`, a ratified `HandoffContract`, one bounded worker, one reviewer, and
+re-entry. Everything in that list except the `Intention` was built before this change; the
+`Intention` is the one thing this stage is still adding, and it is now a row that is written and
+attached but **rendered nowhere** — [`ARCHITECTURE.md`](./ARCHITECTURE.md) §1 carries the
+one-command check, and says in the same breath which half is still owed.
 
 **This stage is [`MVP.md`](./MVP.md), and is deliberately not restated here.** Scope, the three
 hypotheses, the pass/fail numbers, the acceptance criteria and the assumptions live there and are

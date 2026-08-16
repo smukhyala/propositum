@@ -34,6 +34,7 @@ import type { Prisma, PrismaClient } from '@prisma/client'
 import { guarded } from '../errors'
 
 export interface Repositories {
+  readonly intentions: IntentionRepository
   readonly projects: ProjectRepository
   readonly sessions: WorkSessionRepository
   readonly events: ObservationEventReader
@@ -53,6 +54,7 @@ export interface Repositories {
 
 export function createRepositories(prisma: PrismaClient): Repositories {
   return {
+    intentions: intentionRepository(prisma),
     projects: projectRepository(prisma),
     sessions: workSessionRepository(prisma),
     events: observationEventReader(prisma),
@@ -80,6 +82,85 @@ export function createRepositories(prisma: PrismaClient): Repositories {
  * for `attested` — or names its element type.
  */
 export type JsonObject = Record<string, unknown>
+
+/* ── Intention ─────────────────────────────────────────────────────────── */
+
+/** What one Intention holds. `IntentionState` is NOT here and never will be —
+ *  it is computed by `src/domain/intention/state.ts` from rows, and a column
+ *  would be a second store for the same truth. */
+export interface StoredIntention {
+  readonly id: string
+  readonly projectId: string | null
+  readonly objective: string
+  readonly definitionOfDone: string
+  readonly completedAt: Date | null
+}
+
+/**
+ * The Intention: durable, mutable, and written only because a person said so.
+ *
+ * ── Narrower than `ProjectRepository`, on purpose ────────────────────────
+ *
+ * There is no `complete`, no `revise` and no `delete` here yet. Every one of
+ * those is a HUMAN act with no screen behind it — the correction channel is
+ * rewriting the sentence, and the surface that offers that is a later
+ * workstream's. A repository method with no caller is the exact shape of the
+ * three defects `tests/reachability.test.ts` opens with, so they arrive with
+ * the screen that calls them rather than ahead of it.
+ *
+ * `byId` was here and is gone, which is that paragraph applied to itself: it
+ * was called by its own test and by nothing in `src/`, so it was the shape it
+ * was written to argue against. It comes back with the screen that reads it.
+ * Note for whoever writes `delete`: `HandoffContract.intention` is
+ * `onDelete: Restrict`, so an Intention any contract points at cannot be
+ * deleted — the limit is argued at that relation in `prisma/schema.prisma`.
+ *
+ * What is absent structurally rather than for now: nothing here takes a model
+ * output, a claim, an event or a reading. There is no argument any inference
+ * could be passed through — the same bar `WorkOffer` stands behind.
+ */
+export interface IntentionRepository {
+  /**
+   * A person stated one. That is the only reason this ever runs.
+   *
+   * The two strings come from somewhere a person clicked accept on; nothing in
+   * this file can tell where, which is why the human-ratified rule lives at the
+   * one call site and is argued there.
+   */
+  create(input: {
+    projectId: string | null
+    objective: string
+    definitionOfDone: string
+  }): Promise<StoredIntention>
+  /**
+   * The Project's Intention, or null. Singular by ADR-0011: at most one per
+   * Project, held as a unique index rather than as a convention.
+   *
+   * This is what stops the writer minting a second one when a sitting joins a
+   * project that already has an Intention — the constraint would refuse it
+   * anyway, and finding the existing row is the answer rather than the error.
+   */
+  forProject(projectId: string): Promise<StoredIntention | null>
+}
+
+function intentionRepository(prisma: PrismaClient): IntentionRepository {
+  const SELECT = {
+    id: true,
+    projectId: true,
+    objective: true,
+    definitionOfDone: true,
+    completedAt: true,
+  } as const
+
+  return {
+    create: ({ projectId, objective, definitionOfDone }) =>
+      prisma.intention.create({
+        data: { projectId, objective, definitionOfDone },
+        select: SELECT,
+      }),
+    forProject: (projectId) => prisma.intention.findUnique({ where: { projectId }, select: SELECT }),
+  }
+}
 
 /* ── Project ───────────────────────────────────────────────────────────── */
 
@@ -160,8 +241,19 @@ function projectRepository(prisma: PrismaClient): ProjectRepository {
 export type SessionPhase = 'observing' | 'away' | 'ended'
 
 export interface WorkSessionRepository {
-  start(projectId: string): Promise<{ id: string; phase: string }>
-  byId(id: string): Promise<{ id: string; projectId: string; phase: string; endedAt: Date | null } | null>
+  /**
+   * `intentionId` is optional and last, so every existing caller keeps working
+   * and a sitting nobody stated an Intention for gets the honest null rather
+   * than a placeholder row.
+   */
+  start(projectId: string, intentionId?: string | null): Promise<{ id: string; phase: string }>
+  byId(id: string): Promise<{
+    id: string
+    projectId: string
+    intentionId: string | null
+    phase: string
+    endedAt: Date | null
+  } | null>
   forProject(projectId: string): Promise<Array<{ id: string; phase: string; startedAt: Date }>>
   /** Explicit transitions only — no generic setter, so the lifecycle stays
    *  readable and an illegal jump has nowhere to hide. */
@@ -181,8 +273,24 @@ export interface WorkSessionRepository {
    * history to tidy a filing decision is exactly what append-only is for
    * refusing. The caller carries those origins across as approvals on the
    * destination instead, so what Propositum may see is right going forward.
+   *
+   * ── Why `intentionId` is REQUIRED here and not optional ──────────────────
+   *
+   * An Intention belongs to a Project — `Intention.projectId` is `@unique` — so
+   * a move that does not answer this question leaves the sitting pointing at
+   * the OLD project's Intention, and `draftContract` then stamps that
+   * cross-project id onto the new project's HandoffContract. That is exactly
+   * the failure CONTEXT.md's cross-session ruling names: an objective inherited
+   * quietly, on a screen that says nothing about having inherited it. It is
+   * worse here than the cold read that ruling compared it to, because the
+   * person pressing the button has just said *this is not that work*.
+   *
+   * Required rather than defaulted, so the answer is a decision at each call
+   * site instead of whatever a default happened to be: `null` where nobody has
+   * stated an Intention for the destination, and the destination's own
+   * Intention where somebody has.
    */
-  refile(id: string, projectId: string): Promise<void>
+  refile(id: string, projectId: string, intentionId: string | null): Promise<void>
 }
 
 function workSessionRepository(prisma: PrismaClient): WorkSessionRepository {
@@ -191,12 +299,15 @@ function workSessionRepository(prisma: PrismaClient): WorkSessionRepository {
   }
 
   return {
-    start: (projectId) =>
-      prisma.workSession.create({ data: { projectId }, select: { id: true, phase: true } }),
+    start: (projectId, intentionId) =>
+      prisma.workSession.create({
+        data: { projectId, intentionId: intentionId ?? null },
+        select: { id: true, phase: true },
+      }),
     byId: (id) =>
       prisma.workSession.findUnique({
         where: { id },
-        select: { id: true, projectId: true, phase: true, endedAt: true },
+        select: { id: true, projectId: true, intentionId: true, phase: true, endedAt: true },
       }),
     forProject: (projectId) =>
       prisma.workSession.findMany({
@@ -206,8 +317,8 @@ function workSessionRepository(prisma: PrismaClient): WorkSessionRepository {
       }),
     markAway: (id) => setPhase(id, 'away'),
     markObserving: (id) => setPhase(id, 'observing'),
-    refile: async (id, projectId) => {
-      await prisma.workSession.update({ where: { id }, data: { projectId } })
+    refile: async (id, projectId, intentionId) => {
+      await prisma.workSession.update({ where: { id }, data: { projectId, intentionId } })
     },
     end: async (id, endedAt) => {
       await prisma.workSession.update({ where: { id }, data: { phase: 'ended', endedAt } })
@@ -366,6 +477,22 @@ function sessionReadingRepository(prisma: PrismaClient): SessionReadingRepositor
 export interface ContractInput {
   readonly sessionId: string
   readonly readingId: string
+  /**
+   * Which Intention this contract advances. NULL is ordinary — a contract with
+   * no Intention behind it is legal and is what every contract written before
+   * ADR-0011 has.
+   *
+   * It grants nothing and the gate never reads it. It must be supplied HERE,
+   * at draft time: `handoff_contract_frozen_once_accepted` permits an UPDATE
+   * only while `status = 'draft'`, so there is no later moment to write it in.
+   *
+   * Optional rather than required, which is a decision and not laziness. Every
+   * contract that already exists has no Intention and none are backfilled, so
+   * making this required would be a demand that eight fixtures invent a value
+   * the product does not have — and an invented value on a durable row about
+   * purpose is the one thing this table exists not to hold.
+   */
+  readonly intentionId?: string | null
   readonly objective: string
   readonly definitionOfDone: string
   readonly guidance: readonly string[]

@@ -869,6 +869,37 @@ describe('deferred, and asserted as deferred', () => {
     ).toEqual([])
   })
 
+  it('nothing computes an IntentionState, so the lifecycle word is not on any screen', () => {
+    /**
+     * `intentionState()` is pure, total, tested eighteen ways — and called by
+     * nothing. Landed with the table and the repository, ahead of the screen
+     * that reads it, which is the same one-commit gap the computer-use tables
+     * sat in above and the same shape as the three defects at the top of this
+     * file. Asserting the absence is what keeps the two distinguishable.
+     *
+     * The owner is workstream 8, Home — *what is waiting on the person*. That
+     * screen is where ADR-0011's softest claim gets paid: **on screen wherever
+     * it is used** is a requirement on `.tsx` files, not a property of the
+     * schema, and the ADR ships no test that would notice it stopped being
+     * true. This one does not check that either. It checks only that nobody has
+     * quietly started rendering the word without moving this claim.
+     *
+     * `INTENTION_STATES` is asserted alongside `intentionState` because it is
+     * the half a screen reaches for FIRST — the consumer labels are rendered
+     * rather than the ids, so a Home that listed states without computing one
+     * would light up this line and not the one above it.
+     */
+    const state = 'src/domain/intention/state.ts'
+
+    expect(
+      callersOf('intentionState(', state),
+      'IntentionState is computed now — move this into the section above',
+    ).toEqual([])
+    expect(
+      callersOf('INTENTION_STATES', state),
+      'the state labels are rendered now — move this into the section above',
+    ).toEqual([])
+  })
 })
 
 describe('the extension can actually capture', () => {

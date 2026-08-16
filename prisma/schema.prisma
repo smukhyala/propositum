@@ -34,9 +34,75 @@ datasource db {
 
 // ═══════════════════════════════════════════════════════════ 1. Observation
 
+/// One durable statement of what a person is trying to accomplish, written or
+/// ratified by that person. ADR-0011.
+///
+/// ── MUTABLE, and it gets NO append-only triggers ─────────────────────────
+///
+/// Project's reasoning, verbatim: it holds no inference and carries no
+/// provenance, so nothing about it is append-only. No REQUIRED_GUARDS entry, no
+/// triggers.sql change, no row in tests/append-only.test.ts's hand-maintained
+/// checklist. Rewriting the sentence is the correction channel and there is no
+/// second one.
+///
+/// ── HUMAN-RATIFIED ONLY, which is a shape rather than a rule ─────────────
+///
+/// A person creates one and a person edits one. No detector writes one, no
+/// model boundary writes one, and NO MODEL-FACING SCHEMA HAS A FIELD THAT COULD
+/// CARRY ONE — the same structural bar WorkOffer stands behind. It is not
+/// evidence, it carries no provenance, and inference never reads it:
+/// `matchProject` gets no new input from it and no SessionReading consults it.
+///
+/// Ratified is not the same as written. The sentence a person accepts at the
+/// offer screen was composed by a model from page titles and search terms; what
+/// is structural is that no model writes the ROW.
+///
+/// Distinct from ActionIntent and StatedIntent, which are a prefix away and
+/// share nothing with it. `intentId` in the runtime is an ActionIntent's id in
+/// all 141 of its occurrences and never this. The collision is accepted, not
+/// fixed — ADR-0011 §4.
+model Intention {
+  id String @id @default(cuid())
+
+  /// NULLABLE, and UNIQUE: at most one Intention per Project (ADR-0011). The
+  /// uniqueness is the deferral held as a shape rather than as a rule — the
+  /// hard question, *which Intention does this sitting belong to?*, is safe
+  /// only for as long as it cannot be asked, and a second row is where it
+  /// starts being asked. Null means a statement not yet filed under a
+  /// workspace.
+  projectId String? @unique
+
+  /// What the person is trying to accomplish, in their words.
+  objective        String
+  /// What would count as done. `definitionOfDone`, NEVER `definitionOfSuccess`
+  /// — StatedIntent already owns this field name and a StatedIntent is this
+  /// row's per-handoff restatement. Two words for one concept a lifecycle stage
+  /// apart is what the banned-words table exists to stop.
+  definitionOfDone String
+
+  /// Set by a person, and only by a person. `IntentionState.done` derives from
+  /// this and from nothing else — there is no IntentionStatus column, because
+  /// two stores for one truth is exactly how a UI comes to display something
+  /// the gate cannot enforce.
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  project   Project?          @relation(fields: [projectId], references: [id])
+  sessions  WorkSession[]
+  contracts HandoffContract[]
+
+  @@map("intention")
+}
+
 /// The single durable workspace. Owns every ApprovedSource, Document and
 /// WorkSession. Holds no objective, no status and no description — a
 /// description that inference reads is a project goal in disguise.
+///
+/// A Project may own AT MOST ONE Intention (ADR-0011), and the ban above is
+/// untouched: the objective lives on the Intention, which is human-ratified and
+/// — the half that carries the ban — never read by the detector. `matchProject`
+/// still compares subject words to `name` and gains no new input.
 model Project {
   id        String   @id @default(cuid())
   name      String
@@ -45,6 +111,7 @@ model Project {
   sources   ApprovedSource[]
   sessions  WorkSession[]
   documents Document[]
+  intention Intention?
 
   @@map("project")
 }
@@ -53,14 +120,27 @@ model Project {
 /// not a single intention. Survives handoffs, idle, lid close, sleep, service
 /// worker death and permission revocation — only a human act ends it.
 model WorkSession {
-  id        String    @id @default(cuid())
-  projectId String
+  id          String    @id @default(cuid())
+  projectId   String
+  /// The Intention this sitting advances, if the person has stated one.
+  ///
+  /// NULLABLE, and NOTHING BACKFILLS IT (ADR-0011). Every session recorded
+  /// before that ADR keeps a null, which is the honest value: nobody wrote an
+  /// Intention for them. A sitting may point at ONE, at none, and never at two.
+  intentionId String?
   /// SessionPhase: observing | away | ended
-  phase     String    @default("observing")
-  startedAt DateTime  @default(now())
-  endedAt   DateTime?
+  phase       String    @default("observing")
+  startedAt   DateTime  @default(now())
+  endedAt     DateTime?
 
   project   Project            @relation(fields: [projectId], references: [id])
+  /// `SetNull` is DECLARED rather than inherited from Prisma's default for an
+  /// optional relation, because the two nullable Intention keys want opposite
+  /// answers and a default cannot say which. Here null is already the ordinary
+  /// value and already means *nobody stated an Intention for this sitting*, so
+  /// a deleted Intention leaving that behind says something true. Nothing about
+  /// a WorkSession is frozen, so this UPDATE meets no trigger.
+  intention Intention?         @relation(fields: [intentionId], references: [id], onDelete: SetNull)
   events    ObservationEvent[]
   readings  SessionReading[]
   contracts HandoffContract[]
@@ -265,15 +345,24 @@ model WorkOffer {
 /// continuation. No AgentRun may start from an unaccepted contract, and NOTHING
 /// in the controls can switch off human ratification.
 model HandoffContract {
-  id         String    @id @default(cuid())
-  sessionId  String
-  readingId  String
+  id          String    @id @default(cuid())
+  sessionId   String
+  readingId   String
+  /// Which Intention this contract ADVANCES — nothing more. It grants nothing,
+  /// the gate does not read it, and `compilePolicy` cannot receive it.
+  ///
+  /// NULLABLE, and written AT DRAFT TIME. Every contract written before
+  /// ADR-0011 keeps a null and none are backfilled — and none could be:
+  /// `handoff_contract_frozen_once_accepted` permits an UPDATE only while
+  /// `status = 'draft'`, so a column filled in after acceptance is a column
+  /// that cannot be filled in at all.
+  intentionId String?
   /// draft | accepted — two values only. Supersession would be derived from a
   /// successor's supersedesId, so the immutability trigger has a single job.
-  status     String    @default("draft")
+  status      String    @default("draft")
   /// The shift start AND the origin of the deadline, so a crash-restart cannot
   /// silently reset the budget. Deadline is DERIVED, never stored.
-  acceptedAt DateTime?
+  acceptedAt  DateTime?
 
   /// StatedIntent — human-ratified but still PROSE, because spans of it
   /// originate in page-derived text. compilePolicy's parameter types are
@@ -325,6 +414,27 @@ model HandoffContract {
 
   session     WorkSession      @relation(fields: [sessionId], references: [id])
   reading     SessionReading   @relation(fields: [readingId], references: [id])
+  /// `Restrict`, DECLARED — and this is the one referential action in the file
+  /// worth reading twice.
+  ///
+  /// Prisma's default for an optional relation is `SetNull`, and `SetNull` here
+  /// is an UPDATE on this table. `handoff_contract_frozen_once_accepted` aborts
+  /// any UPDATE where `OLD.status = 'accepted'`, and SQLite's
+  /// SQLITE_CONSTRAINT_TRIGGER comes back through Prisma as P2003 *"Foreign key
+  /// constraint violated"* — so deleting an Intention that an accepted contract
+  /// advanced would have failed with an error naming a relation problem that
+  /// did not exist. Worse in the other direction: on a DRAFT contract the same
+  /// default would silently erase the record of which Intention it advances.
+  ///
+  /// `Restrict` refuses the delete outright, for drafts and accepted rows
+  /// alike, and its P2003 is then TRUE — there really is a row referencing this
+  /// one. THE HONEST LIMIT, stated rather than discovered: an Intention that any
+  /// HandoffContract points at cannot be deleted at all. ADR-0011 says a person
+  /// can *"see, edit and delete"* an Intention; see and edit are unrestricted
+  /// (nothing here freezes this row), delete is not, and the eventual
+  /// `IntentionRepository.delete` must be written against that rather than
+  /// against a capability this storage layer does not have.
+  intention   Intention?       @relation(fields: [intentionId], references: [id], onDelete: Restrict)
   baseVersion DocumentVersion? @relation(fields: [baseVersionId], references: [id])
   runs        AgentRun[]
   changesets  Changeset[]

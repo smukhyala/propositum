@@ -81,15 +81,21 @@ would consult.
 ## 1. Observation
 
 ### Intention — *table*
-**Specified 2026-08-16 by [ADR-0011](docs/adr/0011-intention-above-worksession.md), and not yet in
+~~**Specified 2026-08-16 by [ADR-0011](docs/adr/0011-intention-above-worksession.md), and not yet in
 `prisma/schema.prisma`. This entry is a specification rather than a description**, and the first
 sentence of it says so rather than the twenty-fifth. There is no `Intention` model and no
 `intentionId` column today; the columns below are owed, and reading them as a report of the database
-is the mistake §4's claim fence is already there to name.
+is the mistake §4's claim fence is already there to name.~~
+**Amended 2026-08-16, later the same day: the schema landed, and this entry is now a description.**
+`model Intention` is in `prisma/schema.prisma` with the seven columns below, and so are both nullable
+foreign keys. The struck sentence is kept rather than deleted because the transition it marks is the
+one ADR-0011 told a reader to check — *until they are in `prisma/schema.prisma`, this ADR is a
+specification rather than a description* — and a reader has to be able to see which side of it they
+are on.
 
 One durable statement of what a person is trying to accomplish, written or ratified by that person:
-`id`, `projectId` (nullable), `objective`, `definitionOfDone`, `completedAt` (nullable),
-`createdAt`, `updatedAt`.
+`id`, `projectId` (nullable, and `@unique` — that index is how *at most one per Project* is actually
+held), `objective`, `definitionOfDone`, `completedAt` (nullable), `createdAt`, `updatedAt`.
 
 **Human-ratified only, and that is the whole of it.** A person creates one and a person edits one.
 No detector writes one, no model boundary writes one, and **no model-facing schema has a field that
@@ -116,12 +122,28 @@ Rewriting the sentence is the correction channel and there is no second one.
 **At most one per Project** ([ADR-0011](docs/adr/0011-intention-above-worksession.md)) — a deferral,
 not a model. It is safe only because the hard question — *which Intention does this sitting belong
 to?* — never gets asked. The second Intention per Project is where that stops being true, and
-`matchProject` is already known to sometimes fold two subjects into one.
+`matchProject` is already known to sometimes fold two subjects into one. *Held as a unique index on
+`projectId` (2026-08-16), so the writer that would mint a rival is refused by the database rather
+than trusted not to.* The corollary the code now holds everywhere a sitting begins or moves: **a
+`WorkSession` points at its Project's Intention, or at nothing** — which is why re-filing a sitting
+sets `intentionId` alongside `projectId`, and why splitting one out sets it to null.
 
-**The schema this entry authorises is exactly one mutable table and two nullable foreign keys**
+~~**The schema this entry authorises is exactly one mutable table and two nullable foreign keys**
 (`WorkSession.intentionId`, `HandoffContract.intentionId`), by ADR-0011 and by nothing else. If more
 ever exists under this name it was not authorised here. The *less exists* case is the one that holds
-right now, and it is stated in this entry's first line rather than left to be discovered here.
+right now, and it is stated in this entry's first line rather than left to be discovered here.~~
+**Amended 2026-08-16: what was authorised is what exists.** One mutable table and the two nullable
+foreign keys, and nothing else under this name — no triggers, no `REQUIRED_GUARDS` entry, no status
+column. The *less exists* case no longer holds; the claim to check is now equality rather than
+shortfall.
+
+**Delete has a limit, and it is in the storage layer rather than in a rule.**
+`HandoffContract.intention` is declared `onDelete: Restrict`, so **an Intention that any
+HandoffContract points at cannot be deleted at all** — deliberately, because the alternative
+(Prisma's default `SetNull`) is an UPDATE, and on an accepted contract
+`handoff_contract_frozen_once_accepted` aborts it with a P2003 that names a relation problem which
+does not exist. See and edit are unrestricted; delete is not, and whoever writes
+`IntentionRepository.delete` inherits that rather than discovers it.
 
 Distinct from `ActionIntent` and `StatedIntent`, which are a prefix away and share nothing with it.
 `intentId` in the runtime is an `ActionIntent`'s id in all 141 of its occurrences and never an
@@ -161,6 +183,13 @@ thing an Intention exists not to do.
 
 `now` is a parameter, never read from the clock: `src/domain/**` may never call `Date.now()` or
 `new Date()`, and `tests/architecture.test.ts` enforces it by grepping source text.
+
+**Computed by `src/domain/intention/state.ts` as of 2026-08-16, and rendered by nothing yet.** The
+function and the five consumer labels exist and are tested; no screen calls either, and
+`tests/reachability.test.ts`'s *deferred, and asserted as deferred* block pins that absence so the
+suite turns red the day one does. Until then the table below is a description of the function and a
+specification of the interface, and ADR-0011's softest claim — *on screen wherever it is used* — is
+owed rather than kept.
 *Checked against the banned words:* not `status` (displaced), not `SessionState` (that is
 `SessionReading`), not `phase` — `SessionPhase` is per sitting and is a different thing.
 *Displaces:* IntentionStatus · status · lifecycle state (as a column) · state machine · stalled ·
@@ -203,17 +232,24 @@ Intention rather than here: there is still **no objective, no status and no free
 this row**. The ban survives because its reason survives — it forbids *a description that inference
 reads*. An Intention is human-ratified and — the half that actually carries the ban — **never read
 by the detector**; `matchProject` still compares subject words to `name` and gains no new input.
-Auto-naming still writes `name` and nothing else, and a Project with no Intention is the ordinary
+Auto-naming still writes `name` and nothing else, and ~~a Project with no Intention is the ordinary
 case, because a Project is created by accepting an offer and an Intention is created by a person
-typing or accepting one.
+typing or accepting one.~~ *amended 2026-08-16, when the writer landed:* **accepting a composed offer
+creates both in the same click** — the Project from the subject the detector named, the Intention
+from the two sentences that were on the screen — so a Project **with** an Intention is now the
+ordinary case for work started that way. A Project **without** one stays perfectly legal and is what
+every project created before that ADR has, what the degraded accept (nothing composed, so nothing was
+on screen to ratify) produces, and what `splitIntoNewProject` produces. Null still means *nobody
+stated an Intention for this*, and nothing backfills it.
 *Displaces:* Workspace · Space · Folder · Board · Account · Client · ProjectGoal.
 **Consumer:** Project.
 
 ### WorkSession — *table*
 One explicitly started and explicitly ended stretch of desk time in one Project
-(`id`, `projectId`, `intentionId?`, `phase`, `startedAt`, `endedAt?` — `intentionId?` alone is
+(`id`, `projectId`, `intentionId?`, `phase`, `startedAt`, `endedAt?` — ~~`intentionId?` alone is
 *specified 2026-08-16 by [ADR-0011](docs/adr/0011-intention-above-worksession.md) and not yet in
-`prisma/schema.prisma`*; the other five are there today). ~~A **sitting, not a single
+`prisma/schema.prisma`*; the other five are there today~~ *amended 2026-08-16: all six are in
+`prisma/schema.prisma`*). ~~A **sitting, not a single
 intention**: it may contain several strands and the reading names the dominant one.~~ **Amended
 2026-08-16 ([ADR-0011](docs/adr/0011-intention-above-worksession.md)): still a sitting and not a
 single intention — and the sentence is now literal rather than figurative.** It may still contain
@@ -593,13 +629,21 @@ reference.
 ### HandoffContract — *table*
 The persisted, human-ratified agreement governing exactly one autonomous continuation
 (`id`, `sessionId`, `sessionReadingId`, `intentionId?`, `status: draft | accepted`, `acceptedAt`,
-plus the three value objects below — `intentionId?` alone is *specified 2026-08-16 by
-[ADR-0011](docs/adr/0011-intention-above-worksession.md) and not yet in `prisma/schema.prisma`*).
+plus the three value objects below — ~~`intentionId?` alone is *specified 2026-08-16 by
+[ADR-0011](docs/adr/0011-intention-above-worksession.md) and not yet in `prisma/schema.prisma`*~~
+*amended 2026-08-16: `intentionId` is in `prisma/schema.prisma` with the rest*).
 
-`intentionId` is nullable and **specified rather than present**, by
+`intentionId` is nullable and ~~**specified rather than present**~~ ***present as of 2026-08-16***, by
 [ADR-0011](docs/adr/0011-intention-above-worksession.md). It records **which Intention this contract
 advances** — nothing more. It grants nothing, the gate does not read it, and `compilePolicy` cannot
 receive it. Every contract written before that ADR keeps a null and none are backfilled.
+
+**Written at draft time or never.** `handoff_contract_frozen_once_accepted` permits an UPDATE only
+while `status = 'draft'`, so a value not set when the row is created is a value that can never be
+set — which is also why the relation is declared `onDelete: Restrict` rather than left on Prisma's
+`SetNull` default: nulling this column is an UPDATE, and on an accepted contract the trigger aborts
+it. The consequence is stated in the `Intention` entry: an Intention any contract points at cannot
+be deleted.
 
 Status has **two** values only. Supersession, if continuation ever ships, is derived from a
 successor's `supersedesId` — which means the immutability trigger has a single job (permit UPDATE

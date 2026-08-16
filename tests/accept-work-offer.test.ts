@@ -78,7 +78,7 @@ beforeEach(() => {
  * under a signature the way `/api/session/current` pins one before it will emit
  * an offer at all.
  */
-function watched(): string {
+function watchedAs(subject: string, terms: readonly string[]): string {
   const store = stores.ambientStore()
   const now = Date.now()
   const pages = [
@@ -91,11 +91,15 @@ function watched(): string {
     store.record({ at: now, origin: page.origin, url: page.url, title: page.title, kind: 'navigation' }, now)
   }
 
-  const signature = ambient.signatureOf(['northwind', 'partners'])
+  const signature = ambient.signatureOf([...terms])
   store.rememberThread(signature, pages.map((p) => p.url))
   store.startNaming(signature)
-  store.remember({ signature, subject: 'northwind partners', confident: true })
+  store.remember({ signature, subject, confident: true })
   return signature
+}
+
+function watched(): string {
+  return watchedAs('northwind partners', ['northwind', 'partners'])
 }
 
 /** A composed offer against the same thread. */
@@ -131,6 +135,18 @@ async function approvalsMentioning(host: string): Promise<number> {
 async function offerRowFor(sessionId: string) {
   const { repos } = await db.appContext()
   return repos.offers.forSession(sessionId)
+}
+
+/** Counted rather than read by id, because the assertion that matters most in
+ *  the degraded case is that NO row appeared anywhere. */
+async function intentionCount(): Promise<number> {
+  const { db: handle } = await db.appContext()
+  return handle.prisma.intention.count()
+}
+
+async function intentionFor(projectId: string) {
+  const { repos } = await db.appContext()
+  return repos.intentions.forProject(projectId)
 }
 
 /* ── the security property ───────────────────────────────────────────────── */
@@ -338,12 +354,17 @@ describe('an accepted offer becomes durable, and a declined one leaves nothing',
   it('starts a session and writes no offer row when nothing was composed', async () => {
     const signature = watched()
 
+    const before = await intentionCount()
     const result = await actions.acceptWorkOffer(signature, [NORTHWIND, CONTOSO])
     expect(result.ok).toBe(true)
     if (!result.ok) return
 
     expect(result.value.offerRecorded).toBe(false)
     expect(await offerRowFor(result.value.sessionId)).toBeNull()
+
+    // And no Intention either. Nothing was on screen, so nobody ratified
+    // anything, and Propositum does not state a purpose nobody was shown.
+    expect(await intentionCount()).toBe(before)
   })
 
   it('leaves no offer row behind for an offer nobody accepted', async () => {
@@ -367,5 +388,215 @@ describe('an accepted offer becomes durable, and a declined one leaves nothing',
     // And the offer is genuinely gone, so a stale one cannot be served against
     // a thread whose evidence has been thrown away.
     expect(stores.ambientStore().offerFor(signature)).toBeNull()
+  })
+})
+
+/**
+ * The Intention writer — the one path in the system that creates one.
+ *
+ * ── Why these exist as behavioural tests and not unit ones ───────────────
+ *
+ * `tests/repositories.test.ts` proves the row round-trips and
+ * `tests/intention.test.ts` proves the state function is right. Neither touches
+ * `acceptWorkOffer`, and both stayed green under two mutations that deleted the
+ * feature: replacing the ratified statement with `undefined`, and replacing
+ * both `intentionId` writes with `null`. A path the suite EXECUTES but never
+ * LOOKS AT is indistinguishable from one that does nothing, which is the same
+ * argument `tests/reachability.test.ts` opens with, one layer up.
+ *
+ * Each case uses a subject of its own so `matchProject` cannot fold it into a
+ * project some earlier case in this file created — these share one database
+ * file, and "reuses the existing Intention" is only an assertion if the test
+ * controls which project it lands in.
+ */
+describe('accepting an offer writes the Intention, and nothing else does', () => {
+  it('writes the two strings that were on screen, and hands back its id', async () => {
+    const signature = watchedAs('zephyr migration', ['zephyr', 'migration'])
+    composed(signature)
+
+    const before = await intentionCount()
+    // New work, so this founds its own project and cannot inherit one.
+    const result = await actions.acceptWorkOffer(signature, [NORTHWIND], true)
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+
+    expect(await intentionCount()).toBe(before + 1)
+
+    // On the result, not only in the database: ADR-0011's softest claim is *on
+    // screen wherever it is used*, and an id no caller can see is a screen that
+    // cannot meet it.
+    expect(result.value.intentionId).not.toBeNull()
+
+    const intention = await intentionFor(result.value.projectId)
+    expect(intention).toMatchObject({
+      id: result.value.intentionId,
+      // Field for field off the offer: `title` → `objective`, `produces` →
+      // `definitionOfDone`. Nothing is composed here, nothing summarised, and
+      // no second model call happens — the row holds the sentences that were on
+      // the screen when the person clicked.
+      objective: 'Write up how the two partner programmes differ.',
+      definitionOfDone: 'One page comparing the two, with the terms quoted.',
+      // No status column, so nothing but a person can ever make this non-null.
+      completedAt: null,
+    })
+
+    // And the sitting points at it, which is what makes `working` reachable.
+    const { repos } = await db.appContext()
+    expect((await repos.sessions.byId(result.value.sessionId))?.intentionId).toBe(
+      result.value.intentionId,
+    )
+  })
+
+  it('a second sitting on the same work reuses it rather than minting a rival', async () => {
+    const first = watchedAs('halogen rollout', ['halogen', 'rollout'])
+    composed(first)
+
+    const one = await actions.acceptWorkOffer(first, [NORTHWIND], true)
+    expect(one.ok).toBe(true)
+    if (!one.ok) return
+
+    // One live session at a time; the person finished the first sitting and
+    // came back to the same work later.
+    stores.captureStore().end()
+
+    const after = await intentionCount()
+    const second = watchedAs('halogen rollout', ['halogen', 'rollout'])
+    composed(second)
+
+    const two = await actions.acceptWorkOffer(second, [NORTHWIND])
+    expect(two.ok).toBe(true)
+    if (!two.ok) return
+
+    // Same project, same Intention, no second row. At most one per Project is
+    // held as a unique index, so a writer that minted a rival would raise P2002
+    // rather than quietly producing two statements of purpose for one job.
+    expect(two.value.projectId).toBe(one.value.projectId)
+    expect(two.value.intentionId).toBe(one.value.intentionId)
+    expect(await intentionCount()).toBe(after)
+  })
+
+  it('does not rewrite the sentence when the offer says something else', async () => {
+    /**
+     * The correction channel is the person rewriting it, and there is no second
+     * one. A model composing a new title in August must not silently replace
+     * what somebody ratified in March — that is the whole of "human-ratified",
+     * and it is why the accept path creates or reuses and never edits.
+     */
+    const first = watchedAs('cobalt audit', ['cobalt', 'audit'])
+    composed(first)
+
+    const one = await actions.acceptWorkOffer(first, [NORTHWIND], true)
+    expect(one.ok).toBe(true)
+    if (!one.ok) return
+
+    stores.captureStore().end()
+
+    const second = watchedAs('cobalt audit', ['cobalt', 'audit'])
+    const store = stores.ambientStore()
+    store.startComposing(second)
+    store.rememberOffer(second, {
+      signature: second,
+      promptVersion: 'offer@1',
+      title: 'Something else entirely.',
+      rationale: 'A later guess.',
+      outline: ['One'],
+      produces: 'A different thing.',
+      excludes: [],
+      expects: ['document-changes'],
+      grounds: { kinds: ['came-back'], sufficient: true, sentences: ['You came back.'] },
+      confident: true,
+    })
+
+    const two = await actions.acceptWorkOffer(second, [NORTHWIND])
+    expect(two.ok).toBe(true)
+    if (!two.ok) return
+
+    expect(await intentionFor(one.value.projectId)).toMatchObject({
+      objective: 'Write up how the two partner programmes differ.',
+      definitionOfDone: 'One page comparing the two, with the terms quoted.',
+    })
+  })
+
+  it('sitting back down at the same project picks the Intention up again', async () => {
+    /**
+     * The blocking half, and the reason it is blocking.
+     *
+     * `startSession` is the ordinary way a person returns to work that already
+     * exists, and it used to start the sitting with no Intention at all. That
+     * made `IntentionState` almost unreachable past `sleeping`: `working`
+     * derives from a live WorkSession ON THE INTENTION and `delegated` from an
+     * accepted HandoffContract on it, which `draftContract` stamps off the
+     * sitting — so both facts died with the one sitting that ratified it, and
+     * every later visit read as asleep with the person sat in front of it.
+     *
+     * Nothing here writes an Intention. The count is asserted precisely because
+     * the fix must be a READ of a row somebody already ratified.
+     */
+    const signature = watchedAs('tungsten review', ['tungsten', 'review'])
+    composed(signature)
+
+    const accepted = await actions.acceptWorkOffer(signature, [NORTHWIND], true)
+    expect(accepted.ok).toBe(true)
+    if (!accepted.ok) return
+    expect(accepted.value.intentionId).not.toBeNull()
+
+    const { repos } = await db.appContext()
+    await actions.endSession(accepted.value.sessionId)
+
+    const before = await intentionCount()
+    const again = await actions.startSession(accepted.value.projectId)
+    expect(again.ok).toBe(true)
+    if (!again.ok) return
+
+    expect((await repos.sessions.byId(again.value.sessionId))?.intentionId).toBe(
+      accepted.value.intentionId,
+    )
+    expect(await intentionCount()).toBe(before)
+  })
+
+  it('a sitting split out of the wrong project leaves the Intention behind', async () => {
+    /**
+     * The one correction a person has for *this is not that work*. The sitting
+     * used to keep pointing at the Intention filed under the project it just
+     * left, and `draftContract` reads `session.intentionId` onto the contract —
+     * so the sentence they had just rejected would have arrived on a contract in
+     * the new project, with nothing on screen saying it had. Null is the honest
+     * value for the same reason every pre-ADR-0011 row carries one: nobody has
+     * stated an Intention for this newly-split work.
+     */
+    const first = watchedAs('platinum handbook', ['platinum', 'handbook'])
+    composed(first)
+
+    const one = await actions.acceptWorkOffer(first, [NORTHWIND], true)
+    expect(one.ok).toBe(true)
+    if (!one.ok) return
+
+    stores.captureStore().end()
+
+    // A second sitting on the same work, so the project has the two siblings
+    // `splitIntoNewProject` requires — and so the split is the ordinary case
+    // rather than an exotic one.
+    const second = watchedAs('platinum handbook', ['platinum', 'handbook'])
+    composed(second)
+    const two = await actions.acceptWorkOffer(second, [NORTHWIND])
+    expect(two.ok).toBe(true)
+    if (!two.ok) return
+    expect(two.value.intentionId).toBe(one.value.intentionId)
+
+    const split = await actions.splitIntoNewProject(two.value.sessionId, 'actually something else')
+    expect(split.ok).toBe(true)
+    if (!split.ok) return
+
+    const { repos } = await db.appContext()
+    expect(await repos.sessions.byId(two.value.sessionId)).toMatchObject({
+      projectId: split.value.projectId,
+      intentionId: null,
+    })
+
+    // The Intention itself is untouched — a correction re-files a sitting, it
+    // does not edit or delete a sentence a person ratified.
+    expect(await intentionFor(one.value.projectId)).toMatchObject({
+      id: one.value.intentionId,
+    })
   })
 })
