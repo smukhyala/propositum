@@ -277,6 +277,53 @@ describe('the safety machinery is reachable from the product', () => {
     ).not.toEqual([])
   })
 
+  it('a model call is written down, or the ledger cannot reconstruct what ran', () => {
+    /**
+     * Moved up out of *deferred, and asserted as deferred* when the provider
+     * factory landed. Acceptance bullet 11 says the full ledger reconstructs
+     * what happened; `model_call_record` had a table, all three append-only
+     * triggers and no writer, while `AnthropicModelClient` computed every field
+     * of it on every attempt and handed them to an `onCall` hook nothing passed.
+     *
+     * ── The needle changed with the claim, and that is worth reading ──────
+     *
+     * The pin was written as `modelCallRecord.create`, before the repository
+     * existed. `callersOf` EXCLUDES the defining file, and the only text in the
+     * repo matching that string is the Prisma delegate inside it — so the pin
+     * could only ever have gone red for a repository that happened to be named
+     * `modelCallRecord`, and would have stayed green through a correctly wired
+     * `modelCalls`. It was a weaker assertion than it read as. The claim is
+     * unchanged; the needle now names the accessor the callers actually write,
+     * which is the convention every assertion above it already follows
+     * (`reports.create`, `outcomes.create`, `findings.create(`).
+     */
+    expect(
+      callersOf('modelCalls.create', 'src/persistence/repositories/index.ts'),
+      'nothing writes a ModelCallRecord — every call is computed and discarded',
+    ).not.toEqual([])
+  })
+
+  it('one factory builds the model client, or the model id has five owners', () => {
+    /**
+     * Not reachability — the mirror of it, and it lives here because this file
+     * is already the place that greps source text for a claim about wiring.
+     *
+     * `AnthropicModelClientOptions.model` existed for the whole build and NO
+     * caller passed it, because five sites each wrote the constructor by hand
+     * and none of them owned configuration. The same omission is what left
+     * `onCall` unpassed at all five. Collapsing them is only worth something if
+     * a sixth cannot appear, and "cannot" is a grep rather than a note in an
+     * ADR.
+     *
+     * Production only. The live tests construct the client directly and should
+     * keep doing so — they are testing the client, not the wiring.
+     */
+    expect(
+      callersOf('new AnthropicModelClient', 'src/model/provider.ts'),
+      'something builds the model client outside the factory — the model id and the ModelCallRecord hook are set in one place',
+    ).toEqual([])
+  })
+
   /**
    * Every threshold the detector exports is read by something.
    *
@@ -691,6 +738,86 @@ describe('the safety machinery is reachable from the product', () => {
     ).toContain('scripts/worker.ts')
   })
 
+  it('the lifecycle word is computed and rendered, or the Intention is invisible', () => {
+    /**
+     * Moved up out of *deferred, and asserted as deferred* when Home began
+     * deriving each row's status word from `intentionState` — which is that
+     * block working as intended, and this is the relocation it demands rather
+     * than a deletion.
+     *
+     * What was wrong before is worth keeping, because it is the reason the
+     * screen matters: Home read the status word off the most recent sitting's
+     * `phase`, so a project whose shift ended with an unanswered question
+     * rendered `idle` — the same word as a project nobody had touched in a
+     * month. `intentionState` ranks `needs-you` above every activity word for
+     * exactly that case.
+     *
+     * `INTENTION_STATES` is asserted alongside it because it is the half the
+     * screen reaches for LAST — the consumer labels are rendered rather than
+     * the ids, so a caller that computed a state and then wrote its own words
+     * for it would satisfy the first line and not this one.
+     *
+     * ── Both needles now name `front-door.ts`, and that is not a weakening ──
+     *
+     * The derivation was in `src/app/page.tsx` and this pair pointed at it. A
+     * review then mutated the call there so that every row rendered *Sleeping*
+     * and no row could reach `needs-you`, and the whole suite stayed green:
+     * a grep for a call is satisfied by a call whose result is discarded, and
+     * this file's own docblock claimed otherwise. The three derived fields moved
+     * to `src/server/front-door.ts`, where `tests/front-door.test.ts` asserts
+     * the CONSUMER LABEL rather than the presence of a call — so that mutation
+     * is now caught by a test rather than by a grep it could walk past.
+     *
+     * The second hop is asserted below, because a helper Home stopped calling
+     * would leave both lines above green and the screen wordless.
+     *
+     * What this still does NOT check is ADR-0011's softest claim — *on screen
+     * wherever it is used*. That is a requirement on `.tsx` files, and nothing
+     * in this suite renders one. The closest things to a test for it are
+     * `tests/front-door.test.ts`, which holds everything but the markup, and the
+     * bottom of this file, where the agreement screen's account of where its
+     * words came from is pinned to the code that produces them.
+     */
+    const state = 'src/domain/intention/state.ts'
+    const frontDoor = 'src/server/front-door.ts'
+
+    expect(
+      callersOf('intentionState(', state),
+      'nothing computes an IntentionState — the front door is guessing from a phase again',
+    ).toContain(frontDoor)
+    expect(
+      callersOf('INTENTION_STATES', state),
+      'the lifecycle words are written somewhere other than the one place that holds them',
+    ).toContain(frontDoor)
+    expect(
+      callersOf('frontDoorRow(', frontDoor),
+      'Home derives no row state — the computed word reaches no screen',
+    ).toContain('src/app/page.tsx')
+    expect(
+      callersOf('statusWordFor(', frontDoor),
+      'Home renders no lifecycle word — the state is computed and dropped',
+    ).toContain('src/app/page.tsx')
+  })
+
+  it('the re-entry note is reachable from the front door, or it stays four clicks deep', () => {
+    /**
+     * `/shifts/<contractId>` is where "While you were away" lives, and Home did
+     * not link to it at all — the finished note was reachable only by opening
+     * the project, then the sitting, then the link on it. The screen a person
+     * lands on is the screen that has to say something is waiting.
+     *
+     * The label is asserted too, and that is not fussiness. It is the masthead
+     * of the destination and the wording of every other link that reaches it;
+     * a second phrase for one place is a second thing to learn.
+     */
+    const home = readFileSync(join(repo, 'src/app/page.tsx'), 'utf8')
+
+    expect(home, 'Home has no route to a shift report').toMatch(/href=\{`\/shifts\//)
+    expect(stripComments(home), 'the link to the re-entry note calls it something else').toContain(
+      'While you were away',
+    )
+  })
+
   it('the browser tools are reachable from the run path, or the six kinds cannot act', () => {
     /**
      * `ACTION_KINDS` gained six members in wave 2 and the loop threw on all of
@@ -751,16 +878,6 @@ describe('deferred, and asserted as deferred', () => {
     expect(
       callersOf('controlLost', 'src/domain/execution/stop-conditions.ts'),
       'something reports control loss now — move this into the section above',
-    ).toEqual([])
-  })
-
-  it('no model call is recorded, so the ledger does not reconstruct them', () => {
-    // Acceptance bullet 11 says the full ledger reconstructs what happened.
-    // `model_call_record` has a table and append-only guards and no writer.
-    // The hook exists — `AnthropicModelClient` takes `onCall`.
-    expect(
-      callersOf('modelCallRecord.create', 'src/persistence/repositories/index.ts'),
-      'model calls are recorded now — move this into the section above',
     ).toEqual([])
   })
 
@@ -866,38 +983,6 @@ describe('deferred, and asserted as deferred', () => {
     expect(
       callersOf('createBrowserControl(', 'src/runtime/browser-control.ts'),
       'a run drives the browser now — move this into the section above',
-    ).toEqual([])
-  })
-
-  it('nothing computes an IntentionState, so the lifecycle word is not on any screen', () => {
-    /**
-     * `intentionState()` is pure, total, tested eighteen ways — and called by
-     * nothing. Landed with the table and the repository, ahead of the screen
-     * that reads it, which is the same one-commit gap the computer-use tables
-     * sat in above and the same shape as the three defects at the top of this
-     * file. Asserting the absence is what keeps the two distinguishable.
-     *
-     * The owner is workstream 8, Home — *what is waiting on the person*. That
-     * screen is where ADR-0011's softest claim gets paid: **on screen wherever
-     * it is used** is a requirement on `.tsx` files, not a property of the
-     * schema, and the ADR ships no test that would notice it stopped being
-     * true. This one does not check that either. It checks only that nobody has
-     * quietly started rendering the word without moving this claim.
-     *
-     * `INTENTION_STATES` is asserted alongside `intentionState` because it is
-     * the half a screen reaches for FIRST — the consumer labels are rendered
-     * rather than the ids, so a Home that listed states without computing one
-     * would light up this line and not the one above it.
-     */
-    const state = 'src/domain/intention/state.ts'
-
-    expect(
-      callersOf('intentionState(', state),
-      'IntentionState is computed now — move this into the section above',
-    ).toEqual([])
-    expect(
-      callersOf('INTENTION_STATES', state),
-      'the state labels are rendered now — move this into the section above',
     ).toEqual([])
   })
 })
@@ -1025,6 +1110,69 @@ describe('a project nobody created can still be corrected', () => {
     expect(actions, 'createProject is exported again — a person can file work by hand').not.toMatch(
       /export\s+async\s+function\s+createProject\b/,
     )
+  })
+})
+
+/**
+ * ADR-0011's softest claim, given the closest thing to a test it can have.
+ *
+ * The ADR says of its own argument: *"One third of the answer to CONTEXT.md's
+ * ruling is a UI requirement, not a schema property… this ADR ships no test
+ * that would notice if it stopped being true."* This is that test, and it is
+ * honest about being half of one.
+ *
+ * What it CAN check is that the sentence on the agreement screen is currently
+ * true: the two pre-filled fields are built from the handoff boundary's output,
+ * over claims from this sitting, and a durable Intention's words reach neither.
+ * What it cannot check is the branch that does not exist — the day something
+ * pre-fills either field from an Intention, this goes red, and the fix is to
+ * say WHEN those words were written rather than to loosen the grep.
+ */
+describe('the agreement screen says where its two sentences came from', () => {
+  it('the pre-filled words come from this sitting’s reading, and from nothing older', () => {
+    /**
+     * What this catches, and what it does not — because the component's own
+     * docblock used to claim the stronger version of both.
+     *
+     * It catches the assignment being REWIRED: the objective coming from
+     * anywhere other than the drafting call would have to change these two
+     * lines. It does NOT catch an Intention-sourced value arriving as an
+     * ADDITIONAL field that `Agreement` then prefers — the literals below would
+     * still be present, this stays green, and the screen's paragraph becomes
+     * false. Closing that needs a provenance discriminant on `ContractDrafted`,
+     * which is a union with one arm and an unreachable branch until a second
+     * source exists. Named here rather than left for a reader to discover.
+     */
+    const actions = readFileSync(join(repo, 'src/server/actions.ts'), 'utf8')
+    const drafting = actions.slice(
+      actions.indexOf('export async function draftContract'),
+      actions.indexOf('export async function acceptContract'),
+    )
+
+    // Guards against the slice silently matching nothing, which would make
+    // every assertion below vacuous.
+    expect(drafting.length).toBeGreaterThan(200)
+
+    expect(
+      drafting,
+      'the drafted objective no longer comes from this sitting’s reading — the agreement screen must now say where it does come from, and when those words were written',
+    ).toMatch(/objective:\s*drafted\.value\.objective/)
+    expect(
+      drafting,
+      'the drafted definition of done no longer comes from this sitting’s reading — same fix as above',
+    ).toMatch(/definitionOfDone:\s*drafted\.value\.definitionOfDone/)
+  })
+
+  it('and the screen makes that claim out loud, rather than leaving it implied', () => {
+    // Comments stripped for the reason the top of this file gives: the
+    // component's own docblock says this phrase, and a claim satisfied by a
+    // comment about the claim is the failure that verified this whole file.
+    const agreement = stripComments(readFileSync(join(repo, 'src/ui/agreement.tsx'), 'utf8'))
+
+    expect(
+      agreement,
+      'the agreement screen no longer says where its pre-filled sentences came from',
+    ).toContain('Worked out from this session')
   })
 })
 

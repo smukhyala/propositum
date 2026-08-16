@@ -32,6 +32,59 @@
  *     publish, buy, delete. Absence of capability is the strongest prohibition
  *     available, and it is not something a setting could turn back on.
  *
+ * ── Where the two pre-filled sentences came from, said out loud ──────────
+ *
+ * ADR-0011 names its own weak link and this screen is where it lands:
+ *
+ *   > A handoff screen that pre-fills a `StatedIntent` from an Intention and
+ *   > does not say where the words came from would reproduce the exact failure
+ *   > the ruling described.
+ *
+ * The ruling it means is `CONTEXT.md`'s, and its objection is INVISIBILITY
+ * rather than duration — *a stale objective inherited quietly by the next
+ * sitting is worse than a cold read, because nothing on screen would say it had
+ * been.* Two thirds of the answer are structural: no model writes an Intention,
+ * and no model-facing schema has a field that could carry one. The third is a
+ * sentence someone has to keep true in a `.tsx` file, and it is this one.
+ *
+ * **Today both sentences come from this sitting's reading and from nothing
+ * else.** `draftContract` builds them from the handoff boundary's output, over
+ * claims produced from this session's own events; the Intention is stamped onto
+ * the contract as an id and its words are read by nothing. So the honest half
+ * of the requirement is the half this screen can keep, and `WhereTheWordsCameFrom`
+ * keeps it: a person can tell *this is what I worked out from this afternoon*
+ * from *this is what you said in March*, because the screen says which it is.
+ *
+ * **What is still owed, named rather than implied:** the other branch. The day
+ * anything pre-fills either field from a durable Intention, this screen must
+ * also say WHEN those words were written, and that needs a field on
+ * `ContractDrafted` that does not exist — the provenance cannot be inferred
+ * here, and a screen that guessed it would be the failure wearing the fix's
+ * clothes.
+ *
+ * ── How weak the tripwire is, measured rather than asserted ──────────────
+ *
+ * This docblock used to say `tests/reachability.test.ts` *"pins the claim to
+ * the code that makes it true, so the day it stops being true the suite says
+ * so"*. It does not, and the overstatement is worth more than the reassurance.
+ * What that test actually does is grep the `draftContract`..`acceptContract`
+ * slice of `src/server/actions.ts` for `objective: drafted.value.objective` and
+ * the matching `definitionOfDone`. So:
+ *
+ *   - It DOES catch the sentence being rewired to a different source, because
+ *     the assignment it names would have to change.
+ *   - It does NOT catch an Intention-sourced value arriving as an ADDITIONAL
+ *     field that this component then prefers. Both greps stay green, the suite
+ *     stays green, and the paragraph below becomes false on screen.
+ *
+ * Closing that would mean `ContractDrafted` carrying an explicit provenance
+ * discriminant this component renders from — a union with exactly one arm
+ * today, and an unreachable branch beside it, which is the speculative shape
+ * this repo refuses elsewhere. So the tripwire stays as the partial thing it
+ * is, and this paragraph is the honest description of it: the second reader of
+ * this file is the guard against the second case, and there is no substitute
+ * named here that would make that untrue.
+ *
  * ── The quotations are beside the agreement, never inside it ─────────────
  *
  * ADR-0006 §4 and CONTEXT both settle this: an inferred `constraint` is
@@ -121,6 +174,11 @@ const CSS = `
 
 .ag-aside { margin: 1.75rem 0 0; padding: 1.1rem 1.25rem; border: 1px dashed var(--rule); background: var(--raised); }
 .ag-aside-head { font-family: var(--mono); font-size: 0.6875rem; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); margin: 0 0 0.6rem; }
+
+/* Attribution, in the shape this product already uses for it: a mono cite line
+   over the thing it accounts for, the same as tk-quote-said. */
+.ag-from { margin: 0 0 1.15rem; padding: 0.55rem 0 0.55rem 0.85rem; border-left: 2px solid var(--rule); color: var(--muted); font-size: 0.875rem; max-width: 40rem; }
+.ag-from-head { display: block; font-family: var(--mono); font-size: 0.6875rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); margin-bottom: 0.3rem; }
 
 .ag-pinned { margin: 0 0 0.7rem; padding: 0.7rem 0.85rem; border: 1px solid var(--attention); }
 .ag-pinned-head { font-family: var(--mono); font-size: 0.6875rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--attention); margin: 0 0 0.4rem; }
@@ -292,6 +350,8 @@ export function Agreement({ draft, defaults, sourceLabels, onBack, onHandedOver 
       <Styles />
 
       <Section title="What I'll work on" index={1}>
+        <WhereTheWordsCameFrom />
+
         <label>
           <span className="ag-label">The objective</span>
           <textarea
@@ -302,8 +362,8 @@ export function Agreement({ draft, defaults, sourceLabels, onBack, onHandedOver 
           />
         </label>
         <p className="ag-hint">
-          Propositum drafted this from what it read. Correct it — this sentence is what it works
-          towards, and it is easier to fix now than to unpick afterwards.
+          Correct it &mdash; this sentence is what Propositum works towards, and it is easier to fix
+          now than to unpick afterwards.
         </p>
 
         <div style={{ marginTop: '1.6rem' }}>
@@ -560,6 +620,50 @@ export function Agreement({ draft, defaults, sourceLabels, onBack, onHandedOver 
 
         {problem ? <p className="ag-problem">{problem}</p> : null}
       </div>
+    </>
+  )
+}
+
+/* ── where the two sentences came from ──────────────────────────────────── */
+
+/**
+ * The account of the two pre-filled sentences, above the fields they account
+ * for.
+ *
+ * ── Why it is a fixed sentence and not a variable one ────────────────────
+ *
+ * Because the answer is currently fixed. `draftContract` writes `objective` and
+ * `definitionOfDone` from the handoff boundary's output, drafted over claims
+ * that came from this session's own events, and there is no path by which a
+ * durable Intention's words reach either field. Rendering a branch for the
+ * other case would be an attribution affordance nothing can reach — which reads
+ * as proof that provenance is handled here, while the case it is meant to
+ * handle stays unhandled. The screen says the one true thing instead.
+ *
+ * ── Why it names WHEN without printing a date ────────────────────────────
+ *
+ * The masthead above already carries this session's window — "3:41 pm — still
+ * going", or a closed range — so the time is on screen once, where a person
+ * reads it as the time of the sitting rather than as the time of a sentence. A
+ * second timestamp here would be the same fact twice, and the two could
+ * disagree after a reload.
+ *
+ * The distinction it exists to make is the one ADR-0011 asks for in a single
+ * line: **this is what I worked out from this afternoon**, not **this is what
+ * you said in March**. When the second becomes possible, the words are the
+ * thing that has to change here, and the date has to come with them.
+ */
+function WhereTheWordsCameFrom() {
+  return (
+    <>
+      <Styles />
+      <p className="ag-from">
+        <span className="ag-from-head">Worked out from this session</span>
+        Propositum wrote both sentences below from what it read in the session timed at the top of
+        this screen. Neither was carried over from an earlier session, and neither is a sentence you
+        settled before it &mdash; so read them as its account of this one, and change anything it
+        has wrong.
+      </p>
     </>
   )
 }

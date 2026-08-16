@@ -131,6 +131,18 @@ export interface IntentionFacts {
    * A judgment call Propositum declined to make. It is rendered as a decision,
    * never as an error, and it is the person's to answer — so it counts toward
    * `needs-you` for as long as it is there.
+   *
+   * **Nothing supplies a non-zero value today, as of 2026-08-16, and the rule
+   * below is correct rather than reachable.** *For as long as it is there* is
+   * the load-bearing phrase and the schema cannot honour it: a `DecisionNeeded`
+   * has no answered, resolved or verdict column, nothing deletes one, and the
+   * contract carrying it never leaves `accepted` — so a count of them can only
+   * ever go up. Ranked where it is, that pins `needs-you` onto an Intention
+   * permanently, which is the one way this member is expensive to be wrong
+   * about. The repository therefore reports zero and argues it at
+   * `IntentionStateFacts.openDecisions`; this rule stays because it is the
+   * right rule for the row, and it becomes reachable the day the row can be
+   * answered.
    */
   readonly openDecisions: number
 

@@ -165,7 +165,7 @@ already a durable row.
 |---|---|
 | `working` | a live WorkSession on this Intention, phase `observing` |
 | `delegated` | an accepted HandoffContract on it whose Shift has not ended |
-| `needs-you` | an unanswered ConfirmationRequest, a DecisionNeeded, or a held ShiftOutcome with undecided proposals |
+| `needs-you` | an unanswered ConfirmationRequest, ~~a DecisionNeeded,~~ or a held ShiftOutcome with undecided proposals |
 | `sleeping` | none of the above, and `completedAt` is null |
 | `done` | `completedAt` is set — by a person, and only by a person |
 
@@ -184,12 +184,34 @@ thing an Intention exists not to do.
 `now` is a parameter, never read from the clock: `src/domain/**` may never call `Date.now()` or
 `new Date()`, and `tests/architecture.test.ts` enforces it by grepping source text.
 
-**Computed by `src/domain/intention/state.ts` as of 2026-08-16, and rendered by nothing yet.** The
+**The `DecisionNeeded` row is struck, dated 2026-08-16, in the wave that put the word on a screen.**
+The rule was right and the fact is not available: a `DecisionNeeded` has no answered, resolved or
+verdict column, nothing deletes one, and the contract carrying it never leaves `accepted` — so the
+count can only ever go up, and `needs-you` outranks everything. One question raised by one Shift put
+**Needs you** on that Project's front door permanently, linking to a note where nothing could be
+done about it. `factsForEveryProject` therefore reports zero and argues it there; the rule stays in
+`intentionState` because it is the right rule for the row, and it becomes reachable the day the row
+can be answered. **What that costs is a missed `needs-you`** — a Shift that stopped to ask and
+produced nothing else now reads `sleeping` — and ADR-0011 is explicit that a missed one is the
+expensive direction. It is taken because the alternative was a word that is never right again after
+the first question. The unblock is a durable human act on the note: `ShiftReport.finishedAt`, or the
+fourth `*Verdict` this vocabulary already has three of.
+
+~~**Computed by `src/domain/intention/state.ts` as of 2026-08-16, and rendered by nothing yet.** The
 function and the five consumer labels exist and are tested; no screen calls either, and
 `tests/reachability.test.ts`'s *deferred, and asserted as deferred* block pins that absence so the
 suite turns red the day one does. Until then the table below is a description of the function and a
 specification of the interface, and ADR-0011's softest claim — *on screen wherever it is used* — is
-owed rather than kept.
+owed rather than kept.~~ **Amended 2026-08-16, in the wave that landed the caller — which is what
+the struck sentence's own tripwire asked for.** `src/app/page.tsx` renders the consumer label beside
+every row on the front door and links to the re-entry note on `needs-you`; the derivation is
+`frontDoorRow` in `src/server/front-door.ts`, and the reachability claim moved out of *deferred, and
+asserted as deferred* into *the safety machinery is reachable from the product*, where it now names
+`front-door.ts` for both needles. **The softest claim is narrower rather than kept:** what is still
+owed is the Intention-sourced pre-fill branch on the agreement screen, which must say *when* those
+words were written and cannot until `ContractDrafted` can carry that. Note also what a grep cannot
+see — a mutation that computed a state and discarded it kept the whole suite green, which is why
+`tests/front-door.test.ts` asserts the consumer label rather than the presence of a call.
 *Checked against the banned words:* not `status` (displaced), not `SessionState` (that is
 `SessionReading`), not `phase` — `SessionPhase` is per sitting and is a different thing.
 *Displaces:* IntentionStatus · status · lifecycle state (as a column) · state machine · stalled ·

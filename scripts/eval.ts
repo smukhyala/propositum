@@ -7,14 +7,24 @@
  *   npm run eval                      run against the real model
  *   npm run eval -- --baseline        also run the raw-log baseline
  *   npm run eval -- --worksheet       create blank score slots in eval-scores.json
- *   npm run eval -- --report          apply the H1 gates to what you have scored
+ *   npm run eval -- --report          apply the H1 gates to what you have scored,
+ *                                     and compute H2 from the database
  *
  * Produces a scoring worksheet per scenario. It does not produce H1 scores —
  * those are entered by a person, because a model judge shares the generator's
  * blind spots and at n=1 there is no second signal to catch that.
+ *
+ * ── H1 and H2 are measured from different places, on purpose ─────────────
+ *
+ * H1 is scored against sealed references on fixtures, so it never touches the
+ * application database. H2 cannot be: acceptance is what a real person did to
+ * real work, and the only record of that is `ChangeVerdict` and
+ * `OutcomeVerdict` rows in SQLite. So `--report` opens the database and every
+ * other path here still does not. That is a genuine asymmetry rather than an
+ * inconsistency — a fixture cannot accept anything.
  */
 
-import { AnthropicModelClient } from '../src/model/anthropic'
+import { createModelClient, modelId } from '../src/model/provider'
 import { FakeModelClient } from '../src/model/fake'
 import type { ModelClient } from '../src/model/client'
 import { SCENARIOS } from '../src/eval/index'
@@ -22,6 +32,9 @@ import { checkSeal, readSeals, sealNew, writeSeals } from '../src/eval/seal'
 import { renderWorksheet, runScenario } from '../src/eval/run'
 import { blankEntry, isComplete, readScores, resultFor, writeScores } from '../src/eval/record'
 import { H1_COMPONENTS } from '../src/eval/scenario'
+import { H2_PASS_RATE, reportH2, tallyH2 } from '../src/eval/score'
+import { createDatabase } from '../src/persistence/client'
+import { createRepositories } from '../src/persistence/repositories/index'
 
 try {
   process.loadEnvFile('.env')
@@ -62,7 +75,11 @@ if (args.has('--check')) {
 if (args.has('--worksheet')) {
   const scores = readScores()
   const ranAt = new Date().toISOString().slice(0, 10)
-  const model = process.env['PROPOSITUM_MODEL'] ?? 'claude-opus-5'
+  // The same read the client makes, rather than a second copy of the same two
+  // strings. A worksheet is a protocol record: every reported number carries the
+  // model it was produced by, and a worksheet that names a model the harness was
+  // never configured to call is worse than one with the field left blank.
+  const model = modelId()
   let added = 0
 
   for (const scenario of SCENARIOS) {
@@ -82,6 +99,127 @@ if (args.has('--worksheet')) {
   console.log('  0 = wrong, absent, or invented   1 = partial   2 = matches the reference')
   console.log('  Pass needs total >= 10/12 AND objective = 2.')
   process.exit(0)
+}
+
+/* ── H2, read off the durable trajectory ─────────────────────────────────── */
+
+/**
+ * The acceptance rate, computed from rows rather than from a worksheet.
+ *
+ * ── Why this is allowed to say "nothing yet" and mean it ─────────────────
+ *
+ * A metric that reads `0.0%` when the truth is *nobody has decided anything* is
+ * worse than no metric, because the two are indistinguishable on the line where
+ * someone reads them and only one of them is evidence about the product. So the
+ * empty case is a sentence, not a number, and the counts beside every real
+ * number say what was left out of it.
+ *
+ * This file used to say that and then not do it: it printed the sentence and
+ * returned `failed` anyway, off a `scoreH2` call on a tally that had already
+ * had the undecided units excluded. The judgment now lives in `reportH2` in
+ * `src/eval/score.ts`, where it can be tested, and everything here prints.
+ *
+ * ── And why a missing database is not a failure ──────────────────────────
+ *
+ * `--report` is also how a person checks H1 scores they typed on a machine that
+ * may have no database at all. An H1 report that exits non-zero because SQLite
+ * was absent would teach everyone to ignore the exit code.
+ */
+async function printH2(): Promise<'passed' | 'failed' | 'nothing-to-score'> {
+  console.log('\nH2 — acceptance over the durable trajectory')
+
+  let db
+  try {
+    // `createDatabase` rather than a bare PrismaClient: it is the only handle
+    // that installs the append-only guards, and it refuses rather than hands
+    // back an unguarded one. A read-only caller has no excuse to be the first
+    // exception to that.
+    db = await createDatabase({})
+  } catch (error) {
+    console.log(`  · no database to read — ${error instanceof Error ? error.message : String(error)}`)
+    console.log('    H1 above is unaffected: it is scored against sealed fixtures.')
+    return 'nothing-to-score'
+  }
+
+  try {
+    const repos = createRepositories(db.prisma)
+    const units = await repos.outcomes.trajectory()
+    // Read off the accepted contract rather than off the production, because a
+    // Shift that made nothing leaves no production to be read. `trajectory()`
+    // alone cannot see the case MVP.md names as the H2 failure.
+    const barrenShifts = await repos.contracts.barrenShifts()
+    const trajectory = tallyH2(units)
+    const report = reportH2(trajectory, barrenShifts)
+
+    if (trajectory.outputMode === null && report.barren === 0 && report.unfinished === 0) {
+      console.log('  · no decidable units yet — no Shift in this database has produced one.')
+      console.log('    Reported as an absence rather than as 0%, which would be a different claim.')
+      return 'nothing-to-score'
+    }
+
+    if (report.result === null && trajectory.units === 0) {
+      // Reached only when a Shift finished or died without producing anything,
+      // so there is a corpus to talk about and no units in it.
+      console.log('  ·  no decidable units — no Shift in this database has produced one.')
+    } else if (report.result === null) {
+      // Not a rate. Every unit is waiting on the person, and calling that 0%
+      // would read as "everything was rejected" — the reading MVP.md's
+      // undecided exclusion exists to prevent.
+      console.log(
+        `  ·  nothing decided yet — ${trajectory.units} unit(s), none of them decided. Not scored.`,
+      )
+    } else {
+      const rate = `${(report.result.rate * 100).toFixed(1)}%`
+      console.log(
+        `  ${report.result.passed ? '✓' : '✗'}  ${rate} kept — ${report.kept} of ${report.decided} decided unit(s), pass needs ${(H2_PASS_RATE * 100).toFixed(0)}%`,
+      )
+      console.log(
+        `       accepted ${trajectory.tally.accepted} · edited and kept ${trajectory.tally.editedAndKept} · rejected ${trajectory.tally.rejected}`,
+      )
+    }
+
+    // Everything the rate is NOT measured over, always printed, including when
+    // it is zero — a number whose exclusions are shown only when they are
+    // interesting is a number whose reader has to guess which kind they are
+    // looking at.
+    console.log(
+      `       ${report.waiting} waiting on you · ${trajectory.neverDecidable} landed and excluded from the denominator`,
+    )
+    if (report.barren > 0) {
+      console.log(
+        `       ✗ ${report.barren} draft-changes Shift(s) finished and produced nothing decidable — docs/MVP.md scores that zero`,
+      )
+    }
+    if (report.unfinished > 0) {
+      console.log(
+        `       ⚠ ${report.unfinished} Shift(s) ended without finishing — counted here, never scored as a zero`,
+      )
+    }
+    if (trajectory.unrecognised > 0) {
+      console.log(
+        `       ⚠ ${trajectory.unrecognised} verdict(s) in a spelling this harness does not read — see tallyH2`,
+      )
+    }
+
+    const shifts = new Set(units.map((u) => u.contractId))
+    const withIntention = new Set(
+      units.filter((u) => u.intentionId !== null).map((u) => u.contractId),
+    )
+    const produced = units.map((u) => u.producedAt.toISOString().slice(0, 10))
+    console.log(
+      `       across ${shifts.size} shift(s), ${withIntention.size} of them advancing a stated Intention`,
+    )
+    if (produced.length) console.log(`       produced ${produced[0]} → ${produced[produced.length - 1]}`)
+    if (trajectory.outputMode !== null) {
+      console.log(
+        `       scored as ${trajectory.outputMode} — the corpus is forgiven a zero only if no contract in it could draft changes`,
+      )
+    }
+
+    return report.verdict
+  } finally {
+    await db.close()
+  }
 }
 
 /* ── --report ───────────────────────────────────────────────────────────── */
@@ -118,11 +256,15 @@ if (args.has('--report')) {
     if (entry.notes) console.log(`       note: ${entry.notes}`)
   }
 
+  const h2 = await printH2()
+
   console.log(
-    '\nEvery number above is n=1, scored by the person who wrote the answer key,' +
-      '\nagainst references sealed before the run. Report it with that attached.',
+    '\nEvery H1 number above is n=1, scored by the person who wrote the answer key,' +
+      '\nagainst references sealed before the run. H2 is not scored by anyone: it is' +
+      '\nread off verdicts a person recorded while using the product, over whatever' +
+      '\nwindow that database happens to cover. Report both with that attached.',
   )
-  process.exit(anyIncomplete || anyFailed ? 1 : 0)
+  process.exit(anyIncomplete || anyFailed || h2 === 'failed' ? 1 : 0)
 }
 
 /* ── --seal ─────────────────────────────────────────────────────────────── */
@@ -188,7 +330,18 @@ if (dry) {
     console.error('No ANTHROPIC_API_KEY. Use --dry to exercise the harness without one.')
     process.exit(1)
   }
-  client = new AnthropicModelClient({ apiKey })
+  // No `record`, and this is the one caller for which that is right. THE RUN
+  // PATH is standalone — it never opens the application database — so there is
+  // no repository to write a `ModelCallRecord` to. The scoring worksheet is
+  // this path's traceability, and it is a better record than a row would be.
+  //
+  // That sentence used to be about the whole harness, and it stopped being true
+  // when `--report` learned to compute H2: acceptance is what a person did to
+  // real work, and no fixture can stand in for it. The narrowing is written
+  // here rather than left for the next reader to notice, because a comment that
+  // over-claims by one word is exactly how this file would come to describe a
+  // harness it no longer is.
+  client = createModelClient({ apiKey })
 }
 
 let exitCode = 0

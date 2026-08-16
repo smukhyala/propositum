@@ -36,7 +36,8 @@ import { readableCause } from './problem'
 import { confirmRequest, haltRun, rejectRequest } from './confirmations'
 import { ambientStore, captureStore } from './capture-store'
 import { describeWork, signatureOf } from './ambient-store'
-import { AnthropicModelClient } from '../model/anthropic'
+import { createModelClient } from '../model/provider'
+import type { ModelCallSink } from '../model/provider'
 import type { FailureKind, ModelClient } from '../model/client'
 import { datamark } from '../model/untrusted'
 import {
@@ -129,10 +130,29 @@ async function attempt<T>(work: () => Promise<ActionResult<T>>): Promise<ActionR
 
 /* ═════════════════════════════════════════════════════════════ the model ══ */
 
+/**
+ * Where this file's model calls are written down.
+ *
+ * Async on purpose, even though every caller of `modelClient()` already has a
+ * context in hand: `appContext()` is memoised but returns a promise, and
+ * resolving it INSIDE the sink keeps `modelClient()` synchronous, so neither
+ * call site changes shape. The sink is only ever invoked fire-and-forget, so a
+ * context that cannot be built loses the telemetry row rather than the action —
+ * `src/model/provider.ts` holds that rejection and says why.
+ *
+ * No `runId`. Both callers run BEFORE any AgentRun exists — one reads a
+ * finished sitting, the other drafts a working agreement — so the column is
+ * null, which is ordinary rather than missing.
+ */
+const recordModelCall: ModelCallSink = async (row) => {
+  const { repos } = await appContext()
+  return repos.modelCalls.create(row)
+}
+
 function modelClient(): ModelClient | null {
   const apiKey = process.env['ANTHROPIC_API_KEY']
   if (!apiKey) return null
-  return new AnthropicModelClient({ apiKey })
+  return createModelClient({ apiKey, record: recordModelCall })
 }
 
 /** One sentence per failure class, in the person's terms. */

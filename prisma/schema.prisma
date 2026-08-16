@@ -636,7 +636,12 @@ model ActionOutcome {
 model ModelCallRecord {
   id            String   @id @default(cuid())
   runId         String?
-  /// session-reading | handoff | plan | worker-action | review | shift-report
+  /// One of `BOUNDARY_NAMES` in src/model/client.ts, which is the source of
+  /// truth. EIGHT, not the six this line listed until the first writer landed:
+  /// `subject` (ADR-0008) and `offer` (ADR-0009) arrived later and nothing
+  /// updated the list, which was invisible for as long as nothing wrote a row.
+  /// session-reading | handoff | plan | worker-action | review | shift-report |
+  /// subject | offer
   boundary      String
   model         String
   promptVersion String
@@ -645,7 +650,10 @@ model ModelCallRecord {
   latencyMs     Int
   /// end_turn | max_tokens | refusal | stop_sequence
   stopReason    String?
-  /// none | schema-mismatch | truncation | refusal | transport
+  /// NULL when the attempt succeeded. `FailureKind` has no member meaning "it
+  /// worked", and a `none` string beside a nullable column would be two
+  /// spellings of success in one column.
+  /// schema-mismatch | truncation | refusal | transport
   failureKind   String?
   repairTurns   Int      @default(0)
   createdAt     DateTime @default(now())

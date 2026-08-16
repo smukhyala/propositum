@@ -36,9 +36,38 @@ import { ambientStore, captureStore, expectedOrigin } from '@/server/capture-sto
 import { describeOffer, describePause, describeWork, signatureOf } from '@/server/ambient-store'
 import { nameThread } from '@/server/name-thread'
 import { composeOffer } from '@/server/compose-offer'
-import { AnthropicModelClient } from '@/model/anthropic'
+import { createModelClient } from '@/model/provider'
+import type { ModelCallSink } from '@/model/provider'
 import { detectPause, detectWork, threadPagesOf } from '@/domain/detection/detect'
 import { groundsFor } from '@/domain/detection/grounds'
+
+/**
+ * Where the two ambient model calls are written down.
+ *
+ * ── Why the context is resolved inside the sink ──────────────────────────
+ *
+ * `subject` and `offer` are the only two boundaries that run with NO session
+ * and NO contract, which makes them the two whose cost and failures were most
+ * completely invisible — nothing else in the system records that they happened.
+ * They are also the two on the cheapest path in the product: a 30-second poll
+ * that returns before touching the database at all when nothing is detected.
+ *
+ * So the context is not hoisted. Awaiting `appContext()` above the ambient
+ * branch would make the extension's heartbeat depend on a database handle it
+ * does not otherwise need, and `build()` VERIFIES the append-only guards and
+ * throws if one is missing — turning a poll that answers "nothing yet" into a
+ * 500. Resolving it here instead keeps the poll's shape: the request never
+ * awaits this, and a context that cannot be built loses the telemetry row
+ * rather than the suggestion. `src/model/provider.ts` holds that rejection.
+ *
+ * No `runId`, and there never will be one here. Nothing on this path has
+ * started a run — ADR-0008: *what detection produces is a suggestion, never a
+ * session, never an action.*
+ */
+const recordAmbientCall: ModelCallSink = async (row) => {
+  const { repos } = await appContext()
+  return repos.modelCalls.create(row)
+}
 
 /** An origin, or an empty string. Never throws — a malformed stored URL is a
  *  ledger curiosity, not a reason to fail a poll the extension depends on. */
@@ -125,7 +154,7 @@ export async function GET(request: Request) {
     // it. The deterministic offer goes out now; the next poll carries the name.
     const apiKey = process.env['ANTHROPIC_API_KEY']
     if (!named && apiKey) {
-      void nameThread(ambient, new AnthropicModelClient({ apiKey }), detected)
+      void nameThread(ambient, createModelClient({ apiKey, record: recordAmbientCall }), detected)
     }
 
     const composed = ambient.offerFor(signature)
@@ -150,7 +179,13 @@ export async function GET(request: Request) {
      * that lives only in its caller is a guard the next caller will not have.
      */
     if (!composed && named?.confident && apiKey) {
-      void composeOffer(ambient, new AnthropicModelClient({ apiKey }), detected, named, now)
+      void composeOffer(
+        ambient,
+        createModelClient({ apiKey, record: recordAmbientCall }),
+        detected,
+        named,
+        now,
+      )
     }
 
     /**

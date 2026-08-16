@@ -28,6 +28,36 @@
  * the banner is gated on the capture store, and the project screen says the
  * awkward thing out loud when the two disagree.
  *
+ * That rule now reaches one layer further, into the status word beside every
+ * row — and it is held in `src/server/front-door.ts` rather than here, along
+ * with the rest of the derivation. See below.
+ *
+ * ── Why the status word is derived rather than written here ──────────────
+ *
+ * It used to be three strings in a ternary, off the most recent sitting's
+ * `phase`, and the answer was wrong in the expensive direction: a project whose
+ * shift ended with an unanswered question rendered `idle` — the same word as a
+ * project nobody had touched in a month. The person had to open it to find out
+ * that Propositum was waiting on them.
+ *
+ * `intentionState` is now the single place that answers "where is this?", and
+ * ADR-0011 argues its precedence — `needs-you` outranks every activity word,
+ * because a false one costs a look and a missed one costs the shift. The five
+ * consumer labels come from `INTENTION_STATES` rather than from literals here,
+ * so a state cannot arrive on screen wearing its enum member. `sleeping` will
+ * be most rows most of the time; CONTEXT.md says so, says it will read like a
+ * bug, and says that making it more interesting means inferring.
+ *
+ * ── And why the derivation is not in this file ───────────────────────────
+ *
+ * Because nothing can test it here. A review mutated the `intentionState` call
+ * in this file so that every row rendered *Sleeping* and no row could ever
+ * reach `needs-you`, and the full suite stayed green: the only guard was a grep
+ * for the call, and a grep is satisfied by a call whose result is discarded.
+ * `frontDoorRow` and `statusWordFor` are in `src/server/front-door.ts` so that
+ * `tests/front-door.test.ts` can assert the word a person actually reads. What
+ * is left here is markup and one call each.
+ *
  * ── Why the forms are plain server actions ───────────────────────────────
  *
  * No client state, so no client component: the form posts, the action returns a
@@ -48,6 +78,9 @@ import { describeWork, signatureOf } from '@/server/ambient-store'
 import type { NamedThread } from '@/server/ambient-store'
 import { detectWork } from '@/domain/detection/detect'
 import type { WorkDetected } from '@/domain/detection/detect'
+import { frontDoorRow, statusWordFor } from '@/server/front-door'
+import type { FrontDoorRow } from '@/server/front-door'
+import type { IntentionStateFacts } from '@/persistence/repositories/index'
 
 import { appContext } from '@/server/db'
 
@@ -62,8 +95,14 @@ const CSS = `
 .hm-name:hover { text-decoration: underline; text-underline-offset: 3px; }
 .hm-name:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 2px; }
 .hm-under { margin: 0.25rem 0 0; font-size: 0.8125rem; color: var(--muted); }
+.hm-state { display: flex; flex-direction: column; align-items: flex-end; gap: 0.35rem; }
 .hm-meta { font-size: 0.8125rem; color: var(--faint); font-family: var(--mono); white-space: nowrap; }
-.hm-meta[data-live="true"] { color: var(--attention); }
+.hm-meta[data-waiting="true"] { color: var(--attention); }
+/* Not a button. It goes somewhere, so it keeps middle-click, the back button
+   and the keyboard — the argument tk-go already makes on the session screen. */
+.hm-waiting { font-family: var(--mono); font-size: 0.6875rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--attention); text-decoration: none; white-space: nowrap; }
+.hm-waiting:hover { text-decoration: underline; text-underline-offset: 3px; }
+.hm-waiting:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 2px; }
 
 .hm-lede { font-family: var(--serif); font-size: 1.1875rem; line-height: 1.45; margin: 0; max-width: 36rem; text-wrap: pretty; }
 .hm-note { margin: 0.6rem 0 0; font-size: 0.875rem; color: var(--muted); max-width: 36rem; }
@@ -116,14 +155,13 @@ interface RunningSession {
   readonly away: boolean
 }
 
-/** One line of the list: a subject Propositum identified, and where it got to. */
-interface IdentifiedWork {
+/** One line of the list: a subject Propositum identified, and where it got to.
+ *  The three derived fields are `FrontDoorRow`'s and are documented there. */
+interface IdentifiedWork extends FrontDoorRow {
   readonly id: string
   readonly name: string
   readonly sittings: number
   readonly lastSittingAt: Date | null
-  /** SessionPhase of the most recent sitting, or null if it has none. */
-  readonly phase: string | null
 }
 
 /**
@@ -240,6 +278,21 @@ export default async function Home({
   }
 
   const now = new Date()
+  const nowMs = now.getTime()
+
+  /**
+   * Where every Intention is, in one read.
+   *
+   * Not four reads per project. `factsForEveryProject` exists precisely so this
+   * screen does not fan out — its docblock carries the argument, and the short
+   * version is that composing this out of the single-parent readers is 4N
+   * queries on the most-hit route in the product.
+   */
+  const factsByProject = new Map<string, IntentionStateFacts>()
+  for (const facts of await repos.intentions.factsForEveryProject()) {
+    factsByProject.set(facts.projectId, facts)
+  }
+
   /**
    * When each subject was last worked on, and how far it got.
    *
@@ -254,12 +307,19 @@ export default async function Home({
       // Newest first, by the repository's own ordering.
       const sittings = await repos.sessions.forProject(project.id)
       const latest = sittings[0]
+      const derived = frontDoorRow({
+        facts: factsByProject.get(project.id) ?? null,
+        sittings,
+        liveSessionId: live?.sessionId ?? null,
+        nowEpochMs: nowMs,
+      })
+
       return {
         id: project.id,
         name: project.name,
         sittings: sittings.length,
         lastSittingAt: latest?.startedAt ?? null,
-        phase: latest?.phase ?? null,
+        ...derived,
       }
     }),
   )
@@ -272,7 +332,9 @@ export default async function Home({
    * started would be nonsense.
    */
   const ambient = ambientStore()
-  const nowMs = Date.now()
+  // `nowMs` is the instant the lifecycle words above were computed from, rather
+  // than a second reading of the clock. Two "now"s on one render is two answers
+  // to one question, and this screen puts both answers on the same page.
   const detected = live ? null : detectWork(ambient.since(nowMs), nowMs)
   const named = detected ? ambient.nameFor(signatureOf(detected.terms)) : null
   const offer =
@@ -433,17 +495,31 @@ export default async function Home({
                   {work.lastSittingAt === null
                     ? 'No sitting yet'
                     : `${work.sittings} ${work.sittings === 1 ? 'sitting' : 'sittings'} · last ${when(work.lastSittingAt, now)}`}
+                  {/* The capture fact, kept where it has always been said and
+                      not folded into the word beside it. A sitting nobody ended
+                      and nothing is feeding is a real state, and the status word
+                      deliberately claims nothing about it. */}
+                  {work.openUnwatched ? ' · open, not being watched' : ''}
                 </p>
               </div>
-              <span className="hm-meta" data-live={running?.projectId === work.id ? 'true' : 'false'}>
-                {running?.projectId === work.id
-                  ? running.away
-                    ? 'working while you are away'
-                    : 'watching now'
-                  : work.phase === 'ended' || work.phase === null
-                    ? 'idle'
-                    : 'open, not being watched'}
-              </span>
+              <div className="hm-state">
+                <span
+                  className="hm-meta"
+                  data-waiting={work.state === 'needs-you' ? 'true' : 'false'}
+                >
+                  {statusWordFor(work.state)}
+                </span>
+                {/* The way to the note, from the only screen a person reliably
+                    starts on. "While you were away" is that screen's masthead
+                    and the label on every other link that reaches it, so this
+                    one says it too — a second phrase for one destination is two
+                    places to look for one thing. */}
+                {work.state === 'needs-you' && work.waitingContractId !== null ? (
+                  <Link className="hm-waiting" href={`/shifts/${work.waitingContractId}`}>
+                    While you were away
+                  </Link>
+                ) : null}
+              </div>
             </div>
           ))
         )}

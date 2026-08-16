@@ -66,7 +66,7 @@ two are new: one has data and no reader, and one is not being built.
 
 | Layer | Status | Owned today by |
 |---|---|---|
-| Intention Graph | **partial** — one flat table, no graph; `intentionState()` computed and unrendered | `Intention` in `prisma/schema.prisma`, `src/domain/intention/state.ts` ([ADR-0011](./adr/0011-intention-above-worksession.md)) |
+| Intention Graph | **partial** — one flat table, no graph; ~~`intentionState()` computed and unrendered~~ *re-marked 2026-08-16:* the lifecycle word is on the front door | `Intention` in `prisma/schema.prisma`, `src/domain/intention/state.ts` ([ADR-0011](./adr/0011-intention-above-worksession.md)), `src/server/front-door.ts`, `src/app/page.tsx` |
 | State Ingestion | **partial** — one sensor, browser only | `ledger-writer.ts`, the MV3 extension |
 | State Reconciler | **partial** — `matchProject` only | `src/domain/detection/match-project.ts` |
 | Progress Reasoner | **partial** — offer grounds, no ranking | `src/domain/detection/grounds.ts` |
@@ -74,7 +74,7 @@ two are new: one has data and no reader, and one is not being built.
 | Worker Router | **unimplemented, and not being built** | — (§8 forbids; ADR-0005 agrees) |
 | Execution Runtime | **built** | `runWorker`, ADR-0001/0010 |
 | Verification | **built, and near-decorative** | `scopeVerdict` + reviewer |
-| Outcome / Learning | **data built, nothing reads it** | three verdict tables, append-only |
+| Outcome / Learning | ~~**data built, nothing reads it**~~ *re-marked 2026-08-16:* **read, and still learning nothing** | three verdict tables, append-only; `outcomes.trajectory()` + `scripts/eval.ts --report` |
 | Re-entry | **built** | `ShiftReport`, ADR-0003 |
 
 ---
@@ -90,9 +90,16 @@ sentence asked for.** The one-command check now reads the other way, and here is
 `grep 'model Intention' prisma/schema.prisma` → `model Intention {`, and
 `grep -c intentionId prisma/schema.prisma` counts both foreign keys. So this layer is **a table, not
 a graph, and not a screen**: the row exists, `intentionState()` exists in
-`src/domain/intention/state.ts` and computes the five members from rows, and **nothing renders
+`src/domain/intention/state.ts` and computes the five members from rows, and ~~**nothing renders
 either** — `tests/reachability.test.ts`'s *deferred, and asserted as deferred* block pins that last
-absence so it cannot be mistaken for wiring. The check sits in the first line of the section rather
+absence so it cannot be mistaken for wiring~~ **re-marked again 2026-08-16, in the wave that landed
+the caller: it is a table, not a graph, and now also a screen.** `src/app/page.tsx` renders the
+consumer label beside every row on the front door, derived by `frontDoorRow` in
+`src/server/front-door.ts`, and the reachability claim moved out of *deferred, and asserted as
+deferred* into *the safety machinery is reachable from the product* rather than being deleted. What
+the pin cannot see is a state that is computed and then discarded — a mutation doing exactly that
+kept the whole suite green — so `tests/front-door.test.ts` asserts the rendered word instead. The
+check sits in the first line of the section rather
 than below the claim it qualifies, because "the ADR says so", "the schema has it" and "a person can
 see it" are three different things this document exists to keep apart, and a marker a reader meets
 ten lines late has already done its damage.
@@ -316,22 +323,36 @@ in `tests/reachability.test.ts`, so no `ConfirmationRequest` is ever raised and 
 can switch it off; nothing has yet asked it a question. That is the pin's exact purpose — a rule
 nothing raises is a rule that never fires, and it is invisible in a green suite.
 
-**Not built: any reader.** Two specific holes, both named rather than summarised:
+~~**Not built: any reader.** Two specific holes, both named rather than summarised:~~ **Both closed
+2026-08-16, and re-marked here in the wave that closed them — which is what the *Self-correcting*
+note below asked for and did not get on the first pass.**
 
-- `scoreH2` and `H2Tally` in `src/eval/score.ts` have **no production caller** — only
+- ~~`scoreH2` and `H2Tally` in `src/eval/score.ts` have **no production caller** — only
   `tests/eval.test.ts`. The MVP's own H2 acceptance metric is therefore not currently computable from
-  the database, which is a sharper statement than "H2 is unscored".
-- `ModelCallRecord` has a table, all three append-only triggers, and appears **nowhere** in `src/` or
+  the database, which is a sharper statement than "H2 is unscored".~~ `scripts/eval.ts --report` now
+  computes it: `outcomes.trajectory()` reads every decidable unit, `contracts.barrenShifts()` reads
+  the Shifts that produced none, and `tallyH2`/`reportH2`/`scoreH2` fold them. **What is still owed
+  is not a reader but an answer:** the trajectory reports zero decidable units on this machine, so
+  the metric is computable and has nothing yet to say.
+- ~~`ModelCallRecord` has a table, all three append-only triggers, and appears **nowhere** in `src/` or
   `scripts/`. Every call's model, prompt version, tokens, latency, stop reason, repair turns and
   failure kind are computed and handed to `onCall` — an optional hook declared on
-  `AnthropicModelClient` that nothing ever passes. The data is produced and dropped on the floor.
+  `AnthropicModelClient` that nothing ever passes. The data is produced and dropped on the floor.~~
+  `createModelClient` in `src/model/provider.ts` passes the hook, and three callers supply the sink:
+  `src/server/actions.ts`, `src/app/api/session/current/route.ts` and `scripts/worker.ts`. **The
+  weakness that replaced it, not rounded up:** a telemetry write that fails is lost silently and
+  nothing counts the losses — `provider.ts` says so at the empty `.catch`, and there is still no
+  reader of the table.
 
 **Nothing here learns anything, and §8 forbids the thing that would.** Learned trust models are on the
 do-not-build list; trust history can recommend a setting and can never create permission.
 
-*Self-correcting:* `tests/reachability.test.ts` pins `modelCallRecord.create` and `findings.forRun` at
-zero callers. When a reader lands, that suite goes red **by design**, the claim is relocated into the
-reachable section rather than deleted, and this section's status marker moves with it.
+*Self-correcting:* `tests/reachability.test.ts` ~~pins `modelCallRecord.create` and `findings.forRun` at
+zero callers~~ *(2026-08-16: `modelCalls.create` moved into the reachable section and its needle was
+corrected there — the old one named a string only the repository's own Prisma delegate matched, so it
+could never have gone red; `findings.forRun` is still pinned)*. When a reader lands, that suite goes
+red **by design**, the claim is relocated into the reachable section rather than deleted, and this
+section's status marker moves with it.
 
 ---
 
@@ -396,11 +417,19 @@ strictly weaker than an absence**.
 for the same reason `model Intention` appears nowhere in `prisma/schema.prisma` — §1's check covers
 both.~~ **Amended 2026-08-16, with §1:** it is a type you can import.
 `src/domain/intention/state.ts` exports `IntentionStateId`, `IntentionStateRule`, `IntentionFacts`
-and `INTENTION_STATES`, and `intentionState(facts, now)` computes a member from rows. **What is still
+and `INTENTION_STATES`, and `intentionState(facts, now)` computes a member from rows. ~~**What is still
 true is the half that mattered: nothing calls it.** No screen renders a state, the consumer labels
 below are rendered by nothing, and `tests/reachability.test.ts` asserts that absence deliberately so
-a green suite cannot be read as a wired one. The argument for five members below is unchanged, and it
-was written down before the union was rather than after somebody had already typed six.
+a green suite cannot be read as a wired one.~~ **Amended 2026-08-16, in the wave that landed the
+caller: something calls it, and the five consumer labels below are on the front door.**
+`src/server/front-door.ts` derives each row and `src/app/page.tsx` renders the label, with the
+re-entry link on `needs-you`; the reachability claim moved into the reachable section and now names
+`front-door.ts`. **One of the three routes into `needs-you` is unreachable from production data:**
+nothing supplies a non-zero `openDecisions`, because a `DecisionNeeded` cannot be cleared and a count
+that can only go up would pin the word on permanently — see `CONTEXT.md`'s `IntentionState` entry,
+where the cost of that decision is written down rather than talked down. The argument
+for five members below is unchanged, and it was written down before the union was rather than after
+somebody had already typed six.
 
 Computed, not stored, following unanimous precedent — `EnforcedPolicy`, `Shift` and `ActionStatus` are
 all computed views on the argument that **two stores for one truth is exactly how a UI comes to

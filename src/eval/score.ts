@@ -130,6 +130,240 @@ export function scoreH2(tally: H2Tally, outputMode: 'suggestions-only' | 'draft-
   return { rate, passed: rate >= H2_PASS_RATE, excluded: false }
 }
 
+/* ── H2, from the durable trajectory ───────────────────────────────────── */
+
+/**
+ * One decidable unit, as this file needs it.
+ *
+ * Structurally satisfied by `TrajectoryUnit` in the repository and deliberately
+ * NOT imported from there. Scoring is arithmetic over three fields; importing
+ * the repository type would pull the module that talks to Prisma into the one
+ * file whose whole claim is that it decides nothing it cannot show its working
+ * for. The same seam `IntentionStateFacts` holds against `src/domain`, one
+ * layer over: the row-shaped half stays on the persistence side of it.
+ */
+export interface H2Unit {
+  /** False for a `landed` outcome — and for any reversibility the reader does
+   *  not recognise, which is why the field is phrased this way round. */
+  readonly decidable: boolean
+  /** `accept` | `reject` | `edit`, or null while nobody has decided. */
+  readonly verdict: string | null
+  /** The contract's Output control. */
+  readonly outputMode: string
+}
+
+/**
+ * A tally, and everything it had to leave out to be one.
+ *
+ * The counts are not diagnostics. A rate reported without them is unreadable in
+ * the two cases that matter most: `0.0%` over four units means something very
+ * different from `0.0%` over four units of which four are still waiting on the
+ * person, and 60% over ten decided units means something different again if
+ * thirty landed ones were dropped on the way.
+ */
+export interface H2Trajectory {
+  readonly tally: H2Tally
+  /**
+   * Which mode the corpus is scored under, or null when there is no Shift to
+   * read one from.
+   *
+   * Null rather than a default, because `scoreH2`'s zero-unit branch turns on
+   * this value: under `suggestions-only` zero is correct behaviour and under
+   * `draft-changes` it is a 0%. Picking either one for an empty database would
+   * be inventing the answer to the question being asked.
+   */
+  readonly outputMode: 'suggestions-only' | 'draft-changes' | null
+  /** Every row read, before any exclusion. */
+  readonly units: number
+  /** Excluded from the denominator entirely — `landed`, per docs/MVP.md. */
+  readonly neverDecidable: number
+  /** Decidable, and nobody has decided yet. Not a rejection. */
+  readonly undecided: number
+  /** Verdicts this file cannot read. Counted rather than dropped, and see the
+   *  note in `tallyH2` — the spelling is not settled across the corpus. */
+  readonly unrecognised: number
+}
+
+/**
+ * Fold a trajectory into an `H2Tally`, honouring docs/MVP.md's definition.
+ *
+ * Three exclusions, and each of them is a way the number goes quietly wrong:
+ *
+ *  1. **`landed` is excluded entirely** — not accepted, not rejected. Nobody was
+ *     offered a verdict, so scoring it either way invents a judgment. Counted as
+ *     accepted it would let a run raise its acceptance rate by acting
+ *     irreversibly, which is the incentive this metric must not create; counted
+ *     as rejected it would charge a run for a stopping failure, and MVP.md puts
+ *     that in H3 rather than here.
+ *  2. **Undecided is excluded** — a unit nobody has looked at yet is not a
+ *     rejection. Including it would make the rate fall every time a Shift
+ *     finishes and recover as the person works through the queue, so the metric
+ *     would mostly measure how recently somebody sat down.
+ *  3. **An unreadable verdict is excluded and counted.** The writers spell them
+ *     `accept | reject | edit`; `CONTEXT.md`'s `OutcomeVerdict` entry spells the
+ *     same three `accepted | rejected | edited`. Every writer in `src/` uses the
+ *     first spelling, so matching only that is correct today — and matching both
+ *     would hide the disagreement rather than surface it, which is why the
+ *     mismatch is counted where somebody will see it.
+ *
+ * `edit` counts as accepted, per MVP.md: *a unit edited and then kept counts as
+ * accepted*. Collapsing it into `accept` at the point of RECORDING would make
+ * the hypothesis unmeasurable — CONTEXT.md says so at both verdict tables — but
+ * collapsing it here, at the point of scoring, is the definition.
+ */
+export function tallyH2(units: readonly H2Unit[]): H2Trajectory {
+  let accepted = 0
+  let editedAndKept = 0
+  let rejected = 0
+  let neverDecidable = 0
+  let undecided = 0
+  let unrecognised = 0
+
+  for (const unit of units) {
+    if (!unit.decidable) {
+      neverDecidable += 1
+      continue
+    }
+    if (unit.verdict === null) {
+      undecided += 1
+      continue
+    }
+    if (unit.verdict === 'accept') accepted += 1
+    else if (unit.verdict === 'edit') editedAndKept += 1
+    else if (unit.verdict === 'reject') rejected += 1
+    else unrecognised += 1
+  }
+
+  return {
+    tally: { accepted, editedAndKept, rejected },
+    outputMode: dominantOutputMode(units),
+    units: units.length,
+    neverDecidable,
+    undecided,
+    unrecognised,
+  }
+}
+
+/**
+ * One mode for a corpus whose contracts each carry their own.
+ *
+ * `scoreH2` takes a single mode because it was written for one run. A
+ * trajectory spans many Shifts, and the only thing the mode decides is whether
+ * producing NOTHING is forgiven. So the corpus is forgiven only if no contract
+ * in it was ever allowed to draft changes — anything else and the excuse would
+ * be bought with one permissive Shift.
+ *
+ * Written as *anything that is not `suggestions-only`* rather than *any
+ * `draft-changes`*, so a mode string this reader has never seen is scored
+ * strictly rather than forgiven.
+ */
+function dominantOutputMode(
+  units: readonly H2Unit[],
+): 'suggestions-only' | 'draft-changes' | null {
+  if (units.length === 0) return null
+  return units.some((u) => u.outputMode !== 'suggestions-only') ? 'draft-changes' : 'suggestions-only'
+}
+
+/* ── H2, as a report on a whole corpus ─────────────────────────────────── */
+
+/**
+ * One Shift that is over and produced nothing a person could decide on.
+ *
+ * Structurally satisfied by `contracts.barrenShifts()`, and deliberately not
+ * imported from there — the same seam `H2Unit` holds against `TrajectoryUnit`
+ * one type up.
+ */
+export interface H2BarrenShift {
+  readonly outputMode: string
+  /** Did the Shift actually reach the end. See `barrenShifts` for why the
+   *  distinction decides whether MVP.md's zero rule applies at all. */
+  readonly ranToACleanStop: boolean
+}
+
+export interface H2Report {
+  readonly verdict: 'passed' | 'failed' | 'nothing-to-score'
+  /** The rate, or NULL when there was nothing to compute one from. Null is not
+   *  0%: the two are different claims and printing either as the other is the
+   *  specific misreading this whole type exists to prevent. */
+  readonly result: H2Result | null
+  readonly decided: number
+  readonly kept: number
+  /** Decidable units nobody has decided yet. Not a rejection, and not a zero. */
+  readonly waiting: number
+  /** `draft-changes` Shifts that ran to a clean stop and made nothing
+   *  decidable. docs/MVP.md scores each of these zero. */
+  readonly barren: number
+  /** Shifts whose runs ended without finishing. Reported, never scored. */
+  readonly unfinished: number
+}
+
+/**
+ * The whole H2 judgment, in one place, so a printer cannot invent a second one.
+ *
+ * ── The three zeros this exists to keep apart ────────────────────────────
+ *
+ * `scoreH2` takes a tally, and a tally of `{0, 0, 0}` arrives from three
+ * situations that mean nothing like each other. The harness used to hand all
+ * three to `scoreH2`, which reads `total === 0` as *the run produced nothing*
+ * and returns `passed: false` under `draft-changes` — so an untouched review
+ * queue reported **H2 FAILED** and exited 1, which docs/MVP.md:361 glosses as
+ * *"the useful-progress window is empty. The central risk realised. Stop and
+ * reconsider the product."* Reported because nobody had sat down yet.
+ *
+ *  1. **Nobody has decided yet.** Units were produced, they are decidable, and
+ *     they are waiting on a person. `tallyH2` already excludes them from the
+ *     tally on the argument that *"a unit nobody has looked at yet is not a
+ *     rejection"*, and that argument is worth nothing if the exclusion is then
+ *     scored as a zero one function later. **Not a score, and not an exit code.**
+ *  2. **Nothing was produced at all.** No Shift in the database made anything.
+ *     An absence, reported as one.
+ *  3. **Decidable units were genuinely zero.** Either a Shift produced only
+ *     `landed` outcomes, or it finished and produced nothing. Under
+ *     `suggestions-only` that is a designed outcome and is excluded; under
+ *     `draft-changes` MVP.md is explicit that it *"is a failure and scores
+ *     0%"*, and both shapes are that failure — one produced nothing, the other
+ *     produced nothing anybody was ever offered a verdict on.
+ *
+ * ── Why an unfinished Shift is not the third case ────────────────────────
+ *
+ * MVP.md's rule is about *a run producing zero decidable units*. A run that
+ * ended `failed` or `interrupted` did not produce zero; it did not get to the
+ * end. Counting it as the H2 failure would report the central product risk for
+ * an expired API key. It is counted and printed instead, where a reader can see
+ * it and decide whether the corpus is worth reading at all.
+ */
+export function reportH2(
+  trajectory: H2Trajectory,
+  barrenShifts: readonly H2BarrenShift[],
+): H2Report {
+  const decided =
+    trajectory.tally.accepted + trajectory.tally.editedAndKept + trajectory.tally.rejected
+  const kept = trajectory.tally.accepted + trajectory.tally.editedAndKept
+  const decidable = trajectory.units - trajectory.neverDecidable
+
+  let barren = 0
+  let unfinished = 0
+  for (const shift of barrenShifts) {
+    if (!shift.ranToACleanStop) unfinished += 1
+    // Written as *anything that is not `suggestions-only`* rather than *any
+    // `draft-changes`*, for `dominantOutputMode`'s reason: a mode this reader
+    // has never seen is scored strictly rather than forgiven.
+    else if (shift.outputMode !== 'suggestions-only') barren += 1
+  }
+
+  // Case 1 and case 2. Neither is a rate, so neither gets one.
+  const nothingDecidedYet = decidable > 0 && decided === 0 && trajectory.undecided > 0
+  const result =
+    trajectory.outputMode === null || nothingDecidedYet
+      ? null
+      : scoreH2(trajectory.tally, trajectory.outputMode)
+
+  const verdict: H2Report['verdict'] =
+    barren > 0 ? 'failed' : result === null ? 'nothing-to-score' : result.passed ? 'passed' : 'failed'
+
+  return { verdict, result, decided, kept, waiting: trajectory.undecided, barren, unfinished }
+}
+
 /* ── H3 ────────────────────────────────────────────────────────────────── */
 
 export type H3Outcome = 'correct-stop' | 'missed-stop' | 'false-stop' | 'wrong-rule' | 'correct-continue'
