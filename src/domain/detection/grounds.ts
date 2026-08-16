@@ -37,9 +37,51 @@
  * Three-of-six would admit both failures directly. It passes `read-deeply` +
  * `stayed-with-it` + `followed-across` with no intent at all — the newsletter
  * afternoon. And it passes all three intent grounds with no investment —
- * somebody who searched, refined and came back inside ninety seconds having
- * read nothing, which is what a search going badly looks like, and the worst
+ * somebody who searched, refined and came back inside a minute having read
+ * nothing, which is what a search going badly looks like, and the worst
  * possible moment to interrupt. Both are ordinary browsing.
+ *
+ * ── What two real sessions changed, and what they did not ────────────────
+ *
+ * This bar refused two sessions of genuine research on 2026-08-16, and ONE
+ * duration below moved because of it. What did NOT move is the shape of the
+ * rule, and keeping those two apart is the point of recording this here.
+ * `SUSTAINED_MS` moved too, in the same diff, and came back the same day — it
+ * had no session behind it and it admitted the false positive this file spends
+ * its length refusing. Its own comment records that in full.
+ *
+ *   - **Run 1** — one search ("robot navigation through crowds"), three arXiv
+ *     abstracts across two origins, 17.5 seconds engaged in total. No ground
+ *     fired, and that is the right answer. Seventeen seconds is a glance at
+ *     three abstracts; nothing below argues it should have been offered
+ *     anything, and nothing below would now let it through.
+ *   - **Run 2** — four queries on one subject ("what is perturbation in
+ *     robotics" and three variants), an arXiv paper, a Science Robotics article
+ *     and a GitHub project across four origins over about eleven minutes, with
+ *     sixty seconds on the deepest page. It fired `searched-then-read`,
+ *     `refined-the-search`, `came-back` and `followed-across` — three intent
+ *     grounds and ONE investment ground — so `sufficient` stayed false and
+ *     nothing was offered.
+ *
+ * Run 2 is the diagnostic one. Intent was overwhelming, investment was the
+ * blocker, and the single thing standing in the way was `DEEP_READ_MS` at
+ * ninety seconds against a sixty-second read. A DURATION was miscalibrated. The
+ * rule requiring two investment grounds was not.
+ *
+ * **So `INTENT_REQUIRED` and `INVESTMENT_REQUIRED` stay where they are, and
+ * this is the paragraph to read before lowering them.** Dropping
+ * `INVESTMENT_REQUIRED` to 1 would also have unblocked run 2, so the evidence
+ * cannot tell the two fixes apart — but it would additionally admit the
+ * newsletter afternoon the moment any single intent ground fired, and
+ * `came-back` fires on one return to one site. That false positive is the exact
+ * thing the two-of-three requirement exists to exclude, and nothing in these
+ * two sessions is an argument for accepting it. Lowering the counts is the
+ * change a future reader will be most tempted to make next; the evidence does
+ * not support it.
+ *
+ * Two sessions are not a calibration set. They are two observations that
+ * disagreed with a guess. The numbers below are still guesses — better-argued
+ * ones now, with a reason and a date attached.
  *
  * ── No model runs here, ever ─────────────────────────────────────────────
  *
@@ -72,23 +114,89 @@ import type { ThreadPage } from './topics'
  * one page is reading, one search is a whim, and one site is not following
  * anything across.
  *
- * These numbers are guesses, set before any real browsing existed, and nothing
- * has yet told us which of them is wrong. They live together in one block so
- * that tuning them is a diff rather than an excavation.
+ * ~~These numbers are guesses, set before any real browsing existed, and
+ * nothing has yet told us which of them is wrong.~~
+ *
+ * **Amended 2026-08-16: two real sessions told us, and both durations moved.**
+ * The header records what they were. They are still guesses; they are no longer
+ * unexamined ones. They live together in one block so that tuning them is a
+ * diff rather than an excavation, and that is what just happened.
  */
 const SPEED = FAST_DETECT ? 20 : 1
 
-/** One page held their attention this long. Ninety seconds is a page read, not
- *  a page skimmed for the one line it was opened for. */
-export const DEEP_READ_MS = (90 * 1000) / SPEED
+/**
+ * One page held their attention this long. A minute on one page is a read, not
+ * a page skimmed for the one line it was opened for.
+ *
+ * ~~Ninety seconds.~~ **Sixty, as of 2026-08-16.** This constant, on its own,
+ * refused run 2: sixty seconds on an arXiv paper was the deepest read in eleven
+ * minutes of real research, and ninety was the only thing between that session
+ * and an offer. Ninety was a guess about what a read costs. `engagedMs` is
+ * engaged time — dwell plus evidence a person was present, never tab-open time
+ * — so a minute of it is a minute of somebody actually there, which is already
+ * past anything a skim produces.
+ */
+export const DEEP_READ_MS = (60 * 1000) / SPEED
 
-/** The thread's own span, first page to last. Fifteen minutes of returning to
- *  the same subject is a different fact from fifteen minutes of one tab open. */
+/**
+ * The thread's own span, first page to last. Fifteen minutes of returning to
+ * the same subject is a different fact from fifteen minutes of one tab open.
+ *
+ * ~~Fifteen minutes.~~ ~~**Eight, as of 2026-08-16.** Fifteen was half of
+ * `WINDOW_MS`: the buffer holds thirty minutes and drops everything older, so
+ * the rule demanded that a thread span half the entire life of the buffer it is
+ * measured inside before it counted as sustained. That is not a bar on a
+ * person's browsing, it is an artefact of the window — and it went unnoticed
+ * because the two constants live in different files and neither comment
+ * mentioned the other. Eight is under a third of the window, which leaves a
+ * thread room to be sustained and still be seen whole.~~
+ *
+ * **Put back to fifteen the same day, 2026-08-16, and this is the one to read
+ * before lowering it again.** Two things were wrong with the change, and the
+ * artefact argument was not one of them — it is a real observation and it is
+ * kept below.
+ *
+ * **It bought nothing.** Run 2 was the whole evidential case, and `DEEP_READ_MS`
+ * ninety-to-sixty released run 2 on its own: four origins fired
+ * `followed-across`, sixty seconds fired `read-deeply`, and that is the two
+ * investment grounds. Run 2 spanned about eleven minutes, so it never reached
+ * even eight, and this constant played no part in refusing it or in letting it
+ * through. A number moved with no session behind it.
+ *
+ * **It admitted the false positive the same diff was refusing.** Fired as a
+ * fixture: no search at all, nothing held for a minute, twelve links across
+ * three sites at forty-five seconds each, one page returned to. At eight
+ * minutes that afternoon fires `came-back`, `stayed-with-it` and
+ * `followed-across` — one intent ground and two investment grounds — and is
+ * offered work. At fifteen it fires two of the three and is refused, which is
+ * the answer `INVESTMENT_REQUIRED` argues for at length and had stopped
+ * getting. Span is the cheapest of the three investment grounds to produce by
+ * accident, because it costs a person nothing but time passing; lowering it is
+ * therefore the closest thing available to lowering `INVESTMENT_REQUIRED`
+ * itself, which the file next door refuses in as many words.
+ *
+ * **What survives, and is still owed.** Fifteen minutes IS half of `WINDOW_MS`,
+ * and a rule that asks a thread to span half the life of the buffer it is
+ * measured inside is measuring the window as much as the person. That remains
+ * true and remains unfixed. The fix is not a smaller number underneath the same
+ * window — it is either a longer window or a ground that does not depend on
+ * one, and both are changes with an ADR-shaped argument rather than a constant.
+ * `SUSTAINED_MS * 2 === WINDOW_MS` is pinned in `grounds.test.ts` so this stays
+ * a known relationship rather than a rediscovered one.
+ */
 export const SUSTAINED_MS = (15 * 60_000) / SPEED
 
-/** Distinct origins before following a subject counts as following it ACROSS.
- *  Two is the bar a thread already had to clear to exist — see
- *  `ORIGINS_FOR_THREAD` — so two here would be no additional evidence at all. */
+/**
+ * Distinct origins before following a subject counts as following it ACROSS.
+ * Two is the bar a thread already had to clear to exist — see
+ * `ORIGINS_FOR_THREAD` — so two here would be no additional evidence at all.
+ *
+ * **Unchanged on 2026-08-16, deliberately.** Run 2 ran across four origins and
+ * `followed-across` was the one investment ground that did fire, so nothing in
+ * that session touches this number. The argument above is not about
+ * calibration; it is about double-counting, and lowering it to two would report
+ * the thread's own entry condition back as evidence for the thread.
+ */
 export const ORIGINS_FOR_OFFER = 3
 
 /** Distinct queries on the subject before it counts as refining rather than
@@ -132,18 +240,60 @@ export interface OfferGrounds {
   readonly sentences: readonly string[]
 }
 
-/** How many intent grounds must fire. */
+/**
+ * How many intent grounds must fire.
+ *
+ * **Unchanged on 2026-08-16.** One is already the floor — zero is the
+ * newsletter afternoon, which is the failure this half exists to name.
+ */
 export const INTENT_REQUIRED = 1
 
-/** How many investment grounds must fire. */
+/**
+ * How many investment grounds must fire.
+ *
+ * **Unchanged on 2026-08-16, and this is the deliberate one.** Run 2 was
+ * refused with three intent grounds and one investment ground, and lowering
+ * this to 1 would have released it. So would fixing `DEEP_READ_MS`, which is
+ * what was actually wrong — the session had a real sixty-second read that a
+ * ninety-second threshold called a skim. Two changes, one unblocked session,
+ * and no way to choose between them from the session alone.
+ *
+ * They are chosen on what else each admits. `INVESTMENT_REQUIRED = 1` lets an
+ * afternoon of newsletter reading through on `came-back` plus `followed-across`
+ * — one return to one site, and three sites, both of which ordinary browsing
+ * produces without anybody pursuing anything. The threshold fix admits only
+ * reads between sixty and ninety seconds. The narrower fix was the right one,
+ * and this constant records that the wider one was considered and refused
+ * rather than never thought of.
+ *
+ * ── What two still admits, said plainly ──────────────────────────────────
+ *
+ * The count is not a wall, it is a price, and the price is payable by time. A
+ * newsletter afternoon that runs past `SUSTAINED_MS` on three sites with one
+ * return fires `came-back`, `stayed-with-it` and `followed-across`, and this
+ * bar offers it work. Nothing above prevents that; `SUSTAINED_MS` only sets how
+ * long the afternoon has to be, which is why lowering that constant was the
+ * same change as lowering this one wearing a different name, and why it was put
+ * back. Somebody who reads across three sites for a quarter of an hour and
+ * clicks back to one of them will be asked whether they want help with it.
+ *
+ * That is the residual false positive of this design, it has not been measured
+ * in real use, and the honest reason it is tolerated is that the next thing to
+ * do about it is not a bigger count — three of three would refuse most real
+ * research — but a ground that separates "still here" from "came back to it",
+ * which does not exist yet.
+ */
 export const INVESTMENT_REQUIRED = 2
 
 /**
  * Said out loud, exactly as `describeWork` says it.
  *
  * An offer produced under 20× thresholds must not read like one produced by
- * real work: ninety seconds of fast-detect reading renders as the sentence
- * "you have been at this for 15 minutes" would if the thresholds were real.
+ * real work. Twenty-four seconds of browsing clears `SUSTAINED_MS` under
+ * fast-detect and fires `stayed-with-it` — a ground that means eight real
+ * minutes of staying with a subject — and three seconds on a page fires
+ * `read-deeply`, which means a minute. The sentences quote the true durations,
+ * so the numbers in them are not the lie; the grounds having fired at all is.
  * Anyone shown that without the note is being told something false about their
  * own afternoon.
  *

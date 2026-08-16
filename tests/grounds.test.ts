@@ -17,14 +17,17 @@ import { describe, it, expect, vi } from 'vitest'
 import {
   DEEP_READ_MS,
   INTENT_GROUNDS,
+  INTENT_REQUIRED,
   INVESTMENT_GROUNDS,
+  INVESTMENT_REQUIRED,
   ORIGINS_FOR_OFFER,
   SUSTAINED_MS,
   groundsFor,
 } from '../src/domain/detection/grounds'
 import type { GroundKind } from '../src/domain/detection/grounds'
-import { searchQueryOf, termsOf } from '../src/domain/detection/topics'
+import { ORIGINS_FOR_THREAD, searchQueryOf, termsOf } from '../src/domain/detection/topics'
 import type { ThreadPage } from '../src/domain/detection/topics'
+import { WINDOW_MS } from '../src/domain/detection/detect'
 import type { WorkDetected } from '../src/domain/detection/detect'
 
 const T0 = 1_786_471_000_000
@@ -83,6 +86,55 @@ function grounds(pages: readonly ThreadPage[]): readonly GroundKind[] {
 
 const SEARCH = 'https://www.google.com/search?q=world+models'
 const SEARCH_AGAIN = 'https://www.google.com/search?q=world+models+training'
+
+describe('the thresholds themselves', () => {
+  /**
+   * Every other test in this file is written AGAINST the constants, which is
+   * the right way to test the rules and no way at all to test the numbers. The
+   * whole file stayed green through two real sessions that `DEEP_READ_MS`
+   * refused; a boundary test that reads `DEEP_READ_MS - 1` cannot notice that
+   * `DEEP_READ_MS` is wrong. These are the expectations that fail when
+   * somebody moves one, so the number has to be moved on purpose.
+   */
+
+  it('calls a minute on one page a read', () => {
+    // ~~Ninety seconds.~~ Sixty, as of 2026-08-16: run 2's deepest page was a
+    // sixty-second read of an arXiv paper, and ninety was the only thing
+    // between eleven minutes of real research and an offer.
+    expect(DEEP_READ_MS).toBe(60_000)
+  })
+
+  it('calls fifteen minutes on a subject sustained', () => {
+    // ~~Fifteen minutes.~~ ~~Eight, as of 2026-08-16.~~ Fifteen again, later
+    // the same day. Eight had no session behind it — `DEEP_READ_MS` released
+    // run 2 on its own — and it admitted the newsletter afternoon pinned in
+    // `the false positive that must not qualify` below. `SUSTAINED_MS` is the
+    // cheapest investment ground to produce by accident, because it costs a
+    // person nothing but time passing.
+    expect(SUSTAINED_MS).toBe(15 * MINUTE)
+
+    // Half the window, pinned deliberately rather than noticed again. It is a
+    // real complaint about this rule — a thread has to span half the life of
+    // the buffer it is measured inside — and the fix is a longer window or a
+    // different ground, not a smaller number underneath the same window.
+    expect(SUSTAINED_MS * 2).toBe(WINDOW_MS)
+  })
+
+  it('still wants a third origin, because two is only what the thread needed', () => {
+    // Unchanged. Not calibration — double-counting: two origins is the thread's
+    // own entry condition, so two here would report it back as evidence.
+    expect(ORIGINS_FOR_OFFER).toBe(3)
+    expect(ORIGINS_FOR_OFFER).toBeGreaterThan(ORIGINS_FOR_THREAD)
+  })
+
+  it('still wants one intent ground and two investment grounds', () => {
+    // Unchanged, and deliberately. Lowering `INVESTMENT_REQUIRED` to 1 would
+    // also have released run 2, and would additionally have admitted the
+    // newsletter afternoon in the last describe block below.
+    expect(INTENT_REQUIRED).toBe(1)
+    expect(INVESTMENT_REQUIRED).toBe(2)
+  })
+})
 
 describe('intent — did they pursue this, or receive it', () => {
   describe('searched-then-read', () => {
@@ -379,6 +431,112 @@ describe('sufficiency — one of these AND two of those', () => {
   })
 })
 
+describe('the real session that was refused, 2026-08-16', () => {
+  /**
+   * Run 2, as it happened. Four queries on one subject, an arXiv paper, a
+   * Science Robotics article and a GitHub project across four origins over
+   * about eleven minutes, with sixty seconds on the deepest page.
+   *
+   * It fired `searched-then-read`, `refined-the-search`, `came-back` and
+   * `followed-across` — three intent grounds and ONE investment ground — so
+   * `sufficient` stayed false and nothing was offered. `DEEP_READ_MS` at ninety
+   * seconds against a sixty-second read was the single thing in the way.
+   */
+  const SUBJECT_2 = ['perturbation', 'robotic']
+
+  const ARXIV = 'https://arxiv.org/abs/2501.09876'
+  const SCIENCE = 'https://www.science.org/doi/10.1126/scirobotics.perturbation'
+  const GITHUB = 'https://github.com/example/perturbation-sim'
+
+  const query = (q: string, at: number) =>
+    page({ url: `https://www.google.com/search?q=${q}`, at })
+
+  const run2 = [
+    query('what+is+perturbation+in+robotics', T0),
+    page({
+      url: ARXIV,
+      title: 'Perturbation-Aware Robotics Navigation',
+      at: T0 + MINUTE,
+      // The read that was called a skim.
+      engagedMs: 60_000,
+      visits: 2,
+    }),
+    query('perturbation+robotics+definition', T0 + 3 * MINUTE),
+    page({
+      url: SCIENCE,
+      title: 'Robustness to Perturbation in Legged Robotics',
+      at: T0 + 4 * MINUTE,
+      engagedMs: 45_000,
+    }),
+    query('perturbation+theory+robotics+control', T0 + 7 * MINUTE),
+    page({
+      url: GITHUB,
+      title: 'Perturbation Simulation for Robotics',
+      at: T0 + 8 * MINUTE,
+      engagedMs: 30_000,
+    }),
+    query('how+to+model+perturbation+robotics', T0 + 11 * MINUTE),
+  ]
+
+  const result = groundsFor(detected(SUBJECT_2, run2), run2)
+
+  it('had every intent ground it could have', () => {
+    for (const kind of INTENT_GROUNDS) expect(result.kinds).toContain(kind)
+  })
+
+  it('calls the sixty-second page a read', () => {
+    // This is the whole diff. At ninety seconds it did not fire, and it was the
+    // only ground between this session and an offer.
+    expect(result.kinds).toContain('read-deeply')
+  })
+
+  it('does not call eleven minutes sustained, and does not need to', () => {
+    // ~~At fifteen minutes it did not fire either — fifteen being half the life
+    // of the buffer this span is measured inside.~~ That sentence was used to
+    // justify lowering `SUSTAINED_MS` to eight in the same diff, and it does
+    // not support the change: run 2 was released by `DEEP_READ_MS` alone, and
+    // eight minutes admitted the skimmed afternoon pinned above. `SUSTAINED_MS`
+    // went back to fifteen, so this ground stays unfired here — and the session
+    // is still offered on the two grounds it really earned.
+    expect(result.kinds).not.toContain('stayed-with-it')
+    expect(result.kinds).toContain('read-deeply')
+    expect(result.kinds).toContain('followed-across')
+  })
+
+  it('is offered', () => {
+    expect(result.sufficient).toBe(true)
+  })
+
+  it('is still refused when the reading really was thin', () => {
+    /**
+     * The same navigation, compressed into three minutes with nothing held for
+     * a minute: four queries, four origins, a page returned to, and no page
+     * read. Three intent grounds and one investment ground.
+     *
+     * This is the case the counts exist for, and it is why the fix was a
+     * duration and not `INVESTMENT_REQUIRED`. Lowering the count to one would
+     * have released run 2 as well — and would have released this, which is what
+     * a search going badly looks like.
+     */
+    const thin = [
+      query('what+is+perturbation+in+robotics', T0),
+      page({ url: ARXIV, title: 'Perturbation-Aware Robotics Navigation', at: T0 + 1000, engagedMs: 20_000, visits: 2 }),
+      query('perturbation+robotics+definition', T0 + 2000),
+      page({ url: SCIENCE, title: 'Robustness to Perturbation in Legged Robotics', at: T0 + 3000, engagedMs: 15_000 }),
+      page({ url: GITHUB, title: 'Perturbation Simulation for Robotics', at: T0 + 4000, engagedMs: 10_000 }),
+      query('perturbation+theory+robotics+control', T0 + 3 * MINUTE),
+    ]
+
+    const thinResult = groundsFor(detected(SUBJECT_2, thin), thin)
+
+    for (const kind of INTENT_GROUNDS) expect(thinResult.kinds).toContain(kind)
+    expect(thinResult.kinds).toContain('followed-across')
+    expect(thinResult.kinds).not.toContain('read-deeply')
+    expect(thinResult.kinds).not.toContain('stayed-with-it')
+    expect(thinResult.sufficient).toBe(false)
+  })
+})
+
 describe('the false positive that must not qualify', () => {
   /**
    * An afternoon of idle reading. Three sites, forty minutes, two of them read
@@ -431,6 +589,75 @@ describe('the false positive that must not qualify', () => {
 
     expect(groundsFor(detected(SUBJECT, withOneSearch), withOneSearch).sufficient).toBe(false)
   })
+
+  /**
+   * The same afternoon with one click back, which is the version the fixture
+   * above cannot catch.
+   *
+   * `afternoon` has no revisit at all, so it is refused by `INTENT_REQUIRED`
+   * and every investment threshold could be wrong without this file noticing.
+   * One return to one site is not much to ask of ordinary browsing — a tab
+   * reopened, a link followed home — and it fires `came-back`, which satisfies
+   * the intent half on its own. From there the whole bar is the investment
+   * count, and the investment count is `SUSTAINED_MS`.
+   *
+   * Written after `SUSTAINED_MS` was lowered to eight minutes and this exact
+   * shape was offered work: no search, no page held for a minute, twelve links
+   * across three sites in nine.
+   */
+  const skimmed = [
+    page({
+      url: 'https://news.example/digest',
+      title: 'The World After Models',
+      engagedMs: 45_000,
+      at: T0,
+      visits: 2,
+    }),
+    page({
+      url: 'https://forum.example/thread/9',
+      title: 'World Models, discussed',
+      engagedMs: 45_000,
+      at: T0 + 4 * MINUTE,
+    }),
+    page({
+      url: 'https://blog.example/posts/world-models',
+      title: 'Notes on World Models',
+      engagedMs: 45_000,
+      at: T0 + 9 * MINUTE,
+    }),
+  ]
+
+  it('refuses a skimmed afternoon that happens to include one click back', () => {
+    const result = groundsFor(detected(SUBJECT, skimmed), skimmed)
+
+    // The intent half is satisfied — that is the point. The refusal has to
+    // come from investment, and from `SUSTAINED_MS` in particular.
+    expect(result.kinds).toContain('came-back')
+    expect(result.kinds).toContain('followed-across')
+    expect(result.kinds).not.toContain('stayed-with-it')
+    expect(result.kinds).not.toContain('read-deeply')
+    expect(result.sufficient).toBe(false)
+  })
+
+  it('is admitted once the same afternoon runs past SUSTAINED_MS, and that is the known cost', () => {
+    // Not a wall, a price, and the price is time passing. Pinned rather than
+    // hidden: `INVESTMENT_REQUIRED`'s comment says the same thing in words, and
+    // ADR-0009's revisit list names this direction. If a real person is ever
+    // interrupted this way, this is the test that says it was expected.
+    const longer = [
+      ...skimmed.slice(0, 2),
+      page({
+        url: 'https://blog.example/posts/world-models',
+        title: 'Notes on World Models',
+        engagedMs: 45_000,
+        at: T0 + SUSTAINED_MS,
+      }),
+    ]
+
+    const result = groundsFor(detected(SUBJECT, longer), longer)
+    expect(result.kinds).toContain('stayed-with-it')
+    expect(result.sufficient).toBe(true)
+  })
 })
 
 describe('what the person is shown', () => {
@@ -476,9 +703,11 @@ describe('what the person is shown', () => {
 
 describe('an offer produced under fast-detect must not read like a real one', () => {
   it('appends the note to the grounds block', async () => {
-    // Ninety seconds of reading renders as "you have been at this for 15
-    // minutes" when the thresholds are 20× short. Somebody shown that without
-    // the note is being told something false about their own afternoon.
+    // Three seconds on a page fires `read-deeply` when the thresholds are 20×
+    // short, and `read-deeply` means a minute. The sentence quotes the true
+    // three seconds, so the number is not the lie — the ground firing is.
+    // Somebody shown that without the note is being told something false about
+    // their own afternoon.
     vi.resetModules()
     vi.stubEnv('PROPOSITUM_FAST_DETECT', '1')
 

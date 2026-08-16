@@ -31,7 +31,7 @@ back and the cost stated.
 |---|---|
 | **What it may see** | Every `https` origin. `host_permissions: ["https://*/*"]` at install. |
 | **What it records while watching** | Metadata only — cleaned URL, title, dwell, scroll. Never page text. |
-| **Where that goes** | An in-memory buffer, bounded by a 30-minute window **and** a 500-row cap. Never the ledger. |
+| **Where that goes** | An in-memory buffer, bounded by a 30-minute window **and** a 500-row cap. Never the ledger. *(One exception, added 2026-08-16: a TITLE may be copied onto a later report for the same URL, because the extension sends one on a navigation and not on an engagement, so a page still being read under an expired navigation would otherwise report minutes of dwell under an empty name. A copy may never itself be copied, so a title can be just under two windows old and no more. The row it lives on is an ordinary row and the cap, the decline filter and `clear()` all apply to it unchanged. See `withCarriedTitle` in `src/server/ambient-store.ts`.)* |
 | **How work is recognised** | Arithmetic. No model call. |
 | **What detection produces** | A suggestion. Never a session, never an action. |
 | **What accepting does** | Approves the source, starts the session, folds the buffer in, **and drafts a contract from the offer** — one click, all four the person's. *(Fourth clause added 2026-08-11 by [ADR-0009](0009-composed-offers.md). The row above it is unchanged and is restated verbatim there.)* |

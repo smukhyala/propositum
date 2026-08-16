@@ -145,9 +145,38 @@ accidents, and needing two of them is not much to ask of real work.
 
 Three-of-six admits both failures directly. It passes `read-deeply + stayed-with-it +
 followed-across` with no intent at all — the newsletter afternoon. And it passes all three intent
-grounds with no investment — someone who searched, refined, and returned inside ninety seconds
-having read nothing, which is what a search that is going badly looks like. Both are ordinary
-browsing, and an offer on either is a false one.
+grounds with no investment — someone who searched, refined, and returned inside ~~ninety seconds~~
+**a minute** having read nothing, which is what a search that is going badly looks like. Both are
+ordinary browsing, and an offer on either is a false one.
+
+> **Amended 2026-08-16.** The sentence above quoted `DEEP_READ_MS`, which was ninety seconds and is
+> now sixty; the argument is unchanged and only the number moved. Two real research sessions were
+> refused, and the second — four queries, four origins, eleven minutes, sixty seconds on an arXiv
+> paper — fired three intent grounds and one investment ground. The blocker was that ninety-second
+> threshold calling a sixty-second read a skim. ~~`SUSTAINED_MS` moved with it, fifteen minutes to
+> eight, because fifteen was half of the thirty-minute `WINDOW_MS` the span is measured inside.~~
+> **The counts did not move.** Lowering `INVESTMENT_REQUIRED` to one would also have released that
+> session and would additionally have admitted the newsletter afternoon this section exists to
+> refuse; the argument for two groups survives its own recalibration intact. The constants and the
+> full record now live in `src/domain/detection/grounds.ts` — not `detect.ts`, as the paragraph
+> above this table still says.
+
+> **Corrected later the same day, 2026-08-16.** The struck sentence above was wrong, and the
+> sentence after it was made wrong by it. `SUSTAINED_MS` at eight minutes admits the newsletter
+> afternoon directly: no search, nothing held for a minute, twelve links across three sites at
+> forty-five seconds each with one page returned to, fires `came-back` + `stayed-with-it` +
+> `followed-across` and clears the bar at `INVESTMENT_REQUIRED = 2`. So *"the argument for two
+> groups survives its own recalibration intact"* was false for thread spans between eight and
+> fifteen minutes, and it was false in this document while the code it describes was doing it.
+> `SUSTAINED_MS` is back at fifteen minutes; `DEEP_READ_MS` at sixty released run 2 without it.
+> The window artefact fifteen minutes really is — half the life of the buffer the span is measured
+> inside — is recorded in `grounds.ts` as owed, and its fix is a window or a new ground, not a
+> smaller number under the same window.
+>
+> **What the bar still admits, since this section is where it belongs.** Past fifteen minutes that
+> same newsletter afternoon does qualify. The two-group rule buys a duration, not an exemption, and
+> `docs/adr/0009` should not be read as claiming otherwise. Revisit is already listed below —
+> *the two-group bar is observed failing in either direction* — and this is the direction to watch.
 
 ### 3. `ShiftOutcome` — the run produced something, and it was not necessarily a document
 

@@ -20,6 +20,7 @@ import { WINDOW_MS, detectWork } from '../src/domain/detection/detect'
 import type { AmbientObservation } from '../src/domain/detection/detect'
 
 const T0 = 1_000_000
+const MINUTE = 60_000
 const ORIGIN = 'https://northwind.example.com'
 
 function obs(at: number, url: string, origin = ORIGIN): AmbientObservation {
@@ -204,6 +205,189 @@ describe('accepting carries the thread, not the neighbourhood', () => {
 
     expect(store.pagesOfThread('never-seen')).toEqual([])
     expect(store.forUrls(store.pagesOfThread('never-seen'), T0)).toEqual([])
+  })
+})
+
+/**
+ * The page read hardest was contributing the weakest signal.
+ *
+ * `content.js` sends a title on a navigation and not on an engagement. Inside
+ * the window that costs nothing — `pagesOf` keeps the best title per URL — but
+ * once the navigation ages out, a page still being read reports minutes of
+ * dwell under an empty name and `termsOf('', url)` falls back to the URL alone.
+ *
+ * Observed: `robot-colosseum.github.io` held three engaged minutes, the most of
+ * anything in the buffer, with an empty title.
+ */
+describe('a title carried forward, and only from inside the window', () => {
+  const PAGE = 'https://robot-colosseum.github.io/benchmark'
+  const TITLE = 'RLBench Colosseum manipulation benchmark'
+  const ORIGIN_B = 'https://robot-colosseum.github.io'
+
+  function titled(at: number, title: string, kind: AmbientObservation['kind'], engagedMs?: number): AmbientObservation {
+    return {
+      at,
+      origin: ORIGIN_B,
+      url: PAGE,
+      title,
+      kind,
+      ...(engagedMs === undefined ? {} : { engagedMs }),
+    }
+  }
+
+  it('gives a titleless report the title the same URL already had', () => {
+    const store = createAmbientStore()
+    store.record(titled(T0, TITLE, 'navigation'), T0)
+    store.record(titled(T0 + 1000, '', 'engagement', 60_000), T0 + 1000)
+
+    expect(store.since(T0 + 1000).map((o) => o.title)).toEqual([TITLE, TITLE])
+  })
+
+  it('does not lend a title to a different URL', () => {
+    // The buffer is keyed by URL and nothing else. A page that happens to be on
+    // the same site is a different page, and naming it after its neighbour
+    // would invent a term set out of nothing.
+    const store = createAmbientStore()
+    store.record(titled(T0, TITLE, 'navigation'), T0)
+    store.record(
+      { at: T0 + 1, origin: ORIGIN_B, url: `${PAGE}/other`, title: '', kind: 'engagement', engagedMs: 60_000 },
+      T0 + 1,
+    )
+
+    expect(store.since(T0 + 1)[1]?.title).toBe('')
+  })
+
+  it('carries nothing once the titled observation has aged out', () => {
+    // The privacy shape, as an assertion. Nothing outside the window may be
+    // consulted, so a page whose navigation has expired keeps an empty title —
+    // that is the correct outcome, not a gap to be plugged with a longer-lived
+    // structure.
+    const store = createAmbientStore()
+    store.record(titled(T0, TITLE, 'navigation'), T0)
+
+    const later = T0 + WINDOW_MS + 1
+    store.record(titled(later, '', 'engagement', 60_000), later)
+
+    const held = store.since(later)
+    expect(held).toHaveLength(1)
+    expect(held[0]?.title).toBe('')
+  })
+
+  it('keeps the reading legible after the navigation itself has expired', () => {
+    // The live defect, end to end. The navigation ages out; the engagement that
+    // copied its title while both were in the window is still here, so the
+    // detector still knows what the page is about.
+    const store = createAmbientStore()
+    store.record(titled(T0, TITLE, 'navigation'), T0)
+    store.record(titled(T0 + MINUTE, '', 'engagement', 3 * MINUTE), T0 + MINUTE)
+
+    const afterExpiry = T0 + WINDOW_MS + MINUTE / 2
+    const held = store.since(afterExpiry)
+
+    expect(held.map((o) => o.url)).toEqual([PAGE])
+    expect(held[0]?.title).toBe(TITLE)
+  })
+
+  it('forgets a carried title with everything else', () => {
+    // Nothing survives `clear()`. If a title map existed anywhere, this is
+    // where it would show.
+    const store = createAmbientStore()
+    store.record(titled(T0, TITLE, 'navigation'), T0)
+    store.clear()
+
+    store.record(titled(T0 + 1, '', 'engagement', 60_000), T0 + 1)
+
+    expect(store.since(T0 + 1)[0]?.title).toBe('')
+  })
+
+  it('forgets a carried title when the origin is declined', () => {
+    const store = createAmbientStore()
+    store.record(titled(T0, TITLE, 'navigation'), T0)
+    store.decline(ORIGIN_B, T0 + 1)
+
+    store.record(titled(T0 + 2, '', 'engagement', 60_000), T0 + 2)
+
+    expect(store.since(T0 + 2)[0]?.title).toBe('')
+  })
+
+  it('is not exempt from the row cap', () => {
+    // The carried title lives on an ordinary row, so an ordinary row's bounds
+    // apply. Pushed past `MAX_OBSERVATIONS` it goes, and there is nothing left
+    // to copy from.
+    const store = createAmbientStore()
+    store.record(titled(T0, TITLE, 'navigation'), T0)
+    for (let i = 1; i <= MAX_OBSERVATIONS; i += 1) {
+      store.record(obs(T0 + i, `/p${i}`), T0 + i)
+    }
+
+    const at = T0 + MAX_OBSERVATIONS + 1
+    store.record(titled(at, '', 'engagement', 60_000), at)
+
+    expect(store.size()).toBe(MAX_OBSERVATIONS)
+    expect(store.since(at).filter((o) => o.url === PAGE)).toHaveLength(1)
+    expect(store.since(at).find((o) => o.url === PAGE)?.title).toBe('')
+  })
+
+  /**
+   * The bound ADR-0008 states, tested as a duration rather than as a hop.
+   *
+   * A copy used to be a valid source for the next copy, so a page that kept
+   * reporting kept its title alive without limit: one navigation at 10:00 and a
+   * titleless engagement every ten minutes held that title for three hours,
+   * six times the window. ADR-0008 says the buffer is bounded by a 30-minute
+   * window AND a 500-row cap and names the title as one of the four things it
+   * holds; an unbounded title is that row being false.
+   */
+  it('does not let a carried title carry itself onward for ever', () => {
+    const store = createAmbientStore()
+    store.record(titled(T0, TITLE, 'navigation'), T0)
+
+    // Three hours of a tab left open and read, reporting every ten minutes.
+    for (let step = 1; step <= 18; step += 1) {
+      const at = T0 + step * 10 * MINUTE
+      store.record(titled(at, '', 'engagement', 60_000), at)
+    }
+
+    const long = T0 + 180 * MINUTE
+    expect(store.since(long).map((o) => o.title)).toEqual(['', '', '', ''])
+  })
+
+  it('will not take a title from a row that only has a carried one', () => {
+    // The hop, isolated. The engagement at +1s holds a copy; the engagement
+    // after it must not read that copy, because a copy that can be copied is
+    // the chain again by a longer road.
+    const store = createAmbientStore()
+    store.record(titled(T0, TITLE, 'navigation'), T0)
+    store.record(titled(T0 + 1000, '', 'engagement', 60_000), T0 + 1000)
+
+    const afterExpiry = T0 + WINDOW_MS + 1000
+    store.record(titled(afterExpiry, '', 'engagement', 120_000), afterExpiry)
+
+    const held = store.since(afterExpiry)
+    expect(held.map((o) => o.title)).toEqual([TITLE, ''])
+  })
+
+  it('does not carry one onto a navigation, which would make it a source again', () => {
+    // The half that does the proving. A navigation always arrives titled from
+    // `content.js`, so a titleless one is a page that genuinely had no title —
+    // and filling it in would put a row into the buffer that other rows are
+    // allowed to copy from.
+    const store = createAmbientStore()
+    store.record(titled(T0, TITLE, 'navigation'), T0)
+    store.record(titled(T0 + 1000, '', 'navigation'), T0 + 1000)
+
+    expect(store.since(T0 + 1000)[1]?.title).toBe('')
+  })
+
+  it('still records only the fields the detector needs when it carries one', () => {
+    // The carry copies a title onto a new object. It must not smuggle a field
+    // the shape test at the bottom of this file forbids.
+    const store = createAmbientStore()
+    store.record(titled(T0, TITLE, 'navigation'), T0)
+    store.record(titled(T0 + 1, '', 'engagement', 60_000), T0 + 1)
+
+    const carried = store.since(T0 + 1)[1]
+    expect(Object.keys(carried ?? {}).sort()).toEqual(['at', 'engagedMs', 'kind', 'origin', 'title', 'url'])
   })
 })
 

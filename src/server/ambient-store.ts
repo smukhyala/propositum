@@ -140,10 +140,38 @@ export interface AmbientStore {
   pagesOfThread(signature: string): readonly string[]
   /** Observations for an explicit set of pages. */
   forUrls(urls: readonly string[], nowMs: number): readonly AmbientObservation[]
-  /** Record one ambient observation. Trims by window and cap on the way in. */
+  /**
+   * Record one ambient observation. Trims by window and cap on the way in.
+   *
+   * A titleless ENGAGEMENT inherits the most recent title still held IN THE
+   * WINDOW for the same URL, from a navigation or a query — the extension sends
+   * a title on those and not on an engagement, and a page whose navigation has
+   * aged out would otherwise keep reporting minutes of reading under an empty
+   * name. Nothing outside the window is consulted, and a copy is never itself
+   * copied, so a title is at most just under two windows old — once for the
+   * navigation's own life, once for the copy's. See the implementation for the
+   * whole argument, including what it deliberately does not build.
+   */
   record(observation: AmbientObservation, nowMs: number): void
   /** Everything still inside the window, oldest first. */
   since(nowMs: number): readonly AmbientObservation[]
+  /**
+   * Which buffer this is. A counter, changed once by every `clear()`.
+   *
+   * The question `isComposing` cannot answer. That one says whether a call is
+   * running under some signature; this one says whether the buffer the caller
+   * read its inputs out of still exists. They come apart precisely when it
+   * matters: a `clear()` empties the in-flight markers AND the attempt memory,
+   * so the very next poll can start a second call under the same signature —
+   * at which point `isComposing` is true again and is true about somebody
+   * else's work.
+   *
+   * `composeOffer`'s retry is the only caller and the only reason this exists.
+   * It holds a prompt built out of a person's page titles and typed searches
+   * across an await, and a marker that can come back true is not a safe thing
+   * to ask before spending money on sending it.
+   */
+  generation(): number
   /** Forget everything. Called on decline, on session start, and on stop. */
   clear(): void
   /** Stop offering for this origin until the snooze expires. */
@@ -174,6 +202,16 @@ export function createAmbientStore(): AmbientStore {
   const attemptedNames = new Set<string>()
   const attemptedOffers = new Set<string>()
 
+  /**
+   * How many buffers ago this is. Counts `clear()`s and nothing else.
+   *
+   * A number rather than a boolean because "has it been cleared" is not the
+   * question — a caller that started under buffer 3 needs to know it is still
+   * buffer 3, and a clear-then-refill would answer a boolean wrongly. It never
+   * resets, which is what makes "still mine" decidable by equality.
+   */
+  let generation = 0
+
   const trim = (nowMs: number) => {
     observations = observations.filter((o) => nowMs - o.at <= WINDOW_MS)
     if (observations.length > MAX_OBSERVATIONS) {
@@ -182,9 +220,131 @@ export function createAmbientStore(): AmbientStore {
     }
   }
 
+  /**
+   * The same page's title, when this report arrived without one.
+   *
+   * ── The signal this recovers ─────────────────────────────────────────
+   *
+   * `content.js` sends `title` on a navigation and NOT on an engagement, which
+   * sends url, dwell, scroll and whether anyone interacted. Inside the window
+   * that costs nothing — `pagesOf` already keeps the most informative title per
+   * URL, so the navigation's title covers its own engagements. It starts
+   * costing the moment the NAVIGATION ages out and the engagements do not: the
+   * page is still open, still being read, still reporting every fifteen
+   * seconds, and every one of those reports now has an empty title, so
+   * `termsOf('', url)` falls back to the URL alone.
+   *
+   * Observed exactly that way: `robot-colosseum.github.io` held three engaged
+   * minutes — the most of anything in the buffer — with an empty title, and
+   * contributed almost nothing to thread formation. The page read hardest was
+   * the page that counted least.
+   *
+   * ── Why here and not in the extension ────────────────────────────────
+   *
+   * The extension has no build step, so shipping a fix through it means asking
+   * a person to reload an unpacked extension by hand — a manual step nobody
+   * else can take for them, on the one component whose whole point is that it
+   * runs unattended. The buffer already holds the title, keyed by URL. Fixing
+   * it on the side that redeploys itself is the smaller change.
+   *
+   * ── What this deliberately is NOT ────────────────────────────────────
+   *
+   * Not a title map, not a cache, not an index — no structure of any kind that
+   * outlives the window or survives `clear()`. ADR-0008's argument is that this
+   * buffer is non-durable and bounded twice, and a lookup table of "titles we
+   * have seen for URLs" would be a NEW RETENTION SURFACE introduced as a bug
+   * fix, which is the worst way for one to arrive. So this reads the same array
+   * everything else reads, after the same trim, and when a page's navigation
+   * has already aged out there is nothing to carry forward and the title stays
+   * empty. That is the correct outcome, not a gap to be plugged.
+   *
+   * ── One hop, and why it had to be exactly one ────────────────────────
+   *
+   * ~~A title CAN outlive the observation it came from. Engagement at 10:00
+   * copies the title from a 09:35 navigation; at 10:30 that navigation is gone
+   * but the 10:00 engagement is still here carrying the copy, and the 10:30
+   * engagement copies it again. Chained far enough, a title from an hour ago
+   * survives on a page still being read now. That is more than "the last thirty
+   * minutes of titles", and it is worth saying rather than discovering. It is
+   * not a retention surface: every copy lives on an ordinary row, inside the
+   * window, counted against `MAX_OBSERVATIONS`, dropped by `decline`, and
+   * erased by `clear` along with everything else. But it is a longer life than
+   * the row it was copied from had, and that is a real widening rather than a
+   * neutral one.~~
+   *
+   * **Amended 2026-08-16 — "worth saying" was not enough, and the chain is
+   * closed.** Said out loud it still sounded bounded. Measured, it is not: one
+   * navigation titled at 10:00 and a titleless engagement every ten minutes
+   * afterwards kept that title alive for three hours, six times the window, and
+   * would have kept it alive for as long as the tab stayed open. ADR-0008's
+   * decision table says the buffer is bounded by a 30-minute window AND a
+   * 500-row cap, and names the title as one of the four things it holds. A
+   * title with no upper bound on its age is that row of the ADR being false,
+   * and a comment conceding it does not make it true.
+   *
+   * So a copy is made under two conditions, and together they bound the chain
+   * at exactly one hop:
+   *
+   *   - **Only a row the extension itself titled may be the SOURCE.** A
+   *     navigation and a query arrive from `content.js` with the document's own
+   *     title; an engagement never does.
+   *   - **Only an engagement may RECEIVE one.** This is the half that does the
+   *     proving. Without it a titleless navigation could take a copy and then
+   *     be a source for the next one, and the chain would be back by a longer
+   *     road.
+   *
+   * A source's title is therefore always one the extension sent, and the bound
+   * that gives is a number rather than a hope — but it is not thirty minutes,
+   * and rounding it to thirty would be the same kind of wrong this replaces.
+   * The worst case is a navigation at 10:00 and an engagement at 10:29 that
+   * copies from it one minute before it expires: that copy is dropped at 10:59,
+   * so a title can be **just under two windows old**, and never more, because
+   * nothing may copy it again. Twice a stated bound is a real widening; an
+   * unbounded one was a different thing entirely. ADR-0008's decision table
+   * carries the same sentence, so the two do not disagree.
+   *
+   * What that gives up, stated: a titleless NAVIGATION for a page already in
+   * the buffer keeps its empty title. `content.js` sends the document title on
+   * a navigation, so a titleless one is a page that genuinely had no title at
+   * that moment, and inventing its old one back is a guess. The defect this
+   * whole function exists for was engagements, and engagements are what it
+   * still fixes.
+   */
+  const withCarriedTitle = (observation: AmbientObservation): AmbientObservation => {
+    if (observation.title !== '') return observation
+    if (observation.kind !== 'engagement') return observation
+
+    // Backwards: the most recent title for this URL is the one that describes
+    // it now. A single-page app rewrites its title without navigating.
+    for (let i = observations.length - 1; i >= 0; i -= 1) {
+      const earlier = observations[i]
+      if (earlier === undefined) continue
+      if (earlier.url !== observation.url) continue
+      if (earlier.kind !== 'navigation' && earlier.kind !== 'query') continue
+      if (earlier.title === '') continue
+      return { ...observation, title: earlier.title }
+    }
+
+    return observation
+  }
+
   return {
+    /**
+     * Trimmed on the way IN as well as after, and the first trim is the
+     * load-bearing one.
+     *
+     * `withCarriedTitle` reads whatever is in the array, so what is in the
+     * array when it reads has to be what is inside the window. Without the
+     * first call, a buffer that had gone forty minutes without a report would
+     * still be holding rows the window has expired, and a title could be
+     * carried forward off one of them — quietly making the carry-forward the
+     * one thing here that is not bounded by the window. The second call is the
+     * original bound, unchanged, and it is still needed because a push can put
+     * the array one over `MAX_OBSERVATIONS`.
+     */
     record(observation, nowMs) {
-      observations.push(observation)
+      trim(nowMs)
+      observations.push(withCarriedTitle(observation))
       trim(nowMs)
     },
 
@@ -192,6 +352,8 @@ export function createAmbientStore(): AmbientStore {
       trim(nowMs)
       return observations
     },
+
+    generation: () => generation,
 
     /**
      * Forget everything, and mean everything.
@@ -208,8 +370,14 @@ export function createAmbientStore(): AmbientStore {
      * about on every poll; a clear only happens when a person has started a
      * session or turned an offer down, and whatever browsing comes afterwards
      * is genuinely new.
+     *
+     * `generation` is the one thing here that goes UP rather than away, and it
+     * is what lets a call already in flight find out that this happened. See
+     * the interface doc: dropping the markers is what makes them unsafe to ask
+     * about afterwards, so something has to survive to say so.
      */
     clear() {
+      generation += 1
       observations = []
       names.clear()
       naming.clear()

@@ -5,6 +5,13 @@
  * timer, so what is pinned here is mostly about restraint: the bar in front of
  * the offer, one call per thread, and — the defect that shipped — a failure
  * that is remembered instead of retried on every poll forever.
+ *
+ * The one place restraint was too much of it is pinned here too. A call that
+ * never ARRIVED is not an answer, and settling it as one means a person doing
+ * real work silently never gets an offer. So `transport` buys exactly one more
+ * attempt, and the tests below hold both halves: that the retry happens, and
+ * that it stops — at two, inside the in-flight marker, with no poll able to
+ * multiply it.
  */
 
 import { describe, it, expect } from 'vitest'
@@ -323,11 +330,27 @@ describe('one call per thread, including the failures', () => {
     expect(model.calls).toHaveLength(1)
   })
 
+  it('remembers a schema mismatch the same way — the client already spent its repair turn', async () => {
+    const { store, detected, named, at } = loaded(strongThread())
+    const model = new FakeModelClient([
+      { kind: 'fail', failure: 'schema-mismatch', detail: 'outline: expected array' },
+    ])
+
+    await composeOffer(store, model, detected, named, at)
+    await composeOffer(store, model, detected, named, at)
+
+    // Well-formed JSON of the wrong shape is an ANSWER. Asking again asks the
+    // same model the same thing, which is what `answered()` says out loud.
+    expect(model.calls).toHaveLength(1)
+  })
+
   it('treats a thrown error as the same settled outcome', async () => {
     const { store, detected, named, at } = loaded(strongThread())
 
-    // The stand-in for a transport error that escapes as an exception rather
-    // than arriving as a BoundaryResult.
+    // NOT a stand-in for a transport failure. `client.ts` is explicit that a
+    // transport failure ARRIVES as `{ ok: false, failure: 'transport' }`; a
+    // throw is programmer error the client did not catch, and retrying an
+    // unclassified fault on a paid path would just fault twice.
     const throwing = {
       run: async () => {
         throw new Error('socket hang up')
@@ -341,6 +364,162 @@ describe('one call per thread, including the failures', () => {
     const second = new FakeModelClient([ok])
     await composeOffer(store, second, detected, named, at)
     expect(second.calls).toHaveLength(0)
+  })
+})
+
+/**
+ * A call that did not COMPLETE is not an answer, and must not settle the thread.
+ *
+ * The defect, observed live: `model_call_record` holds
+ * `offer | claude-opus-5 | 11179ms | transport` against a thread somebody was
+ * really working on. `attemptedOffer` latched, and that person never got an
+ * offer for the life of the buffer, with nothing on screen saying why.
+ */
+describe('a call that never arrived is retried, exactly once', () => {
+  it('retries a transport failure and composes on the second attempt', async () => {
+    const { store, detected, named, at } = loaded(strongThread())
+    const model = new FakeModelClient([
+      { kind: 'fail', failure: 'transport', detail: 'socket hang up' },
+      ok,
+    ])
+
+    await composeOffer(store, model, detected, named, at)
+
+    expect(model.calls).toHaveLength(2)
+    expect(store.offerFor(named.signature)?.title).toBe(OFFER.title)
+    expect(store.isComposing(named.signature)).toBe(false)
+  })
+
+  it('stops at two, and never asks again however many polls arrive', async () => {
+    // The bound is the whole design. An unbounded retry fired by a poll loop
+    // against a paid API is worse than the bug — that is the sixty-call defect.
+    const { store, detected, named, at } = loaded(strongThread())
+    const model = new FakeModelClient([
+      { kind: 'fail', failure: 'transport', detail: 'ECONNRESET' },
+      { kind: 'fail', failure: 'transport', detail: 'ECONNRESET' },
+    ])
+
+    for (let poll = 0; poll < 10; poll += 1) {
+      await composeOffer(store, model, detected, named, at)
+    }
+
+    expect(model.calls).toHaveLength(2)
+    expect(store.offerFor(named.signature)).toBeNull()
+    expect(store.isComposing(named.signature)).toBe(false)
+    expect(store.attemptedOffer(named.signature)).toBe(true)
+  })
+
+  it('does not retry a refusal, which is a real answer', async () => {
+    // The retry must be keyed on "did the call complete", not on "did we get
+    // an offer". A refusal reproduced twice is money spent to be told the same
+    // thing, and it is the case `recoveryFor` already calls terminal.
+    const { store, detected, named, at } = loaded(strongThread())
+    const model = new FakeModelClient([{ kind: 'fail', failure: 'refusal', detail: 'declined' }])
+
+    await composeOffer(store, model, detected, named, at)
+
+    expect(model.calls).toHaveLength(1)
+  })
+
+  it('does not let two polls turn one retry into four calls', async () => {
+    // The concurrency claim, stated as a test: the retry lives INSIDE the
+    // in-flight marker's critical section. `startComposing` records the attempt
+    // synchronously before the first await, so the second poll returns at the
+    // `attemptedOffer` guard and the two attempts are sequential within one
+    // invocation — never two invocations retrying in parallel.
+    const { store, detected, named, at } = loaded(strongThread())
+    const model = new FakeModelClient([
+      { kind: 'fail', failure: 'transport', detail: 'socket hang up' },
+      ok,
+    ])
+
+    await Promise.all([
+      composeOffer(store, model, detected, named, at),
+      composeOffer(store, model, detected, named, at),
+      composeOffer(store, model, detected, named, at),
+    ])
+
+    expect(model.calls).toHaveLength(2)
+    expect(model.pendingReplies).toBe(0)
+    expect(store.offerFor(named.signature)?.title).toBe(OFFER.title)
+  })
+
+  it('a retry that lands after a clear leaves nothing behind', async () => {
+    // Two attempts is twice as long a window for somebody to decline in. The
+    // buffer must still refuse the result — an offer that outlives "no thanks"
+    // is the profile the whole object exists to refuse.
+    const { store, detected, named, at } = loaded(strongThread())
+    const model = new FakeModelClient([
+      { kind: 'fail', failure: 'transport', detail: 'socket hang up' },
+      ok,
+    ])
+
+    const composing = composeOffer(store, model, detected, named, at)
+    store.clear()
+    await composing
+
+    expect(store.offerFor(named.signature)).toBeNull()
+    expect(store.attemptedOffer(named.signature)).toBe(false)
+  })
+
+  /**
+   * The half the test above walked straight past.
+   *
+   * Asserting that nothing was WRITTEN is not the same as asserting that
+   * nothing was SENT, and the second attempt is an outbound call carrying this
+   * person's page titles and the searches they typed. `clear()` is what runs
+   * when somebody accepts an offer or turns one down — so the buffer these
+   * inputs came from has been thrown away, and every other path in this design
+   * refuses even to leave a trace of one. A fresh transmission is stronger than
+   * a trace, and before the retry existed there was no second call to make.
+   *
+   * `model.calls` is therefore the assertion, and the reply script is left one
+   * short on purpose: `pendingReplies` says the second call was never reached
+   * rather than merely never recorded.
+   */
+  it('makes no second call about a buffer that has been forgotten', async () => {
+    const { store, detected, named, at } = loaded(strongThread())
+    const model = new FakeModelClient([
+      { kind: 'fail', failure: 'transport', detail: 'socket hang up' },
+      ok,
+    ])
+
+    const composing = composeOffer(store, model, detected, named, at)
+    store.clear()
+    await composing
+
+    expect(model.calls).toHaveLength(1)
+    expect(model.pendingReplies).toBe(1)
+  })
+
+  it('does not settle a later poll´s call as its own when it gives up', async () => {
+    // A clear un-latches `attemptedOffers`, so the next poll starts a genuinely
+    // new attempt under the same signature — about new browsing, on a buffer
+    // that exists. The invocation from before the clear must not spend the new
+    // buffer's budget, and must not touch its markers on the way out: settling
+    // somebody else's in-flight call as failed is how a thread becomes
+    // permanently unofferable with nothing saying why.
+    const { store, detected, named, at } = loaded(strongThread())
+    const stale = new FakeModelClient([
+      { kind: 'fail', failure: 'transport', detail: 'ECONNRESET' },
+      ok,
+    ])
+
+    const composing = composeOffer(store, stale, detected, named, at)
+    store.clear()
+
+    // The browsing carries on, so the same signature is detected again — this
+    // time out of a buffer somebody still holds.
+    for (const o of strongThread()) store.record(o, o.at)
+    const later = new FakeModelClient([ok])
+    await composeOffer(store, later, detected, named, at)
+    await composing
+
+    // One call from the invocation that was orphaned, one from the poll that
+    // owns the buffer now. Four is what an unguarded retry produced.
+    expect(stale.calls).toHaveLength(1)
+    expect(later.calls).toHaveLength(1)
+    expect(store.offerFor(named.signature)?.title).toBe(OFFER.title)
   })
 })
 
