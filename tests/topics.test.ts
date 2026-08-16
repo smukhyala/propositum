@@ -108,20 +108,21 @@ describe('terms', () => {
   it('strips search-engine branding from a title', () => {
     const terms = termsOf('world models - Google Search', 'https://www.google.com/search?q=world+models')
     expect(terms.has('world')).toBe(true)
-    expect(terms.has('models')).toBe(true)
+    // `models` normalises to `model`. See the singular/plural block below.
+    expect(terms.has('model')).toBe(true)
     expect(terms.has('google')).toBe(false)
   })
 
   it('reads the subject out of a search query even with an unhelpful title', () => {
     const terms = termsOf('Search', 'https://duckduckgo.com/?q=diffusion+world+models')
     expect(terms.has('diffusion')).toBe(true)
-    expect(terms.has('models')).toBe(true)
+    expect(terms.has('model')).toBe(true)
   })
 
   it('reads the subject out of a URL path when the title is useless', () => {
     const terms = termsOf('Loading', 'https://arxiv.org/abs/world-models-survey')
     expect(terms.has('world')).toBe(true)
-    expect(terms.has('models')).toBe(true)
+    expect(terms.has('model')).toBe(true)
   })
 
   it('drops platform names that would otherwise bind everything together', () => {
@@ -133,6 +134,88 @@ describe('terms', () => {
     const terms = termsOf('AI in 2026 is on', 'https://x.example/a')
     expect(terms.has('2026')).toBe(false)
     expect(terms.has('in')).toBe(false)
+  })
+})
+
+/**
+ * One subject, written two ways.
+ *
+ * The case that produced this: a person searched "what is perturbation in
+ * robotics", read an arXiv paper, then spent two minutes on a Science Robotics
+ * article titled "Robot-induced **perturbations** of human walking…". Every
+ * human would call that one subject. The detector called it two, because a
+ * `Set<string>` of terms answers `has('perturbation')` with `false` when the
+ * word on the page was plural — and the page that best supported the thread was
+ * the one excluded from it.
+ *
+ * The rule is deliberately the smallest one that fixes it: singulars only, no
+ * verb forms. `-ing` and `-ed` were left alone because "learning" and "learn"
+ * are frequently different subjects, and a false merge is the expensive
+ * direction — `match-project.ts` files a sitting on these same terms.
+ */
+describe('a plural and its singular are one term', () => {
+  const sameTerm = (a: string, b: string) =>
+    expect([...termsOf(a, '')].sort()).toEqual([...termsOf(b, '')].sort())
+
+  it('collapses a simple plural', () => {
+    sameTerm('perturbations in robotics', 'perturbation in robotics')
+  })
+
+  it('collapses -es after a sibilant', () => {
+    sameTerm('classes of manifold', 'class of manifold')
+  })
+
+  it('collapses -ies to -y', () => {
+    sameTerm('case studies on transformer', 'case study on transformer')
+  })
+
+  it('leaves -ss, -us and -is alone, because they are not plurals', () => {
+    expect(termsOf('business process analysis', '').has('business')).toBe(true)
+    expect(termsOf('business process analysis', '').has('process')).toBe(true)
+    expect(termsOf('business process analysis', '').has('analysis')).toBe(true)
+  })
+
+  it('does not stem below the floor, so short tokens keep their shape', () => {
+    // `abs` is the arXiv path segment, not a word about anything. It reached
+    // the subject terms of a real thread once; stemming it would be a second
+    // way for the same junk to arrive.
+    expect(termsOf('Loading', 'https://arxiv.org/abs/2306.01874').has('abs')).toBe(true)
+  })
+
+  it('does not collapse two genuinely different words into one', () => {
+    // The failure this rule must not have: distinct subjects merging.
+    expect([...termsOf('robot navigation', '')].sort()).not.toEqual(
+      [...termsOf('robust navigation', '')].sort(),
+    )
+  })
+})
+
+/**
+ * Branding stripping used to eat hyphenated subject words.
+ *
+ * `grounds.ts` documented the symptom rather than the cause: `termsOf('gpt-4 vs
+ * claude', '')` returned `{gpt}`, because the separator class did not require
+ * whitespace and `-4 vs claude` looked exactly like ` — Acme Blog`. The paper
+ * that started all this is titled "PA-LOCO: Learning Perturbation-Adaptive
+ * Locomotion…", which is the same shape.
+ */
+describe('branding is only stripped where branding actually goes', () => {
+  it('still strips a spaced separator', () => {
+    const terms = termsOf('Robot-induced perturbations of walking | Science Robotics', '')
+    expect(terms.has('science')).toBe(false)
+    expect(terms.has('perturbation')).toBe(true)
+  })
+
+  it('keeps a hyphenated word that is part of the subject', () => {
+    const terms = termsOf('gpt-4 vs claude', '')
+    expect(terms.has('gpt')).toBe(true)
+    expect(terms.has('claude')).toBe(true)
+  })
+
+  it('keeps the subject of a hyphenated paper title', () => {
+    const terms = termsOf('PA-LOCO: Learning Perturbation-Adaptive Locomotion', '')
+    expect(terms.has('perturbation')).toBe(true)
+    expect(terms.has('locomotion')).toBe(true)
   })
 })
 

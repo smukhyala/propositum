@@ -108,6 +108,10 @@ export interface AmbientObservation {
 export interface WorkDetected {
   /** The recurring subject words, most common first. Raw material for a name. */
   readonly terms: readonly string[]
+  /** The same words as they were written on the pages, aligned index-for-index
+   *  with `terms`. Sentences shown to a person use these; nothing compares
+   *  them, because comparing spellings is what `terms` exists to stop. */
+  readonly labels: readonly string[]
   /** Every site the thread runs through. Research is rarely on one. */
   readonly origins: readonly string[]
   readonly pages: number
@@ -264,6 +268,7 @@ export function detectWork(
 
   return {
     terms: thread.terms,
+    labels: thread.labels,
     origins: thread.origins,
     pages: thread.pages.length,
     searches: thread.searches,

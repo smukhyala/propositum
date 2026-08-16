@@ -179,13 +179,25 @@ function hostOf(origin: string): string {
  * page joined the thread on some incidental word.
  *
  * That test is `page.terms` against the thread's terms, and not a fresh
- * tokenisation of the query, for a reason worth writing down: `termsOf` strips
- * trailing site branding from the string it is given, and a bare query is not a
- * title. `termsOf('gpt-4 vs claude', '')` returns `{gpt}` — the hyphen reads as
- * a branding separator — and `termsOf('e-processes sequential testing', '')`
- * returns nothing at all. Every hyphenated search would have failed this test
- * silently. `page.terms` is built from the URL as well, where the query arrives
- * through the path branch and is never branding-stripped.
+ * tokenisation of the query.
+ *
+ * ~~The reason was that `termsOf` strips trailing site branding from whatever
+ * string it is given, and a bare query is not a title: `termsOf('gpt-4 vs
+ * claude', '')` returned `{gpt}` — the hyphen read as a branding separator —
+ * and `termsOf('e-processes sequential testing', '')` returned nothing at all.
+ * Every hyphenated search failed this test silently.~~
+ *
+ * **Amended 2026-08-16: that bug is fixed at its source.** `BRANDING` now
+ * requires whitespace before the separator, so a hyphen inside a word is part
+ * of the word; those two calls return `{gpt, claude}` and `{process,
+ * sequential, testing}`. This comment described a workaround for a defect
+ * nobody had gone and fixed, which is how a routing-around outlives the thing
+ * it routed around.
+ *
+ * The conclusion survives its own justification, on a narrower argument:
+ * `page.terms` is built from the URL as well as the title, so a query that
+ * reaches the page through the path branch is matched on words the title may
+ * never have carried. Re-tokenising the query alone would see less.
  */
 function pursuitOf(
   detected: WorkDetected,

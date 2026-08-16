@@ -53,11 +53,79 @@ const STOPWORDS = new Set([
   'docs', 'doc', 'pdf', 'html', 'www', 'com', 'org', 'net', 'io', 'ai', 'app', 'jobs', 'careers',
 ])
 
-/** Trailing site branding: "… - Google Search", "… | Acme", "… — Acme Blog". */
-const BRANDING = /\s*[|–—-]\s*[^|–—-]{1,40}$/
+/**
+ * Trailing site branding: "… - Google Search", "… | Acme", "… — Acme Blog".
+ *
+ * The leading `\s+` is load-bearing and was missing. Without it the separator
+ * class matched the hyphen INSIDE a word, so any title whose subject was
+ * hyphenated lost everything after it: `termsOf('gpt-4 vs claude', '')`
+ * returned `{gpt}`, and "PA-LOCO: Learning Perturbation-Adaptive Locomotion"
+ * lost the two words it was about. `grounds.ts` documented the symptom and
+ * routed around it rather than fixing it here, which left every other caller
+ * still paying for it.
+ *
+ * Branding goes after a space. A hyphen with no space before it is part of a
+ * word, and this now says so.
+ */
+const BRANDING = /\s+[|–—-]\s*[^|–—-]{1,40}$/
 
-/** Terms worth clustering on. Short tokens and stopwords are dropped. */
-export function termsOf(title: string, url: string): Set<string> {
+/**
+ * One subject, written two ways.
+ *
+ * A `Set<string>` of terms answers `has('perturbation')` with `false` when the
+ * page said "perturbations", so the two-minute read that best supported a
+ * thread was the page excluded from it. Every human reading those titles would
+ * have called it one subject.
+ *
+ * ── Why this is the smallest rule that works, and not a stemmer ───────────
+ *
+ * Singulars only. `-ing` and `-ed` are deliberately left alone: "learning" and
+ * "learn" are frequently different subjects, and this function is also both
+ * halves of `matchProject`, which decides which Project a sitting is FILED
+ * under. `CONTEXT.md` tunes that toward splitting on the grounds that a false
+ * split is one click and a false merge silently inherits the wrong sources and
+ * the wrong document. Every rule below therefore has to be one a person would
+ * agree with instantly, because the expensive failure is agreeing too much.
+ *
+ * A real stemmer was the alternative and is refused for the same reason the
+ * detector refuses a blocklist and a model: it would collapse words this file
+ * cannot argue about, in a path where the collapse is invisible and the damage
+ * is silent.
+ *
+ * ── Where it is wrong, named rather than discovered ───────────────────────
+ *
+ * `series` → `sery` and `species` → `specy`. Both are wrong and both are
+ * harmless here, because the cost of a bad stem is a term that matches nothing
+ * — a MISSED join, which is the cheap direction. A bad stem only becomes
+ * expensive if two different words land on the same string, and the guards
+ * below exist to keep that rare: nothing under five characters is touched, and
+ * `-ss`, `-us` and `-is` endings are left alone so `process`, `status` and
+ * `analysis` survive intact.
+ */
+function singular(word: string): string {
+  // The floor. `abs` is an arXiv path segment that reached a real thread's
+  // subject terms once; stemming short tokens would add a second way for that
+  // class of junk to arrive, and buys nothing — English plurals are longer.
+  if (word.length < 5) return word
+
+  if (word.endsWith('ies')) return `${word.slice(0, -3)}y`
+  // Not plurals. Checked before the two rules below, which would both bite.
+  if (/(?:ss|us|is)$/.test(word)) return word
+  if (/(?:s|x|z|ch|sh)es$/.test(word)) return word.slice(0, -2)
+  if (word.endsWith('s')) return word.slice(0, -1)
+
+  return word
+}
+
+/**
+ * The words, before normalisation. One tokeniser, two callers.
+ *
+ * `termsOf` and `surfacesOf` must not disagree about what a word is, for the
+ * same reason `projectTerms` wraps `termsOf` rather than tokenising again: two
+ * notions of "what this page is about" produce a bug where both halves look
+ * right.
+ */
+function tokenise(title: string, url: string): string[] {
   const cleanedTitle = title.replace(BRANDING, ' ')
 
   // The path often carries the subject when the title does not — /world-models.
@@ -74,12 +142,40 @@ export function termsOf(title: string, url: string): Set<string> {
     /* not a URL; the title alone will have to do */
   }
 
-  const words = `${cleanedTitle} ${path}`
+  return `${cleanedTitle} ${path}`
     .toLowerCase()
     .split(/[^a-z0-9]+/)
     .filter((w) => w.length >= 3 && !STOPWORDS.has(w) && !/^\d+$/.test(w))
+}
 
-  return new Set(words)
+/** Terms worth clustering on. Short tokens and stopwords are dropped. */
+export function termsOf(title: string, url: string): Set<string> {
+  // Normalised LAST, so the stopword list stays a list of words as written
+  // rather than a list of stems nobody would recognise reading it.
+  return new Set(tokenise(title, url).map(singular))
+}
+
+/**
+ * Each normalised term back to the spelling that produced it.
+ *
+ * Matching wants `perturbation`; a person reading a sentence about their own
+ * afternoon wants the word they actually saw. Without this the front door said
+ * *"you have been looking into world model"*, and for the handful of words the
+ * rule gets wrong it would have said *"looking into sery"* — a stem is a
+ * matching key and was never fit to be shown to anybody.
+ *
+ * Only the display path uses this. Nothing compares surfaces, because comparing
+ * them is the exact bug the normalisation just fixed.
+ */
+export function surfacesOf(title: string, url: string): Map<string, string> {
+  const surfaces = new Map<string, string>()
+  for (const word of tokenise(title, url)) {
+    const term = singular(word)
+    // First spelling seen wins, so the same buffer renders the same sentence
+    // every time it is asked.
+    if (!surfaces.has(term)) surfaces.set(term, word)
+  }
+  return surfaces
 }
 
 /**
@@ -174,6 +270,9 @@ export interface ThreadPage {
 export interface Thread {
   /** The recurring terms, most common first. The raw material for a name. */
   readonly terms: readonly string[]
+  /** The same words as a person wrote them, aligned index-for-index with
+   *  `terms`. For sentences shown to somebody; never for comparison. */
+  readonly labels: readonly string[]
   readonly pages: readonly ThreadPage[]
   readonly origins: readonly string[]
   readonly engagedMs: number
@@ -227,16 +326,25 @@ export function findThreads(pages: readonly ThreadPage[]): Thread[] {
     // Every term the members share, ordered by how often it recurs — this is
     // what a naming step would be given.
     const within = new Map<string, number>()
+    const surfaces = new Map<string, string>()
     for (const page of members) {
       for (const term of page.terms) within.set(term, (within.get(term) ?? 0) + 1)
+      // Rebuilt from the page's own title and URL, so the spelling shown is one
+      // that was actually on a page rather than a stem dressed up as a word.
+      for (const [term, word] of surfacesOf(page.title, page.url)) {
+        if (!surfaces.has(term)) surfaces.set(term, word)
+      }
     }
 
+    const terms = [...within]
+      .filter(([, n]) => n > 1)
+      .sort((a, b) => b[1] - a[1])
+      .map(([term]) => term)
+      .slice(0, 8)
+
     threads.push({
-      terms: [...within]
-        .filter(([, n]) => n > 1)
-        .sort((a, b) => b[1] - a[1])
-        .map(([term]) => term)
-        .slice(0, 8),
+      terms,
+      labels: terms.map((term) => surfaces.get(term) ?? term),
       pages: members,
       origins: [...new Set(members.map((p) => p.origin))],
       engagedMs: members.reduce((total, p) => total + p.engagedMs, 0),

@@ -58,6 +58,10 @@ function page(o: {
 function detected(terms: string[], pages: readonly ThreadPage[]): WorkDetected {
   return {
     terms,
+    // Grounds never reads a label — nothing here is shown to anybody — but the
+    // shape is filled honestly rather than cast, which is what caught this
+    // field arriving in the first place.
+    labels: terms,
     origins: [...new Set(pages.map((p) => p.origin))],
     pages: pages.length,
     searches: pages.filter((p) => p.searched).length,

@@ -181,7 +181,9 @@ interface IdentifiedWork extends FrontDoorRow {
  * Renaming it is one field on its own screen.
  */
 function subjectOf(detected: WorkDetected, named: NamedThread | null): string {
-  const terms = detected.terms.slice(0, 3).join(' ')
+  // `labels`, not `terms`. This string becomes a Project's name when the model
+  // was not sure, so a stem here would be filed under a word nobody wrote.
+  const terms = detected.labels.slice(0, 3).join(' ')
   return named?.confident ? named.subject : terms
 }
 

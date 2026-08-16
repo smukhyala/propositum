@@ -140,7 +140,12 @@ describe('what is work — a subject followed across sites', () => {
 
     expect(found).not.toBeNull()
     expect(found?.terms).toContain('world')
-    expect(found?.terms).toContain('models')
+    // The matching key is singular, so a page saying "world model" joins a
+    // thread built from pages saying "world models".
+    expect(found?.terms).toContain('model')
+    // And the sentence a person reads keeps the spelling they saw. A stem is a
+    // key; it was never fit to be shown to anybody.
+    expect(found?.labels).toContain('models')
   })
 
   it('names every site the subject ran through', () => {

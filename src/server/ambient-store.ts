@@ -428,7 +428,8 @@ export function describeWork(
   threadSignature: string,
   named?: NamedThread | null,
 ): Suggestion {
-  const words = detected.terms.slice(0, 3).join(' ')
+  // `labels`, not `terms`: the spelling a person saw, not the matching key.
+  const words = detected.labels.slice(0, 3).join(' ')
   const sites = detected.origins.length
   const where = sites === 1 ? hostOf(detected.origins[0] ?? '') : `${sites} sites`
 
