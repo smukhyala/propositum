@@ -1,10 +1,19 @@
 # Product principles
 
-Ten principles. Each states what it **forbids concretely**, because a principle that rules nothing
-out is decoration.
+~~Ten principles.~~ **Fifteen, as of 2026-08-16.** The header said ten while eleven were present:
+principle 11 arrived and the count did not follow it. That is a small error in the one document that
+tells every other document to say the true thing, and it is corrected here rather than quietly
+overwritten. Four more principles arrive below from the 2026-08-16 direction update
+([ADR-0011](./adr/0011-intention-above-worksession.md)).
+
+Each states what it **forbids concretely**, because a principle that rules nothing out is decoration.
 
 Where a principle is already enforced by a type, a schema, or a test, that enforcement is named.
 Where it currently rests on discipline alone, that is said plainly — those are the ones that erode.
+
+**The numbers are load-bearing.** Source comments in `src/` cite §6, §8, §9, §10 and §11 by number,
+so principles are **appended, never inserted or renumbered**. A principle that turns out to be wrong
+gets struck and dated in place, keeping its number.
 
 ---
 
@@ -18,6 +27,19 @@ interpreting it.
 
 **Test:** if a `SessionReading` reads like a narrated log, it has failed even when every fact in it
 is correct.
+
+**Extended 2026-08-16** ([ADR-0011](./adr/0011-intention-above-worksession.md)). The direction update
+asked for a principle called *activity is not progress*. **This is that principle**, written earlier
+and named better, so no separate entry was added — two rules saying one thing in different words is
+how a list of constraints becomes a list of slogans, and the second one is always the one that gets
+cited because it is easier to satisfy. What the update genuinely adds is a second place the rule has
+to hold: an `Intention` has moved when its stated outcome is closer, not when something happened to
+it. A sitting that produced forty `ObservationEvent`s and left the desired outcome exactly as far
+away made no progress.
+
+**Forbids, extended:** an `IntentionState` that changes because activity occurred rather than
+because a stated condition was met · any progress indicator derived from event volume, action
+count, or elapsed time.
 
 ---
 
@@ -193,6 +215,126 @@ their desk under a screen headed *"While you were away"*, because `SessionPhase`
 for that moment and keeping `away` is the smaller lie — **and it is still a lie**. The fence
 `CONTEXT.md` describes around a claimed run has never existed in the schema. All four are written
 down instead of smoothed over.
+
+---
+
+## 12. Intentions outlive sessions
+
+*(Added 2026-08-16 — [ADR-0011](./adr/0011-intention-above-worksession.md).)*
+
+A sitting is an episode. What the person is trying to achieve is not. The `Intention` is the durable
+row; the `WorkSession` is one attempt at it.
+
+**Forbids:** an `Intention` created or edited by anything other than a person · a carried-forward
+outcome that is not on screen where the person can read and change it · any inference path writing
+to the `Intention` row — not the detector, not a model boundary, not a future reconciler · treating
+`SessionClaim{kind:'objective'}` as a source for one.
+
+**Enforced by nothing yet — the row does not exist.** `prisma/schema.prisma` has no `Intention`
+model and `grep -rn Intention src/` finds one doc comment. When
+[ADR-0011](./adr/0011-intention-above-worksession.md)'s table lands, the single writer is to be the
+**contract-ratification path** — `acceptContract`, not `acceptWorkOffer`, because ratifying the
+`StatedIntent` is the first point at which a `definitionOfDone` exists to write down. Until then
+this principle is a constraint on the slice, not a property of the code.
+`SessionClaim{kind:'objective'}` is deliberately left alone by this principle and must stay that way
+— per-sitting, model-inferred, evidence-bearing, cold every time. Two lifetimes, two rows, and no
+code path from the inferred one to the durable one.
+
+**Honest limit:** even once it lands, "inference never writes the row" is held up by there being
+exactly one writer, not by a type that makes a second writer impossible. Compare principle 3, where
+the equivalent guarantee is a **compile error**. This one is weaker, and the correct moment to
+strengthen it is the first time somebody proposes a second writer, not after.
+
+**Second honest limit:** the objection this principle answers was invisibility, not persistence —
+[`CONTEXT.md`](../CONTEXT.md) argued that a quietly inherited objective is worse than a cold read.
+Nothing here makes a person *read* what carries forward. It only guarantees there is nothing to
+inherit that they did not put there.
+
+---
+
+## 13. The system should be comfortable doing nothing
+
+*(Added 2026-08-16 — [ADR-0011](./adr/0011-intention-above-worksession.md).)*
+
+Silence is a correct output. A product that has to be seen working will find work to be seen doing.
+
+**Forbids:** manufacturing work in order to stay active · a notification with no decision attached
+to it · treating an empty offer as a failure to be tuned away · rendering a `sleeping` intention as
+a problem, a warning, or an empty state that asks to be filled.
+
+**Half-enforced, and the enforced half is the useful one:** `src/domain/detection/grounds.ts` will
+not let Propositum offer until **one** intent ground and **two** investment grounds have fired, and
+`tests/grounds.test.ts` carries the case that matters most as a standing fixture — *an afternoon of
+ordinary reading*, which must **not** qualify. A change that makes that fixture start qualifying has
+broken this principle whatever else it improved. [ADR-0008](./adr/0008-ambient-detection.md) already
+names the asymmetry: a missed offer costs a suggestion nobody sees, a false one asks somebody to read
+and ratify a proposal about work they were not doing.
+
+**Honest limit:** the other half is enforced by nothing. The grounds threshold is a floor on *when*
+Propositum may offer, not a ceiling on how often it may speak, and there is no metric anywhere that
+would catch an offer rate creeping upward. Notifications are the obvious place this erodes first,
+because a notification is the cheapest thing to add and the hardest to attribute.
+
+---
+
+## 14. Models are workers, not the product
+
+*(Added 2026-08-16 — [ADR-0011](./adr/0011-intention-above-worksession.md).)*
+
+[`VISION.md`](./VISION.md) states this better than the request that prompted it: *"Most AI products
+make the assistant the persistent thing and the conversation disposable. Propositum makes the work
+persistent and the assistant disposable."* This principle is that sentence with edges on it.
+
+**Forbids:** a named or persistent assistant · a personality, a voice, or any identity continuing
+across runs · provider-specific vocabulary anywhere a person can read it — no model names, no
+version numbers, no *agent* · an interface that could not swap the executor without a consumer-facing
+change · defining what Propositum is worth by what the model underneath it can do.
+
+**Enforced in part:** all eight model-calling places go through one `ModelClient`, so provider calls
+never appear in UI or domain code; an `AgentRun` carries a `role` — *worker* or *reviewer* — and no
+name; and the table below rules *spawn agent*, *orchestration* and *worker* out of consumer copy.
+
+**Honest limit:** as of 2026-08-16 there is exactly one real implementation of that interface and one
+fake. *Replaceable* is therefore proved by a test double, not by a second provider — which is a
+weaker claim than it sounds, because a fake is written to fit the interface it is testing. This is
+also the boundary of what may be built here: **a clean interface is permitted, a router is not.**
+Choosing between providers by quality, cost or latency is out of scope and stays out.
+
+**And it forbids one thing in the other direction:** treating stronger foundation models as a threat.
+If a better model makes the worker better, this principle is working. What must not happen is a model
+becoming the thing a person has a relationship with.
+
+---
+
+## 15. Learned trust may recommend; it may never grant
+
+*(Added 2026-08-16 — [ADR-0011](./adr/0011-intention-above-worksession.md).)*
+
+History is evidence about a person. It is not permission from them.
+
+**Forbids:** acceptance history widening a permission · a dial that moves itself · an autonomy level
+that drifts upward without a human act · a default computed from past behaviour and applied without
+being shown · a recommendation rendered so that accepting it is indistinguishable from not reading it.
+
+**The asymmetry is not new.** It is [ADR-0007](./adr/0007-stop-conditions.md)'s rule for models,
+applied unchanged to history:
+
+> A model may **never** widen what is permitted — it could grant.
+> A model may **always** decline to proceed — it can only withhold.
+
+Read *history* for *model* and nothing else has to change. Trust history may narrow autonomy on its
+own; widening always needs a person. A false narrowing is annoying and a false widening is dangerous,
+so the bias belongs on that side, exactly as it does for stop conditions.
+
+**Enforced by nothing, because nothing learns yet.** No component reads acceptance history: the
+verdict tables are append-only and have no reader, and `scoreH2` has no production caller. This
+principle is being written *before* the first thing that learns, which is the only point at which a
+rule like this is cheap — after, it is a migration. Until then it rests on discipline alone, and
+discipline is what this file says erodes.
+
+[`VISION.md`](./VISION.md)'s *Adaptive autonomy* **Later** section got here first and says it more
+strongly: the widening must be "a visible, revocable, human act". That is the version to build
+against, and this entry is a promotion of it rather than an invention.
 
 ---
 

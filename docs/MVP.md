@@ -25,6 +25,14 @@ scripts. Nothing about onboarding is being tested yet.
 The founding brief states one. The demo scenario requires three, with different failure modes and
 different evidence. They are scored **separately** and never averaged.
 
+**Reframed 2026-08-16 ([ADR-0011](adr/0011-intention-above-worksession.md)): what the three
+hypotheses are evidence *about* is an unfinished `Intention` surviving a human → AI → human handoff
+with useful progress and minimal re-explanation.** H1 is the re-explanation cost, H2 is the useful
+progress, H3 is the line the handoff must not cross. **Nothing measured changes** — same questions,
+same six components, same thresholds, same sealed references. A `WorkSession` is still the only
+thing captured, and a `SessionReading` built from one is still what H1 scores. The reframe names what
+the numbers are for; it does not touch the instrument.
+
 ### H1 — Context transfer
 
 > Does the `SessionReading` Propositum builds from a `WorkSession` match what the person would
@@ -32,6 +40,12 @@ different evidence. They are scored **separately** and never averaged.
 
 The cheap one to measure, and the one most at risk of measuring the wrong thing. See
 [Scoring](#scoring) for the blind-reference protocol that keeps it from becoming self-recognition.
+
+**What the reading is for:** the re-explanation cost of one handoff. A reading the person would have
+written themselves is one they do not have to write again. **The rubric scores the match, and the
+match is a proxy** — nobody has yet timed how long re-explanation actually takes, and until someone
+does, "minimal re-explanation" is an inference from a score rather than a measurement. See
+[`EVALUATION.md`](./EVALUATION.md), *What this does not yet measure*.
 
 ### H2 — Useful progress
 
@@ -84,6 +98,13 @@ concrete, not to specialise the code.
 5. Ratify a `HandoffContract` — objective, definition of done, what it may look at, what it may
    change, and the four dials. No `AgentRun` starts from an unratified contract, and nothing in
    the dials can switch that off.
+   *(Specified, not yet built.)* **Amended 2026-08-16
+   ([ADR-0011](adr/0011-intention-above-worksession.md)): this is also where an `Intention` is
+   born.** The desired outcome and definition of success are the words the person
+   typed or edited here, ratified into a row that outlives the sitting. **Nothing else can write
+   one** — not the detector, not a model boundary, not the next shift.
+   `SessionClaim{kind:'objective'}` is untouched: still per-sitting, still model-inferred, still cold
+   every time. What persists is what a person ratified, never what Propositum inferred.
 6. Leave. One worker `AgentRun`, then one reviewer `AgentRun`, inside one `Shift`.
 7. Return to *while you were away*: a `ShiftReport`, the `ShiftOutcome` — a readable diff for
    `document-changes`, a list for a `collection`, and for anything that `landed`, a report and no
@@ -91,6 +112,11 @@ concrete, not to specialise the code.
 8. Accept or reject each decidable unit. A `landed` outcome is never one of them.
 
 Step 8 is where slice 0 ends. See [Out of scope](#out-of-scope).
+
+**The `Intention` outlives step 8. Nothing resumes it.** The row persists and its lifecycle state
+stays computable, and that is the whole of it: slice 0 ships no scheduler, no notification, and no
+second shift. Picking the work back up is still a person opening their laptop and starting a sitting.
+Saying the row survives is a claim about storage, not about continuity.
 
 ---
 
@@ -105,18 +131,59 @@ dials · a deterministic `EnforcedPolicy` and an unbypassable gate · one worker
 `AgentRun` · research constrained to `ApprovedSource`s · a `Changeset` of `ProposedChange`s against
 an immutable `BaseVersion` · an append-only ledger of `ActionIntent` and `ActionOutcome` ·
 structural stop conditions · a `ShiftReport` · per-change accept and reject · an evaluation harness
-scoring H1, H2 and H3.
+scoring H1, H2 and H3 · **an `Intention` above `WorkSession` in the domain language, a `Project` and
+a `WorkSession` attachable to one without a graph system, and a minimal desired outcome, definition
+of success and lifecycle state** *(added 2026-08-16,
+[ADR-0011](adr/0011-intention-above-worksession.md))*.
+
+Those three additions are exactly what direction §8 permits, and the boundaries around them are
+part of the scope, not decoration:
+
+- **Human-ratified only.** An `Intention` is created and edited by a person and by nothing else.
+  `SessionClaim{kind:'objective'}` is unchanged — per-sitting, model-inferred, cold every time.
+- **`IntentionState` is a computed view with five members** — `working`, `delegated`, `needs-you`,
+  `sleeping`, `done` — derived from rows that already exist, not a stored column, on the same
+  argument already written down for `EnforcedPolicy` and `Shift`. Direction §1 lists a sixth,
+  `waiting`. Nothing in this system can produce an external event, so it is **not declared**; see
+  the `ExternalEvent` row below.
+- **At most one `Intention` per `Project` for now**, two nullable foreign keys
+  (`WorkSession.intentionId`, `HandoffContract.intentionId`) so no row needs backfilling, and
+  **no change to document ownership or base-version pinning**.
+- **Not yet built at the time of writing.** This is the one schema addition slice 0 takes on, and
+  it is deliberately the smallest thing that stops `Intention` being prose only. One flat mutable
+  table is not an intention graph, and this document should not be read as promising one.
 
 ## Out of scope
 
-Everything the founding brief excludes, unchanged. Plus, decided during charting:
+Everything the founding brief excludes, unchanged. Plus, decided during charting — and, from
+2026-08-16, direction §8's *do not build yet* list in full
+([ADR-0011](adr/0011-intention-above-worksession.md)), which arrived with the persistent-intentions
+direction and had nowhere else to live. **A list with nowhere to live gets re-litigated by the next
+reader**, so it is pasted here whole, item for item, with the argument each item already has
+somewhere in the corpus:
 
 | Excluded | Why | Where |
 |---|---|---|
 | **"Keep going" and "Redirect"** | Would force replanning against a `Document` that moved between shifts. Ship it unsolved and the second `Shift` re-proposes work the first already did — on the demo path. | [#2](https://github.com/smukhyala/propositum/issues/2) |
 | **A cost dial** | Measured on a real boundary at $0.0325 and 15.1 s per call: a 30-minute budget buys ~120 sequential calls, about a dollar. Latency binds; cost never does. Budget is time only. | [#3](https://github.com/smukhyala/propositum/issues/3), [#14](https://github.com/smukhyala/propositum/issues/14) |
-| **Cross-session continuity** | The objective does not survive a `WorkSession`. A second session starts cold. | [#2](https://github.com/smukhyala/propositum/issues/2) |
+| **Cross-session continuity** | The objective does not survive a `WorkSession`. ~~A second session starts cold.~~ **Amended 2026-08-16 ([ADR-0011](adr/0011-intention-above-worksession.md)): what carries forward changes, the shift model does not.** A human-ratified `Intention` **is specified to survive — the row is not yet in the schema**. The inferred objective still does not survive and still must not, because a stale objective inherited quietly is worse than a cold read. **The reading is still cold** — inference starts from this sitting's events and nothing else — and still nothing resumes an `Intention` without a person. | [#2](https://github.com/smukhyala/propositum/issues/2) |
 | **Multi-project, auth, billing, collaboration, Tauri, rich text, vector search, a second provider** | None is needed to test intention-preserving continuation. | brief |
+| **A graph database, or generalised intention-graph infrastructure** | Slice 0 ships one flat mutable table, at most one `Intention` per `Project`, and two nullable foreign keys. A graph would model relationships nothing in the runtime can yet produce. | §8 · [ADR-0011](adr/0011-intention-above-worksession.md) |
+| **Automatic Gmail / Slack / Calendar / GitHub / Notion ingestion, and `ExternalEvent` with it** | **Blocked by structure, not only by scope.** `ObservationEvent.sessionId` is required and there is a single ledger writer, so **no event outside a sitting can be persisted at all**. An external sensor needs a second ledger before it needs an integration. This is also why `IntentionState` has five members and not six. | §8 · `prisma/schema.prisma`, `src/persistence/ledger-writer.ts` |
+| **Continuous autonomous background scheduling** | Propositum watches continuously and **offers**; starting a session remains a human act, and one live session at a time is enforced in the app layer. Scheduling would have to break both. | §8 · [ADR-0008](adr/0008-ambient-detection.md) |
+| **Learned trust / autonomy models** | The verdict tables record accept, edit and reject, and **nothing reads them** — that is the state of the outcome layer, honestly. Trust history may one day recommend a setting; it may never create permission, which is a boundary and not a backlog item. | §8 · [ADR-0006](adr/0006-trust-boundary.md) |
+| **Multi-provider quality / cost routing beyond clean interfaces** | A second provider is already excluded above, so a router would choose between one option. It would also route on cost, and cost does not bind here — latency does. Abstract interfaces yes; a router no. | §8 · [ADR-0005](adr/0005-model-boundary.md), [#3](https://github.com/smukhyala/propositum/issues/3) |
+| **Large multi-agent swarms** | One worker `AgentRun`, then one reviewer, inside one `Shift`. The second role is the one assumption 4 already calls doubtful; adding a third before the second earns its place would buy nothing measurable. | §8 · [ADR-0001](adr/0001-worker-runtime.md) |
+| **Unrestricted computer use** | Acting in the browser shipped **bounded** — plan-bound actions, the gate, and a confirmation pause before anything the browser attests is irreversible. ADR-0010 says in its own voice that a pause is strictly weaker than an absence. Remove the bounds and the only argument that made it acceptable goes with them. | §8 · [ADR-0010](adr/0010-acting-in-the-browser.md) |
+| **Automatic multi-intention compute allocation** | At most one `Intention` per `Project`, and one live session at a time. There is nothing to allocate between, and a surface listing several `working` intentions would look right and be unable to start the second one. | §8 · [ADR-0011](adr/0011-intention-above-worksession.md) |
+| **Cross-device continuity** | *"Leave your desk", not "leave the building"* below: a local worker stops when the Mac sleeps. Continuity across devices needs cloud execution, which is out of scope for the same reason. | §8 · brief |
+| **Proactive consequential action without an established permission policy** | The one item on this list that is **already enforced rather than merely unbuilt**: the gate is unbypassable, and no `AgentRun` starts from an unratified `HandoffContract`. It is listed so that stays true when intentions start persisting — a durable goal is exactly the thing that makes acting without asking feel reasonable. | §8 · [ADR-0004](adr/0004-policy-gate.md), [ADR-0006](adr/0006-trust-boundary.md) |
+
+**`Blocker`, `Dependency` and `ProgressEvent` are not added as vocabulary either.** Direction §1
+lists all three. `DecisionNeeded`'s *Displaces:* line in [`CONTEXT.md`](../CONTEXT.md) already
+retires the words *blocker* and *escalation*, so introducing `Blocker` would be a vocabulary
+**reversal, not an addition**, and it would need its own argument that nobody has made.
+`Dependency` and `ProgressEvent` have nothing in the runtime that could produce them.
 
 **"Leave your desk", not "leave the building".** A lid close cannot be blocked, only delayed by
 about 30 seconds. A local worker stops when the Mac sleeps. This is inherent to local execution —

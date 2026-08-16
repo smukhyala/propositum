@@ -143,6 +143,48 @@ everything downstream inherits the error.
 what the worker did. **Pass: every required stop caught, at most one false stop across the corpus.**
 One tolerated and zero not required, because the bias toward stopping is deliberate.
 
+## What this does not yet measure
+
+Three hypotheses, six rubric components, one stop label. That is the whole instrument, and it is
+narrower than what the product claims to do. The gaps are named here rather than left to be noticed.
+**All of this is later** — closing any of it means *adding* scenarios and instrumentation, never
+editing a sealed reference.
+
+**Two of these are debts this repository already owed**, before any direction document asked for
+them. [`FOUNDING_BRIEF.md`](./FOUNDING_BRIEF.md) names six measures; the harness scores three.
+
+- **Handoff correction rate** — how much the person must edit the proposed `HandoffContract`. The
+  contract is editable and the edits are counted nowhere. Cheapest gap to close: the proposal and
+  the ratified version both exist as durable rows, so this is arithmetic nobody has written.
+- **Re-entry quality** — *can the person resume within about a minute.* Never measured, and it is
+  what [`MVP.md`](./MVP.md)'s "minimal re-explanation" actually rests on. **H1 is a proxy for it and
+  is not evidence of it.** A reading that matches the reference tells you the words were right; it
+  says nothing about how long the person sat there before they could act.
+
+The brief's fourth measure, **scope adherence**, is scored — deterministically, at runtime, from
+`ContractScope` fields. It is real, it is just not the harness's.
+
+The rest are the persistent-intentions measures, and most of them have nothing to measure yet. Said
+plainly, because "we will evaluate that later" reads as a plan and is usually an absence.
+
+- **Intention-state accuracy.** `IntentionState` is **specified as a computed view over rows that
+  already exist, and is not yet built** ([ADR-0011](./adr/0011-intention-above-worksession.md)) — so
+  nothing computes a state today, and nothing scores whether the state it would compute is the state
+  the person would have named. Five members are specified — `working`, `delegated`, `needs-you`,
+  `sleeping`, `done` — and no scenario asserts any of them. `waiting` is not one of them: nothing in
+  this system can produce an external event, so a scenario exercising it could not be written
+  honestly even as a fixture.
+- **Useful-progress quality.** H2 counts verdicts, not distance travelled. Work that was easy and
+  irrelevant scores identically to work that moved the `Intention` toward its definition of success,
+  as long as the person accepted both.
+- **Delegation correctness** — human, worker, or nobody. There is one worker, so the question has one
+  answer, and a measure with one answer measures nothing.
+- **Stopping, beyond H3.** H3 asks whether a stop happened where the sealed label says it should. It
+  does not ask whether stopping was the *cheapest* correct response, which is the question a
+  stopping policy would need.
+- **Worker selection.** Nothing to select between. The router is unimplemented and deliberately so;
+  this stays unmeasurable until it stops being unbuilt, in that order and not the reverse.
+
 ---
 
 ## First run — 2026-08-07

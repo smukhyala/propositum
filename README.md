@@ -22,14 +22,16 @@ while you're gone. You come back to what changed, why, and what it couldn't deci
 
 | | |
 |---|---|
-| [`CONTEXT.md`](./CONTEXT.md) | The ubiquitous language. 38 terms, 28 banned. Every schema, prompt, table and UI string uses these words. |
+| [`CONTEXT.md`](./CONTEXT.md) | The ubiquitous language, and the only glossary — there is no `UBIQUITOUS_LANGUAGE.md`. ~~38 terms, 28 banned.~~ **Corrected 2026-08-16: 54 terms, and 21 rows in the banned table, one of them now struck.** CONTEXT.md's own closing line carries the term count and is the authority on it; this cell had been wrong since 2026-08-11, which is what keeping a count in two places does. Every schema, prompt, table and UI string uses these words. |
 | [`docs/MVP.md`](./docs/MVP.md) | What slice 0 is, the three hypotheses, and the pass/fail numbers — fixed before any result existed. |
 | [`docs/VISION.md`](./docs/VISION.md) | Where this goes, with **now** and **later** kept strictly apart. |
-| [`docs/PRODUCT_PRINCIPLES.md`](./docs/PRODUCT_PRINCIPLES.md) | Ten principles, each stating what it concretely forbids. |
+| [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) | Ten layers, each marked with what is built and what would have to exist first. Six of the ten are partial or absent. |
+| [`docs/ROADMAP.md`](./docs/ROADMAP.md) | Four stages. Stage 1 points at MVP.md rather than restating it; stages 2–4 are direction, not commitment, and none is implemented. Stage 1's one addition — the `Intention` table — is not implemented either as of 2026-08-16. |
+| [`docs/PRODUCT_PRINCIPLES.md`](./docs/PRODUCT_PRINCIPLES.md) | ~~Ten principles~~ **fifteen, corrected 2026-08-16**, each stating what it concretely forbids. PRODUCT_PRINCIPLES.md's own header carries the count and is the authority on it — and says the header had been wrong since principle 11 arrived. Fourth stale count in this table, in the document that tells the others to say the true thing. |
 | [`docs/research/`](./docs/research/) | ~4,900 lines answering the questions the architecture waited on. |
 | [`docs/FOUNDING_BRIEF.md`](./docs/FOUNDING_BRIEF.md) | The originating brief, kept as history. |
-| [`docs/adr/`](./docs/adr/) | Seven decisions, each with the option it rejected and why. |
-| Runtime | Next 16, TypeScript strict, Prisma + SQLite, Zod 4, Vitest. 336 tests. |
+| [`docs/adr/`](./docs/adr/) | ~~Seven decisions~~ **eleven, corrected 2026-08-16 ([ADR-0011](./docs/adr/0011-intention-above-worksession.md) is the newest)**, each with the option it rejected and why. The number went stale four ADRs ago and nothing noticed, because nothing counts them. |
+| Runtime | Next 16, TypeScript strict, Prisma + SQLite, Zod 4, Vitest. ~~336 tests.~~ **1,028 tests across 40 files, measured 2026-08-16.** Stale by roughly a factor of three, and corrected here for the same reason as the two counts above. |
 | The product | Chrome MV3 capture, the reading with per-claim evidence, the editable agreement, the unbypassable gate, the worker and reviewer, the diff, the shift report, per-change accept/reject, and the fold into a new version. |
 | [`extension/`](./extension/) | The capture extension. See its README — the host grant is a step only you can do, from the side panel. |
 
@@ -37,6 +39,15 @@ while you're gone. You come back to what changed, why, and what it couldn't deci
 mistaken for done: the shift-report narrative boundary (the field currently holds a stop-rule
 label), the heartbeat gap sweeper (so two of four `CaptureGap` reasons cannot occur), and the
 `ModelCallRecord` writer (so the ledger does not reconstruct model calls).
+
+~~That is three.~~ **Corrected 2026-08-16: the suite pins seven.** The four this paragraph had not
+caught up with are `controlLost` (two structural stop rules cannot fire), `findings.forRun`
+(outcome-scoped review findings are written and never shown), `confirmations.create` (the gate has
+never yet stopped to ask a person anything), and `createBrowserControl` — **no run drives the
+browser**, so the acting path decided in [ADR-0010](./docs/adr/0010-acting-in-the-browser.md) has both
+ends built and nothing holding the middle. `LANDING_ACTION_KINDS` is likewise empty, so no
+irreversible outcome can occur. [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) marks each of these
+against the layer it belongs to.
 
 **Not measured:** the harness produces H1 material and cannot yet produce H2 or H3, and both
 scenarios expect a stop — so the false-stop half of H3 has nothing to score against.
@@ -124,8 +135,16 @@ These are properties of the design, not a to-do list.
 ## On the broader vision
 
 Everything in [`docs/VISION.md`](./docs/VISION.md) beyond the **Now** sections — multi-project
-work, adaptive autonomy, structured app integrations, computer use, cross-device continuity — is
+work, adaptive autonomy, structured app integrations, ~~computer use,~~ cross-device continuity — is
 **direction, not commitment, and none of it is implemented.**
+
+**Computer use struck 2026-08-16.** It moved from Later to Now on 2026-08-11
+([ADR-0010](./docs/adr/0010-acting-in-the-browser.md)) and this line did not move with it, which is
+the same failure as the stale counts above and in the more embarrassing direction: understating what
+the product can do is still saying a false thing about it. What is actually true is narrower than
+either version — the control channel is built and **no run yet constructs one**, asserted in
+`tests/reachability.test.ts`. [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) marks it layer by
+layer; [`docs/ROADMAP.md`](./docs/ROADMAP.md) has the stages beyond slice 0.
 
 The project's own principle applies to its README: say the true thing, including when it's
 unimpressive. This is a foundation and an experiment designed so it can fail. It is not a product.

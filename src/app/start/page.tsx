@@ -212,10 +212,42 @@ export default async function StartPage({
           <>
             <p className="of-lede">{screen.sentence}</p>
             <p className="of-title">Propositum can start watching this.</p>
+            {/*
+              The honest version of "there is no offer", with none of the
+              machinery in it.
+
+              This used to say the missing part "needs a model, and either it is
+              still thinking or it has no way to reach one" — the only place in
+              the product that named the machine to the person, which
+              CONTEXT.md's banned-words list rules out in consumer copy.
+
+              Taking the machine out was right. What replaced it went too far:
+              "Propositum could not work out what to do about it, and nothing is
+              trying again behind this screen" states a settled failure, and
+              this branch cannot know one happened. `offer === null` is four
+              states wearing one face — the grounds bar was never met, a
+              compose call is in flight, one came back with nothing, or there is
+              no `ANTHROPIC_API_KEY`. The header above says a call takes about
+              fifteen seconds, so the first fifteen seconds of every offer look
+              exactly like the permanent absence. `isComposing` is the question
+              that tells them apart; `offerForThread` does not ask it, so this
+              page has no way to. Something may well be running behind this
+              screen — `composeOffer`, fired from the extension's poll — and it
+              will never announce itself here.
+
+              PRODUCT_PRINCIPLES sanctions *"I couldn't work out…"*, and this is
+              not that case: that sentence is for a reading that came back
+              unsure, not for one that has not come back. So the copy states
+              what is on the screen rather than why, and makes only the
+              guarantee this page can keep — it is a server component that
+              neither polls nor refreshes, so it will not change under them
+              while they read it. The button below still works.
+            */}
             <p className="st-under">
-              {screen.because} It has not worked out what to do about it yet &mdash; that needs a
-              model, and either it is still thinking or it has no way to reach one. Starting the
-              session loses nothing: what it has already seen comes with you.
+              {screen.because}{' '}
+              <strong>Propositum has not worked out what to do about it</strong>, and this screen
+              will not fill itself in. Starting the session loses nothing: what it has already seen
+              comes with you.
             </p>
           </>
         ) : (

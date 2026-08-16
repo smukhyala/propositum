@@ -7,6 +7,11 @@ the brief says so itself, and the specific overrides are listed at the end.
 Organised by lifecycle, mirroring the pipeline:
 **observation → inference → handoff → execution → documents & review → re-entry.**
 
+**Amended 2026-08-16 ([ADR-0011](docs/adr/0011-intention-above-worksession.md)): two terms now sit
+above that pipeline rather than inside it.** `Intention` and its computed `IntentionState` open §1
+because an Intention precedes observation — a person may write one before Propositum has seen
+anything — and there is no §0. The pipeline is otherwise unchanged.
+
 Each term says what it is, what words it displaces, whether it is a **table**, a
 **computed view**, a **value object** (fields on another row) or **not persisted**, and its
 consumer wording. A term that does not appear in slice 0 does not belong here.
@@ -75,6 +80,93 @@ would consult.
 
 ## 1. Observation
 
+### Intention — *table*
+**Specified 2026-08-16 by [ADR-0011](docs/adr/0011-intention-above-worksession.md), and not yet in
+`prisma/schema.prisma`. This entry is a specification rather than a description**, and the first
+sentence of it says so rather than the twenty-fifth. There is no `Intention` model and no
+`intentionId` column today; the columns below are owed, and reading them as a report of the database
+is the mistake §4's claim fence is already there to name.
+
+One durable statement of what a person is trying to accomplish, written or ratified by that person:
+`id`, `projectId` (nullable), `objective`, `definitionOfDone`, `completedAt` (nullable),
+`createdAt`, `updatedAt`.
+
+**Human-ratified only, and that is the whole of it.** A person creates one and a person edits one.
+No detector writes one, no model boundary writes one, and **no model-facing schema has a field that
+could carry one** — the same structural bar `WorkOffer` stands behind, for the same reason. It is
+not evidence, it carries no provenance, and inference never reads it: `matchProject` gets no new
+input from it and no SessionReading consults it.
+
+**Ratified is not the same as written, and the gap is real.** The sentence a person accepts at the
+offer screen was composed by a model from page titles and search terms; accepting a plausible
+sentence is a weaker act than typing one. What is structural is that **no model writes the row** —
+authorship of the record, not authorship of the words in it.
+[`docs/VISION.md`](docs/VISION.md)'s *Honest limits, today* carries the rest, and is the version to
+trust wherever this entry reads stronger.
+
+**`definitionOfDone`, not `definitionOfSuccess`** — which is the direction document's phrase.
+`StatedIntent` already owns the field name and an Intention is what a `StatedIntent` restates; two
+words for one concept a lifecycle stage apart is exactly what the banned-words table exists to stop.
+
+**Mutable, and it gets no append-only triggers.** `Project`'s reasoning verbatim: it holds no
+inference and carries no provenance, so nothing about it is append-only. No `REQUIRED_GUARDS` entry,
+no `triggers.sql` change, no row in `tests/append-only.test.ts`'s hand-maintained checklist.
+Rewriting the sentence is the correction channel and there is no second one.
+
+**At most one per Project** ([ADR-0011](docs/adr/0011-intention-above-worksession.md)) — a deferral,
+not a model. It is safe only because the hard question — *which Intention does this sitting belong
+to?* — never gets asked. The second Intention per Project is where that stops being true, and
+`matchProject` is already known to sometimes fold two subjects into one.
+
+**The schema this entry authorises is exactly one mutable table and two nullable foreign keys**
+(`WorkSession.intentionId`, `HandoffContract.intentionId`), by ADR-0011 and by nothing else. If more
+ever exists under this name it was not authorised here. The *less exists* case is the one that holds
+right now, and it is stated in this entry's first line rather than left to be discovered here.
+
+Distinct from `ActionIntent` and `StatedIntent`, which are a prefix away and share nothing with it.
+`intentId` in the runtime is an `ActionIntent`'s id in all 141 of its occurrences and never an
+Intention's. **The collision is accepted, not fixed**, and ADR-0011 argues it at full size rather
+than talking it down.
+*Checked against the banned words:* not bare `Objective` — that ban stands, write "the Intention's
+objective" — not `Task`, not `Goal`, not `ProjectGoal`, not `Draft`.
+*Displaces:* Goal · Mission · ProjectGoal · OKR · north star · desired outcome (as a stored field) ·
+persistent process · PersistentIntention · IntentionRecord · Objective (as a table).
+**Consumer:** what you're working toward.
+
+### IntentionState — *computed view*
+`working | delegated | needs-you | sleeping | done`. Derived, never stored — `EnforcedPolicy`,
+`Shift` and `ActionStatus` set the precedent and the argument is theirs: **two stores for one truth
+is exactly how a UI comes to display something the gate cannot enforce.** Every fact it reads is
+already a durable row.
+
+| Member | Derived from |
+|---|---|
+| `working` | a live WorkSession on this Intention, phase `observing` |
+| `delegated` | an accepted HandoffContract on it whose Shift has not ended |
+| `needs-you` | an unanswered ConfirmationRequest, a DecisionNeeded, or a held ShiftOutcome with undecided proposals |
+| `sleeping` | none of the above, and `completedAt` is null |
+| `done` | `completedAt` is set — by a person, and only by a person |
+
+**Five members. There is no `waiting`, and it is not an omission to tidy up later.** `waiting` means
+*progress depends on an external event or dependency*, and nothing in this system can produce an
+external event: `ObservationEvent.sessionId` is required with a single ledger writer, so **no event
+outside a sitting can be persisted at all**, and `ExternalEvent` is on the do-not-build list. A
+member nothing can reach is a promise the interface would render and the data could never keep. It
+arrives with event ingestion, and `docs/ARCHITECTURE.md` records it there rather than in the union.
+
+**`sleeping` is the honest common case and will read like a bug.** With one sensor, no external
+events and one live session at a time, most Intentions compute to `sleeping` most of the time. That
+is the true answer. Making the screen more interesting than that means inferring, which is the one
+thing an Intention exists not to do.
+
+`now` is a parameter, never read from the clock: `src/domain/**` may never call `Date.now()` or
+`new Date()`, and `tests/architecture.test.ts` enforces it by grepping source text.
+*Checked against the banned words:* not `status` (displaced), not `SessionState` (that is
+`SessionReading`), not `phase` — `SessionPhase` is per sitting and is a different thing.
+*Displaces:* IntentionStatus · status · lifecycle state (as a column) · state machine · stalled ·
+blocked · waiting (as a member).
+**Consumer:** Working · Propositum is on it · Needs you · Sleeping · Done.
+
 ### Project — *table*
 The single durable workspace (`id`, `name`, `createdAt`). Owns every ApprovedSource, Document and
 WorkSession. No objective, no status, **no free-text description** — a description that inference
@@ -104,13 +196,31 @@ silently inherits the wrong sources and the wrong document.
 
 The no-description rule matters **more** after this change, not less: the offer boundary now runs
 before any person has said anything at all, so the only thing auto-naming may write is `name`.
+
+**A Project may own an Intention, and the no-description ban is untouched** *(added 2026-08-16,
+[ADR-0011](docs/adr/0011-intention-above-worksession.md))*. At most one, and it lives on the
+Intention rather than here: there is still **no objective, no status and no free-text description on
+this row**. The ban survives because its reason survives — it forbids *a description that inference
+reads*. An Intention is human-ratified and — the half that actually carries the ban — **never read
+by the detector**; `matchProject` still compares subject words to `name` and gains no new input.
+Auto-naming still writes `name` and nothing else, and a Project with no Intention is the ordinary
+case, because a Project is created by accepting an offer and an Intention is created by a person
+typing or accepting one.
 *Displaces:* Workspace · Space · Folder · Board · Account · Client · ProjectGoal.
 **Consumer:** Project.
 
 ### WorkSession — *table*
 One explicitly started and explicitly ended stretch of desk time in one Project
-(`id`, `projectId`, `phase`, `startedAt`, `endedAt?`). A **sitting, not a single intention**:
-it may contain several strands and the reading names the dominant one. It survives handoffs,
+(`id`, `projectId`, `intentionId?`, `phase`, `startedAt`, `endedAt?` — `intentionId?` alone is
+*specified 2026-08-16 by [ADR-0011](docs/adr/0011-intention-above-worksession.md) and not yet in
+`prisma/schema.prisma`*; the other five are there today). ~~A **sitting, not a single
+intention**: it may contain several strands and the reading names the dominant one.~~ **Amended
+2026-08-16 ([ADR-0011](docs/adr/0011-intention-above-worksession.md)): still a sitting and not a
+single intention — and the sentence is now literal rather than figurative.** It may still contain
+several strands and the reading still names the dominant one. What changed is that *intention* is a
+noun with a table behind it, so a sitting may point at **one** Intention, at none, and never at two.
+`intentionId` is nullable and **nothing backfills it**: every session recorded before this ADR keeps
+a null, which is the honest value, because nobody wrote an Intention for them. It survives handoffs,
 idle, lid close, sleep, service-worker death and permission revocation. Only a human act ends it.
 *Displaces:* Session (bare) · Sitting · Episode · FocusSession · Task · Job · Run ·
 Shift-as-a-session · CaptureSession.
@@ -296,7 +406,13 @@ It names a subject and grants nothing. It reaches no policy decision, no scope, 
 gate reads. `confident: false` is a real outcome the interface must render as vagueness rather than
 suppress — a confident wrong name is worse than an honest mixed one.
 *Checked against the banned words:* not `SessionState` (that is `SessionReading`), not bare
-`Objective`, not `Intention`, not `Task`.
+`Objective`, not `Intention`, not `Task`. *(2026-08-16: `Intention` stopped being a banned word and
+this check got **stronger**, not weaker. A SessionSubject is model-composed and nobody has agreed to
+it; an Intention is a durable row a person ratified and can edit or delete. The uncomfortable half,
+written down in [`docs/VISION.md`](docs/VISION.md)'s honest limits rather than smoothed over here:
+an Intention's words may well have **started** as text of exactly this kind. What may never happen
+is a SessionSubject becoming an Intention without a person accepting it — of everything in this
+vocabulary, that is the one promotion no code path may make.)*
 *Displaces:* topic · theme · thread name · detected intent · inferred goal · Subject (bare) ·
 NamedThread (as a vocabulary word — it stays the in-memory store's own field name).
 **Consumer:** what you've been looking into.
@@ -476,8 +592,14 @@ reference.
 
 ### HandoffContract — *table*
 The persisted, human-ratified agreement governing exactly one autonomous continuation
-(`id`, `sessionId`, `sessionReadingId`, `status: draft | accepted`, `acceptedAt`, plus the three
-value objects below).
+(`id`, `sessionId`, `sessionReadingId`, `intentionId?`, `status: draft | accepted`, `acceptedAt`,
+plus the three value objects below — `intentionId?` alone is *specified 2026-08-16 by
+[ADR-0011](docs/adr/0011-intention-above-worksession.md) and not yet in `prisma/schema.prisma`*).
+
+`intentionId` is nullable and **specified rather than present**, by
+[ADR-0011](docs/adr/0011-intention-above-worksession.md). It records **which Intention this contract
+advances** — nothing more. It grants nothing, the gate does not read it, and `compilePolicy` cannot
+receive it. Every contract written before that ADR keeps a null and none are backfilled.
 
 Status has **two** values only. Supersession, if continuation ever ships, is derived from a
 successor's `supersedesId` — which means the immutability trigger has a single job (permit UPDATE
@@ -514,8 +636,25 @@ human retypes anything they want honoured. This is the one place where page pros
 become something the worker follows, so the barrier is structural: the handoff-generation boundary
 has no path that writes a claim into `guidance`.
 
+**It is one Intention's per-handoff restatement** *(added 2026-08-16,
+[ADR-0011](docs/adr/0011-intention-above-worksession.md))*. It already carried `objective` and
+`definitionOfDone`, which is the whole of what an Intention holds, so this is **a move, not a
+build** — no field is added, removed or retyped. The relationship in one line: an **Intention** is
+durable and belongs to the person; a **StatedIntent** is the sentence *one* contract commits to,
+ratified for that contract and re-ratified for the next. `HandoffContract.intentionId` is nullable
+and records which one; a contract with no Intention behind it is legal and ordinary.
+
+What genuinely changes is the **source of the pre-filled text**: the drafting path may now start
+from a sentence written before the sitting existed rather than only from a reading of it. Everything
+that made this value object safe is unchanged — `guidance` stays human-typed only, an inferred
+`constraint` claim still never pre-populates it, and `compilePolicy` still cannot receive any of it.
+The human ratification that follows is doing more work than it was designed for, and that is
+recorded under known risks rather than smoothed over.
+
 *Displaces:* Objective (free-standing) · InferredObjective · CommittedObjective · AgreedObjective ·
-Goal · Mission · Intent · Intention (as a field) · Instructions · outOfScope · SuccessCriteria.
+Goal · Mission · Intent · ~~Intention (as a field)~~ · Instructions · outOfScope · SuccessCriteria.
+**Amended 2026-08-16 ([ADR-0011](docs/adr/0011-intention-above-worksession.md)): `Intention` is a
+table and is not displaced by this. It is restated by it.**
 **Consumer:** "What I'll work on" · "Done means…" · "Guidance — not a hard limit".
 
 ### ContractScope — *value object*
@@ -1398,7 +1537,10 @@ threshold · context window · tool call · execution trace.
 | bare `Outcome` | `ShiftOutcome` (per run) · `ActionOutcome` (per action) |
 | `finding` for what a run produced | the `answer` ShiftOutcomeKind — `ReviewFinding` owns "finding" |
 | `actor` | `observedBy` · `SessionClaim.origin` |
-| `Intention` as a field or type | prose only — allowed in VISION.md |
+| ~~`Intention` as a field or type~~ | ~~prose only — allowed in VISION.md~~ **Unbanned 2026-08-16 ([ADR-0011](docs/adr/0011-intention-above-worksession.md)): `Intention` is a table.** `ActionIntent`, `StatedIntent`, `recordIntent` and all 141 occurrences of `intentId` are unchanged and unrelated — the collision is accepted, not fixed |
+| `WorkingAgreement` as a type name | **Reserved 2026-08-16 (ADR-0011)** for the durable delegation policy, which is **not built**. Until it is: `HandoffContract` (the object) · "Working agreement" (its consumer label, unchanged). The word has now been spent twice; there is no third |
+| `definitionOfSuccess` | `definitionOfDone` — one field name, shared by `Intention` and `StatedIntent` |
+| `IntentionStatus`, a stored lifecycle column | `IntentionState` (a computed view) |
 | copy, patch, hunk, diff chunk, changeset, anchor, offset, fold, materialise, base version, commit, merge | *(UI copy)* changes · this change · the version you left · Preview · Accept · Reject · Edit |
 | ledger entry, agent run, job, orchestration, allowlist | *(UI copy)* what I did · Propositum · what Propositum can see |
 
@@ -1458,6 +1600,18 @@ say that it does.
     replaces absence with a landing `ActionKind` behind a per-action human confirmation. This is the
     only override in this list that makes the product **less** safe, and the standing-rules section
     above gives it the argument it needs rather than the argument it would like.
+11. **The core primitive is the Intention, not the persistent work session.** The brief says *"Its
+    core primitive is the **persistent work session**. A work session can transfer control between
+    Human → Propositum → Human → Propositum. The persistent object is the session, not the
+    individual agent."* [ADR-0011](docs/adr/0011-intention-above-worksession.md) puts `Intention`
+    above `WorkSession`: a sitting is an episode that may advance an Intention, and the durable
+    statement of what the work is for belongs to the person rather than to the sitting. The brief is
+    **not edited** — it declares itself historical and its own rule is that the later document wins
+    and should say that it does. This entry is that mechanism.
+    The override is narrower than it sounds and is worth bounding here rather than leaving to be
+    inferred: a `WorkSession` is unchanged in every field but one nullable foreign key, the
+    handoff → worker → reviewer → re-entry slice is untouched, and everything Propositum *infers* is
+    still per-sitting and still cold. What moved above the session is one sentence a person typed.
 
 ---
 
@@ -1493,10 +1647,29 @@ Recorded so they are found deliberately rather than discovered.
   brief's Project "goals" is deliberately unmodelled. A second session starts cold — which the
   product's own shift-change metaphor implies otherwise.
   *Partly addressed 2026-08-11.* `matchProject` joins a new sitting to the project it recognises,
-  so the approved sources and the document survive a session. **The objective still does not, and
+  so the approved sources and the document survive a session. ~~**The objective still does not, and
   must not**: a stale objective inherited quietly by the next sitting is worse than a cold read,
-  because nothing on screen would say it had been. What carries forward is where the work lives,
+  because nothing on screen would say it had been.~~ What carries forward is where the work lives,
   never what Propositum thinks it is for.
+  **Amended 2026-08-16 ([ADR-0011](docs/adr/0011-intention-above-worksession.md)): the ruling's
+  objection was invisibility, not persistence, and it is answered by construction rather than
+  deleted.** The operative word was *quietly*, and the ruling named its own reason — *because
+  nothing on screen would say it had been*. An `Intention` is durable and survives every session,
+  and it is **human-ratified only**: a person writes it, a person edits it, no detector and no model
+  boundary can, and no model-facing schema has a field to put one in. Nothing is inherited quietly
+  because nothing is inherited by inference at all.
+  **The last clause above is unchanged and is now enforced rather than observed.** What Propositum
+  thinks is still cold every time: `SessionClaim{kind:'objective'}` is untouched — one per revision,
+  inferred, evidence-bearing, per-sitting — and no reading reads an Intention.
+  **What the amendment does not buy is accuracy.** A sentence a person wrote in March is visible in
+  August and can be flatly wrong, and nothing here detects that the work moved. Human-ratified
+  removes silence, not staleness. The contract's human ratification is now the only thing standing
+  between a months-old sentence and a run, and it was not designed to carry that.
+  **And one third of the answer is a UI requirement rather than a schema property.**
+  *Human-authored* and *never model-written* are structural. *On screen wherever it is used* is a
+  sentence somebody has to keep true in `.tsx` files, with no test that would notice if it stopped
+  being true. A handoff screen that pre-fills a StatedIntent from an Intention without saying where
+  the words came from reproduces exactly the failure the struck sentence described.
 - **Locking the document for the duration of a Shift is an untested product cost.** It buys a
   genuinely immutable base, and it tells the user who opens their laptop at 6pm to fix a typo *no*.
 - **`guidance` is unenforceable prose beside enforced fields**, held honest only by a UI label.
@@ -1525,9 +1698,17 @@ Recorded so they are found deliberately rather than discovered.
 - **The injection surface grew by roughly two orders of magnitude**, from a 2,000-character excerpt
   read once to an accessibility tree read every turn, every accessible name of it page-authored.
   ADR-0006 says datamarking is depth, not a boundary, and depth scaled a hundredfold is still depth.
-- **~~This is 38 terms.~~ This is 52.** Fourteen were added on 2026-08-11 for composed offers and
-  browser action. Small against nine brief objects, seven model boundaries, an append-only ledger, a
-  diff model, a policy gate and an acting agent. **Not small in absolute terms, and no longer
-  arguably small at all.** The earlier note said roughly six earn their place only marginally; that
-  is now closer to ten, and the first cut should start with the terms that exist to name one field
-  on one row.
+- **~~This is 38 terms.~~ ~~This is 52.~~ This is 54.** Fourteen were added on 2026-08-11 for
+  composed offers and browser action, and two on 2026-08-16 for persistent intentions: `Intention`
+  and `IntentionState`. Small against nine brief objects, seven model boundaries, an append-only
+  ledger, a diff model, a policy gate and an acting agent. **Not small in absolute terms, and no
+  longer arguably small at all.** The earlier note said roughly six earn their place only
+  marginally; that is now closer to ten, and the first cut should start with the terms that exist to
+  name one field on one row.
+  **The two added on 2026-08-16 are held to that standard rather than exempted from it.**
+  `Intention` is a table with rows and an identity, and it survives the cut on the same grounds
+  every other table does. `IntentionState` is a computed view over five other tables, so it names no
+  field on any row and is the weaker of the two. It earns its place by **holding a refusal**: a
+  lifecycle word the interface says out loud, with no entry here, is exactly how `waiting` gets
+  declared by someone who never learned it was refused. That is a thinner claim than the other 53
+  make, and it is stated as the thinner claim it is.

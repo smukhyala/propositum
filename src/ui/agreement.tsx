@@ -144,7 +144,7 @@ function Styles() {
 
 /* ── what each ActionKind means, said plainly ───────────────────────────── */
 
-const ACTION_LABEL: Readonly<Record<ActionKind, string>> = {
+export const ACTION_LABEL: Readonly<Record<ActionKind, string>> = {
   'read-approved-source': 'Read the sources you approved',
   'read-document': 'Read your document',
   'draft-section': 'Draft a section of your document',

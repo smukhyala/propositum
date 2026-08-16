@@ -14,6 +14,8 @@ The five canonical triage roles, using their default label strings. See `docs/ag
 
 Single-context: `CONTEXT.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`.
 
+Layer build status is `docs/ARCHITECTURE.md` and stage framing is `docs/ROADMAP.md`. Neither is the glossary — `CONTEXT.md` still is, and there is no `UBIQUITOUS_LANGUAGE.md`.
+
 <!-- BEGIN:nextjs-agent-rules -->
 
 # This is NOT the Next.js you know
