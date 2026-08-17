@@ -110,7 +110,20 @@ export interface OfferInput {
   readonly siteCount: number
   readonly pageCount: number
   readonly readingMinutes: number
-  /** `OfferGrounds.sentences` — what the deterministic bar actually saw. */
+  /**
+   * `OfferGrounds.sentences`, verbatim — what the deterministic bar saw, in the
+   * same voice `describeWork` uses to say it to the person.
+   *
+   * They are code-authored: counts, durations and hostnames off the ambient
+   * buffer, with no page-authored text in them, which is why they are the one
+   * input here that is not datamarked. A hostname does appear — "you went back
+   * to nature.com after leaving it" — and that is a deliberate acceptance
+   * rather than an oversight. It is evidence the person is about to be shown
+   * anyway, it comes from where they actually went rather than from anything a
+   * page said, and the offer that gets composed from it still has no field to
+   * put a site in. The prompt is told, separately and explicitly, that a place
+   * appearing in the evidence is not permission to name one in the proposal.
+   */
   readonly grounds: readonly string[]
   /** What Propositum can really make. Code-derived from the closed kinds, so an
    *  offer cannot promise something the machine has no way to produce. */
@@ -201,7 +214,7 @@ Rules:
 - Say roughly what you would do, in order, in at most six short lines. This is so they can turn you down for the right reason.
 - Only propose what Propositum can actually produce. You will be given that list; nothing outside it is on the table.
 - Say what you would NOT do. Especially the thing they might assume you would.
-- Never name a website, a company's site, a page or a link. You could not widen what Propositum is allowed to look at even if you tried, and naming one would only be describing something you cannot do.
+- Never name a website, a company's site, a page or a link. The evidence you are given may mention where they were — that is Propositum saying what it saw, and it is not permission to put a place in your proposal. You could not widen what Propositum is allowed to look at even if you tried, and naming one would only be describing something you cannot do.
 - If the reading does not add up to one thing worth doing, say so with confident: false. A confident wrong proposal costs them the time to read it and the trust to read the next one.
 
 ${UNTRUSTED_CONTENT_RULE}`

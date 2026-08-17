@@ -59,8 +59,10 @@ import { offerBoundary, outcomeKindsOf } from '../model/boundaries/offer'
 import type { ModelClient } from '../model/client'
 import { PRODUCIBLE } from '../domain/execution/outcome-kinds'
 import { groundsFor } from '../domain/detection/grounds'
-import { QUERY_PARAMS } from '../capture/url'
-import type { AmbientObservation, WorkDetected } from '../domain/detection/detect'
+import { threadPagesOf } from '../domain/detection/detect'
+import { searchQueryOf } from '../domain/detection/topics'
+import type { ThreadPage } from '../domain/detection/topics'
+import type { WorkDetected } from '../domain/detection/detect'
 import { signatureOf } from './ambient-store'
 import type { AmbientStore, NamedThread } from './ambient-store'
 
@@ -73,53 +75,28 @@ const TITLES_SHOWN = 12
 const SEARCHES_SHOWN = 6
 
 /**
- * What they typed into a search box, and only when it was about this.
+ * What they typed into a search box, and only when it was really a search.
  *
- * Two rules, and both are about what leaves the machine rather than about the
- * prompt reading well.
+ * `searchQueryOf` is the same structural test `grounds.ts` uses to decide the
+ * intent half of the sufficiency rule, and using it here rather than
+ * `kind === 'query'` matters for a reason beyond consistency. The extension
+ * marks any URL carrying a `?` as a query, so a WordPress post at `?p=1234` and
+ * a paginated listing at `?s=2` both arrive claiming to be searches. Showing
+ * those to the model as "they searched for 1234" would not merely read oddly —
+ * it would put a fabricated statement of the person's intent at the top of the
+ * evidence a proposal is composed from.
  *
- * **It has to be a real search.** `kind === 'query'` is set by the extension
- * for any URL with a `?` in it, so a link carrying `?utm_source=` arrives
- * claiming to be one. The term has to be in a parameter `cleanUrl` kept, which
- * is the closed list of things search boxes actually use.
- *
- * **It has to be about the thread.** This reads the whole window rather than
- * only the pages that joined the thread — a results page often does not join
- * one — so the overlap check is doing real work: the unrelated search that
- * happened in the same half hour, the one about a diagnosis, the one about a
- * new job, never leaves this function. That is the filter, and the thread's
- * own words are what it is against.
+ * The pages are the thread's own, so a search from the same half hour about
+ * something else — the one about a diagnosis, the one about a new job — is not
+ * here to be filtered: it never joined this thread and this function never sees
+ * it.
  */
-function searchesIn(
-  observations: readonly AmbientObservation[],
-  terms: readonly string[],
-): readonly string[] {
-  const wanted = new Set(terms)
+function searchesIn(pages: readonly ThreadPage[]): readonly string[] {
   const found: string[] = []
 
-  for (const observation of observations) {
-    if (observation.kind !== 'query') continue
-
-    let typed = ''
-    try {
-      const params = new URL(observation.url).searchParams
-      for (const key of QUERY_PARAMS) {
-        const value = params.get(key)
-        if (value !== null && value.trim() !== '') {
-          typed = value.trim()
-          break
-        }
-      }
-    } catch {
-      continue
-    }
-
-    if (typed === '') continue
-
-    const words = typed.toLowerCase().split(/[^a-z0-9]+/)
-    if (!words.some((w) => wanted.has(w))) continue
-    if (found.includes(typed)) continue
-
+  for (const page of [...pages].sort((a, b) => a.at - b.at)) {
+    const typed = searchQueryOf(page.url)
+    if (typed === null || found.includes(typed)) continue
     found.push(typed)
   }
 
@@ -151,8 +128,12 @@ export async function composeOffer(
 ): Promise<void> {
   const signature = signatureOf(detected.terms)
 
-  const observations = store.forUrls(detected.urls, nowMs)
-  const grounds = groundsFor(detected, observations)
+  // The pages the detection was actually made of, rebuilt from the same buffer
+  // and windowed the same way — `threadPagesOf` exists so the bar cannot
+  // measure browsing the detection had already discarded, and so a "3 sites"
+  // ground cannot count a site the thread never ran through.
+  const pages = threadPagesOf(store.since(nowMs), detected, nowMs)
+  const grounds = groundsFor(detected, pages)
 
   // The bar, before the memory. See the header: recording an attempt here would
   // silence a thread that has not yet earned an offer but is about to.
@@ -165,10 +146,7 @@ export async function composeOffer(
   store.startComposing(signature)
 
   try {
-    // The whole window, not only the thread's pages: a results page frequently
-    // does not join the thread it started, and the overlap check inside is what
-    // keeps an unrelated search out.
-    const searches = searchesIn(store.since(nowMs), detected.terms)
+    const searches = searchesIn(pages)
 
     const outcome = await model.run(offerBoundary, {
       terms: detected.terms,

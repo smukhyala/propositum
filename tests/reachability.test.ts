@@ -214,6 +214,50 @@ describe('the safety machinery is reachable from the product', () => {
     ).not.toEqual([])
   })
 
+  /**
+   * Every threshold the detector exports is read by something.
+   *
+   * `callersOf` cannot express this on its own, and the gap let two constants
+   * sit in `detect.ts` for the whole build with no reader: `PAGES_FOR_WORK`,
+   * naming a per-origin page bar that died when threads replaced origins, and
+   * `PAGES_AFTER_QUERY`, naming a rule `detectWork` never applied. Both were
+   * described in the surrounding comments as active. A threshold nothing
+   * consults is worse than a missing one, because the comment beside it reads
+   * as proof the bar exists — which is how a reviewer concludes the detector is
+   * stricter than it is.
+   *
+   * A threshold is legitimately read inside its own file, so unlike everything
+   * above this counts a use in the DEFINING file too. What it will not accept
+   * is a constant that appears exactly once, at its own declaration.
+   */
+  it('every exported threshold in the detector is actually read', () => {
+    const detection = PRODUCTION.filter((f) =>
+      relative(repo, f).startsWith(join('src', 'domain', 'detection')),
+    )
+
+    const unread: string[] = []
+
+    for (const file of detection) {
+      const source = stripImports(stripComments(readFileSync(file, 'utf8')))
+
+      for (const [, name] of source.matchAll(/export const (\w+)\s*[:=]/g)) {
+        if (name === undefined) continue
+
+        // Everything but the declaration itself. `\b` keeps `FAST_DETECT` from
+        // being satisfied by `PROPOSITUM_FAST_DETECT`, and `PAGES_FOR_THREAD`
+        // from standing in for `PAGES_FOR_WORK`.
+        const elsewhere = source.replace(new RegExp(`export const ${name}\\s*[:=]`), ' ')
+        const readAtHome = new RegExp(`\\b${name}\\b`).test(elsewhere)
+
+        if (!readAtHome && callersOf(name, relative(repo, file)).length === 0) {
+          unread.push(`${relative(repo, file)}: ${name}`)
+        }
+      }
+    }
+
+    expect(unread, 'a threshold nothing reads is a bar that does not exist').toEqual([])
+  })
+
   it('the classifiers run in production, not only in their own tests', () => {
     // 205 lines of tested classification that no production file imported. The
     // extension re-implemented a thinner, wrong version inline instead.
@@ -241,6 +285,34 @@ describe('deferred, and asserted as deferred', () => {
       callersOf('shiftReportBoundary(', 'src/model/boundaries/shift-report.ts'),
       'shiftReportBoundary is wired now — move this into the section above',
     ).toEqual([])
+  })
+
+  it('the higher bar is consulted before any offer is composed', () => {
+    // Moved up from the deferred block below, which is the system working:
+    // `groundsFor` is the arithmetic that separates offering to DO work from
+    // offering to name it (ADR-0009 §2), and a sufficiency rule nothing calls
+    // is indistinguishable from one that was wired and is silently passing
+    // everything.
+    //
+    // The caller matters as much as the count. If anything OTHER than the
+    // compose path started consulting it, the bar would have moved somewhere a
+    // reader of this file would not think to look.
+    expect(
+      callersOf('groundsFor(', 'src/domain/detection/grounds.ts'),
+      'nothing consults OfferGrounds — every offer is gated by the LOW bar alone',
+    ).toEqual(['src/server/compose-offer.ts'])
+  })
+
+  it('the pages the bar measures are the pages the detection was made of', () => {
+    // `threadPagesOf` narrows the buffer to the thread's own URLs and windows
+    // it the same way `detectWork` did. Handing `groundsFor` everything in the
+    // window instead would let a "3 sites" ground count sites the thread never
+    // ran through — which is the mistake `WorkDetected.urls` exists to prevent,
+    // and it would make the bar look stricter than it is.
+    expect(
+      callersOf('threadPagesOf(', 'src/domain/detection/detect.ts'),
+      'nothing rebuilds the thread pages — the grounds would be measured over the wrong pages',
+    ).toContain('src/server/compose-offer.ts')
   })
 
   it('nothing composes an offer, so a detected thread can only be described', () => {

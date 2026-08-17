@@ -82,6 +82,79 @@ export function termsOf(title: string, url: string): Set<string> {
   return new Set(words)
 }
 
+/**
+ * Query parameters that carry something a person typed.
+ *
+ * Narrower than `capture/url.ts`'s `QUERY_PARAMS`, deliberately, and not
+ * imported from it — that list exists to decide what may be STORED, and being
+ * generous there is the safe direction, because keeping one parameter too many
+ * costs a slightly longer URL. Being generous HERE costs a false offer.
+ *
+ * `s` and `p` are the two dropped. `?p=1234` is a WordPress post id and `?s=2`
+ * is page two of a listing at least as often as either is a search, and a
+ * ground that fires on a page number is not an intent ground.
+ *
+ * Every parameter here also survives `cleanUrl`, which strips the rest before
+ * anything reaches the ambient buffer. A parameter this list recognised and
+ * that one discarded would be a rule that can never fire.
+ */
+const SEARCH_PARAMS = ['q', 'query', 'search', 'k'] as const
+
+/**
+ * Paths that name searching: /search, /results, /find, Amazon's /s, /web.
+ *
+ * The root path counts too, because DuckDuckGo, Kagi and several others put the
+ * query straight on the origin — `https://duckduckgo.com/?q=…`.
+ */
+const SEARCH_PATH = /^\/((search|results|find|web|s|sp)(\/|$).*)?$/i
+
+/**
+ * The thing they typed, if this URL is a search. Null otherwise.
+ *
+ * ── Why the domain re-decides what the extension already labelled ────────
+ *
+ * The service worker marks `kind: 'query'` on any URL carrying a `?`, so a
+ * checkout page, a paginated listing and a tracked newsletter link all arrive
+ * claiming to be searches. That was survivable while a search only made the
+ * copy read oddly. It stops being survivable in `grounds.ts`, where a search is
+ * an INTENT ground and the whole "did they pursue this or merely receive it"
+ * half of the sufficiency rule would be satisfiable by a question mark.
+ *
+ * So the test lives here, in code the extension cannot widen, and it is
+ * structural rather than a list of search engines: a recognised parameter, a
+ * path that names searching, and a value that looks like words rather than an
+ * id. A brand list would need endless maintenance and would still miss the next
+ * engine — the same argument that kept a blocklist out of thread detection.
+ *
+ * It is deliberately possible for this to say no to a real search on some site
+ * with an unusual shape. A missed search costs one ground; a false one costs an
+ * interruption, and ADR-0008 names which of those is the expensive failure.
+ */
+export function searchQueryOf(url: string): string | null {
+  let parsed: URL
+  try {
+    parsed = new URL(url)
+  } catch {
+    return null
+  }
+
+  // Not decoded: a search path is ASCII, and `decodeURIComponent` throws on a
+  // stray `%` — a malformed URL must cost a ground, never a crash in detection.
+  if (!SEARCH_PATH.test(parsed.pathname)) return null
+
+  for (const param of SEARCH_PARAMS) {
+    const value = parsed.searchParams.get(param)
+    if (value === null) continue
+
+    const term = value.trim().toLowerCase().replace(/\s+/g, ' ')
+    // Two characters and at least one letter. `?q=1` is a page number wearing a
+    // search parameter's name, and an id is not something anybody typed.
+    if (term.length >= 2 && /[a-z]/.test(term)) return term
+  }
+
+  return null
+}
+
 export interface ThreadPage {
   readonly url: string
   readonly origin: string
@@ -92,6 +165,10 @@ export interface ThreadPage {
   /** True when this page was reached by searching — the strongest statement of
    *  intent available without asking. */
   readonly searched: boolean
+  /** How many times they ARRIVED at this page, counting only arrivals that
+   *  followed a visit somewhere else. One on the way through; two or more means
+   *  they left and chose to come back, which is a different fact entirely. */
+  readonly visits: number
 }
 
 export interface Thread {
