@@ -270,6 +270,14 @@ broken this principle whatever else it improved. [ADR-0008](./adr/0008-ambient-d
 names the asymmetry: a missed offer costs a suggestion nobody sees, a false one asks somebody to read
 and ratify a proposal about work they were not doing.
 
+**The enforced half failed once, on 2026-08-17, and the way it failed is worth keeping.** The
+standing fixture had been written at three pages while its own docstring recorded the session it
+stood for as *twelve links across three sites*. A new investment ground then admitted the real
+afternoon and not the fixture — twelve pages over three sites put four on some site by pigeonhole,
+three put one — so the suite stayed green through exactly the regression it exists to catch. The
+fixture is at twelve now. A fixture smaller than the session it records is not a smaller test, it is
+a different one, and this principle is only as enforced as its fixture is honest.
+
 **Honest limit:** the other half is enforced by nothing. The grounds threshold is a floor on *when*
 Propositum may offer, not a ceiling on how often it may speak, and there is no metric anywhere that
 would catch an offer rate creeping upward. Notifications are the obvious place this erodes first,

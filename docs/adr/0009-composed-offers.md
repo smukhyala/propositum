@@ -123,6 +123,10 @@ So there is a second, higher bar, and it is arithmetic. **`OfferGrounds` splits 
 | **investment** | `read-deeply` | one page past the existing engagement threshold — dwell and scroll |
 | | `stayed-with-it` | the thread's own span past a threshold |
 | | `followed-across` | three or more distinct origins in one thread |
+| | `read-around` | three or more distinct pages of one origin, each held past the engagement floor, none a search *(added 2026-08-17)* |
+
+`followed-across` and `read-around` are the two ends of one axis and **count once between them** —
+see the second 2026-08-17 amendment below for the sessions that shipped counting them twice.
 
 > **`sufficient = at least one intent ground AND at least two investment grounds.`**
 
@@ -130,8 +134,9 @@ No model runs on this. The thresholds are the constants already in
 `src/domain/detection/detect.ts`, they are guesses set before any real browsing existed, and
 ADR-0008 already says so.
 
-**Why two groups rather than three-of-six.** Because the two axes fail differently, and a single
-counter cannot say *one of these and two of those*.
+**Why two groups rather than ~~three-of-six~~ three-of-seven.** Because the two axes fail
+differently, and a single counter cannot say *one of these and two of those*. *(Heading corrected
+2026-08-17, thirteen lines after the amendment that struck the same count below it.)*
 
 *Intent separates pursuing from receiving.* A person who searched and then read chose the subject.
 A person who read three pages of a site they arrived at from a newsletter did not choose anything.
@@ -140,14 +145,20 @@ recipe — and that is precisely the false positive ADR-0008 names as the expens
 it interrupts someone reading the news and teaches them the feature is noise.
 
 *Investment separates "worth an offer" from "a lucky click".* One strong signal is cheap to produce
-by accident. Depth on a page, span across the thread, and breadth across sites are three different
-accidents, and needing two of them is not much to ask of real work.
+by accident. ~~Depth on a page, span across the thread, and breadth across sites are three different
+accidents, and needing two of them is not much to ask of real work.~~ **Restated 2026-08-17, when
+`read-around` joined the group and this sentence did not follow it** — the identical sentence in
+`src/domain/detection/grounds.ts` was amended and this one was left, so the two documents disagreed
+about how many investment grounds existed. **Four grounds over three accidents:** depth on one PAGE,
+span across the thread, and breadth — which `followed-across` and `read-around` measure from its two
+ends, and which therefore counts once between them. Needing two different accidents is still not
+much to ask of real work.
 
-Three-of-six admits both failures directly. It passes `read-deeply + stayed-with-it +
-followed-across` with no intent at all — the newsletter afternoon. And it passes all three intent
-grounds with no investment — someone who searched, refined, and returned inside ~~ninety seconds~~
-**a minute** having read nothing, which is what a search that is going badly looks like. Both are
-ordinary browsing, and an offer on either is a false one.
+~~Three-of-six~~ **Three-of-seven** admits both failures directly. It passes `read-deeply +
+stayed-with-it + followed-across` with no intent at all — the newsletter afternoon. And it passes all
+three intent grounds with no investment — someone who searched, refined, and returned inside
+~~ninety seconds~~ **a minute** having read nothing, which is what a search that is going badly looks
+like. Both are ordinary browsing, and an offer on either is a false one.
 
 > **Amended 2026-08-16.** The sentence above quoted `DEEP_READ_MS`, which was ninety seconds and is
 > now sixty; the argument is unchanged and only the number moved. Two real research sessions were
@@ -177,6 +188,77 @@ ordinary browsing, and an offer on either is a false one.
 > same newsletter afternoon does qualify. The two-group rule buys a duration, not an exemption, and
 > `docs/adr/0009` should not be read as claiming otherwise. Revisit is already listed below —
 > *the two-group bar is observed failing in either direction* — and this is the direction to watch.
+
+> **Amended 2026-08-17 — a fourth investment ground, and the arithmetic two paragraphs up.**
+> `read-around` fires on three or more distinct pages of one origin, each of them engaged with and
+> none of them a search. It exists because breadth across sites was rewarded and depth on one site
+> counted for nothing: six arXiv abstracts on one subject earned no investment ground at all unless a
+> page happened to clear `DEEP_READ_MS`, while three glances at three sites earned `followed-across`
+> outright. The product owner's words: *"in the event something is done on the same site for multiple
+> subpages, you shouldn't need a third site. That doesn't really make sense logistically."* Two
+> cheaper-looking fixes were considered and both are refused in `grounds.ts`: `ORIGINS_FOR_OFFER`
+> 3→2 reports the thread's own entry condition back as evidence, and `ORIGINS_FOR_THREAD` 2→1 is the
+> structural reason a video call and a rent portal produce nothing.
+>
+> **The flat alternative is now three-of-seven, and the argument above holds at the new numbers —
+> more strongly rather than less, which is why it is restated rather than left implied.** Both
+> failures it names still clear a flat counter: `read-deeply + stayed-with-it + followed-across` with
+> no intent is still three, and all three intent grounds with no investment is still three. The
+> fourth member makes the first failure *worse*, not better — there are now four ways to pick three
+> investment grounds, so a flat three-of-seven has four newsletter afternoons to offer work to where
+> it had one. Two-of-two-groups refuses all four for the same reason it refused the first: none of
+> them contains an act of navigation anybody chose.
+>
+> **What the fourth ground costs, since this section is where the bar's costs belong.** Requiring two
+> of four is a cheaper bar than requiring two of three — ~~three qualifying pairs became six~~ **five,
+> once breadth counts once** — and no sentence here makes that untrue. And it admits a shape that
+> could not qualify before: ~~one search leading into heavy browsing on a single site~~ **any one
+> intent ground leading into three or more read pages of a single site**. That is research (google →
+> arXiv → six abstracts) and it is equally shopping (google → Amazon → eighteen product pages, which
+> was in a real buffer from this product's own testing on 2026-08-16). Nothing deterministic
+> separates the two, and separating them is what a model would be for. **The trade was accepted
+> knowingly.** It is bounded by a rule outside this section — a thread needs two origins to exist at
+> all, so single-site browsing with no search in front of it forms no thread and is offered nothing,
+> however deep it goes — and by `INVESTMENT_REQUIRED`, which still wants a second ground beside it.
+> Both bounds are real and neither makes it free. This is a second entry under the revisit item
+> below, in the same direction as the first.
+
+> **Amended again 2026-08-17 — what the fourth ground shipped doing, and the two things that were
+> wrong with it.** Both were found by review of the working tree and both are fixed in
+> `src/domain/detection/grounds.ts`. They are recorded here rather than quietly corrected because the
+> paragraph above states a trade, and for part of a day the trade that shipped was not that one.
+>
+> **1. `read-around` and `followed-across` were counted as two grounds, and they are one axis.** A
+> thread spanning three origins usually has three pages on one of them, and past seven pages over
+> three origins it must, by pigeonhole. So the pair satisfied `INVESTMENT_REQUIRED` on its own with
+> **no duration evidence of any kind** — no page held, no span. One search and four tabs closed after
+> three seconds each, twelve seconds of attention across a hundred seconds, was offered work. So was
+> the twelve-link newsletter afternoon two amendments up — the one `SUSTAINED_MS` was put back to
+> fifteen minutes to refuse — which means `read-around` did to it exactly what lowering `SUSTAINED_MS`
+> had done, from a different direction. `BREADTH_AXIS` folds the pair into one number. Both grounds
+> still fire and both still say their sentence; only the arithmetic folds. This is also the product
+> owner's ask stated tightly rather than generously: *"you shouldn't need a third site"* is depth
+> standing **in place of** breadth, and somebody who has the third site was never the person being
+> argued about.
+>
+> **2. "each engaged with" meant "was visible for a nonzero time".** The ground borrowed `pursuitOf`'s
+> `engagedMs > 0` test, and the ambient path applies no dwell floor of its own — `ENGAGEMENT_DWELL_MS`
+> gates the ledger path, the ambient route accepts any nonnegative integer, and
+> `extension/src/content.js` says so in its own words. Three seconds a tab produced the sentence *"You
+> read 3 pages on arxiv.org."* Recorded run 1 — three abstracts, 17.5 seconds between them, which
+> ADR-0008's successor file calls the right answer to refuse — fired it. `READ_AROUND_MS` is a real
+> floor at twenty seconds, the same number `ENGAGEMENT_DWELL_MS` uses and deliberately not imported
+> from it.
+>
+> **And the cost above was recorded smaller than it is.** Two corrections, neither of them a change
+> to the code: a search is **not** required, because `came-back` is an intent ground too and a
+> reopened tab supplies it; and the admitted size is **three pages and about four minutes**, not
+> eighteen pages — three pages of one site past `READ_AROUND_MS` with one of them past `DEEP_READ_MS`.
+> A bank portal reached through a google search has exactly that shape and is offered work. The
+> `ORIGINS_FOR_THREAD` bound above is real and is weaker than it reads, because one search supplies
+> the second origin. All of these are pinned as admitted-cost tests in `tests/grounds.test.ts`
+> alongside the newsletter afternoon, rather than tightened away — the ground is what the product
+> owner asked for and this is what it costs.
 
 ### 3. `ShiftOutcome` — the run produced something, and it was not necessarily a document
 

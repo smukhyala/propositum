@@ -513,12 +513,24 @@ ambient buffer. No model, ever.
 
 > **`sufficient = at least one intent ground AND at least two investment grounds.`**
 
-Two groups rather than k-of-6, because the two axes fail differently and one counter cannot express
+Two groups rather than ~~k-of-6~~ k-of-7, because the two axes fail differently and one counter cannot express
 *one of these and two of those*. Intent separates **pursuing** from **receiving** — without it, a
 long absorbing article qualifies, which is the false positive ADR-0008 names as the expensive
 failure. Investment separates **worth an offer** from **a lucky click** — one strong signal is cheap
 to produce by accident; two independent ones are not. The argument in full is in
 [ADR-0009](docs/adr/0009-composed-offers.md) §2.
+
+**Amended 2026-08-17: the investment group has four members, not three.** `read-around` joined it,
+so the required two are now drawn from four rather than three — ~~three qualifying pairs became
+six~~ **five, corrected later the same day** — which is a cheaper bar and is recorded as one rather
+than left to be worked out. The intent group is unchanged and so is the sentence in the block quote
+above: still one and two, never a single counter.
+
+**Counted by axis, not by ground, corrected 2026-08-17.** `followed-across` and `read-around` are
+breadth measured from its two ends, so they count **once between them** — the sixth pair was never a
+pair. Both still fire and both still say their sentence; only the arithmetic folds. Counting them
+separately made the pair sufficient with no duration evidence at all, which is why this is a rule
+rather than a note.
 
 **`OfferGrounds`, not `Evidence`.** `Evidence` means claim→event and is the most expensive collision
 available here: two things called evidence, one carrying provenance for an inference and one gating
@@ -536,12 +548,25 @@ Closed and code-owned, in two groups that are part of the type rather than a com
 | Group | Members |
 |---|---|
 | intent | `searched-then-read` · `refined-the-search` · `came-back` |
-| investment | `read-deeply` · `stayed-with-it` · `followed-across` |
+| investment | `read-deeply` · `stayed-with-it` · `followed-across` · `read-around` |
 
 Adding a member is a schema change, never configuration. **No `other`.** Never model output, so the
 enum is a genuine constraint rather than a prose hint. The thresholds behind each member are the
-constants in `src/domain/detection/detect.ts` and are guesses set before any real browsing existed —
-ADR-0008 says so and this does not improve on it.
+constants in ~~`src/domain/detection/detect.ts`~~ **`src/domain/detection/grounds.ts`** and are
+guesses set before any real browsing existed — ADR-0008 says so and this does not improve on it.
+*(The file was corrected 2026-08-17. ADR-0009 recorded the move on 2026-08-16 and this sentence did
+not follow it, which is the glossary describing a file the constants had already left.)*
+
+**Amended 2026-08-17: `read-around` is the seventh member and the fourth investment ground.** It
+fires on three or more distinct pages of ONE origin, each of them held past `READ_AROUND_MS`, none of
+them a search. It exists because breadth across sites was rewarded and depth on one site counted for
+nothing: six arXiv abstracts on a subject earned no investment ground at all unless one page happened
+to clear the deep-read threshold, while three glances at three sites earned `followed-across`
+outright. What it admits — ~~one search~~ **any one intent ground, a reopened tab included**, leading
+into three or more read pages of a single site, which is research and is equally shopping — is an
+accepted cost, recorded in full in `src/domain/detection/grounds.ts` and in ADR-0009 §2. *(Both
+corrections made the same day: it shipped counting as a ground beside `followed-across` rather than
+folding into it, and with "engaged" meaning "visible for a nonzero time" rather than read.)*
 *Checked against the banned words:* not bare `action`, not `signal` (displaced by ObservationEvent).
 *Displaces:* signal type · heuristic name · rule id (in detection) · trigger · other · misc.
 **Consumer:** internal — rendered as a sentence, never as a name: *"you searched, then read three
