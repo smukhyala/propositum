@@ -36,14 +36,41 @@
  * offers to start a session about it — and nothing above this call is waiting
  * to be told why.
  *
- * The cost of that, said out loud: a thirty-second network outage settles the
+ * ~~The cost of that, said out loud: a thirty-second network outage settles the
  * thread the same way a refusal does, and it stays settled. It is deliberate.
  * The alternative is a retry budget, and a retry budget on a thirty-second poll
  * is how the sixty-call bug happened in the first place — it would have to be
  * bounded, backed off, and keyed per signature, which is three mechanisms to
  * recover an offer the person can get anyway by carrying on reading past the
  * next clear. Revisit it if transport failures turn out to be common enough to
- * notice.
+ * notice.~~
+ *
+ * **Amended 2026-08-16 — that cost was paid, and it was too high.** The revisit
+ * condition met itself on the first real afternoon: `model_call_record` holds
+ * `offer | claude-opus-5 | 11179ms | transport` against a thread somebody was
+ * genuinely working on, and that thread never got an offer, with nothing on
+ * screen to say why. The paragraph above treats every `!outcome.ok` as the same
+ * event, and it is not one event. **A refusal, a truncation and a schema
+ * mismatch are ANSWERS** — the model was asked and this is what came back, and
+ * settling them is the argument above, unchanged and still correct. **A
+ * transport failure is not an answer at all**; the question never arrived.
+ * Recording "the model had nothing to offer" about a call the model never saw
+ * is the only kind of wrong this file can be that nobody can detect from the
+ * outside.
+ *
+ * So `answered()` splits the two, and a call that did not complete gets exactly
+ * one more — see `COMPOSE_ATTEMPTS`. The old paragraph's fear was three
+ * mechanisms; this is one, and it is a bound rather than a budget.
+ *
+ * ── The mirror with `name-thread.ts` is now broken, on purpose ────────────
+ *
+ * `nameThread` still settles a transport failure permanently, and this file no
+ * longer does. That is a real inconsistency between two files whose whole
+ * design was "the same shape twice", and it is written down here rather than
+ * left to be discovered. The reason it is tolerable in this direction: naming's
+ * degraded form is a sentence that is merely vaguer, while this one's is the
+ * absence of the feature ADR-0009 exists for. The reason it is still owed:
+ * nothing about a lost packet cares which boundary it lost.
  *
  * ── What is written down, and when ───────────────────────────────────────
  *
@@ -56,7 +83,7 @@
 
 import { datamark } from '../model/untrusted'
 import { offerBoundary, outcomeKindsOf } from '../model/boundaries/offer'
-import type { ModelClient } from '../model/client'
+import type { FailureKind, ModelClient } from '../model/client'
 import { PRODUCIBLE } from '../domain/outcome/shift-outcome'
 import { threadPagesOf } from '../domain/detection/detect'
 import { groundsFor } from '../domain/detection/grounds'
@@ -72,6 +99,81 @@ const TITLES_SHOWN = 12
 /** Searches are the clearest statement of intent available without asking, and
  *  also the most personal thing in the buffer. Six of them. */
 const SEARCHES_SHOWN = 6
+
+/**
+ * How many times one thread's offer may be ASKED FOR, in total, ever.
+ *
+ * Two, and the second only when the first did not complete. The bound is the
+ * whole of the design, so it is a number here rather than a policy somewhere:
+ * this function is fired by a poll loop, from a fire-and-forget `void`, with
+ * nowhere for an error to surface, against an API that charges per call. An
+ * unbounded retry on that path is strictly worse than the bug it fixes — that
+ * is the sixty-call defect the header describes, and sixty calls is a real
+ * invoice.
+ *
+ * Thirty seconds is the FLOOR, not the interval. The service worker's heartbeat
+ * alarm is `HEARTBEAT_MINUTES = 0.5`, and the extension's panel calls
+ * `/api/session/current` again every time somebody opens it — which is not on
+ * any timer at all. So "how often can this be re-entered" has no upper bound
+ * worth writing down, and that is precisely why the bound here is a COUNT
+ * against the signature rather than a cooldown against the clock. A cooldown
+ * would also need a clock, and this file is on the poll path.
+ *
+ * A count against the signature is not by itself a count against a PERSON's
+ * afternoon: `clear()` forgets the signature along with everything else, so the
+ * count restarts. That is right — a clear is somebody having accepted or
+ * declined, and what follows is genuinely new browsing — but it means the
+ * attempts of an invocation started before the clear must not be spent after
+ * it. See the loop below, which is where that goes wrong if nothing stops it.
+ *
+ * Two rather than three because the second attempt is not cheap and its odds
+ * are not independent: the first one already spent the SDK's own backoff (the
+ * observed failure took 11.2 seconds before giving up), so a transport failure
+ * that survives both attempts is an outage rather than a blip, and an outage is
+ * not waited out one poll at a time. If both fail the thread settles exactly as
+ * an answer would, and the person gets the deterministic suggestion — which is
+ * less than this would have said and is never wrong.
+ */
+const COMPOSE_ATTEMPTS = 2
+
+/**
+ * Did the model ANSWER, or did the call not arrive?
+ *
+ * The distinction the retry turns on, and the reason it reads `FailureKind`
+ * rather than inventing a second vocabulary beside it: `client.ts` already
+ * classifies every failure by `stop_reason` before any parse, and a parallel
+ * taxonomy here would be a second place for the same four words to mean
+ * something slightly different.
+ *
+ * An answer is terminal. `refusal` is the model deciding; `truncation` is the
+ * model answering and running out of room, and a bigger budget is not this
+ * call's decision to make; `schema-mismatch` is a well-formed answer of the
+ * wrong shape, which the client already spent its one repair turn on. Asking
+ * again asks the same model the same thing.
+ *
+ * `transport` is network or 5xx — the call did not complete, so there is no
+ * answer to settle. Note the deliberate disagreement with `recoveryFor`, which
+ * returns `'none'` for `transport`: that function is about whether the CLIENT
+ * should re-issue the HTTP request inside one call, and it is right that it
+ * should not, because the SDK is already backing off in there. This is a
+ * different question one level up — whether a thread that was never actually
+ * asked should be marked as having been asked — and it has a different answer.
+ *
+ * Exhaustive with no `default`, so a fifth `FailureKind` is a type error here
+ * rather than a silent retry.
+ */
+function answered(failure: FailureKind): boolean {
+  switch (failure) {
+    case 'refusal':
+      return true
+    case 'truncation':
+      return true
+    case 'schema-mismatch':
+      return true
+    case 'transport':
+      return false
+  }
+}
 
 /**
  * What they typed into a search box, and only when it was about this.
@@ -172,6 +274,16 @@ export async function composeOffer(
   // the poll that would retry one that already failed.
   if (store.attemptedOffer(signature)) return
 
+  /**
+   * Which buffer this invocation is about, taken before anything is sent.
+   *
+   * Read here rather than asked for later because every marker this function
+   * could otherwise consult is emptied by `clear()` and can be set again by the
+   * next poll — see `AmbientStore.generation`. This is the only value in scope
+   * that a `clear()` cannot make true again.
+   */
+  const buffer = store.generation()
+
   store.startComposing(signature)
 
   try {
@@ -180,7 +292,7 @@ export async function composeOffer(
     // keeps an unrelated search out.
     const searches = searchesIn(store.since(nowMs), detected.terms)
 
-    const outcome = await model.run(offerBoundary, {
+    const input = {
       terms: detected.terms,
       titles: detected.titles.slice(0, TITLES_SHOWN).map((t) => datamark(t)),
       searches: searches.map((s) => datamark(s)),
@@ -190,12 +302,91 @@ export async function composeOffer(
       readingMinutes: Math.max(1, Math.round(detected.engagedMs / 60_000)),
       grounds: grounds.sentences,
       producible: PRODUCIBLE,
-    })
+    }
+
+    /**
+     * The retry, and where it is NOT.
+     *
+     * It is here — between `startComposing` and the settle, inside the marker's
+     * own critical section — rather than across polls, and that placement is
+     * the entire concurrency argument. `startComposing` adds to `attemptedOffers`
+     * SYNCHRONOUSLY, before the first `await` in this function, so every other
+     * poll that reaches `composeOffer` for this signature returns at the
+     * `attemptedOffer` guard above and never gets here. This loop awaits each
+     * attempt in turn, so the two calls are sequential and never concurrent, and
+     * it clears nothing on the way round — the alternative design, letting a
+     * transport failure un-set `attemptedOffer` so the next poll re-enters, is
+     * the one that would reopen the race the two markers exist to close, and it
+     * would reopen it against a paid API on a few-second timer.
+     *
+     * ~~The ceiling is therefore `COMPOSE_ATTEMPTS` calls per signature per
+     * buffer lifetime, no matter how many pollers ask, and a `clear()` is the
+     * only thing that resets it — which is a person having accepted or
+     * declined.~~
+     *
+     * **Corrected 2026-08-16. That sentence was false in both halves, and the
+     * second attempt is the reason.** A `clear()` does not RESET the count, it
+     * un-latches `attemptedOffers` while this invocation is still inside its
+     * loop — so a poll thirty seconds later starts a fresh budget of two
+     * alongside a retry that has not fired yet. Measured at four calls for one
+     * signature. And the first half was worse than wrong: a `clear()` is a
+     * person having ACCEPTED an offer or turned one down, and the retry fired a
+     * new outbound call afterwards, carrying `input` — their page titles, their
+     * typed searches, the subject composed from both — about a buffer they had
+     * just been told was thrown away. Everything else in this design refuses to
+     * leave a TRACE of a forgotten buffer (`rememberOffer` and `finishComposing`
+     * both drop results for exactly that reason); this made a fresh transmission
+     * of one, which is strictly stronger, and it was new behaviour rather than
+     * something the retry inherited — before the retry there was no second call
+     * to make.
+     *
+     * So the loop asks `store.generation()`, and so does everything after it.
+     * The ceiling that IS true: `COMPOSE_ATTEMPTS` calls per signature per
+     * buffer — where a buffer ends at a `clear()` — no matter how many pollers
+     * ask, and a call in flight when one lands neither continues nor writes.
+     *
+     * Nothing sleeps between attempts. The pause has already happened: the SDK
+     * backs off inside the call that failed, which is why the observed transport
+     * failure took 11.2 seconds rather than milliseconds. A timer here would be
+     * a second backoff stacked on a first, and `recoveryFor` is explicit that
+     * stacking them hides the real error behind a timeout.
+     */
+    let outcome = await model.run(offerBoundary, input)
+    let attempts = 1
+
+    while (
+      attempts < COMPOSE_ATTEMPTS &&
+      !outcome.ok &&
+      !answered(outcome.failure) &&
+      store.generation() === buffer
+    ) {
+      attempts += 1
+      outcome = await model.run(offerBoundary, input)
+    }
+
+    /**
+     * The buffer this was about is gone. Leave, touching nothing.
+     *
+     * Not `finishComposing`, which is the tempting one and is wrong twice. Its
+     * own guard already makes it a no-op after a plain `clear()`, so on the
+     * simple path it buys nothing; and after a clear-then-refill it is actively
+     * destructive, because `composing` holds the SECOND invocation's marker by
+     * then and deleting it would silently drop an offer somebody is owed. The
+     * success path is worse still: `rememberOffer` would write an offer
+     * composed from a forgotten afternoon into a buffer that is about something
+     * else entirely.
+     *
+     * This is `finishComposing`'s own doctrine applied one level up — a result
+     * about a buffer nobody holds any more must leave no trace at all.
+     */
+    if (store.generation() !== buffer) return
 
     if (!outcome.ok) {
-      // Settled as "no offer" rather than retried. The deterministic suggestion
-      // stands: it says what was seen, which is less than this would have said
-      // and is never wrong.
+      // Settled as "no offer" rather than retried. Either the model answered —
+      // declined, ran out of room, or produced the wrong shape — or the call
+      // failed to arrive `COMPOSE_ATTEMPTS` times, which is an outage rather
+      // than a blip. The deterministic suggestion stands: it says what was seen,
+      // which is less than this would have said and is never wrong.
       store.finishComposing(signature)
       return
     }
@@ -216,8 +407,28 @@ export async function composeOffer(
       confident: composed.confident,
     })
   } catch {
-    // A thrown error and a returned failure are the same thing to the person,
-    // and get the same treatment: settled, no offer, no retry.
+    /**
+     * A throw is settled, and it is NOT folded into the transport retry above.
+     *
+     * `client.ts` is explicit that `run()` does not throw for model failures —
+     * a transport error arrives as `{ ok: false, failure: 'transport' }`, which
+     * is the path that now gets a second attempt. What reaches here instead is
+     * "programmer error — a boundary that cannot be built at all", plus
+     * whatever the client itself failed to catch. Retrying that means retrying
+     * something nobody has classified, on the same paid path, and a bug that
+     * throws deterministically would throw twice.
+     *
+     * So: settled, no offer, no retry, and nothing above this call is waiting
+     * to be told why. If a real transport failure ever starts arriving here
+     * instead, the fix belongs in the client, where the classification lives.
+     *
+     * The generation check is the same one the loop makes, for the same reason:
+     * a throw arriving after a `clear()` must not settle a signature that now
+     * belongs to a later buffer's poll. Settling somebody else's in-flight call
+     * as failed is how a thread becomes permanently unofferable with nothing
+     * saying why — see `finishNaming`, which was bitten by exactly that.
+     */
+    if (store.generation() !== buffer) return
     store.finishComposing(signature)
   }
 }

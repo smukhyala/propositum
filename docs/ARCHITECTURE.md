@@ -1,0 +1,482 @@
+# Architecture
+
+The layers Propositum is organised into, each marked with what is actually built. Two words in the
+layer names are already spoken for in this repository and must not be read the way they usually are:
+**"worker"** here means a layer, not `AgentRun.role` (`worker | reviewer`) and not the `npm run
+worker` process that drains the run table; and **"router"** in *Worker Router* has nothing to do with
+Next.js routing — it means choosing which executor performs an action.
+
+Every layer below carries **its own status marker**. There is no blanket caveat at the top, because a
+blanket caveat is the thing a reader skips. Where a layer is unbuilt this document says **what would
+have to exist first**, which is usually more informative than the layer's name.
+
+Section references of the form **§8** point at the direction document these layer names come from,
+archived verbatim at
+[`docs/superpowers/specs/2026-08-16-direction-update-source.md`](./superpowers/specs/2026-08-16-direction-update-source.md).
+§8 is its *do not build yet* list, and it is binding here.
+
+---
+
+## The thesis
+
+**Propositum sits above models and agents.** Foundation models, browser agents, coding agents and
+whatever comes next are workers beneath a control plane that owns intention state, delegation policy,
+progress reasoning, provenance and human continuity. The bet in that sentence is directional: **better
+foundation models should improve Propositum rather than replace it**, because none of what the control
+plane owns is a capability a model can supply. A model cannot decide what you are permitted to
+authorise, and it must not — that is [Principle 3](./PRODUCT_PRINCIPLES.md), and here it is enforced
+as a compile error rather than a convention.
+
+**The honest counterweight, first:** a control plane with one worker beneath it is a control plane in
+name. Today Propositum has one sensor, one worker role, one reviewer role and one provider. The
+architecture is shaped so a second of each is an addition rather than a rewrite. That is a claim about
+seams, not about capability, and nothing below rounds it up.
+
+---
+
+## What these layers refine
+
+The pipeline this repository was built as, which still describes what runs:
+
+```
+Observation → Session State → Handoff → Planning → Execution → Verification → Human Re-entry
+```
+
+That pipeline is **refined, not discarded**. It is one pass through the layers below, and it is the
+only pass slice 0 makes:
+
+| Pipeline stage | Layer it becomes |
+|---|---|
+| Observation | State Ingestion |
+| Session State | State Reconciler (and, for one sitting, `SessionReading`) |
+| Handoff | Delegation / Policy |
+| Planning | Progress Reasoner |
+| Execution | Execution Runtime |
+| Verification | Verification |
+| Human Re-entry | Re-entry |
+
+Three layers have no stage above them — Intention Graph, Worker Router, Outcome / Learning — and that
+is the actual shape of the change. **Intention Graph is the durable half of something the pipeline
+only ever held for one sitting** — decided in ADR-0011 and, since 2026-08-16, a table, per §1 below. The other
+two are new: one has data and no reader, and one is not being built.
+
+---
+
+## The ten layers
+
+| Layer | Status | Owned today by |
+|---|---|---|
+| Intention Graph | **partial** — one flat table, no graph; ~~`intentionState()` computed and unrendered~~ *re-marked 2026-08-16:* the lifecycle word is on the front door | `Intention` in `prisma/schema.prisma`, `src/domain/intention/state.ts` ([ADR-0011](./adr/0011-intention-above-worksession.md)), `src/server/front-door.ts`, `src/app/page.tsx` |
+| State Ingestion | **partial** — one sensor, browser only | `ledger-writer.ts`, the MV3 extension |
+| State Reconciler | **partial** — `matchProject` only | `src/domain/detection/match-project.ts` |
+| Progress Reasoner | **partial** — offer grounds, no ranking | `src/domain/detection/grounds.ts` |
+| Delegation / Policy | **built** | `compilePolicy` + the gate, ADR-0004/0006 |
+| Worker Router | **unimplemented, and not being built** | — (§8 forbids; ADR-0005 agrees) |
+| Execution Runtime | **built** | `runWorker`, ADR-0001/0010 |
+| Verification | **built, and near-decorative** | `scopeVerdict` + reviewer |
+| Outcome / Learning | ~~**data built, nothing reads it**~~ *re-marked 2026-08-16:* **read, and still learning nothing** | three verdict tables, append-only; `outcomes.trajectory()` + `scripts/eval.ts --report` |
+| Re-entry | **built** | `ShiftReport`, ADR-0003 |
+
+---
+
+### 1. Intention Graph — **partial: one flat table, and *graph* is aspirational**
+
+*For:* the persistent source of truth for what a person is trying to accomplish.
+
+~~**Not built as this file lands, and here is the one-command check that says so:** `grep 'model
+Intention' prisma/schema.prisma` returns nothing, which makes this layer a **decision and not yet a
+table**.~~ **Re-marked 2026-08-16, in the commit that landed the schema, which is what the struck
+sentence asked for.** The one-command check now reads the other way, and here is what it returns:
+`grep 'model Intention' prisma/schema.prisma` → `model Intention {`, and
+`grep -c intentionId prisma/schema.prisma` counts both foreign keys. So this layer is **a table, not
+a graph, and not a screen**: the row exists, `intentionState()` exists in
+`src/domain/intention/state.ts` and computes the five members from rows, and ~~**nothing renders
+either** — `tests/reachability.test.ts`'s *deferred, and asserted as deferred* block pins that last
+absence so it cannot be mistaken for wiring~~ **re-marked again 2026-08-16, in the wave that landed
+the caller: it is a table, not a graph, and now also a screen.** `src/app/page.tsx` renders the
+consumer label beside every row on the front door, derived by `frontDoorRow` in
+`src/server/front-door.ts`, and the reachability claim moved out of *deferred, and asserted as
+deferred* into *the safety machinery is reachable from the product* rather than being deleted. What
+the pin cannot see is a state that is computed and then discarded — a mutation doing exactly that
+kept the whole suite green — so `tests/front-door.test.ts` asserts the rendered word instead. The
+check sits in the first line of the section rather
+than below the claim it qualifies, because "the ADR says so", "the schema has it" and "a person can
+see it" are three different things this document exists to keep apart, and a marker a reader meets
+ten lines late has already done its damage.
+
+**What [ADR-0011](./adr/0011-intention-above-worksession.md) authorises.** One mutable `Intention`
+row: a desired outcome, a `definitionOfDone` shared with `StatedIntent` — `definitionOfSuccess` is
+banned, one field name for one idea — and a lifecycle state that is computed rather than stored. It is
+**human-ratified only** — created and edited by a person, never by the detector and never by a model
+boundary. `SessionClaim{kind:'objective'}` is untouched by this: still per-sitting, still
+model-inferred, still cold every time. Two nullable foreign keys attach work to it,
+`WorkSession.intentionId` and `HandoffContract.intentionId`, so every existing row, fixture and test
+keeps working with no backfill. **At most one Intention per Project**, for now. Scope for that slice
+is [`MVP.md`](./MVP.md), which marks it *not yet built at the time of writing* in its own voice.
+
+**Not authorised either, and not on the way.** Subgoals, dependencies, artifacts, people and decisions
+as nodes. More than one Intention per Project. Any edge that is not one of those two foreign keys.
+
+**The word *graph* is aspirational here and is kept only so this document and the direction it came
+from can be read side by side.** Two nullable foreign keys pointing at one row are a table, which is
+now literally what exists. Calling it a graph would be the single easiest inflation in this file to
+commit and the hardest to notice — and calling it **built** now that the schema has it is the second
+easiest, which is why the marker above says *partial* and names the two things still missing rather
+than the one that landed.
+
+*What would have to exist first:* a second Intention per Project, and something that can create an
+edge between two of them. Neither exists, and direction §8 forbids the generalised graph
+infrastructure that would motivate them.
+
+---
+
+### 2. State Ingestion — **partial: one sensor, browser only**
+
+*For:* accepting observations, external events, user input and worker results.
+
+**Built.** One sensor. The Chrome MV3 extension in [`extension/`](../extension/)
+([ADR-0002](./adr/0002-observation-capture.md), permission model amended by
+[ADR-0008](./adr/0008-ambient-detection.md)) posts raw signals; `src/server/capture-adapter.ts`
+classifies them deterministically; `createLedgerWriter` in `src/persistence/ledger-writer.ts` appends
+`ObservationEvent`s with a gapless ledger-assigned `seq`. Values Chrome or Propositum asserted travel
+in `attested`; anything a page could have authored travels in `untrusted`, carried structurally rather
+than by a per-field flag.
+
+**Not built.** Email, calendar, Slack, GitHub, Notion, docs, local files, and every other event source
+the direction document lists. All of it is on §8's do-not-build list.
+
+**The structural fact that makes this hard to change by accident.**
+`ObservationEvent.sessionId` is **required** in `prisma/schema.prisma`, its relation to `WorkSession`
+is non-nullable, and `createLedgerWriter` is the only thing in the repository that calls
+`observationEvent.create`. So **no event outside a sitting can be persisted at all.** `ExternalEvent`
+is not merely unbuilt — there is nowhere to put one. That is worth stating precisely because it means
+event ingestion cannot arrive by accident, and it is also the reason `waiting` is absent from the
+lifecycle union (below).
+
+*What would have to exist first:* either a second ledger writer or a nullable `sessionId`. Both are
+schema changes that need an argument attached, not an afternoon of wiring.
+
+---
+
+### 3. State Reconciler — **partial: `matchProject` only**
+
+*For:* deciding which intentions changed, resolving conflicting evidence, preserving provenance.
+
+**Built.** `matchProject` in `src/domain/detection/match-project.ts`, called from
+`src/server/actions.ts`: term overlap against existing projects, at `SHARED_TERMS_FOR_MATCH = 2` and
+`SHARED_SHARE_FOR_MATCH = 0.6`. Deterministic, no model call. It is what files a new sitting under a
+`Project` that already exists.
+
+**Not built.** Conflict resolution, because there is only one source of evidence to conflict. **A
+reconciler with one input is a matcher**, and this one is named for what it will be rather than what
+it does. Provenance is preserved, but by the append-only ledger and by `Evidence` rows, not by this
+layer.
+
+One trap for whoever builds the rest: `signatureOf(terms)` in `src/server/ambient-store.ts` is
+documented flapping A→B→A across three polls while keying six things, including the durable
+`WorkOffer.threadSignature`. An Intention's identity is derived independently of it.
+
+*What would have to exist first:* a second sensor.
+
+---
+
+### 4. Progress Reasoner — **partial: offer grounds, no ranking**
+
+*For:* deciding whether useful progress is possible, and generating candidate next actions.
+
+**Built.** Direction §2's Opportunity-to-Help Detection, deterministically and with no model in the
+decision. `groundsFor` in `src/domain/detection/grounds.ts` requires `INTENT_REQUIRED = 1` intent
+ground and `INVESTMENT_REQUIRED = 2` investment grounds before Propositum may offer to *do* anything,
+a strictly higher bar than `detectWork`'s bar for *saying* anything
+([ADR-0009](./adr/0009-composed-offers.md)). §2's *do not invent work simply to remain active* clause
+is what this bar enforces, and a regression fixture of an ordinary afternoon of reading must **not**
+clear it. `src/server/compose-offer.ts` composes the offer off the request path, and a failure there
+is a normal outcome rather than an error.
+
+**Not built.** Ranking. There is no expected-progress estimate, no cost, no risk, no uncertainty, and
+no dependency effects — the five things direction §3 asks this layer to represent. There is one
+candidate action at a time, so nothing sorts.
+
+*What would have to exist first:* more than one candidate.
+
+---
+
+### 5. Delegation / Policy — **built**
+
+*For:* combining agreements, permissions, trust history, budgets, risk and stop conditions into
+something that decides.
+
+**Built.** `compilePolicy` in `src/domain/handoff/policy.ts` turns the four autonomy dials and a
+`ContractScope` into an `EnforcedPolicy`; `authorize` in `src/policy/gate.ts` is the only construction
+site for an `AuthorizedAction`, and `tests/architecture.test.ts` holds it to that by grepping the
+source. Stop conditions are structural ([ADR-0007](./adr/0007-stop-conditions.md)). The trust boundary
+is [ADR-0006](./adr/0006-trust-boundary.md); the gate is [ADR-0004](./adr/0004-policy-gate.md).
+
+**"Models never authorize" is a compile error here, not a review note.** `compilePolicy`'s parameter
+types are constructed so they cannot receive prose, and the `@ts-expect-error` directives in
+`tests/policy-gate.type-test.ts` fail `npm run typecheck` the moment a line they guard becomes legal.
+That file ends in `-test.ts` rather than `.test.ts`, so vitest never runs it — **`npm run typecheck`
+is the assertion.** Neither command is a superset of the other.
+
+**Not built: the durable half.** Every policy today is per-handoff and dies with its
+`HandoffContract`. `WorkingAgreement` — a standing agreement that outlives a handoff — is a
+**reserved name with no object behind it**: reserved in `CONTEXT.md` so it is not spent a third time,
+deferred because §8 puts standing agreements and learned trust models on the do-not-build list.
+`HandoffContract` keeps *Working agreement* as its consumer label and **no UI copy changes**. Nothing
+accumulates trust; nothing recommends autonomy.
+
+*What would have to exist first:* a policy object with a lifetime longer than one contract, and an
+argument for how a person sees and revokes it. The name is the easy part and is already spent twice.
+
+---
+
+### 6. Worker Router — **unimplemented, and not being built**
+
+*For:* choosing a human, a model, a specialised agent, an API, a browser worker or a computer-use
+worker for the next action.
+
+**Nothing owns this layer, and that is a decision rather than a gap.** Two independent sources say so.
+Direction §8 lists *multi-provider quality/cost routing beyond clean interfaces* under do-not-build.
+And [ADR-0005](./adr/0005-model-boundary.md) closed, in its own *Revisit when* section, on:
+
+> A second provider is genuinely required. The interface allows it; nothing else should.
+
+**What exists instead, and it is all §8 asks for.** `ModelClient` in `src/model/client.ts` is a
+one-method interface over a `ModelBoundary`; `src/model/anthropic.ts` and `src/model/fake.ts` are two
+implementations of it. That is the *keep model/provider interfaces abstract and workers replaceable*
+clause, met. It is not a router and must not be described as one.
+
+*What would have to exist first:* a second provider somebody actually needs. Routing without one is a
+switch statement with a single arm and a name that promises more than the code does.
+
+Read **"router" as executor selection**, never as Next.js routing. The Next.js routes in `src/app/`
+are unrelated to this layer.
+
+---
+
+### 7. Execution Runtime — **built**
+
+*For:* performing bounded work through the highest-level tool available.
+
+**Built.** `runWorker` in `src/runtime/worker-loop.ts`, drained by a separate process — `npm run
+worker` → `scripts/worker.ts` → `src/runtime/worker-process.ts` — under a renewed lease, because Node
+never kills its children and orphans are the default rather than the edge
+([ADR-0001](./adr/0001-worker-runtime.md)). `src/server/execute-run.ts` turns a `WorkerResult` into
+rows. One worker `AgentRun` and one reviewer `AgentRun` inside one `Shift`. Research is confined to
+`ApprovedSource`s by `allowlisted()` in `src/policy/fetcher.ts`.
+
+**Built and not yet reachable, asserted as such.** The browser-acting path from
+[ADR-0010](./adr/0010-acting-in-the-browser.md) has both ends: the five `/api/act/*` routes are live
+and `createBrowserControl` in `src/runtime/browser-control.ts` is the client a run would use. **No run
+constructs one.** `tests/reachability.test.ts`'s *deferred, and asserted as deferred* block pins
+`callersOf('createBrowserControl(')` to `[]`, and pins `LANDING_ACTION_KINDS` to empty, so no
+`external-effect` outcome can occur either. [`VISION.md`](./VISION.md) files computer use under
+**Now** and ADR-0010 decided it; the capability is decided and the channel is built, and the run path
+that holds the control is the piece still unwired. Saying so here is the point of the pin — a reader
+who checks the ADR and stops would conclude something stronger than the code supports.
+
+---
+
+### 8. Verification — **built, and near-decorative**
+
+*For:* checking whether the intended state change occurred and scope was respected.
+
+**Built: the deterministic half.** `ActionOutcome.scopeVerdict` — `within_scope | out_of_scope |
+unverified` — is written from deterministic fields in `src/runtime/worker-loop.ts` and
+`src/server/execute-run.ts`. The reviewer `AgentRun` runs after the worker reaches a terminal status,
+via `reviewBoundary` in `src/model/boundaries/review.ts`, and its failure is swallowed so the
+`ShiftReport` still renders.
+
+**Honest limit: `ReviewFinding` currently has no effect.** It cannot block a change, fail a run, or
+grant anything — [ADR-0004](./adr/0004-policy-gate.md) says the reviewer is close to decorative and
+[`MVP.md`](./MVP.md) assumption 4 says the same and has not yet been answered. Its most plausible
+check is the one it cannot make: `sourcesRead` is empty and stays empty until something retains
+fetched page text, so it can judge internal support and vagueness and **cannot compare a draft against
+the source it cites**.
+
+**Honest limit: outcome-scoped findings are written and never shown.** A finding citing a whole
+production is stored with `outcomeId` set and `changeId` null, and the only reader on the re-entry
+screen joins through `changeId`. `findings.forRun` is pinned at zero callers in the deferred block.
+
+**Honest limit: `unverified` is the routine value.** Under the "leave your desk, not the building"
+constraint a local worker stops when the Mac sleeps, so an effect that landed with no check after it
+is ordinary rather than exceptional.
+
+*What would have to exist first for this layer to be load-bearing:* a finding that can hold a change,
+which is a permission question and not a prompt question, and re-fetching so the reviewer can read
+what the worker read.
+
+---
+
+### 9. Outcome / Learning — **data built, nothing reads it**
+
+*For:* recording accepted, edited, rejected, blocked and reverted outcomes as a feedback trajectory.
+
+**Built: the recording.** Three verdict tables, all append-only with triggers listed in
+`REQUIRED_GUARDS` in `src/persistence/append-only.ts` and reinstalled and verified at every startup —
+`ChangeVerdict` (per proposed change), `OutcomeVerdict` (per held production), `ConfirmationVerdict`
+(per irreversible action a person authorised). What a person accepted or rejected cannot be rewritten.
+
+**Two of the three can be written today, not three.** `confirmations.create` is pinned at zero callers
+in `tests/reachability.test.ts`, so no `ConfirmationRequest` is ever raised and therefore no
+`ConfirmationVerdict` can exist. The deterministic rule that would raise one is written and no dial
+can switch it off; nothing has yet asked it a question. That is the pin's exact purpose — a rule
+nothing raises is a rule that never fires, and it is invisible in a green suite.
+
+~~**Not built: any reader.** Two specific holes, both named rather than summarised:~~ **Both closed
+2026-08-16, and re-marked here in the wave that closed them — which is what the *Self-correcting*
+note below asked for and did not get on the first pass.**
+
+- ~~`scoreH2` and `H2Tally` in `src/eval/score.ts` have **no production caller** — only
+  `tests/eval.test.ts`. The MVP's own H2 acceptance metric is therefore not currently computable from
+  the database, which is a sharper statement than "H2 is unscored".~~ `scripts/eval.ts --report` now
+  computes it: `outcomes.trajectory()` reads every decidable unit, `contracts.barrenShifts()` reads
+  the Shifts that produced none, and `tallyH2`/`reportH2`/`scoreH2` fold them. **What is still owed
+  is not a reader but an answer:** the trajectory reports zero decidable units on this machine, so
+  the metric is computable and has nothing yet to say.
+- ~~`ModelCallRecord` has a table, all three append-only triggers, and appears **nowhere** in `src/` or
+  `scripts/`. Every call's model, prompt version, tokens, latency, stop reason, repair turns and
+  failure kind are computed and handed to `onCall` — an optional hook declared on
+  `AnthropicModelClient` that nothing ever passes. The data is produced and dropped on the floor.~~
+  `createModelClient` in `src/model/provider.ts` passes the hook, and three callers supply the sink:
+  `src/server/actions.ts`, `src/app/api/session/current/route.ts` and `scripts/worker.ts`. **The
+  weakness that replaced it, not rounded up:** a telemetry write that fails is lost silently and
+  nothing counts the losses — `provider.ts` says so at the empty `.catch`, and there is still no
+  reader of the table.
+
+**Nothing here learns anything, and §8 forbids the thing that would.** Learned trust models are on the
+do-not-build list; trust history can recommend a setting and can never create permission.
+
+*Self-correcting:* `tests/reachability.test.ts` ~~pins `modelCallRecord.create` and `findings.forRun` at
+zero callers~~ *(2026-08-16: `modelCalls.create` moved into the reachable section and its needle was
+corrected there — the old one named a string only the repository's own Prisma delegate matched, so it
+could never have gone red; `findings.forRun` is still pinned)*. When a reader lands, that suite goes
+red **by design**, the claim is relocated into the reachable section rather than deleted, and this
+section's status marker moves with it.
+
+---
+
+### 10. Re-entry — **built**
+
+*For:* presenting the minimum a person needs to understand state and resume control.
+
+**Built.** A `ShiftReport` written by the **app process** when the run ends, never by the `AgentRun`
+itself — a report only a live runner could produce cannot exist on `interrupted`, and under the sleep
+constraint `interrupted` is routine. Every section is a deterministic rendering of durable rows:
+completed work from the ledger, productions from `ShiftOutcome`, refusals from refused
+`ActionIntent`s, gaps from `captureGap` events, decisions from `DecisionNeeded`, and where it stopped
+from `AgentRun.status` and `terminalReason`. Rendered by `src/ui/shift-report.tsx`. Review produces
+**decisions, never documents**, and a document is a pure fold over the immutable base
+([ADR-0003](./adr/0003-artifact-versioning-ledger.md)).
+
+**Not built: the narrative.** `shiftReportBoundary` in `src/model/boundaries/shift-report.ts` is
+unwired, and `ShiftReport.narrative` currently holds a stop-rule label — a consumer string sitting in
+the field where model prose belongs. Pinned in the deferred block.
+
+**One shift per session.** Re-entry ends at accept or reject. No *keep going*, no *redirect*.
+
+---
+
+## Where computer use sits
+
+The preference ordering, highest first, which is what direction §4 gets right and what this repository
+already honours:
+
+1. Native APIs.
+2. Structured integrations.
+3. Browser DOM tools — the accessibility tree, which is the browser's own semantic description of the
+   page.
+4. Visual computer use — a screenshot, requested only when the tree is not enough.
+
+**Computer use is the fallback tier under structured APIs, not the goal.** It is the least inspectable
+and least reversible way to act, and both properties are load-bearing. Propositum never runs its own
+JavaScript inside a page you are signed into.
+
+**The tension with the direction document, stated rather than resolved.** Direction §4 files Computer
+Use under *Later — fallback when structured APIs/integrations are unavailable*. This repository shipped
+it as **Now** on 2026-08-11 ([ADR-0010](./adr/0010-acting-in-the-browser.md)), and
+[`VISION.md`](./VISION.md) records the reversal under *The honest cost of moving this line*. Applying
+§4 literally would write a **false modesty** claim backwards into a document that already carries a
+struck-through `~~Now. None.~~`, which is [Principle 11](./PRODUCT_PRINCIPLES.md) — *say the true
+thing, including when it is unimpressive* — violated in its rare inverted form, where the untrue thing
+is the modest one. On this line the direction document is behind the repository, not ahead of it. The
+ordering above is the part of §4 that stands.
+
+ADR-0010's own opening is the reason this section is not comfortable: `ActionKind` now enumerates
+mechanisms rather than effects, a confirmation pause replaced an absent capability, and **a pause is
+strictly weaker than an absence**.
+
+---
+
+## The lifecycle word
+
+`IntentionState` is a **computed view with five members**: `working`, `delegated`, `needs-you`,
+`sleeping`, `done`.
+
+~~**It is not a type you can import as this file lands.** `IntentionState` appears nowhere in `src/`,
+for the same reason `model Intention` appears nowhere in `prisma/schema.prisma` — §1's check covers
+both.~~ **Amended 2026-08-16, with §1:** it is a type you can import.
+`src/domain/intention/state.ts` exports `IntentionStateId`, `IntentionStateRule`, `IntentionFacts`
+and `INTENTION_STATES`, and `intentionState(facts, now)` computes a member from rows. ~~**What is still
+true is the half that mattered: nothing calls it.** No screen renders a state, the consumer labels
+below are rendered by nothing, and `tests/reachability.test.ts` asserts that absence deliberately so
+a green suite cannot be read as a wired one.~~ **Amended 2026-08-16, in the wave that landed the
+caller: something calls it, and the five consumer labels below are on the front door.**
+`src/server/front-door.ts` derives each row and `src/app/page.tsx` renders the label, with the
+re-entry link on `needs-you`; the reachability claim moved into the reachable section and now names
+`front-door.ts`. **One of the three routes into `needs-you` is unreachable from production data:**
+nothing supplies a non-zero `openDecisions`, because a `DecisionNeeded` cannot be cleared and a count
+that can only go up would pin the word on permanently — see `CONTEXT.md`'s `IntentionState` entry,
+where the cost of that decision is written down rather than talked down. The argument
+for five members below is unchanged, and it was written down before the union was rather than after
+somebody had already typed six.
+
+Computed, not stored, following unanimous precedent — `EnforcedPolicy`, `Shift` and `ActionStatus` are
+all computed views on the argument that **two stores for one truth is exactly how a UI comes to
+display something the gate cannot enforce.** Every fact these five derive from already exists as a
+durable row.
+
+**`waiting` is deliberately absent from the union.** Direction §1's lifecycle has six states and
+`waiting` means *progress depends on an external event or dependency*. Nothing in this system can
+produce an external event: `ExternalEvent` is on §8's do-not-build list, and — the structural half —
+`ObservationEvent.sessionId` is required with a single ledger writer, so no event outside a sitting
+can be persisted at all. `waiting` is the state that arrives with event ingestion. Until then it is a
+member nothing can reach, and **a member nothing can reach is a claim**; this repository writes claims
+down instead of shipping them.
+
+**One live session at a time is enforced in the app layer, not the schema.** A surface listing several
+`working` intentions would look correct and be unable to start the second one. Worth knowing before
+anyone builds that surface.
+
+---
+
+## Honest limits of this document
+
+- **Propositum is one sensor, one worker, one reviewer, and — once the slice lands — one flat table
+  and a lifecycle word computed from rows that already existed.** As this document lands the table is
+  not in `prisma/schema.prisma` and the lifecycle word is not in `src/`, so that clause is a
+  description of the state after the slice and not of the state now. Six of the ten layers above are
+  partial or absent. The four that are built are the four that had to be built before anything could
+  be safe.
+- **Naming a layer is not building one.** This document names ten because the direction document names
+  ten and the two should be readable side by side. The status column is the load-bearing part; the
+  layer names are the part most likely to be quoted out of context.
+- **Nothing checks the status column.** No test reads this file. §1 carries a command a reader can
+  run against the schema, and **nothing runs it for them**. A layer that gets built and is not
+  re-marked here will read as unbuilt, and a layer that gets deleted will read as built. The
+  reachability pins named in layers 7 to 10 are the only mechanism in the repository that goes red on
+  its own when one of these claims stops being true — and they cover six named symbols, not this
+  document.
+- **These layer names are not vocabulary.** *Progress Reasoner*, *State Reconciler* and the rest are
+  organising words for this file and for reading the direction document beside it. They are not
+  `CONTEXT.md` terms, and nothing should be named after one in code, schema, prompts or UI. The
+  glossary is the authority on what things are called; this file is the authority on nothing except
+  what is built.
+- **`GUARDED_TABLES` in `src/persistence/errors.ts` names 7 tables while 13 are guarded**, so a
+  trigger firing on six of them still surfaces as Prisma's P2003 "Foreign key constraint violated"
+  lie. Not this document's job to fix; recorded so the next person to read an implausible error
+  message finds the explanation.
+
+Vocabulary is [`CONTEXT.md`](../CONTEXT.md), which is this repository's single glossary. Scope and the
+numbers that decide whether slice 0 worked are [`MVP.md`](./MVP.md). Stages beyond it are
+[`ROADMAP.md`](./ROADMAP.md).

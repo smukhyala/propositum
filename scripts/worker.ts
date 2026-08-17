@@ -16,7 +16,7 @@ import { randomBytes } from 'node:crypto'
 import { createDatabase } from '../src/persistence/client'
 import { createRepositories } from '../src/persistence/repositories/index'
 import { createLedgerWriter } from '../src/persistence/ledger-writer'
-import { AnthropicModelClient } from '../src/model/anthropic'
+import { createModelClient } from '../src/model/provider'
 import { startWorkerProcess, installSignalHandlers } from '../src/runtime/worker-process'
 import { executeRun } from '../src/server/execute-run'
 import { admitRun, expireConfirmations, sweepAbandonedIntents } from '../src/server/confirmations'
@@ -169,11 +169,15 @@ const handle = startWorkerProcess(
     // The fence is threaded straight through. It is closed over this run's id
     // and this process's identity, so the executor can neither ask about
     // another run nor answer the question itself.
+    // A client per run, not per process, and that is the point: the run id is
+    // only in scope here, and it is what makes this the ONE construction site
+    // whose `ModelCallRecord` rows can be joined back to what they were for.
+    // The other four call sites have no run to name.
     execute: (runId, fence) =>
       executeRun(runId, {
         fence,
         ctx,
-        model: new AnthropicModelClient({ apiKey }),
+        model: createModelClient({ apiKey, runId, record: ctx.repos.modelCalls.create }),
         fetcher,
         now: () => Date.now(),
       }),

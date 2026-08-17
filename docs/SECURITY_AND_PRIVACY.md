@@ -6,6 +6,16 @@ what it does not.
 Written from the decisions in [`docs/adr/`](./adr/) rather than ahead of them. Where a protection is
 depth rather than a boundary, this document says so.
 
+*(Added 2026-08-16 — [ADR-0011](./adr/0011-intention-above-worksession.md). Some sections below
+constrain capabilities that **do not exist**: standing agreements, event sources beyond the browser,
+a worker router. They are here because the constraint on each is one sentence today and a migration
+later. Each says in its own first line that the thing is unbuilt, so nothing here can be read as a
+capability claim. **The `Intention` belongs on that list**, and it is the one most likely to be
+misread, because ADR-0011 authorises it and the next slice builds it. Today there is no `Intention`
+table and no `Intention` type. What this document says about what an Intention may hold, and about
+its lifecycle states, is a **specification rather than a description** — the same fence
+[`CONTEXT.md`](../CONTEXT.md)'s own entry puts around itself.)*
+
 ---
 
 ## Data collected
@@ -174,6 +184,41 @@ picture-in-picture, and password managers rendered as extensions. Those leaks we
 properties of building exclusions on a see-everything vehicle. That failure mode is not available to
 a vehicle that is never handed the data. ([ADR-0002](./adr/0002-observation-capture.md))
 
+## Event ingestion beyond the browser
+
+**One sensor exists, and it is the Chrome extension above.** Email, calendar, Slack, GitHub, Notion,
+local files, and agent output from anywhere else are **unbuilt, and this work does not build them** —
+they sit on the *do not build yet* list in [`MVP.md`](./MVP.md)'s Out of scope table. This section
+exists so the constraint is on record before a later reader takes the absence for an oversight and
+closes it with a connector.
+
+Two facts make the absence structural rather than a matter of priority. That distinction is the
+whole value of this section: it means the line cannot be crossed by accident.
+
+- **No event outside a sitting can be persisted at all.** `ObservationEvent.sessionId` is required,
+  and `ledger-writer.ts` is the single door every event enters by — one writer, because `seq` has to
+  be gapless per session and two writers assigning their own sequence corrupt the stream invisibly.
+  There is no row an external event could become and no writer that would accept it. A connector is
+  therefore not an integration job. It is a schema change plus a second writer, and the second writer
+  is the thing that argument exists to forbid.
+- **[`CONTEXT.md`](../CONTEXT.md) bans model calls on a timer**, and gives two reasons an external
+  source would have to answer rather than inherit: periodic interpretation feeds hostile page text to
+  a model while no human is watching, and it makes the event stream non-reproducible, so the eval
+  harness cannot re-score a fixture. An email that arrives at 3am is a model call at 3am unless
+  something is designed first to prevent it.
+
+**Neither of those is a promise never to build this.** They are the two questions the first external
+source has to answer in its own ADR — written down now so that answering them is the work, rather
+than discovering them.
+
+One consequence is already fixed in the specification. The `Intention` lifecycle is specified with
+**five** states — `working`, `delegated`, `needs-you`, `sleeping`, `done`. The direction document
+lists a sixth, *waiting*, meaning progress depends on an external event. Nothing here can produce an
+external event, so nothing could put an intention into it. It is documented in
+[`ARCHITECTURE.md`](./ARCHITECTURE.md) as the state that arrives with event ingestion, and it will
+not be declared in the union: an enum member nothing can reach is a promise the schema makes and the
+product cannot keep.
+
 ## Local versus remote
 
 **Everything is local.** SQLite on your machine. No account, no cloud, no sync, no server.
@@ -183,6 +228,25 @@ and document text a boundary needs. Nothing else leaves the machine.
 
 This is a privacy property today and a limitation tomorrow — it is also why a run stops when your
 Mac sleeps.
+
+### Send a worker the minimum it needs
+
+Every model call is a `ModelBoundary` with its own prompt builder, schema and token budget
+([ADR-0005](./adr/0005-model-boundary.md)), so what travels is a property of the one job being done
+rather than of a shared context blob that grows. The reading boundary gets one session's events. A
+worker gets the contract's terms, what it has already done **in this run**, and the page in front of
+it — not the project's other sessions and not what a previous run did. `WorkerActionInput` is the
+list, and it is short enough to read.
+
+**Honest limit: this is a habit of the design, not an enforced maximum.** Nothing rejects a boundary
+that builds an over-broad prompt. The token budget bounds size, not relevance, and no test asserts
+that a boundary asked for the least it could have.
+
+**There is one provider and there is no router.** `ModelClient` has one real implementation and one
+fake. Nothing selects an executor by fit, cost, latency, quality or tool access, and multi-provider
+routing beyond clean interfaces is on the *do not build yet* list. This is recorded here because a
+router is exactly the component that would put pressure on this section: choosing a different
+executor changes who performs the work, and must not change how much of your data travels with it.
 
 ## Retention and deletion
 
@@ -220,6 +284,107 @@ anywhere but Anthropic.
 5. You accept or reject every proposed change.
 
 **Approval scopes where Propositum may look. It confers no trust on what is found there.**
+
+## Trust is not authorization
+
+*Approval scopes where Propositum may look; it confers no trust on what is found there* is one
+instance of a rule this document now states generally.
+
+[ADR-0007](./adr/0007-stop-conditions.md) already states the asymmetry, for models:
+
+> A model may **never** widen what is permitted — it could grant.
+> A model may **always** decline to proceed — it can only withhold.
+
+**Acceptance history is a second source, and it gets the same asymmetry, unchanged.** A record of
+which classes of action you have accepted, edited, rejected or required approval for may recommend a
+dial's default, and may argue on screen for a wider setting. It may never widen a permission, and it
+is never an input the gate reads. It can always make Propositum more cautious.
+
+Naming it as the same asymmetry is worth more than the paragraph itself. There is one rule with two
+sources rather than two safety arguments to keep in agreement, and the next source — a heuristic, a
+score, a reputation signal from outside — arrives already governed instead of needing its own case
+made from scratch.
+
+**None of this is built.** Nothing today counts what you accept or reject in order to recommend
+anything. The verdict tables exist, append-only, and nothing reads them for this purpose.
+
+### Standing agreements: the name is reserved, the object is deferred
+
+**There is no standing agreement in this system, and this work does not add one.** Nothing durable
+carries permission between handoffs; every `AgentRun` starts from a `HandoffContract` a person
+ratified for that run, and the five steps above are the whole of the permission model.
+[ADR-0011](./adr/0011-intention-above-worksession.md) reserves `WorkingAgreement` as a type name so
+the word is not spent a third time, and builds nothing behind it. *Working agreement* stays
+`HandoffContract`'s consumer label, and no screen changes.
+
+One commitment is recorded now, because it is one sentence today and a migration later:
+
+> **A standing agreement is a ceiling intersected into a contract's scope — never a floor unioned
+> onto it.**
+
+That choice, not the feature's interface, decides whether it is safe. Intersection can only narrow
+what a run may do, so an agreement that is stale, over-broad, or written in a more trusting mood than
+the one you are in now still cannot authorise anything the contract in front of you does not already
+allow. Union makes the durable object a grant, and a grant signed months ago is precisely the
+permission nobody re-reads.
+
+**Nothing enforces this, because there is nothing yet to enforce it on.** It is a sentence in a
+document, which is the weakest kind of guarantee this file contains, and it is here rather than held
+in someone's memory of a conversation.
+
+### No agreement may pre-approve an irreversible action
+
+Not a new rule. Two existing ones, cited rather than re-argued, because the way this feature gets
+built wrong is by reading *reduce repetitive confirmations* as *reduce confirmations*.
+
+- [`PRODUCT_PRINCIPLES.md`](./PRODUCT_PRINCIPLES.md) §6: **no dial may ever pre-approve an
+  irreversible action**, and *"a model saying 'this is still the same step' is likewise forbidden,
+  because that is a grant wearing a description's clothes."* A standing agreement is a dial with a
+  longer life. The principle already reaches it; it does not need extending.
+- **`ConfirmationVerdict` has two members, and both are decisions a human made.** There is no value
+  meaning *expired*, *assumed* or *agreed in advance*, and `expireConfirmations` writes no verdict at
+  all — an unanswered question keeps its absence, and the gate refuses on the same nothing it saw
+  before the question was asked. A third member is how elapsed time would become permission. Its
+  absence is why that path does not exist, which is a stronger thing than a rule against taking it.
+
+`classifyReversibility` takes an action kind and the browser's own attestation about the element. It
+takes no agreement, no history and no preference, and the correct shape for any future agreement is
+one that still cannot reach it.
+
+### What an Intention may accrue
+
+An `Intention` will be the first durable object here that outlives a sitting, which makes it the
+obvious place for a profile to accumulate quietly. The boundary, written before the table is:
+
+| | |
+|---|---|
+| **May hold** | what a person wrote or edited — the desired outcome and what done looks like. `objective` and `definitionOfDone` are the whole of it |
+| **Is not stored at all** | the lifecycle state. `working`, `delegated`, `needs-you`, `sleeping` and `done` are to be computed from rows that already exist; the view is specified and not yet written, so there is no column for them to drift in |
+| **May not hold** | anything inferred about the person rather than stated by them — a working style, a tolerance for risk, a trust score, a learned autonomy level |
+
+**`guidance` stays per-contract on `StatedIntent`, and deliberately does not become durable.** It is
+the one field this corpus guards hardest: [`CONTEXT.md`](../CONTEXT.md) calls it *"the one place
+where page prose could otherwise become something the worker follows"*, which is why it is
+human-typed only and why an inferred `constraint` claim never pre-populates it. Its safety is
+carried by its lifetime — retyped, re-read and re-ratified for every contract. A durable `guidance`
+would be one afternoon's sentence silently steering every later handoff on one old ratification,
+which is the standing-agreement failure mode wearing a field name.
+
+**The table's third row is enforced by construction rather than by a check, and that difference is
+the point.** Per [ADR-0011](./adr/0011-intention-above-worksession.md) an `Intention` is
+**human-ratified only**: a person creates it, a person edits it, no detector writes one, and no model
+boundary writes one. There is no writer that could accrue anything, so there is nothing for a check
+to catch.
+
+That is a stronger guarantee than a validation rule and a more brittle one. It holds exactly as long
+as the writer set stays human, and it would fail **silently** the first time a model boundary is
+given an `Intention` field to fill in — no test would go red, because what is protecting the row is
+the absence of a writer rather than the shape of its contents.
+
+What Propositum infers about you stays where it already is: `SessionClaim{kind:'objective'}`, one
+sitting, evidence-bearing, cold every time. That arrangement is what keeps the boundary observable
+rather than merely intended — the inferred thing has a visible lifetime, and the durable thing has a
+human author.
 
 ## Action authorization
 

@@ -328,3 +328,143 @@ describe('readings carry evidence, and edits are per claim', () => {
     expect(after?.claims.find((c) => c.kind === 'openThread')?.origin).toBe('inferred')
   })
 })
+
+describe('an Intention is durable, mutable, and at most one per Project', () => {
+  it('round-trips the sentence, and a sitting and a contract can point at it', async () => {
+    const project = await repos.projects.create('Northwind renewal')
+    const intention = await repos.intentions.create({
+      projectId: project.id,
+      objective: 'Win the Northwind renewal',
+      definitionOfDone: 'A tier comparison they have read',
+    })
+
+    // Read back through `forProject`, which is the only reader there is: `byId`
+    // was dropped for having no caller outside this line, which is the shape
+    // the file at the top of `tests/reachability.test.ts` exists to remember.
+    expect(await repos.intentions.forProject(project.id)).toMatchObject({
+      id: intention.id,
+      projectId: project.id,
+      objective: 'Win the Northwind renewal',
+      definitionOfDone: 'A tier comparison they have read',
+      // Nobody has said it is finished, so `IntentionState` computes `sleeping`
+      // rather than `done`. There is no status column to disagree with that.
+      completedAt: null,
+    })
+
+    const session = await repos.sessions.start(project.id, intention.id)
+    expect((await repos.sessions.byId(session.id))?.intentionId).toBe(intention.id)
+
+    const reading = await repos.readings.create({ sessionId: session.id, throughSeq: 0, claims: [] })
+    const contract = await repos.contracts.createDraft({
+      sessionId: session.id,
+      readingId: reading.id,
+      intentionId: intention.id,
+      objective: 'draft the comparison',
+      definitionOfDone: 'all four tiers',
+      guidance: [],
+      approvedSourceIds: [],
+      allowedActionKinds: ['read-approved-source'],
+      baseVersionId: null,
+      initiative: 'follow-closely',
+      progress: 'current-step-only',
+      output: 'suggestions-only',
+      interruption: 'stop-when-uncertain',
+      timeLimitMinutes: 30,
+    })
+
+    // Written at DRAFT time. `handoff_contract_frozen_once_accepted` permits an
+    // UPDATE only while the row is a draft, so a value written any later could
+    // not be written at all.
+    await repos.contracts.accept(contract.id, new Date(0))
+    expect((await repos.contracts.byId(contract.id))?.intentionId).toBe(intention.id)
+  })
+
+  it("finds the Project's one Intention, and refuses a second", async () => {
+    const project = await repos.projects.create('one each')
+    expect(await repos.intentions.forProject(project.id)).toBeNull()
+
+    const first = await repos.intentions.create({
+      projectId: project.id,
+      objective: 'the one thing',
+      definitionOfDone: 'it is done',
+    })
+    expect(await repos.intentions.forProject(project.id)).toMatchObject({ id: first.id })
+
+    // At most one per Project (ADR-0011), held as a unique index rather than as
+    // a convention — so the accept path finds the existing row instead of
+    // minting a rival statement of purpose for the same work.
+    await expect(
+      repos.intentions.create({
+        projectId: project.id,
+        objective: 'a rival thing',
+        definitionOfDone: 'also done',
+      }),
+    ).rejects.toThrow()
+  })
+
+  it('leaves a session and a contract with no Intention, because most have none', async () => {
+    const project = await repos.projects.create('no intention')
+    const session = await repos.sessions.start(project.id)
+
+    expect((await repos.sessions.byId(session.id))?.intentionId).toBeNull()
+
+    const reading = await repos.readings.create({ sessionId: session.id, throughSeq: 0, claims: [] })
+    const contract = await repos.contracts.createDraft({
+      sessionId: session.id,
+      readingId: reading.id,
+      objective: 'draft it',
+      definitionOfDone: 'all sections',
+      guidance: [],
+      approvedSourceIds: [],
+      allowedActionKinds: ['read-approved-source'],
+      baseVersionId: null,
+      initiative: 'follow-closely',
+      progress: 'current-step-only',
+      output: 'suggestions-only',
+      interruption: 'stop-when-uncertain',
+      timeLimitMinutes: 30,
+    })
+
+    // Nothing backfills, and the omitted field is null rather than absent —
+    // every fixture written before ADR-0011 keeps working unchanged.
+    expect((await repos.contracts.byId(contract.id))?.intentionId).toBeNull()
+  })
+
+  it('a sitting moved to another Project does not keep the old Intention', async () => {
+    /**
+     * The one correction a person has for *this is not that work*, and the
+     * defect it had: `refile` wrote `projectId` alone, so the sitting kept
+     * pointing at the Intention filed under the project it just left — and
+     * `draftContract` reads `session.intentionId` onto the contract, so the
+     * rejected sentence would have arrived on a HandoffContract in the new
+     * project with nothing on screen saying it had.
+     *
+     * `Intention.projectId` is `@unique`, so "the sitting's Intention" and "the
+     * sitting's Project's Intention" are one question; this asserts the two
+     * cannot disagree after a move.
+     */
+    const from = await repos.projects.create('where it started')
+    const to = await repos.projects.create('where it belongs')
+    const intention = await repos.intentions.create({
+      projectId: from.id,
+      objective: 'the sentence they rejected',
+      definitionOfDone: 'never mind',
+    })
+
+    const session = await repos.sessions.start(from.id, intention.id)
+    expect((await repos.sessions.byId(session.id))?.intentionId).toBe(intention.id)
+
+    // The destination has no Intention, so null is the honest value — nobody
+    // has stated one for this work.
+    await repos.sessions.refile(session.id, to.id, null)
+
+    expect(await repos.sessions.byId(session.id)).toMatchObject({
+      projectId: to.id,
+      intentionId: null,
+    })
+
+    // And the Intention itself is untouched: a move re-files a sitting, it does
+    // not edit a sentence a person ratified.
+    expect(await repos.intentions.forProject(from.id)).toMatchObject({ id: intention.id })
+  })
+})

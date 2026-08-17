@@ -36,7 +36,8 @@ import { readableCause } from './problem'
 import { confirmRequest, haltRun, rejectRequest } from './confirmations'
 import { ambientStore, captureStore } from './capture-store'
 import { describeWork, signatureOf } from './ambient-store'
-import { AnthropicModelClient } from '../model/anthropic'
+import { createModelClient } from '../model/provider'
+import type { ModelCallSink } from '../model/provider'
 import type { FailureKind, ModelClient } from '../model/client'
 import { datamark } from '../model/untrusted'
 import {
@@ -45,7 +46,7 @@ import {
 } from '../model/boundaries/session-reading'
 import type { PromptEvent } from '../model/boundaries/session-reading'
 import { handoffBoundary, sourceHandlesFor } from '../model/boundaries/handoff'
-import { detectWork, threadPagesOf } from '../domain/detection/detect'
+import { EVERY_STRAND, detectThreads, threadPagesOf } from '../domain/detection/detect'
 import { groundsFor } from '../domain/detection/grounds'
 import { matchProject, projectTerms } from '../domain/detection/match-project'
 import type { ProjectCandidate } from '../domain/detection/match-project'
@@ -129,10 +130,29 @@ async function attempt<T>(work: () => Promise<ActionResult<T>>): Promise<ActionR
 
 /* ═════════════════════════════════════════════════════════════ the model ══ */
 
+/**
+ * Where this file's model calls are written down.
+ *
+ * Async on purpose, even though every caller of `modelClient()` already has a
+ * context in hand: `appContext()` is memoised but returns a promise, and
+ * resolving it INSIDE the sink keeps `modelClient()` synchronous, so neither
+ * call site changes shape. The sink is only ever invoked fire-and-forget, so a
+ * context that cannot be built loses the telemetry row rather than the action —
+ * `src/model/provider.ts` holds that rejection and says why.
+ *
+ * No `runId`. Both callers run BEFORE any AgentRun exists — one reads a
+ * finished sitting, the other drafts a working agreement — so the column is
+ * null, which is ordinary rather than missing.
+ */
+const recordModelCall: ModelCallSink = async (row) => {
+  const { repos } = await appContext()
+  return repos.modelCalls.create(row)
+}
+
 function modelClient(): ModelClient | null {
   const apiKey = process.env['ANTHROPIC_API_KEY']
   if (!apiKey) return null
-  return new AnthropicModelClient({ apiKey })
+  return createModelClient({ apiKey, record: recordModelCall })
 }
 
 /** One sentence per failure class, in the person's terms. */
@@ -876,6 +896,38 @@ export interface WorkStarted {
    *  which stay withdrawn. Propositum cannot see them here, and the person is
    *  the only one who may put that back. */
   readonly leftWithdrawn: number
+  /**
+   * The Intention this sitting advances, or NULL — which is the ordinary case
+   * and the honest one.
+   *
+   * Null whenever nobody ratified a sentence about what the work is for. It is
+   * on the result rather than only in the database because a sentence that is
+   * used and not shown is the exact failure ADR-0011 names as the weak link in
+   * its own argument: *on screen wherever it is used* is a requirement on the
+   * interface, and an id no caller can see is a screen that cannot meet it.
+   */
+  readonly intentionId: string | null
+}
+
+/**
+ * The sentence a person ratified about what the work is for.
+ *
+ * ── Why this is a parameter and not something this file works out ────────
+ *
+ * `startFromSuggestion` knows the subject, the sites and the thread. NONE of
+ * those is a statement of purpose — they are what the detector saw, and an
+ * Intention derived from what a detector saw is precisely the thing ADR-0011
+ * forbids, however plausible the sentence came out. So the words have to arrive
+ * from a caller that watched a person accept them, and the only such caller is
+ * `acceptWorkOffer`.
+ *
+ * Optional, so every other path — the carry-on suggestion, the tests, anything
+ * later — starts a sitting with `intentionId` null and no Intention is written.
+ * An absent Intention is the normal state of the world.
+ */
+export interface RatifiedStatement {
+  readonly objective: string
+  readonly definitionOfDone: string
 }
 
 export async function startFromSuggestion(
@@ -896,6 +948,15 @@ export async function startFromSuggestion(
    * anything durable exists and the project screen can only ask after.
    */
   treatAsNewWork?: boolean,
+  /**
+   * The words a person just accepted, when a person just accepted some.
+   *
+   * Last and optional for the reason `treatAsNewWork` is: a caller that has
+   * nothing to say here says nothing, and gets a sitting with no Intention —
+   * which is what every caller but the accept path has, and what every session
+   * recorded before ADR-0011 has.
+   */
+  ratified?: RatifiedStatement,
 ): Promise<ActionResult<WorkStarted>> {
   return attempt(async () => {
     const name = subject.trim()
@@ -1037,7 +1098,63 @@ export async function startFromSuggestion(
      * the same later seam: `draftContract` takes `documents[0]`, and finds
      * yesterday's half-written draft exactly where it left it.
      */
-    const session = await repos.sessions.start(project.id)
+    /**
+     * The Intention, written here because a person said the words and for no
+     * other reason.
+     *
+     * ── At most one per Project, and what happens on the second sitting ──
+     *
+     * A joined project already has its Intention, and this REUSES it rather
+     * than minting a second. That is the cardinality ADR-0011 defers behind,
+     * and reuse is the honest reading of it: the person ratified a sentence
+     * about this work once, and a sitting that continues the work continues the
+     * sentence. The alternative — a fresh row per acceptance — would answer
+     * *which Intention does this sitting belong to?* by making the question
+     * exist, which is exactly what the deferral is buying time on.
+     *
+     * Nothing UPDATES the existing row here. A sentence a person wrote in March
+     * is not quietly rewritten in August by an offer a model composed; if it is
+     * wrong, rewriting it is the person's act and their correction channel.
+     * That is the whole of "human-ratified", and it is why this branch creates
+     * or reuses and never edits.
+     *
+     * ── The lookup is unconditional; only the WRITE needs `ratified` ─────
+     *
+     * The two questions are separate and were once collapsed into one, which
+     * was a bug rather than a simplification: *does this Project have an
+     * Intention?* is a read of a row a person already ratified, and *may
+     * Propositum write one?* is the human-ratified-only rule. Asking the first
+     * only when the second was true meant a sitting on a project WITH an
+     * Intention — reached from the degraded path, where no offer was composed —
+     * got a null, and null is documented as meaning *nobody stated an Intention
+     * for this sitting*. On that project it would have been false.
+     *
+     * So the invariant this file now holds everywhere a sitting begins or moves
+     * is one sentence: **a WorkSession points at its Project's Intention, or at
+     * nothing.** Reading it writes nothing and creates nothing, so the shape
+     * ADR-0011 enforces is untouched.
+     */
+    const existing = await repos.intentions.forProject(project.id)
+    let intentionId: string | null = existing?.id ?? null
+
+    if (existing === null && ratified !== undefined) {
+      const objective = ratified.objective.trim()
+      const definitionOfDone = ratified.definitionOfDone.trim()
+
+      if (objective !== '' && definitionOfDone !== '') {
+        // An empty half writes nothing. A row saying the work is for "" is
+        // worse than no row: null means nobody said, and "" means somebody
+        // said nothing, and only the first of those is true here.
+        const created = await repos.intentions.create({
+          projectId: project.id,
+          objective,
+          definitionOfDone,
+        })
+        intentionId = created.id
+      }
+    }
+
+    const session = await repos.sessions.start(project.id, intentionId)
     const startedAtMs = Date.now()
     captureStore().start(session.id, startedAtMs)
 
@@ -1142,6 +1259,7 @@ export async function startFromSuggestion(
       joinedExisting: joined,
       discardedOrigins,
       leftWithdrawn,
+      intentionId,
     })
   })
 }
@@ -1259,15 +1377,30 @@ export async function offerForThread(threadSignature: string): Promise<
      * is cheap arithmetic over the same observations the detector just read.
      */
     const observations = ambient.since(now)
-    const detected = detectWork(observations, now)
-    const stillThisThread = detected !== null && signatureOf(detected.terms) === thread
+    /**
+     * THIS strand, not the strongest one.
+     *
+     * It used to be `detectWork` plus an equality check, which is the same thing
+     * only while an afternoon has one strand in it. With three, opening the
+     * offer screen for the second — which the front door and the extension link
+     * both do, by signature — found the first, failed the equality check, and
+     * fell through to no grounds and a generic sentence. The strand was
+     * perfectly detectable; it was simply not the one being looked at.
+     *
+     * `EVERY_STRAND` for the same reason `strandBySignature` uses it, added
+     * 2026-08-17: the display bound is applied after the snooze filters now, so
+     * the third strand on the screen can be the detector's fourth, and a lookup
+     * bounded at three would answer a link that is on screen with nothing.
+     */
+    const detected =
+      detectThreads(observations, now, EVERY_STRAND).find(
+        (candidate) => signatureOf(candidate.terms) === thread,
+      ) ?? null
     const grounds =
       composed?.grounds.sentences ??
-      (stillThisThread && detected
-        ? groundsFor(detected, threadPagesOf(observations, detected, now)).sentences
-        : [])
+      (detected ? groundsFor(detected, threadPagesOf(observations, detected, now)).sentences : [])
 
-    const describedFor = stillThisThread && detected ? describeWork(detected, thread, named) : null
+    const describedFor = detected ? describeWork(detected, thread, named) : null
     const sentence =
       describedFor?.sentence ?? `You have been looking into ${subject}.`
     const because = describedFor?.because ?? `Across ${patterns.length} sites.`
@@ -1392,7 +1525,52 @@ export async function acceptWorkOffer(
     const intent =
       composed && composed.expects.includes('document-changes') ? 'draft-document' : 'deep-research'
 
-    const started = await startFromSuggestion(subject, chosen, intent, thread, treatAsNewWork)
+    /**
+     * The Intention, from the two strings on the offer the person just accepted.
+     *
+     * ── Why these two strings and no others ──────────────────────────────
+     *
+     * `title` is *"What you would do, in one line, as a person would say it out
+     * loud"*, and `produces` is *"What they would have at the end, said
+     * concretely"*. They are the only two strings anywhere in the system that
+     * already say what the work is FOR, and they map field for field onto
+     * `objective` and `definitionOfDone`. Nothing is composed here, nothing is
+     * summarised, and no second model call happens: the row holds the sentences
+     * that were on the screen when the person clicked.
+     *
+     * ── What makes this consistent with human-ratified-only ──────────────
+     *
+     * The words were composed by a model; the ROW is written because a person
+     * clicked accept, on a screen showing those exact words. ADR-0011 is precise
+     * about which of the two it claims — *"authorship of the record, not
+     * authorship of the words in it, and only the first of the two is enforced
+     * by shape"* — and this is that shape. `intentions.create` is reachable
+     * from this action and from nothing else: no detector, no model boundary,
+     * no recovery sweep and no worker has a path to it, and no model-facing
+     * schema has a field that could carry one.
+     *
+     * The gap is real and is not talked down here: clicking accept on a
+     * plausible sentence is a weaker act than typing one, and this design lets
+     * that sentence outlive the sitting that produced it. What answers the
+     * original objection is that nothing is inherited QUIETLY — the sentence is
+     * the person's to see, edit and delete. Nothing makes it TRUE.
+     *
+     * The degraded path — no composed offer, so no sentence was on screen —
+     * passes nothing and writes no Intention. Propositum does not state a
+     * purpose nobody was shown.
+     */
+    const ratified: RatifiedStatement | undefined = composed
+      ? { objective: composed.title, definitionOfDone: composed.produces }
+      : undefined
+
+    const started = await startFromSuggestion(
+      subject,
+      chosen,
+      intent,
+      thread,
+      treatAsNewWork,
+      ratified,
+    )
     if (!started.ok) return { ok: false, problem: started.problem } as const
 
     /**
@@ -1562,7 +1740,14 @@ export async function refileSession(
     }
 
     const carried = await carrySourcesAcross(sessionId, session.projectId, projectId)
-    await repos.sessions.refile(sessionId, projectId)
+
+    // The sitting arrives under the destination's Intention, whatever the
+    // origin's was. Carrying the old one across would file a sentence about one
+    // project's work onto a sitting in another, which `draftContract` would
+    // then stamp onto a contract. Null when the destination has none, which is
+    // the ordinary case and the honest value.
+    const destinationIntention = await repos.intentions.forProject(projectId)
+    await repos.sessions.refile(sessionId, projectId, destinationIntention?.id ?? null)
 
     refresh()
     return ok({
@@ -1618,7 +1803,19 @@ export async function splitIntoNewProject(
     if (!created.ok) return { ok: false, problem: created.problem } as const
 
     const carried = await carrySourcesAcross(sessionId, session.projectId, created.value.id)
-    await repos.sessions.refile(sessionId, created.value.id)
+
+    /**
+     * And it arrives with NO Intention, which is the whole point of the button.
+     *
+     * The project was created one line ago, so nobody has stated an Intention
+     * for it — null is the same honest value every pre-ADR-0011 row carries.
+     * Carrying the old project's Intention across would be the failure
+     * CONTEXT.md's ruling names by name: the person has just said *this is not
+     * that work*, and the sentence they rejected would ride along onto the
+     * split-off sitting and, through `draftContract`, onto its contract, with
+     * nothing on screen saying it had.
+     */
+    await repos.sessions.refile(sessionId, created.value.id, null)
 
     /**
      * And something to work in, because otherwise this is a dead end.
@@ -1649,12 +1846,88 @@ export async function splitIntoNewProject(
   })
 }
 
-/** The person says no. Forget it, and stay quiet about that site for a while. */
-export async function declineOffer(origin: string): Promise<ActionResult<{ origin: string }>> {
+/**
+ * ~~The person says no. Forget it, and stay quiet about that site for a
+ * while.~~ **`declineOffer(origin)` is deleted, 2026-08-17.**
+ *
+ * It had exactly one caller, the front door's "Not now" button, and that button
+ * now names a THREAD. Declining by origin is still what the extension's
+ * `/api/capture/ambient/decline` route does, and that route calls
+ * `AmbientStore.decline` directly rather than through here — so this was an
+ * exported action nothing reached, which is worse than a gap because it reads as
+ * a supported way to do something.
+ *
+ * `declineThread` carries the argument for why the unit changed.
+ */
+
+/**
+ * The person says no to ONE strand of an afternoon.
+ *
+ * ── Why the pages are recomputed and not taken from the caller ────────────
+ *
+ * The same reason the accept path recomputes: a hidden field would carry a page
+ * list that was true when the screen rendered, and dropping pages a strand no
+ * longer has — or missing ones it has picked up since — would leave the
+ * declined subject able to re-form out of the remainder. The signature is the
+ * only thing that crosses, exactly as it is on accept, and everything else is
+ * read off the buffer here.
+ *
+ * `pagesOfThread` is the fallback rather than the primary, and the order
+ * matters: the fresh detection is what the strand IS now, and the remembered
+ * list is what it was when something last pinned it. When the strand has
+ * already stopped being detected, the remembered list is all there is, and
+ * dropping those pages is still better than dropping nothing — otherwise "not
+ * now" on a strand that just aged below the bar would leave every one of its
+ * pages in the buffer to seed it again.
+ *
+ * The signature is snoozed either way, including when neither list has
+ * anything. A snooze against a subject nobody can find is harmless and costs a
+ * map entry; failing to record one because the strand blinked is an hour of
+ * "not now" that does not hold.
+ *
+ * ── Unbounded, added 2026-08-17 ──────────────────────────────────────────
+ *
+ * `EVERY_STRAND`, because the display bound is now applied after the snooze
+ * filters and the third strand on the screen can be the detector's fourth. A
+ * lookup bounded at three would miss it, fall through to `pagesOfThread`, and
+ * quietly do the weaker thing — snoozing the signature while leaving the pages
+ * that will re-form it in an hour's time. That failure is invisible: the strand
+ * disappears from the screen for the snooze and comes back afterwards, which is
+ * what a snooze looks like anyway.
+ *
+ * ── What "not now" here does not buy ─────────────────────────────────────
+ *
+ * Quiet from the notification channel. This snoozes one signature; the poll
+ * promotes whichever strand is next and the extension may notify about that one
+ * within a poll or two, because `quietUntil` in `service-worker.js` is set only
+ * by the notification's own "Not now" and nothing here reaches it. That is
+ * deliberate as far as this screen is concerned — it tells the person that
+ * turning one down leaves the others where they are — and it is written down in
+ * ADR-0008 rather than only here, because it is the notification channel's
+ * behaviour and not this action's.
+ */
+export async function declineThreadOffer(
+  threadSignature: string,
+): Promise<ActionResult<{ thread: string; pagesDropped: number }>> {
   return attempt(async () => {
-    ambientStore().decline(origin, Date.now())
+    const thread = threadSignature.trim()
+    if (thread === '') {
+      return no<{ thread: string; pagesDropped: number }>(
+        'invalid-input',
+        'Propositum could not tell which of those you meant. Reload and try again.',
+      )
+    }
+
+    const ambient = ambientStore()
+    const now = Date.now()
+    const fresh = detectThreads(ambient.since(now), now, EVERY_STRAND).find(
+      (candidate) => signatureOf(candidate.terms) === thread,
+    )
+    const urls = fresh ? fresh.urls : ambient.pagesOfThread(thread)
+
+    ambient.declineThread(thread, urls, now)
     refresh()
-    return ok({ origin })
+    return ok({ thread, pagesDropped: urls.length })
   })
 }
 
@@ -1693,7 +1966,27 @@ export async function startSession(projectId: string): Promise<ActionResult<Sess
       }
     }
 
-    const session = await repos.sessions.start(projectId)
+    /**
+     * The Project's Intention comes with it, and this is the line without which
+     * `IntentionState` could never leave `sleeping`.
+     *
+     * `working` derives from a live WorkSession on the Intention and `delegated`
+     * from an accepted HandoffContract on it; a contract gets its id off the
+     * sitting at draft time. So if the ONLY sitting ever attached to an
+     * Intention were the one that ratified it, both facts would become
+     * unreachable the moment that sitting ended, and every second visit to the
+     * same work would read as asleep while the person sat in front of it.
+     *
+     * This is a READ of a row a person already ratified. It writes no Intention,
+     * creates none, and edits none — `repos.intentions.create` is still
+     * reachable from `startFromSuggestion` and from nothing else — so the
+     * human-ratified-only shape is untouched. What it fixes is the honesty of
+     * the null: the schema says a null `intentionId` means nobody stated an
+     * Intention for this sitting, and on a project that has one, that was false.
+     */
+    const intention = await repos.intentions.forProject(projectId)
+
+    const session = await repos.sessions.start(projectId, intention?.id ?? null)
     captureStore().start(session.id, Date.now())
 
     const sources = await repos.projects.approvedSources(projectId)
@@ -2220,6 +2513,21 @@ export async function draftContract(readingId: string): Promise<ActionResult<Con
     const contract = await repos.contracts.createDraft({
       sessionId: reading.sessionId,
       readingId,
+      /**
+       * Which Intention this contract advances, carried off the sitting.
+       *
+       * Written HERE and nowhere else, because it cannot be written anywhere
+       * else: `handoff_contract_frozen_once_accepted` permits an UPDATE only
+       * while the row is a draft, so a column filled in after acceptance is a
+       * column that can never be filled in.
+       *
+       * It grants nothing. The gate does not read it, `compilePolicy` cannot
+       * receive it, and the StatedIntent below is unchanged — the objective and
+       * the definition of done are still what the handoff boundary drafted from
+       * this sitting's claims, still ratified per contract, still re-ratified
+       * for the next one.
+       */
+      intentionId: session.intentionId,
       objective: drafted.value.objective,
       definitionOfDone: drafted.value.definitionOfDone,
       guidance: [],
@@ -2387,6 +2695,10 @@ export async function acceptContract(
           await repos.contracts.createDraft({
             sessionId: draft.sessionId,
             readingId: draft.readingId,
+            // Carried onto the superseding draft. Editing the agreement mints a
+            // new row rather than updating a frozen one, and a field left off
+            // here would be silently dropped by the act of changing a dial.
+            intentionId: draft.intentionId ?? null,
             objective,
             definitionOfDone,
             guidance,

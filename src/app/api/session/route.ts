@@ -19,7 +19,16 @@ export async function POST(request: Request) {
   if (!projectId) return NextResponse.json({ ok: false, reason: 'projectId required' }, { status: 400 })
 
   const { repos } = await appContext()
-  const session = await repos.sessions.start(projectId)
+
+  // The Project's Intention comes with the sitting, exactly as `startSession`
+  // in `src/server/actions.ts` does it — the two paths are duplicated rather
+  // than shared because this one mints a bearer token, and a divergence here is
+  // the same defect twice: a sitting started from the extension that read as
+  // having no Intention on a project that has one. A read of a ratified row; it
+  // writes no Intention and creates none.
+  const intention = await repos.intentions.forProject(projectId)
+
+  const session = await repos.sessions.start(projectId, intention?.id ?? null)
   const live = captureStore().start(session.id, Date.now())
   const sources = await repos.projects.approvedSources(projectId)
 

@@ -47,7 +47,12 @@ describe('work that is plainly the same subject', () => {
     // The detector's terms are the recurring words across several pages, so
     // they are routinely broader than the two-word name a model settled on.
     const candidates = [project('p1', 'world models')]
-    const thread = ['world', 'models', 'genie', 'simulation', 'deepmind']
+    // Built through `projectTerms` rather than written as literals, for the
+    // reason the last describe in this file is about: the detector's terms and
+    // a project's terms must come from ONE function. A hand-written array is a
+    // second tokeniser wearing a fixture's clothes, and it stopped agreeing
+    // with the real one the day singulars arrived.
+    const thread = projectTerms('world models genie simulation deepmind')
 
     expect(matchProject(thread, candidates)).toEqual({ projectId: 'p1', overlap: 2 })
   })
@@ -76,7 +81,11 @@ describe('work that only looks the same', () => {
     // The near-miss that matters most: enough overlap to read as a match at a
     // glance, not enough to be one. 2 of 4 is 0.5, under the 0.6 bar.
     const candidates = [project('p1', 'series funding term sheets')]
-    const thread = ['series', 'sheets', 'google', 'formulas']
+    // Four words each, two shared — 0.5, under the 0.6 bar. `google` used to be
+    // one of these and was a bad choice twice over: it is a stopword, so it
+    // never reached the comparison, and once the thread went through `termsOf`
+    // the denominator changed and the case stopped testing the ratio at all.
+    const thread = projectTerms('series sheets pricing formulas')
 
     expect(matchProject(thread, candidates)).toBeNull()
   })
@@ -105,7 +114,7 @@ describe('choosing between candidates', () => {
       project('closer', 'world models research'),
     ]
 
-    expect(matchProject(['world', 'models', 'research', 'genie'], candidates)).toEqual({
+    expect(matchProject(projectTerms('world models research genie'), candidates)).toEqual({
       projectId: 'closer',
       overlap: 3,
     })
@@ -117,7 +126,7 @@ describe('choosing between candidates', () => {
     // time, which is what makes a wrong filing reproducible enough to report.
     const candidates = [project('newest', 'world models'), project('oldest', 'world models')]
 
-    expect(matchProject(['world', 'models'], candidates)?.projectId).toBe('newest')
+    expect(matchProject(projectTerms('world models'), candidates)?.projectId).toBe('newest')
   })
 
   it('finds nothing when there is nothing to find', () => {
@@ -129,7 +138,7 @@ describe('choosing between candidates', () => {
     // must be skipped rather than dividing by zero or matching everything.
     const candidates = [project('empty', 'the home page'), project('real', 'world models')]
 
-    expect(matchProject(['world', 'models'], candidates)?.projectId).toBe('real')
+    expect(matchProject(projectTerms('world models'), candidates)?.projectId).toBe('real')
   })
 })
 
@@ -137,7 +146,10 @@ describe('both sides are tokenised by one function', () => {
   it('derives project terms with the detector, not a second tokeniser', () => {
     // A thread and the project named after that same thread must agree. If
     // these ever diverge the bug is invisible, because both halves look right.
-    expect(projectTerms('World Models')).toEqual(['world', 'models'])
+    // `models` arrives as `model`: one subject written two ways is one term,
+    // and this is the line that says so. Both halves of every comparison go
+    // through here, so the normalisation cannot apply to one side only.
+    expect(projectTerms('World Models')).toEqual(['world', 'model'])
   })
 
   it('strips a trailing dashed clause from a name, the way it strips site branding', () => {

@@ -1,5 +1,52 @@
 /**
- * The front door — a list of work nobody filed.
+ * The front door — one question, and the two ways to answer it.
+ *
+ * ── What this screen is now, and what it stopped being ───────────────────
+ *
+ * It was a dashboard: a masthead, an attention band, a list of every subject
+ * Propositum had picked out, and a "How this works" essay under that. The
+ * owner's brief cut all of it:
+ *
+ * "Do the UI so it's extremely bare bones and simple. I literally just wanted
+ * this to show the current proposed [work] and whether to do it or not, and
+ * then the name of the tool, etc. That's very basic, black and white, bare
+ * bones, but they should be friendly. Maybe add a sprite or something."
+ *
+ * So there are three things on it. The wordmark, small and mono, because it is
+ * a signature rather than a heading. The proposal, set large in the serif, with
+ * the deterministic `because` line under it in mono. And yes or no.
+ *
+ * The one exception below the offer is the re-entry line: when a shift is
+ * waiting on the person, one plain line names the project and says *While you
+ * were away*. It is the only route to a finished shift from the screen people
+ * actually land on, so it survived the cut — `tests/reachability.test.ts` holds
+ * that route open, and this file calls `frontDoorRow` because the whole of what
+ * decides whether a row appears at all is `state === 'needs-you'`.
+ *
+ * It no longer calls `statusWordFor`. The rows are already filtered to that one
+ * state, so the word could only ever come out *Needs you* beside a link that
+ * says the same thing; the note beside the row markup carries the argument, and
+ * the reachability assertion moved with it.
+ *
+ * ── Why there is no colour on this screen ────────────────────────────────
+ *
+ * `--ink` on `--ground`, `--rule` for hairlines, `--muted` for the evidence
+ * line. No `--accent` and no `--attention`. Yes and no differ by weight and
+ * fill rather than by hue: the accept is solid ink with ground-coloured text,
+ * the decline is text behind a hairline. The tokens are untouched — every other
+ * screen still spends the accent — this one just declines to.
+ *
+ * That leaves the friendliness to be carried by the sprite, the spacing and the
+ * voice, which is the constraint rather than a shortfall of it.
+ *
+ * ── Why `Section` and `Masthead` are not used here ───────────────────────
+ *
+ * Both are correct and both are coloured: `Masthead` puts the kicker in the
+ * accent, and `Section tone='attention'` breaks the column with attention-
+ * coloured rules and a raised ground. Nothing about them is wrong — they are
+ * how the rest of the product looks — and this screen simply is not that shape
+ * any more. It keeps `Sheet`, so the page's column and entrance stay shared,
+ * and sets its own narrower measure inside it.
  *
  * ── What is deliberately not here any more ───────────────────────────────
  *
@@ -14,9 +61,7 @@
  * Naming a project is the first thing a person cannot do well: at the moment
  * they would have to type it, they are twenty minutes into reading and have not
  * decided the reading is a project. So this screen never asks. Propositum
- * watches, notices a subject, offers, and the person answers one question. What
- * they see here afterwards is a record of what that produced — and every name on
- * it can be changed on the project's own screen.
+ * watches, notices a subject, offers, and the person answers one question.
  *
  * ── Why "running" is not read off the session row ────────────────────────
  *
@@ -25,8 +70,37 @@
  * token lives in memory in this process, so a restart leaves an open session
  * row that nothing is feeding. Saying "a session is running" in that state
  * would be a false statement about our own software, which §11 rules out. So
- * the banner is gated on the capture store, and the project screen says the
+ * the line is gated on the capture store, and the project screen says the
  * awkward thing out loud when the two disagree.
+ *
+ * ── Why which rows appear is derived rather than decided here ────────────
+ *
+ * A status word used to be three strings in a ternary, off the most recent
+ * sitting's `phase`, and the answer was wrong in the expensive direction: a
+ * project whose shift ended with an unanswered question rendered `idle` — the
+ * same word as a project nobody had touched in a month. The person had to open
+ * it to find out that Propositum was waiting on them. The word is gone from
+ * this screen; the question it was answering is not, because it is now what
+ * decides whether the row exists.
+ *
+ * `intentionState` is now the single place that answers "where is this?", and
+ * ADR-0011 argues its precedence — `needs-you` outranks every activity word,
+ * because a false one costs a look and a missed one costs the shift.
+ *
+ * ── And why the derivation is not in this file ───────────────────────────
+ *
+ * Because nothing can test it here. A review mutated the `intentionState` call
+ * in this file so that every row rendered *Sleeping* and no row could ever
+ * reach `needs-you`, and the full suite stayed green: the only guard was a grep
+ * for the call, and a grep is satisfied by a call whose result is discarded.
+ * `frontDoorRow`, `statusWordFor`, `noticedStrands` and `strandBySignature` are
+ * in `src/server/front-door.ts` so that `tests/front-door.test.ts` can assert
+ * the state a row is filtered on, and so that the three silent decisions
+ * behind the strands — the snooze filters, the refusal of a duplicate
+ * signature, and which strand a button belongs to — sit where a test can hold
+ * them. The last is the worst of the three: a button that starts the wrong
+ * subject approves the wrong sites, and the person finds out from a session
+ * that reads slightly oddly. What is left here is markup and one call each.
  *
  * ── Why the forms are plain server actions ───────────────────────────────
  *
@@ -39,15 +113,17 @@
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
 
-import { Empty, Masthead, Section, Sheet } from '@/ui/primitives'
+import { Sheet } from '@/ui/primitives'
 import { Away, Handover, Watching } from '@/ui/sprites'
-import { carryOnCandidate, declineOffer, startFromSuggestion } from '@/server/actions'
+import { carryOnCandidate, declineThreadOffer, startFromSuggestion } from '@/server/actions'
 import type { CarriedProject } from '@/server/actions'
 import { ambientStore, captureStore } from '@/server/capture-store'
 import { describeWork, signatureOf } from '@/server/ambient-store'
 import type { NamedThread } from '@/server/ambient-store'
-import { detectWork } from '@/domain/detection/detect'
 import type { WorkDetected } from '@/domain/detection/detect'
+import { frontDoorRow, noticedStrands, strandBySignature } from '@/server/front-door'
+import type { FrontDoorRow } from '@/server/front-door'
+import type { IntentionStateFacts } from '@/persistence/repositories/index'
 
 import { appContext } from '@/server/db'
 
@@ -55,57 +131,145 @@ import { appContext } from '@/server/db'
 // cacheable, and a stale "a session is running" is exactly the lie §11 forbids.
 export const dynamic = 'force-dynamic'
 
+/**
+ * The whole of the screen's look, in three type roles and two shades of one
+ * colour.
+ *
+ * `--serif` says the sentence and every sentence answering it, `--mono` signs
+ * the page, states the evidence and labels the buttons, `--ink` and `--muted`
+ * are the only colours, `--rule` is every line. The measure is 34rem rather
+ * than the sheet's 54: one short sentence and two buttons in a 54rem column
+ * reads as a fragment of a page that failed to load.
+ *
+ * ── Three roles, counted honestly, after two of them turned out to be five ──
+ *
+ * `.hm-btn` was `font: inherit`, which on this screen means `--sans` off
+ * `body` — a family that appears NOWHERE else here, on the two controls that
+ * matter most, so yes and no read as browser chrome dropped into a serif page.
+ * They are mono now, at the size of the evidence line they answer.
+ *
+ * And there was a `.hm-fine` at 0.6875rem beside `.hm-because` at 0.75rem:
+ * same family, same colour, 1.09x apart, which is not two roles but one role
+ * rendered inconsistently. `.hm-fine` is gone. What actually needed separating
+ * was the FILING sentence — the project a strand would be absorbed into was set
+ * in the same mono grey as the throwaway line above it — so that has a serif
+ * role of its own, and the name inside it is the one italic on the screen.
+ *
+ * ── And why `.hm-problem` is not the quietest thing here any more ────────
+ *
+ * It is the only text on this screen a person did not ask to see, and it was
+ * 0.75rem mono — smaller than the sentence it interrupts by a factor of nearly
+ * three, stacked above a large mark and a large serif headline both shouting
+ * about a state that did not change. Dropping `--attention` from this screen
+ * was a decision about HUE. It was not a decision to make a failure whisper, so
+ * the weight comes back in greyscale: serif, ink, and the one 2px rule here.
+ */
 const CSS = `
-.hm-row { display: grid; grid-template-columns: 1fr auto; gap: 0.5rem 1.5rem; align-items: baseline; padding: 0.85rem 0; border-bottom: 1px solid var(--rule); }
-.hm-row:last-of-type { border-bottom: none; }
-.hm-name { font-family: var(--serif); font-size: 1.1875rem; color: var(--ink); text-decoration: none; }
-.hm-name:hover { text-decoration: underline; text-underline-offset: 3px; }
-.hm-name:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 2px; }
-.hm-under { margin: 0.25rem 0 0; font-size: 0.8125rem; color: var(--muted); }
-.hm-meta { font-size: 0.8125rem; color: var(--faint); font-family: var(--mono); white-space: nowrap; }
-.hm-meta[data-live="true"] { color: var(--attention); }
+/* One column, and tall enough that a short answer sits in the middle of the
+   screen rather than clinging to the top of it. The auto margins below do the
+   centring while there is room and collapse to nothing when there is not, so
+   three strands push the page down the way a list should. */
+.hm-col { max-width: 34rem; margin: 0 auto; min-height: calc(100vh - 12rem); display: flex; flex-direction: column; }
 
-.hm-lede { font-family: var(--serif); font-size: 1.1875rem; line-height: 1.45; margin: 0; max-width: 36rem; text-wrap: pretty; }
-.hm-note { margin: 0.6rem 0 0; font-size: 0.875rem; color: var(--muted); max-width: 36rem; }
+/* The name of the tool. A signature at the top, not a heading. */
+.hm-wordmark { font-family: var(--mono); font-size: 0.6875rem; letter-spacing: 0.3em; text-transform: uppercase; color: var(--ink); margin: 0; }
 
-.hm-acts { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 1.25rem; }
-.hm-submit { font: inherit; font-size: 0.8125rem; line-height: 1.4; padding: 0.45rem 0.9rem; border: 1px solid var(--rule); background: var(--ground); color: var(--ink); border-radius: 3px; cursor: pointer; }
-.hm-submit:hover { border-color: var(--accent); }
-.hm-submit:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.hm-submit-primary { border-color: var(--accent); background: var(--accent); color: var(--ground); }
-.hm-submit-primary:hover { filter: brightness(1.07); }
+.hm-body { margin: auto 0; padding-top: 3.5rem; }
 
-.hm-go { display: inline-block; font-size: 0.8125rem; line-height: 1.4; padding: 0.35rem 0.9rem; border: 1px solid var(--accent); background: var(--accent); color: var(--ground); border-radius: 3px; text-decoration: none; }
-.hm-go:hover { filter: brightness(1.07); text-decoration: none; }
-.hm-go:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* The one warm thing on the page. Always directly above the sentence that
+   names what it means, and its accessible label always says what that sentence
+   says — a sprite is never the only carrier of anything, and a mark whose label
+   names something the adjacent text does not is worse than no mark.
 
-/* The carry-on box. Indented under the offer, because it is a qualification of
-   the offer rather than a second one. */
-.hm-back-on { margin: 1.25rem 0 0; padding: 0.9rem 0 0.9rem 1.1rem; border-left: 2px solid var(--accent); }
-.hm-back-on-name { font-family: var(--serif); font-size: 1.0625rem; margin: 0; }
-.hm-back-on-meta { font-family: var(--mono); font-size: 0.75rem; color: var(--faint); margin: 0.3rem 0 0; }
+   Drawn at MARK_PEN CSS px, which is the width of every rule, border and
+   underline on this screen. See SpriteProps.pen: at MARK_SIZE the default grid
+   stroke would have come out near 3px, four times the hairline it sits beside,
+   so the page's one decorative element was also its loudest. */
+.hm-mark { display: block; color: var(--ink); margin: 0 0 1.75rem; }
 
-.hm-live { display: flex; flex-wrap: wrap; gap: 1rem; align-items: center; justify-content: space-between; }
-.hm-live p { margin: 0; max-width: 34rem; font-family: var(--serif); font-size: 1.125rem; line-height: 1.5; }
+.hm-say { font-family: var(--serif); font-weight: 400; font-size: clamp(1.5rem, 5.2vw, 2.0625rem); line-height: 1.24; letter-spacing: -0.015em; color: var(--ink); margin: 0; text-wrap: pretty; }
+.hm-then { font-family: var(--serif); font-size: 1.0625rem; line-height: 1.55; color: var(--muted); margin: 1.15rem 0 0; text-wrap: balance; }
+.hm-because { font-family: var(--mono); font-size: 0.75rem; line-height: 1.65; color: var(--muted); margin: 1.15rem 0 0; }
 
-.hm-problem { margin: 0 0 2.25rem; padding: 0.75rem 1rem; border-left: 2px solid var(--attention); background: var(--raised); color: var(--attention); font-size: 0.9375rem; }
+/* The filing decision. Serif and ink, because the project a strand is about to
+   be absorbed into is the one word in this block a person has to read. */
+.hm-filed { font-family: var(--serif); font-size: 1.0625rem; line-height: 1.5; color: var(--ink); margin: 1.5rem 0 0; }
+.hm-filed-name { font-style: italic; }
+.hm-filed + .hm-because { margin-top: 0.45rem; }
 
-.hm-prose { margin: 0; color: var(--muted); max-width: 38rem; }
-.hm-aside { display: flex; align-items: center; gap: 0.5rem; margin: 0.85rem 0 0; color: var(--faint); max-width: 38rem; font-size: 0.875rem; }
+/* A failure, said plainly, and not quietly. It gets the one 2px rule on the
+   screen because it is the only thing here a person did not ask to see. */
+.hm-problem { font-family: var(--serif); font-size: 1.0625rem; line-height: 1.5; color: var(--ink); border-left: 2px solid var(--ink); padding-left: 1.05rem; margin: 0 0 3.25rem; }
+
+/* Three strands are one list, so each proposal is set smaller than the one
+   sentence naming the state above them — the same treatment as each other,
+   which is what stops the page reading as three demands shouted in turn. */
+.hm-offer-many .hm-strand .hm-say { font-size: clamp(1.25rem, 3.6vw, 1.5rem); }
+.hm-note { margin: 1.15rem 0 3.5rem; }
+.hm-foot { margin-top: 2.75rem; }
+
+/* Yes and no, told apart by weight and fill. There is no hue here to spend.
+
+   Hover THICKENS, the way the re-entry underline below does, and never moves
+   toward the ground. The accept used to go from --ink to --muted on hover —
+   about three quarters of its contrast, in both themes, at the moment of
+   commitment — which is the conventional signal for "disabled". So the ink
+   grows instead: 2px more of it outside the edge, and a hairline of ground
+   just inside, which is the same "the line got heavier" move made legible on a
+   control that is already solid. Both are token colours, so it reads the same
+   way in dark, where the two swap roles. */
+.hm-acts { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 2.25rem 0 0; }
+.hm-btn { font-family: var(--mono); font-size: 0.75rem; line-height: 1.4; padding: 0.6rem 1.05rem; border: 1px solid var(--muted); background: transparent; color: var(--ink); border-radius: 2px; cursor: pointer; }
+.hm-btn:hover { border-color: var(--ink); box-shadow: 0 0 0 1px var(--ink); }
+.hm-btn:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+.hm-btn-yes { background: var(--ink); border-color: var(--ink); color: var(--ground); }
+.hm-btn-yes:hover { background: var(--ink); border-color: var(--ink); box-shadow: 0 0 0 2px var(--ink), inset 0 0 0 1px var(--ground); }
+
+/* Two strands of one afternoon are one thing Propositum is saying in two
+   parts. Whitespace and a hairline, never a card each. */
+.hm-strand + .hm-strand { margin-top: 3.5rem; padding-top: 3.5rem; border-top: 1px solid var(--rule); }
+
+/* The only thing that survives below the offer. */
+.hm-waits { margin-top: 5.5rem; border-top: 1px solid var(--rule); }
+.hm-wait { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 0.25rem 1.25rem; padding: 0.9rem 0; font-family: var(--mono); font-size: 0.75rem; color: var(--ink); text-decoration: none; }
+.hm-wait + .hm-wait { border-top: 1px solid var(--rule); }
+.hm-wait-go { text-decoration: underline; text-underline-offset: 3px; text-decoration-thickness: 1px; }
+.hm-wait:hover .hm-wait-go { text-decoration-thickness: 2px; }
+.hm-wait:focus-visible { outline: 2px solid var(--ink); outline-offset: 4px; border-radius: 2px; }
+
+.hm-link { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; text-decoration-thickness: 1px; }
+.hm-link:hover { text-decoration-thickness: 2px; }
+.hm-link:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; border-radius: 2px; }
 `
 
 const CLOCK = new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit' })
-const DAY = new Intl.DateTimeFormat('en-US', { weekday: 'long', day: 'numeric', month: 'long' })
 
 function clock(at: Date): string {
   return CLOCK.format(at).replace(/AM$/, 'am').replace(/PM$/, 'pm')
 }
 
-/** "3:41pm today" for a sitting this morning, the weekday for anything older —
- *  the same day is the only case where a bare time is unambiguous. */
-function when(at: Date, now: Date): string {
-  const sameDay = at.toDateString() === now.toDateString()
-  return sameDay ? `${clock(at)} today` : `${DAY.format(at)}, ${clock(at)}`
+/** How big the one mark on the screen is drawn, and with what pen. The pen is
+ *  in CSS pixels and matches every hairline here; see `SpriteProps.pen`. */
+const MARK_SIZE = 48
+const MARK_PEN = 1
+
+/**
+ * A small count, in words.
+ *
+ * Prose, not a table: *Two shifts finished while you were away* is a sentence
+ * and *2 shifts finished* is a readout. Past nine it gives up and uses the
+ * digits, because spelling out fourteen is worse than either.
+ */
+const COUNT_WORDS = ['no', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine']
+
+function countWord(n: number): string {
+  return COUNT_WORDS[n] ?? String(n)
+}
+
+/** The same word, starting a sentence. */
+function countWordCapped(n: number): string {
+  const word = countWord(n)
+  return word.charAt(0).toUpperCase() + word.slice(1)
 }
 
 interface RunningSession {
@@ -116,24 +280,21 @@ interface RunningSession {
   readonly away: boolean
 }
 
-/** One line of the list: a subject Propositum identified, and where it got to. */
-interface IdentifiedWork {
+/** One subject Propositum identified, and where it got to. The three derived
+ *  fields are `FrontDoorRow`'s and are documented there. */
+interface IdentifiedWork extends FrontDoorRow {
   readonly id: string
   readonly name: string
-  readonly sittings: number
-  readonly lastSittingAt: Date | null
-  /** SessionPhase of the most recent sitting, or null if it has none. */
-  readonly phase: string | null
 }
 
 /**
  * The subject this work would be filed under, from whatever naming has managed
  * so far.
  *
- * Computed identically here and inside the accept action, so the carry-on box
- * cannot promise one thing and the acceptance do another. When no model has
- * named the thread yet — no key, or the call has not come back — the recurring
- * words stand in. They are a worse name and a true one.
+ * Computed identically here and inside the accept action, so what the screen
+ * says cannot promise one thing and the acceptance do another. When no model
+ * has named the thread yet — no key, or the call has not come back — the
+ * recurring words stand in. They are a worse name and a true one.
  *
  * An UNCONFIDENT name is discarded rather than used, and that is a deliberate
  * trade: the offer above it already refuses to show an unsure name as a
@@ -143,7 +304,9 @@ interface IdentifiedWork {
  * Renaming it is one field on its own screen.
  */
 function subjectOf(detected: WorkDetected, named: NamedThread | null): string {
-  const terms = detected.terms.slice(0, 3).join(' ')
+  // `labels`, not `terms`. This string becomes a Project's name when the model
+  // was not sure, so a stem here would be filed under a word nobody wrote.
+  const terms = detected.labels.slice(0, 3).join(' ')
   return named?.confident ? named.subject : terms
 }
 
@@ -157,6 +320,14 @@ function subjectOf(detected: WorkDetected, named: NamedThread | null): string {
  * now, and the pages pinned as "the thread" are exactly what gets folded into
  * the ledger — so they have to be the current ones.
  *
+ * ── What the form DOES carry, and why that is not the same concession ────
+ *
+ * The signature, and nothing else. `strandBySignature` in `front-door.ts` holds
+ * the whole of that argument and is where it can be tested; the short version is
+ * that the signature SELECTS among strands detected a moment ago and supplies
+ * nothing of its own, so accepting the second strand carries the second strand's
+ * pages, freshly computed.
+ *
  * ── Why it lives out here and not inside the component ───────────────────
  *
  * The two `'use server'` closures below call it, and anything an inline server
@@ -164,10 +335,10 @@ function subjectOf(detected: WorkDetected, named: NamedThread | null): string {
  * serialisable, so declaring this beside them throws at render — found by
  * loading the page, not by the typechecker.
  */
-async function accept(treatAsNewWork: boolean): Promise<never> {
+async function accept(threadSignature: string, treatAsNewWork: boolean): Promise<never> {
   const store = ambientStore()
   const at = Date.now()
-  const fresh = detectWork(store.since(at), at)
+  const fresh = strandBySignature(store.since(at), at, threadSignature)
   if (!fresh) {
     redirect(
       `/?problem=${encodeURIComponent('That has gone quiet. Propositum will offer again when it sees a subject come back.')}`,
@@ -198,7 +369,7 @@ async function accept(treatAsNewWork: boolean): Promise<never> {
   // JOINED a project rather than opening one, the subject goes with it: that
   // screen states the filing decision and offers to undo it, and a merge the
   // person is never told about is the failure the matcher calls expensive.
-  // The box above may not have been on screen at all — naming can land between
+  // The line above may not have been on screen at all — naming can land between
   // the render and the click — so the landing screen is the one place that
   // covers every path.
   const subject = subjectOf(fresh, name)
@@ -239,75 +410,145 @@ export default async function Home({
     }
   }
 
-  const now = new Date()
+  const nowMs = Date.now()
+
   /**
-   * When each subject was last worked on, and how far it got.
+   * Where every Intention is, in one read.
    *
-   * One query per project, issued together rather than one after another. This
-   * is the most-hit route and it used to cost nothing, so a serial walk would
-   * make the front door slower every time Propositum identifies something —
-   * the wrong direction for a screen whose whole content is that list. A local
-   * SQLite file will not thank anyone for a join here.
+   * Not four reads per project. `factsForEveryProject` exists precisely so this
+   * screen does not fan out — its docblock carries the argument, and the short
+   * version is that composing this out of the single-parent readers is 4N
+   * queries on the most-hit route in the product.
+   */
+  const factsByProject = new Map<string, IntentionStateFacts>()
+  for (const facts of await repos.intentions.factsForEveryProject()) {
+    factsByProject.set(facts.projectId, facts)
+  }
+
+  /**
+   * Which subjects are waiting on the person — which is now the only question
+   * this screen asks of the database's older half.
+   *
+   * The list of everything Propositum has picked out is gone from the screen,
+   * and the derivation is not: `frontDoorRow` is what separates a project that
+   * is merely quiet from one holding an unanswered question, and getting that
+   * wrong in the cheap direction hides a finished shift behind a screen nobody
+   * has a reason to open. One query per project, issued together rather than
+   * one after another, because this is the most-hit route in the product.
    */
   const identified: IdentifiedWork[] = await Promise.all(
     projects.map(async (project) => {
       // Newest first, by the repository's own ordering.
       const sittings = await repos.sessions.forProject(project.id)
-      const latest = sittings[0]
+      const derived = frontDoorRow({
+        facts: factsByProject.get(project.id) ?? null,
+        sittings,
+        liveSessionId: live?.sessionId ?? null,
+        nowEpochMs: nowMs,
+      })
+
+      return { id: project.id, name: project.name, ...derived }
+    }),
+  )
+
+  const waiting = identified.filter(
+    (work) => work.state === 'needs-you' && work.waitingContractId !== null,
+  )
+
+  /**
+   * Has Propositum noticed work nobody told it about — and how much of it?
+   *
+   * Rendered only when no session is running, because during one the timeline
+   * already shows what is being seen — an offer to start something that has
+   * started would be nonsense.
+   *
+   * ── Every strand, and why that is not the same decision as notifying ─────
+   *
+   * `detectThreads` returns each disjoint strand of the afternoon, strongest
+   * first, bounded by `MAX_THREADS_SHOWN`. All of them are shown HERE and only
+   * the strongest reaches the extension's badge and notification. The asymmetry
+   * is the whole point: ADR-0008 names interruption as the expensive failure and
+   * PRODUCT_PRINCIPLES §13 wants notifications sparse, but this is a screen a
+   * person chose to open, and more information on it interrupts nobody.
+   *
+   * ── And the derivation is not in this file, for the reason it never is ──
+   *
+   * `noticedStrands` filters the snoozed, refuses a duplicate signature, and
+   * keeps the bound — three decisions that all fail silently, in a `.tsx` server
+   * component nothing in this suite can assert against. `front-door.ts` opens
+   * with that argument and this is the second thing to move for it. What stays
+   * here is markup and one call.
+   */
+  const ambient = ambientStore()
+  // `nowMs` is the instant the lifecycle words above were computed from, rather
+  // than a second reading of the clock. Two "now"s on one render is two answers
+  // to one question, and this screen puts both answers on the same page.
+  const noticed = live ? [] : noticedStrands(ambient, ambient.since(nowMs), nowMs)
+
+  /**
+   * Each strand as the screen renders it, including which project it would join.
+   *
+   * The carry-on question is asked per strand, because it is a per-strand answer
+   * — two subjects in one afternoon can belong to two different projects, and
+   * one of them can be new work. Issued together rather than in series, and
+   * bounded by `MAX_THREADS_SHOWN`, so the worst case on the most-hit route is
+   * three of these rather than an unbounded walk. Nothing is asked at all on the
+   * ordinary quiet screen, where `noticed` is empty.
+   */
+  const strands = await Promise.all(
+    noticed.map(async (thread) => {
+      const named = ambient.nameFor(thread.signature)
+      const subject = subjectOf(thread.detected, named)
+      const described = describeWork(thread.detected, thread.signature, named)
+      const candidate = await carryOnCandidate(subject)
+
       return {
-        id: project.id,
-        name: project.name,
-        sittings: sittings.length,
-        lastSittingAt: latest?.startedAt ?? null,
-        phase: latest?.phase ?? null,
+        signature: thread.signature,
+        named,
+        sentence: described.sentence,
+        because: described.because,
+        backOn: candidate.ok ? candidate.value : (null as CarriedProject | null),
       }
     }),
   )
 
   /**
-   * Has Propositum noticed work nobody told it about?
+   * One set of actions for every strand, told apart by a hidden field.
    *
-   * Rendered only when no session is running, because during one the timeline
-   * already shows what is being seen — an offer to start something that has
-   * started would be nonsense.
+   * Not a closure per strand. An inline `'use server'` function declared inside
+   * the render closes over whatever is in scope and that gets serialised across
+   * the boundary — the note on `accept` records what happens when something
+   * unserialisable is in there. A hidden input avoids the question entirely, and
+   * it is the shape the "Not now" form already had.
    */
-  const ambient = ambientStore()
-  const nowMs = Date.now()
-  const detected = live ? null : detectWork(ambient.since(nowMs), nowMs)
-  const named = detected ? ambient.nameFor(signatureOf(detected.terms)) : null
-  const offer =
-    detected && !ambient.isSnoozed(detected.origins[0] ?? '', nowMs)
-      ? describeWork(detected, signatureOf(detected.terms), named)
-      : null
-
-  const subject = detected ? subjectOf(detected, named) : ''
-
-  // Only asked when there is something to ask about, so the ordinary quiet
-  // screen does not walk every project for nothing.
-  let backOn: CarriedProject | null = null
-  if (offer !== null && offer.kind === 'start-session') {
-    const candidate = await carryOnCandidate(subject)
-    if (candidate.ok) backOn = candidate.value
-  }
-
-  async function carryOn() {
+  async function carryOn(formData: FormData) {
     'use server'
 
-    await accept(false)
+    await accept(String(formData.get('thread') ?? ''), false)
   }
 
-  async function asNewWork() {
+  async function asNewWork(formData: FormData) {
     'use server'
 
-    await accept(true)
+    await accept(String(formData.get('thread') ?? ''), true)
   }
 
   async function notNow(formData: FormData) {
     'use server'
 
-    await declineOffer(String(formData.get('origin') ?? ''))
+    await declineThreadOffer(String(formData.get('thread') ?? ''))
     redirect('/')
   }
+
+  /**
+   * Which heading level a proposal is.
+   *
+   * With one strand the proposal is what the page is about, so it is the `h1`.
+   * With several, the sentence that says how many were noticed is what the page
+   * is about and each proposal sits under it — one `h1` per document either
+   * way, and never zero, which is what this screen had after `Masthead` went.
+   */
+  const Say: 'h1' | 'h2' = strands.length > 1 ? 'h2' : 'h1'
 
   return (
     <Sheet>
@@ -315,152 +556,259 @@ export default async function Home({
         {CSS}
       </style>
 
-      <Masthead
-        kicker="Propositum"
-        title="What you have been working on"
-        subtitle="Propositum works this out from what you read. You never file anything — when it gets a name wrong, open it and change it."
-        mark={running ? <Watching size={20} delay={0.3} /> : <Away size={20} delay={0.3} />}
-      />
+      <div className="hm-col">
+        <p className="hm-wordmark">Propositum</p>
 
-      {problem ? (
-        <p className="hm-problem" role="status">
-          {problem}
-        </p>
-      ) : null}
-
-      {running ? (
-        <Section
-          title={running.away ? 'Propositum is working while you are away' : 'A session is running'}
-          tone="attention"
-          index={1}
-        >
-          <div className="hm-live">
-            <p>
-              {running.away
-                ? `You handed ${running.projectName} over. Propositum holds the work until it is finished or you take it back.`
-                : `You started a session in ${running.projectName} at ${clock(running.startedAt)}. Everything you do on an approved source is going into its timeline.`}
+        <div className="hm-body">
+          {problem ? (
+            <p className="hm-problem" role="status">
+              {problem}
             </p>
-            <Link className="hm-go" href={`/projects/${running.projectId}`}>
-              {running.away ? 'Take back control' : 'Open the session'}
-            </Link>
-          </div>
-        </Section>
-      ) : null}
+          ) : null}
 
-      {offer === null || offer.kind !== 'start-session' ? null : (
-        <Section title="Propositum noticed" tone="attention" index={2}>
-          {/* The named sentence only when the model was sure. A confident wrong
-              name reads as Propositum knowing something it does not; the
-              deterministic sentence is vaguer and always true. */}
-          <p className="hm-lede">
-            {named?.confident ? `Looks like you are working on ${named.subject}.` : offer.sentence}
-          </p>
-          <p className="hm-note">{offer.because}</p>
-          <p className="hm-note">
-            Nothing has been recorded. What Propositum saw is held in memory for half an hour and
-            thrown away unless you say yes &mdash; and it never included the words on the page.
-          </p>
-
-          {backOn === null ? (
-            <div className="hm-acts">
-              <form action={carryOn}>
-                <button className="hm-submit hm-submit-primary" type="submit">
-                  {'Set this up for me'}
-                </button>
-              </form>
-              <form action={notNow}>
-                <input type="hidden" name="origin" value={offer.origin} />
-                <button className="hm-submit" type="submit">
-                  Not now
-                </button>
-              </form>
-            </div>
-          ) : (
+          {/* A session is live. One line, and the way into it. The offer cannot
+              appear beside this — `noticed` is empty while anything is being
+              captured — so the two are alternatives rather than a stack. */}
+          {running ? (
             <>
-              {/* Filing is a decision Propositum made, so it is stated before it
-                  is acted on — and the way out of it is beside it, not buried
-                  on the screen you land on afterwards. */}
-              <div className="hm-back-on">
-                <p className="hm-note" style={{ marginTop: 0 }}>
-                  Looks like you are back on
-                </p>
-                <p className="hm-back-on-name">{backOn.name}</p>
-                <p className="hm-back-on-meta">
-                  {backOn.sittings} {backOn.sittings === 1 ? 'sitting' : 'sittings'} &middot;{' '}
-                  {backOn.sources} {backOn.sources === 1 ? 'source' : 'sources'} &middot;{' '}
-                  {backOn.documents} {backOn.documents === 1 ? 'document' : 'documents'} &middot;{' '}
-                  {backOn.overlap} {backOn.overlap === 1 ? 'word' : 'words'} in common
-                </p>
-              </div>
-
-              <div className="hm-acts">
-                <form action={carryOn}>
-                  <button className="hm-submit hm-submit-primary" type="submit">
-                    Carry on with it
-                  </button>
-                </form>
-                <form action={asNewWork}>
-                  <button className="hm-submit" type="submit">
-                    No &mdash; this is new work
-                  </button>
-                </form>
-                <form action={notNow}>
-                  <input type="hidden" name="origin" value={offer.origin} />
-                  <button className="hm-submit" type="submit">
-                    Not now
-                  </button>
-                </form>
-              </div>
-            </>
-          )}
-        </Section>
-      )}
-
-      <Section title="What Propositum has picked out" index={offer ? 3 : 2}>
-        {identified.length === 0 ? (
-          <Empty
-            title="Nothing yet."
-            next="There is nothing to set up. Go and read about something for a while — when the same subject turns up across a few sites, Propositum will say so and offer to pick it up."
-          />
-        ) : (
-          identified.map((work) => (
-            <div className="hm-row" key={work.id}>
-              <div>
-                <Link className="hm-name" href={`/projects/${work.id}`}>
-                  {work.name}
-                </Link>
-                <p className="hm-under">
-                  {work.lastSittingAt === null
-                    ? 'No sitting yet'
-                    : `${work.sittings} ${work.sittings === 1 ? 'sitting' : 'sittings'} · last ${when(work.lastSittingAt, now)}`}
-                </p>
-              </div>
-              <span className="hm-meta" data-live={running?.projectId === work.id ? 'true' : 'false'}>
-                {running?.projectId === work.id
-                  ? running.away
-                    ? 'working while you are away'
-                    : 'watching now'
-                  : work.phase === 'ended' || work.phase === null
-                    ? 'idle'
-                    : 'open, not being watched'}
+              <span className="hm-mark">
+                {running.away ? (
+                  <Away size={MARK_SIZE} pen={MARK_PEN} title="Away" />
+                ) : (
+                  <Watching size={MARK_SIZE} pen={MARK_PEN} title="Watching" />
+                )}
               </span>
-            </div>
-          ))
-        )}
-      </Section>
+              <h1 className="hm-say">
+                {running.away
+                  ? `Propositum is working on ${running.projectName} while you are away.`
+                  : `You started on ${running.projectName} at ${clock(running.startedAt)}, and Propositum is watching.`}
+              </h1>
+              <p className="hm-because">
+                <Link className="hm-link" href={`/projects/${running.projectId}`}>
+                  {running.away ? 'Take back control' : 'Open the session'}
+                </Link>
+              </p>
+            </>
+          ) : null}
 
-      <Section title="How this works" index={offer ? 4 : 3}>
-        <p className="hm-prose">
-          Propositum watches the sites you have let Chrome share with it and works out what you are
-          reading about. When a subject holds up across a few sites, it offers to pick it up &mdash;
-          and if you say yes it sets everything up itself. When you step away, hand it over inside a
-          working agreement you write and accept; when you come back, read what changed and decide.
-        </p>
-        <p className="hm-aside">
-          <Handover size={14} title="Handed over" /> Nothing is recorded until you accept an offer,
-          and only you can end a session.
-        </p>
-      </Section>
+          {/* Nothing running, nothing noticed, and nothing waiting — the screen
+              most days. An empty screen has to say what is true and what will
+              happen, or it reads as something that failed to load. */}
+          {!running && strands.length === 0 && waiting.length === 0 ? (
+            <>
+              <span className="hm-mark">
+                <Watching size={MARK_SIZE} pen={MARK_PEN} title="Watching" />
+              </span>
+              <h1 className="hm-say">Nothing yet.</h1>
+              <p className="hm-then">
+                Go and read about something for a while. When the same subject turns up across a few
+                sites, Propositum will say so here and offer to pick it up.
+              </p>
+            </>
+          ) : null}
+
+          {/* Nothing noticed, but shifts finished — and this is a DIFFERENT
+              screen, which is the whole reason it is a separate branch.
+
+              The empty box used to be gated on `strands.length === 0` alone, so
+              "Nothing yet. / Go and read about something for a while." rendered
+              directly above a list of finished shifts that were waiting on the
+              person. Both halves were wrong at once: a false statement about
+              our own state, and the wrong instruction at the exact moment
+              Propositum is blocked on them rather than the other way round. */}
+          {!running && strands.length === 0 && waiting.length > 0 ? (
+            <>
+              <span className="hm-mark">
+                <Away size={MARK_SIZE} pen={MARK_PEN} title="While you were away" />
+              </span>
+              <h1 className="hm-say">Nothing new.</h1>
+              <p className="hm-then">
+                {countWordCapped(waiting.length)}{' '}
+                {waiting.length === 1 ? 'shift' : 'shifts'} finished while you were away, just
+                below. Propositum will offer again when the same subject turns up across a few
+                sites.
+              </p>
+            </>
+          ) : null}
+
+          {strands.length > 0 ? (
+            <div className={strands.length > 1 ? 'hm-offer hm-offer-many' : 'hm-offer'}>
+              {/* One mark, and it belongs to whichever sentence leads.
+
+                  With one strand that is the proposal, so the mark is the
+                  handover arrow and it sits immediately above it. With several,
+                  the leading sentence is the COUNT — and the mark for noticing
+                  is the eye, above the sentence that says what was noticed.
+
+                  It used to be the arrow in both cases, sitting above the
+                  one-at-a-time caveat with three proposals a hundred pixels
+                  below, so a mark labelled "Propositum can take this on" named
+                  nothing on the screen and the first thing after the wordmark
+                  was a caveat about a decision the reader had not been shown. */}
+              {strands.length > 1 ? (
+                <>
+                  <span className="hm-mark">
+                    <Watching
+                      size={MARK_SIZE}
+                      pen={MARK_PEN}
+                      title={`Propositum noticed ${countWord(strands.length)} subjects`}
+                    />
+                  </span>
+                  <h1 className="hm-say">
+                    Propositum noticed {countWord(strands.length)} subjects while you were reading.
+                  </h1>
+                  {/* The fact that makes several buttons honest: only one
+                      session runs at a time, so saying yes to one lets the rest
+                      go. Said once, and said before any of them. */}
+                  <p className="hm-then hm-note">
+                    It watches one thing at a time, so saying yes to one of these lets the others
+                    go. Turning one down leaves the rest where they are.
+                  </p>
+                </>
+              ) : (
+                <span className="hm-mark">
+                  <Handover
+                    size={MARK_SIZE}
+                    pen={MARK_PEN}
+                    title="Propositum can take this on"
+                  />
+                </span>
+              )}
+
+              {strands.map((strand) => (
+                <div className="hm-strand" key={strand.signature}>
+                  {/* The named sentence only when the model was sure. A
+                      confident wrong name reads as Propositum knowing something
+                      it does not; the deterministic sentence is vaguer and
+                      always true.
+
+                      `h1` when this proposal IS the page and `h2` when the
+                      count above it is — the screen had no heading of any level
+                      at all after `Masthead` was dropped, which left the
+                      product's landing page with no document outline while
+                      every other screen still had one. */}
+                  <Say className="hm-say">
+                    {strand.named?.confident
+                      ? `Looks like you're working on ${strand.named.subject}.`
+                      : strand.sentence}
+                  </Say>
+                  <p className="hm-because">{strand.because}</p>
+
+                  {strand.backOn === null ? (
+                    <div className="hm-acts">
+                      <form action={carryOn}>
+                        <input type="hidden" name="thread" value={strand.signature} />
+                        <button className="hm-btn hm-btn-yes" type="submit">
+                          {'Set this up for me'}
+                        </button>
+                      </form>
+                      <form action={notNow}>
+                        <input type="hidden" name="thread" value={strand.signature} />
+                        <button className="hm-btn" type="submit">
+                          Not now
+                        </button>
+                      </form>
+                    </div>
+                  ) : (
+                    <>
+                      {/* Filing is a decision Propositum made, so it is stated
+                          before it is acted on — and the way out of it is the
+                          button beside it, not something buried on the screen
+                          you land on afterwards.
+
+                          Which is why the project's name is not in the same
+                          mono grey as the evidence line above it any more. It
+                          was, and that made the one thing a person has to read
+                          before pressing "Carry on with it" — WHICH EXISTING
+                          PROJECT their afternoon is about to be merged into —
+                          the quietest text in its own offer. The counts stay
+                          mono, because counts are evidence. */}
+                      <p className="hm-filed">
+                        Looks like you&apos;re back on{' '}
+                        <span className="hm-filed-name">{strand.backOn.name}</span>.
+                      </p>
+                      <p className="hm-because">
+                        {strand.backOn.sittings}{' '}
+                        {strand.backOn.sittings === 1 ? 'sitting' : 'sittings'} so far,{' '}
+                        {strand.backOn.overlap}{' '}
+                        {strand.backOn.overlap === 1 ? 'word' : 'words'} in common.
+                      </p>
+
+                      <div className="hm-acts">
+                        <form action={carryOn}>
+                          <input type="hidden" name="thread" value={strand.signature} />
+                          <button className="hm-btn hm-btn-yes" type="submit">
+                            Carry on with it
+                          </button>
+                        </form>
+                        <form action={asNewWork}>
+                          <input type="hidden" name="thread" value={strand.signature} />
+                          <button className="hm-btn" type="submit">
+                            No &mdash; this is new work
+                          </button>
+                        </form>
+                        <form action={notNow}>
+                          <input type="hidden" name="thread" value={strand.signature} />
+                          <button className="hm-btn" type="submit">
+                            Not now
+                          </button>
+                        </form>
+                      </div>
+                    </>
+                  )}
+                </div>
+              ))}
+
+              {/* The last line of the offer, not a section under it. Nothing is
+                  recorded until the person says yes, and the moment they are
+                  deciding is the moment that is worth saying. */}
+              <p className="hm-because hm-foot">
+                Nothing has been recorded. Propositum holds what it saw for half an hour and throws
+                it away unless you say yes.
+              </p>
+            </div>
+          ) : null}
+
+          {/* The only thing below the offer, and only when something is
+              actually waiting. "While you were away" is the masthead of the
+              screen it opens and the wording of every other link that reaches
+              it — a second phrase for one destination is two places to look for
+              one thing.
+
+              ── Why there is no status word on this row any more ────────────
+
+              There was: `<name> · Needs you   While you were away`. `waiting`
+              is filtered to `state === 'needs-you'` three lines up, so the word
+              could only ever be *Needs you* — the four other lifecycle words
+              were unreachable from here — and the row already said the same
+              thing twice over on its right-hand side. A call whose result the
+              caller has constant-folded is not a rendering of a derivation; it
+              is decoration that a reachability grep cannot tell from one.
+
+              The obvious alternative is worse and is worth naming so nobody
+              tries it: dropping the `needs-you` half of the filter and letting
+              the word distinguish the rows would list projects where NOTHING is
+              waiting, because `factsForEveryProject` falls back to
+              `contracts[0].id` — `waitingContractId` is non-null for any
+              Intention with an accepted contract. Every one of those rows would
+              be labelled "While you were away" and open a note with nothing in
+              it for the person to do. */}
+          {waiting.length > 0 ? (
+            <div className="hm-waits">
+              {waiting.map((work) => (
+                <Link
+                  className="hm-wait"
+                  key={work.id}
+                  href={`/shifts/${work.waitingContractId}`}
+                >
+                  <span>{work.name}</span>
+                  <span className="hm-wait-go">While you were away</span>
+                </Link>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      </div>
     </Sheet>
   )
 }

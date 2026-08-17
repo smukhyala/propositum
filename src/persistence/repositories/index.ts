@@ -32,14 +32,27 @@
 
 import type { Prisma, PrismaClient } from '@prisma/client'
 import { guarded } from '../errors'
+// The one domain import in this file, and it is here rather than re-derived so
+// that `held` has a single reader. `isDecidable` is a pure two-line predicate
+// that argues its own direction — `=== 'held'` rather than `!== 'landed'`, so a
+// reversibility nobody has seen before is reported rather than waved through —
+// and `trajectory()` needs exactly that direction, because the value it decides
+// is whether a row enters the MVP's headline denominator. A second copy of the
+// string here is how the two would eventually disagree about that.
+import { isDecidable } from '../../domain/outcome/shift-outcome'
 
 export interface Repositories {
+  readonly intentions: IntentionRepository
   readonly projects: ProjectRepository
   readonly sessions: WorkSessionRepository
   readonly events: ObservationEventReader
   readonly readings: SessionReadingRepository
   readonly contracts: HandoffContractRepository
   readonly runs: AgentRunRepository
+  /** Beside `runs` because a model call points at one when there is one, and at
+   *  nothing when there is not. Never in the ledger a person READS — ADR-0005:
+   *  a model call is not an action the person authorized. */
+  readonly modelCalls: ModelCallRecordRepository
   readonly documents: DocumentRepository
   readonly changesets: ChangesetRepository
   readonly findings: ReviewFindingRepository
@@ -53,12 +66,14 @@ export interface Repositories {
 
 export function createRepositories(prisma: PrismaClient): Repositories {
   return {
+    intentions: intentionRepository(prisma),
     projects: projectRepository(prisma),
     sessions: workSessionRepository(prisma),
     events: observationEventReader(prisma),
     readings: sessionReadingRepository(prisma),
     contracts: handoffContractRepository(prisma),
     runs: agentRunRepository(prisma),
+    modelCalls: modelCallRecordRepository(prisma),
     documents: documentRepository(prisma),
     changesets: changesetRepository(prisma),
     findings: reviewFindingRepository(prisma),
@@ -80,6 +95,336 @@ export function createRepositories(prisma: PrismaClient): Repositories {
  * for `attested` — or names its element type.
  */
 export type JsonObject = Record<string, unknown>
+
+/* ── Intention ─────────────────────────────────────────────────────────── */
+
+/** What one Intention holds. `IntentionState` is NOT here and never will be —
+ *  it is computed by `src/domain/intention/state.ts` from rows, and a column
+ *  would be a second store for the same truth. */
+export interface StoredIntention {
+  readonly id: string
+  readonly projectId: string | null
+  readonly objective: string
+  readonly definitionOfDone: string
+  readonly completedAt: Date | null
+}
+
+/**
+ * A Shift is still going while any of its runs is in one of these.
+ *
+ * The same three `src/app/shifts/[contractId]/page.tsx` calls `live`, written
+ * down once so the front door and the re-entry note cannot disagree about
+ * whether a shift has ended. The four that are absent are terminal:
+ * `succeeded`, `failed`, `interrupted`, and `awaiting-confirmation` — which is
+ * terminal FOR THE RUN and is not a finished shift.
+ *
+ * That last one is the interesting exclusion. A run parked on a question always
+ * leaves an unanswered `ConfirmationRequest` behind it, and `intentionState`
+ * ranks that above `delegated` — so counting it here would change nothing while
+ * the question still stands, and would be wrong once it expires: the run has
+ * ended, nobody can answer it any more, and *Propositum is on it* would be the
+ * most confident thing the screen could possibly say about that.
+ */
+const LIVE_RUN_STATUSES: ReadonlySet<string> = new Set(['pending', 'claimed', 'running'])
+
+/**
+ * Everything `intentionState()` needs about one Intention, as rows.
+ *
+ * Deliberately not an `IntentionFacts` — that type lives in `src/domain` and is
+ * epoch milliseconds and counts, and the domain may not learn that Prisma
+ * exists. This is the row-shaped half; the caller does the arithmetic on the
+ * two fields where only the caller knows the answer (see `openSessions`).
+ */
+export interface IntentionStateFacts {
+  readonly intentionId: string
+  /** Never null: intentions with no Project are filtered out, because the
+   *  screen that reads this lists projects. */
+  readonly projectId: string
+  /** Set by a person, and only by a person. The whole of `done`. */
+  readonly completedAt: Date | null
+  /**
+   * WorkSessions on this Intention that no human has ended, with their phase.
+   *
+   * The PHASES are not summarised here, and that is the point of returning the
+   * ids beside them. A row saying `observing` means a human started a sitting
+   * and no human ended it; it does not mean anything is being captured, and
+   * only the app process holding the capture store knows which of these it is
+   * actually feeding. Answering that here would mean this file inventing a fact
+   * it cannot see.
+   */
+  readonly openSessions: ReadonlyArray<{ id: string; phase: string }>
+  /** Accepted HandoffContracts whose Shift has not ended — `LIVE_RUN_STATUSES`. */
+  readonly liveAcceptedContracts: number
+  /** When each unanswered `ConfirmationRequest` was asked. Unanswered means no
+   *  `ConfirmationVerdict` of any kind; expiry is the domain's to apply. */
+  readonly unansweredConfirmationsAskedAt: readonly Date[]
+  /**
+   * `DecisionNeeded` rows this reader can say are still open — **which is none
+   * of them, and always zero. Amended 2026-08-16; the count was live for one
+   * wave and is the reason this docblock is long.**
+   *
+   * The count was `contract.report.decisions.length` over every accepted
+   * contract, all-time. `intentionState` ranks `openDecisions > 0` above every
+   * other member, so one question raised by one Shift put *Needs you* on that
+   * Project's front door **permanently** — with a *While you were away* link to
+   * a note where nothing can be done about it. That is the failure the docblock
+   * one function up already names for outcomes, reproduced for decisions.
+   *
+   * ── Why it cannot be fixed by counting better ────────────────────────────
+   *
+   * There is nothing to count. A `DecisionNeeded` has `question`, `whyStopped`,
+   * `needs` and `ordinal` and no answered, resolved or verdict column; nothing
+   * deletes one; `ShiftReport.contractId` is `@unique` and `reports.create` is
+   * its only writer; a `HandoffContract` only ever moves `draft → accepted`, so
+   * it never leaves the filter. The one affordance that looks like an answer —
+   * *settle* on the re-entry note — is client-only React state whose own copy
+   * says so: *"Propositum doesn't keep your answer — settling this only unlocks
+   * accepting the changes together."*
+   *
+   * Every gate that would make the count clearable turns out to be a gate on
+   * something ELSE being undecided, which `undecidedHeldOutcomes` already
+   * answers — so the count would never change an answer it did not already
+   * agree with. A field whose only honest value is zero is reported as zero,
+   * where a reader can see the reasoning, rather than silently dropped.
+   *
+   * ── What this costs, stated rather than rounded up ───────────────────────
+   *
+   * A Shift that stopped to ask a question and produced nothing else now reads
+   * `sleeping` on the front door and offers no link to its note. That is a
+   * MISSED `needs-you`, and ADR-0011 is explicit that a missed one is the
+   * expensive direction. It is taken because the alternative was a `needs-you`
+   * that is never right again after the first question — a status word that is
+   * always on is a status word nobody reads, and it would be wrong on every
+   * look rather than on one.
+   *
+   * **What would undo this:** a durable human act on the note. `finishShift`
+   * refuses outright when a Shift produced nothing (*"There is nothing waiting
+   * on you"*) and writes no marker of its own for the cases it does accept, so
+   * the fix is a row that says the person has been here — `ShiftReport`
+   * gaining a `finishedAt` a server action writes, or `DecisionNeeded` gaining
+   * the human answer this vocabulary has three of already. Both are a schema
+   * change plus a screen, which is a workstream and not a line.
+   */
+  readonly openDecisions: number
+  /** Held ShiftOutcomes still undecided — the `UNSETTLED` predicate, counted. */
+  readonly undecidedHeldOutcomes: number
+  /**
+   * The re-entry note to open when something is waiting: the newest accepted
+   * contract carrying a decision, an unanswered confirmation or an undecided
+   * outcome — and failing that, simply the newest accepted contract.
+   *
+   * An EXPIRED confirmation still counts toward *which* note this is, though it
+   * counts toward nothing about whether anything is waiting at all. That is
+   * deliberate: applying the expiry rule here would put it in a second place,
+   * and the note is the right place to land either way. A `DecisionNeeded`
+   * counts here for the same reason and on the same terms: it decides which
+   * note is worth opening, and decides nothing about whether one is.
+   */
+  readonly waitingContractId: string | null
+}
+
+/**
+ * The Intention: durable, mutable, and written only because a person said so.
+ *
+ * ── Narrower than `ProjectRepository`, on purpose ────────────────────────
+ *
+ * There is no `complete`, no `revise` and no `delete` here yet. Every one of
+ * those is a HUMAN act with no screen behind it — the correction channel is
+ * rewriting the sentence, and the surface that offers that is a later
+ * workstream's. A repository method with no caller is the exact shape of the
+ * three defects `tests/reachability.test.ts` opens with, so they arrive with
+ * the screen that calls them rather than ahead of it.
+ *
+ * `byId` was here and is gone, which is that paragraph applied to itself: it
+ * was called by its own test and by nothing in `src/`, so it was the shape it
+ * was written to argue against. It comes back with the screen that reads it.
+ * Note for whoever writes `delete`: `HandoffContract.intention` is
+ * `onDelete: Restrict`, so an Intention any contract points at cannot be
+ * deleted — the limit is argued at that relation in `prisma/schema.prisma`.
+ *
+ * What is absent structurally rather than for now: nothing here takes a model
+ * output, a claim, an event or a reading. There is no argument any inference
+ * could be passed through — the same bar `WorkOffer` stands behind.
+ */
+export interface IntentionRepository {
+  /**
+   * A person stated one. That is the only reason this ever runs.
+   *
+   * The two strings come from somewhere a person clicked accept on; nothing in
+   * this file can tell where, which is why the human-ratified rule lives at the
+   * one call site and is argued there.
+   */
+  create(input: {
+    projectId: string | null
+    objective: string
+    definitionOfDone: string
+  }): Promise<StoredIntention>
+  /**
+   * The Project's Intention, or null. Singular by ADR-0011: at most one per
+   * Project, held as a unique index rather than as a convention.
+   *
+   * This is what stops the writer minting a second one when a sitting joins a
+   * project that already has an Intention — the constraint would refuse it
+   * anyway, and finding the existing row is the answer rather than the error.
+   */
+  forProject(projectId: string): Promise<StoredIntention | null>
+  /**
+   * Every Intention's state facts, for every Project, in one pass.
+   *
+   * ── Why this exists, when nothing else here crosses a parent ─────────────
+   *
+   * It is the only cross-parent reader in this file, and it earns that by
+   * arithmetic rather than by taste. Every other reader is single-parent —
+   * `contracts.acceptedForSession`, `changesets.forContract`,
+   * `outcomes.forContract`, `confirmations.pendingForRun` — because every other
+   * caller holds one parent id. The front door holds N of them: it lists every
+   * Project, and `intentionState` needs five separate facts per Intention.
+   * Composed out of the single-parent readers, the honest version of Home is
+   * four round trips per project — sessions, contracts, confirmations,
+   * outcomes — which is 4N queries on the most-hit route in the product, and
+   * the route whose entire content is that list. It would get slower every time
+   * Propositum identified something, which is the wrong direction for the one
+   * screen whose job is to show that Propositum has been identifying things.
+   *
+   * So: one method, one nested read, and the cost is flat in the number of
+   * projects. Prisma resolves the nesting as a small fixed number of queries —
+   * one per relation level — not one per row.
+   *
+   * ── No parameter, and that is not laziness ───────────────────────────────
+   *
+   * It could take the project ids Home already has. It does not, because that
+   * list grows one bound variable per project and this file has already been
+   * bitten by exactly that: `sweepSettledRuns` is written as a relation filter
+   * rather than an id list, on the argument that the failure "arrives late, on
+   * the machine with the most history". A front door that starts throwing when
+   * somebody has read about enough things is the same bug wearing a nicer hat.
+   *
+   * ── What it deliberately does NOT answer ─────────────────────────────────
+   *
+   * Which sittings are actually being captured. See `openSessions`.
+   */
+  factsForEveryProject(): Promise<IntentionStateFacts[]>
+}
+
+function intentionRepository(prisma: PrismaClient): IntentionRepository {
+  const SELECT = {
+    id: true,
+    projectId: true,
+    objective: true,
+    definitionOfDone: true,
+    completedAt: true,
+  } as const
+
+  return {
+    create: ({ projectId, objective, definitionOfDone }) =>
+      prisma.intention.create({
+        data: { projectId, objective, definitionOfDone },
+        select: SELECT,
+      }),
+    forProject: (projectId) => prisma.intention.findUnique({ where: { projectId }, select: SELECT }),
+
+    factsForEveryProject: async () => {
+      /**
+       * `UNSETTLED` is declared beside the evidence sweep, a thousand lines
+       * further down this file, and is read here rather than re-derived.
+       *
+       * Its own docblock says why that matters: *"this is the one place that
+       * has to learn about it, and getting it wrong is silent"*. The predicate
+       * is not the obvious one — four of the five outcome kinds are settled by
+       * an `OutcomeVerdict` and `document-changes` never receives one at all,
+       * so the naive *"held with no verdict"* counts every document Shift as
+       * waiting forever. A second copy of that would put *Needs you* on the
+       * front door, permanently, for work the person finished weeks ago.
+       *
+       * Declaration order is not a hazard: this closure runs when a caller
+       * invokes the method, long after the module has finished evaluating.
+       */
+      const rows = await prisma.intention.findMany({
+        // A Project is what the front door lists. An Intention with no Project
+        // is legal in the schema and has no row on any screen to sit beside.
+        where: { projectId: { not: null } },
+        select: {
+          id: true,
+          projectId: true,
+          completedAt: true,
+          sessions: { where: { endedAt: null }, select: { id: true, phase: true } },
+          contracts: {
+            where: { status: 'accepted', acceptedAt: { not: null } },
+            // Newest first, so the first contract carrying a question is the
+            // one `waitingContractId` should open.
+            orderBy: { acceptedAt: 'desc' },
+            select: {
+              id: true,
+              runs: {
+                select: {
+                  status: true,
+                  confirmations: { where: { verdict: { is: null } }, select: { createdAt: true } },
+                  outcomes: { where: UNSETTLED, select: { id: true } },
+                },
+              },
+              report: { select: { decisions: { select: { id: true } } } },
+            },
+          },
+        },
+      })
+
+      const facts: IntentionStateFacts[] = []
+
+      for (const row of rows) {
+        // Non-null by the WHERE above; the generated type does not know that,
+        // so it is narrowed rather than asserted — `acceptedForSession` makes
+        // the same move for the same reason.
+        if (row.projectId === null) continue
+
+        let liveAcceptedContracts = 0
+        let undecidedHeldOutcomes = 0
+        const unansweredConfirmationsAskedAt: Date[] = []
+        let waitingContractId: string | null = null
+
+        for (const contract of row.contracts) {
+          let live = false
+          // Toward WHICH note, never toward whether one is waiting. Nothing can
+          // clear a `DecisionNeeded`, so counting it into `openDecisions` pins
+          // *Needs you* on this Project for good — the argument is at
+          // `IntentionStateFacts.openDecisions` and it is longer than this line
+          // because it ends in a cost rather than in a fix.
+          let waitingHere = contract.report === null ? 0 : contract.report.decisions.length
+
+          for (const run of contract.runs) {
+            if (LIVE_RUN_STATUSES.has(run.status)) live = true
+
+            for (const request of run.confirmations) {
+              unansweredConfirmationsAskedAt.push(request.createdAt)
+            }
+            waitingHere += run.confirmations.length
+
+            undecidedHeldOutcomes += run.outcomes.length
+            waitingHere += run.outcomes.length
+          }
+
+          if (live) liveAcceptedContracts += 1
+          if (waitingContractId === null && waitingHere > 0) waitingContractId = contract.id
+        }
+
+        facts.push({
+          intentionId: row.id,
+          projectId: row.projectId,
+          completedAt: row.completedAt,
+          openSessions: row.sessions.map((sitting) => ({ id: sitting.id, phase: sitting.phase })),
+          liveAcceptedContracts,
+          unansweredConfirmationsAskedAt,
+          // Zero, always, and the field is kept rather than removed so the
+          // reasoning has somewhere to live. See its docblock.
+          openDecisions: 0,
+          undecidedHeldOutcomes,
+          waitingContractId: waitingContractId ?? row.contracts[0]?.id ?? null,
+        })
+      }
+
+      return facts
+    },
+  }
+}
 
 /* ── Project ───────────────────────────────────────────────────────────── */
 
@@ -160,8 +505,19 @@ function projectRepository(prisma: PrismaClient): ProjectRepository {
 export type SessionPhase = 'observing' | 'away' | 'ended'
 
 export interface WorkSessionRepository {
-  start(projectId: string): Promise<{ id: string; phase: string }>
-  byId(id: string): Promise<{ id: string; projectId: string; phase: string; endedAt: Date | null } | null>
+  /**
+   * `intentionId` is optional and last, so every existing caller keeps working
+   * and a sitting nobody stated an Intention for gets the honest null rather
+   * than a placeholder row.
+   */
+  start(projectId: string, intentionId?: string | null): Promise<{ id: string; phase: string }>
+  byId(id: string): Promise<{
+    id: string
+    projectId: string
+    intentionId: string | null
+    phase: string
+    endedAt: Date | null
+  } | null>
   forProject(projectId: string): Promise<Array<{ id: string; phase: string; startedAt: Date }>>
   /** Explicit transitions only — no generic setter, so the lifecycle stays
    *  readable and an illegal jump has nowhere to hide. */
@@ -181,8 +537,24 @@ export interface WorkSessionRepository {
    * history to tidy a filing decision is exactly what append-only is for
    * refusing. The caller carries those origins across as approvals on the
    * destination instead, so what Propositum may see is right going forward.
+   *
+   * ── Why `intentionId` is REQUIRED here and not optional ──────────────────
+   *
+   * An Intention belongs to a Project — `Intention.projectId` is `@unique` — so
+   * a move that does not answer this question leaves the sitting pointing at
+   * the OLD project's Intention, and `draftContract` then stamps that
+   * cross-project id onto the new project's HandoffContract. That is exactly
+   * the failure CONTEXT.md's cross-session ruling names: an objective inherited
+   * quietly, on a screen that says nothing about having inherited it. It is
+   * worse here than the cold read that ruling compared it to, because the
+   * person pressing the button has just said *this is not that work*.
+   *
+   * Required rather than defaulted, so the answer is a decision at each call
+   * site instead of whatever a default happened to be: `null` where nobody has
+   * stated an Intention for the destination, and the destination's own
+   * Intention where somebody has.
    */
-  refile(id: string, projectId: string): Promise<void>
+  refile(id: string, projectId: string, intentionId: string | null): Promise<void>
 }
 
 function workSessionRepository(prisma: PrismaClient): WorkSessionRepository {
@@ -191,12 +563,15 @@ function workSessionRepository(prisma: PrismaClient): WorkSessionRepository {
   }
 
   return {
-    start: (projectId) =>
-      prisma.workSession.create({ data: { projectId }, select: { id: true, phase: true } }),
+    start: (projectId, intentionId) =>
+      prisma.workSession.create({
+        data: { projectId, intentionId: intentionId ?? null },
+        select: { id: true, phase: true },
+      }),
     byId: (id) =>
       prisma.workSession.findUnique({
         where: { id },
-        select: { id: true, projectId: true, phase: true, endedAt: true },
+        select: { id: true, projectId: true, intentionId: true, phase: true, endedAt: true },
       }),
     forProject: (projectId) =>
       prisma.workSession.findMany({
@@ -206,8 +581,8 @@ function workSessionRepository(prisma: PrismaClient): WorkSessionRepository {
       }),
     markAway: (id) => setPhase(id, 'away'),
     markObserving: (id) => setPhase(id, 'observing'),
-    refile: async (id, projectId) => {
-      await prisma.workSession.update({ where: { id }, data: { projectId } })
+    refile: async (id, projectId, intentionId) => {
+      await prisma.workSession.update({ where: { id }, data: { projectId, intentionId } })
     },
     end: async (id, endedAt) => {
       await prisma.workSession.update({ where: { id }, data: { phase: 'ended', endedAt } })
@@ -366,6 +741,22 @@ function sessionReadingRepository(prisma: PrismaClient): SessionReadingRepositor
 export interface ContractInput {
   readonly sessionId: string
   readonly readingId: string
+  /**
+   * Which Intention this contract advances. NULL is ordinary — a contract with
+   * no Intention behind it is legal and is what every contract written before
+   * ADR-0011 has.
+   *
+   * It grants nothing and the gate never reads it. It must be supplied HERE,
+   * at draft time: `handoff_contract_frozen_once_accepted` permits an UPDATE
+   * only while `status = 'draft'`, so there is no later moment to write it in.
+   *
+   * Optional rather than required, which is a decision and not laziness. Every
+   * contract that already exists has no Intention and none are backfilled, so
+   * making this required would be a demand that eight fixtures invent a value
+   * the product does not have — and an invented value on a durable row about
+   * purpose is the one thing this table exists not to hold.
+   */
+  readonly intentionId?: string | null
   readonly objective: string
   readonly definitionOfDone: string
   readonly guidance: readonly string[]
@@ -418,7 +809,54 @@ export interface HandoffContractRepository {
    *  the deadline, so a crash-restart cannot reset the budget. */
   accept(id: string, acceptedAt: Date): Promise<void>
   editDraft(id: string, patch: Partial<Pick<ContractInput, 'objective' | 'definitionOfDone' | 'timeLimitMinutes'>>): Promise<void>
+  /**
+   * Shifts that are over and produced nothing a person could decide on.
+   *
+   * ── The hole this exists to close ────────────────────────────────────────
+   *
+   * `outcomes.trajectory()` reads productions: `ShiftOutcome` rows and pre-spine
+   * `Changeset`s. A Shift that produced NEITHER contributes no rows, so it is
+   * invisible to the metric — and docs/MVP.md names that exact case as an H2
+   * failure: *"a run producing zero decidable units under `draft-changes` is a
+   * failure and scores 0%."* Read off productions alone, a corpus of barren
+   * draft-changes Shifts reports the flattering *no decidable units yet*
+   * instead. The error was in the direction that flatters the product, which is
+   * the direction a metric must never be wrong in.
+   *
+   * The spine here is therefore the accepted CONTRACT rather than the
+   * production, which is the only object that exists whether or not the Shift
+   * made anything.
+   *
+   * ── Why `awaiting-confirmation` does not count as over ───────────────────
+   *
+   * It is terminal for the RUN and is not the end of the Shift: the gate
+   * refused an action that needs the person, and a successor run carrying
+   * `resumesRunId` continues from there if they confirm. A Shift parked there
+   * has not finished and has not produced zero — it is waiting on somebody.
+   * `LIVE_RUN_STATUSES` alone would get this wrong, which is why the filter
+   * below names four statuses rather than reusing that set.
+   *
+   * ── `ranToACleanStop`, and why the caller needs it ───────────────────────
+   *
+   * MVP.md's rule is about *a run producing zero*, not about a run that never
+   * got to the end. A Shift whose runs all ended `failed` or `interrupted` did
+   * not produce zero decidable units; it did not finish. Scoring those as the
+   * 0% failure would report *the useful-progress window is empty — stop and
+   * reconsider the product* for an expired API key. So the two are separated
+   * here and the caller decides, rather than this reader deciding by omission.
+   */
+  barrenShifts(): Promise<
+    Array<{ contractId: string; outputMode: string; ranToACleanStop: boolean }>
+  >
 }
+
+/**
+ * A run status that means this run is not coming back — and that its Shift is
+ * genuinely over, which is the narrower claim.
+ *
+ * `awaiting-confirmation` is deliberately absent. See `barrenShifts`.
+ */
+const ENDED_RUN_STATUSES: readonly string[] = ['succeeded', 'failed', 'interrupted']
 
 function handoffContractRepository(prisma: PrismaClient): HandoffContractRepository {
   const asStrings = (value: unknown): string[] => (Array.isArray(value) ? (value as string[]) : [])
@@ -464,6 +902,46 @@ function handoffContractRepository(prisma: PrismaClient): HandoffContractReposit
       await guarded('handoff_contract', 'update', () =>
         prisma.handoffContract.update({ where: { id }, data: patch }),
       )
+    },
+
+    barrenShifts: async () => {
+      const contracts = await prisma.handoffContract.findMany({
+        where: {
+          status: 'accepted',
+          acceptedAt: { not: null },
+          // A Shift with no run at all was accepted and never picked up. It is
+          // not barren; it has not started.
+          runs: { some: {}, none: { status: { notIn: [...ENDED_RUN_STATUSES] } } },
+          // The pre-spine production, on the contract rather than on the run.
+          // A contract with one is in `trajectory()` already.
+          changesets: { none: {} },
+        },
+        orderBy: { acceptedAt: 'asc' },
+        select: {
+          id: true,
+          output: true,
+          runs: { select: { status: true, outcomes: { select: { id: true } } } },
+        },
+      })
+
+      const barren: Array<{ contractId: string; outputMode: string; ranToACleanStop: boolean }> = []
+
+      for (const contract of contracts) {
+        // Filtered here rather than as `runs: { none: { outcomes: { some: {} } } }`
+        // so the shape being tested is the one the caller reads: this Shift, in
+        // total, produced nothing.
+        let produced = 0
+        let clean = false
+        for (const run of contract.runs) {
+          produced += run.outcomes.length
+          if (run.status === 'succeeded') clean = true
+        }
+        if (produced > 0) continue
+
+        barren.push({ contractId: contract.id, outputMode: contract.output, ranToACleanStop: clean })
+      }
+
+      return barren
     },
   }
 }
@@ -689,6 +1167,90 @@ function agentRunRepository(prisma: PrismaClient): AgentRunRepository {
       })
       return count === 1
     },
+  }
+}
+
+/* ── ModelCallRecord ───────────────────────────────────────────────────── */
+
+/**
+ * The telemetry table's only writer, and its first one.
+ *
+ * ── What was here before ─────────────────────────────────────────────────
+ *
+ * `model_call_record` has had a table and all three append-only triggers since
+ * ADR-0003 and NO WRITER. `AnthropicModelClient` computed every field of it on
+ * every attempt, handed them to an `onCall` hook nothing passed, and dropped
+ * them. This interface is the other end of that hook; `src/model/provider.ts`
+ * is what connects the two.
+ *
+ * ── Write only, and no `guarded()` ───────────────────────────────────────
+ *
+ * There is no read method, because nothing reads it yet and this file's rule is
+ * that every method has a caller or an imminent one. A cost report and an H2
+ * tally are the obvious ones and neither is built.
+ *
+ * `guarded()` wraps update, delete and upsert — the operations the triggers
+ * reject — and this table only ever receives inserts. The third trigger
+ * (`model_call_record_no_replace`) fires on an INSERT that reuses an existing
+ * id, which `@default(cuid())` cannot produce; if it ever did fire, the message
+ * would survive because nothing has a foreign key TO this table, so Prisma's
+ * P2003 remapping (see `../errors.ts`) has nothing to remap.
+ *
+ * ── This method does NOT swallow its own failures ────────────────────────
+ *
+ * A rejection here is a real rejection. The rule that a telemetry write must
+ * never fail the model call it describes is held in `src/model/provider.ts`,
+ * where the fire-and-forget call is made and where the difference between "this
+ * row was lost" and "this call failed" is still visible. Swallowing it here
+ * would apply that decision to every future caller — including a backfill or a
+ * test that genuinely wants to know the write failed.
+ *
+ * ── One row per ATTEMPT ──────────────────────────────────────────────────
+ *
+ * Including failures, per ADR-0005 — traceability that records only successes is
+ * not traceability. A repaired boundary call writes two rows. Anyone counting
+ * rows is counting attempts, and the arithmetic that turns those back into calls
+ * does not exist yet either.
+ */
+export interface ModelCallRecordRepository {
+  /**
+   * The input is written out here rather than imported from `src/model`.
+   *
+   * Neither layer imports the other today and one telemetry row is not a good
+   * enough reason to make this the first edge — the same trade `IntentionFacts`
+   * takes at the domain boundary, and the same looseness: `boundary`,
+   * `stopReason` and `failureKind` are `string` here and narrow unions there.
+   * The narrowing is the model layer's to own; the column is a `TEXT`.
+   *
+   * The check that keeps the two in step is `npm run typecheck` at the call
+   * sites, and it is stronger in one direction than the other: a field added
+   * here fails every caller, a field removed here fails nobody and simply stops
+   * being recorded.
+   */
+  create(row: {
+    /** Null for the boundaries that run before any AgentRun exists — which is
+     *  four of the eight, including both that run with no session at all. */
+    runId: string | null
+    boundary: string
+    model: string
+    promptVersion: string
+    inputTokens: number
+    outputTokens: number
+    latencyMs: number
+    stopReason: string | null
+    /** Null means the attempt succeeded. */
+    failureKind: string | null
+    repairTurns: number
+  }): Promise<{ id: string }>
+}
+
+function modelCallRecordRepository(prisma: PrismaClient): ModelCallRecordRepository {
+  return {
+    create: (row) =>
+      prisma.modelCallRecord.create({
+        data: { ...row },
+        select: { id: true },
+      }),
   }
 }
 
@@ -1130,6 +1692,81 @@ export interface StoredShiftOutcome extends Omit<ShiftOutcomeInput, 'citedAction
   readonly createdAt: Date
 }
 
+/**
+ * One unit somebody either decided on, or was owed a decision on.
+ *
+ * ── What a unit is, and why it is not one row per outcome ────────────────
+ *
+ * `docs/MVP.md` defines H2's denominator as **decidable units**, and a unit is
+ * not the same size in every kind: a `document-changes` outcome is decided one
+ * `ProposedChange` at a time, and a `collection`, an `answer` or a
+ * `message-draft` is decided as a whole. So one ShiftOutcome yields either N
+ * units or one, and counting outcomes instead would make a run that proposed
+ * eight paragraphs and a run that answered one question weigh the same.
+ *
+ * ── `decidable`, not `landed`, and the difference is the default ─────────
+ *
+ * The rule this field exists for is that a `landed` outcome is **excluded from
+ * the denominator entirely** — not accepted, not rejected. Nobody was ever
+ * offered a verdict, so scoring it either way invents a judgment the person did
+ * not make, and counting it as accepted would let a run improve its acceptance
+ * rate by acting irreversibly.
+ *
+ * It is written as *is this decidable* rather than *did this land* so the
+ * default falls the safe way: a reversibility this reader has never seen is not
+ * decidable, so it stays OUT of the headline denominator instead of quietly
+ * entering it. The predicate is `isDecidable`, imported rather than re-spelt.
+ *
+ * ── What it does NOT carry ───────────────────────────────────────────────
+ *
+ * No `ActionEvidence`, and this is a constraint rather than an omission. The
+ * evidence sweep deletes a run's snapshots as soon as every held outcome is
+ * decided — which is exactly the moment a trajectory completes — so a reader
+ * built on evidence would go blank on precisely the runs it most wants to
+ * describe, and would look like an empty dataset rather than a deleted one.
+ * Everything here is a semantic row that outlives the sweep.
+ */
+export interface TrajectoryUnit {
+  /** The Shift this unit was produced under. A Shift is addressed by contract
+   *  everywhere a person can see it, so it is the id a reader can act on. */
+  readonly contractId: string
+  /**
+   * The Intention the contract advanced, or null.
+   *
+   * Null is the ordinary value and will stay that way for a long time:
+   * `HandoffContract.intentionId` is written at draft time only and **nothing
+   * backfills it**, so every Shift that ran before ADR-0011 carries a null and
+   * none can be given one — the frozen-once-accepted trigger permits an UPDATE
+   * only while the contract is still a draft. A report that read a low count
+   * here as "people are not stating intentions" would be reading the migration,
+   * not the person.
+   */
+  readonly intentionId: string | null
+  /** `HandoffContract.output` — `suggestions-only` | `draft-changes`. Carried
+   *  because H2 excuses a zero-unit run under one of them and fails it under
+   *  the other, and the mode is a property of the contract rather than of the
+   *  corpus. */
+  readonly outputMode: string
+  /** The ShiftOutcome, or null for a Changeset written before the outcome spine
+   *  existed. See `trajectory()` on why those are in here at all. */
+  readonly outcomeId: string | null
+  /** The ProposedChange, when the unit is one. Null for the kinds decided
+   *  whole. */
+  readonly changeId: string | null
+  /** May a person be offered a verdict on this at all. See the type docblock. */
+  readonly decidable: boolean
+  /** `accept` | `reject` | `edit`, or null while nobody has decided.
+   *
+   *  Deliberately the stored string rather than a union. This is a read of rows
+   *  written over months; narrowing it here would turn a value this reader does
+   *  not recognise into a type error at the wrong end, and the tally counts
+   *  those rather than crashing on them. */
+  readonly verdict: string | null
+  /** When the run produced it. The ordering key, and the only honest answer to
+   *  "over what window is this rate measured". */
+  readonly producedAt: Date
+}
+
 export interface ShiftOutcomeRepository {
   /**
    * Write a run's productions in one go.
@@ -1168,6 +1805,49 @@ export interface ShiftOutcomeRepository {
     verdict: 'accept' | 'reject' | 'edit'
     editedText?: string
   }): Promise<void>
+  /**
+   * Every decidable unit this database holds, oldest first, across every Shift.
+   *
+   * ── Why it exists ────────────────────────────────────────────────────────
+   *
+   * `ChangeVerdict`, `OutcomeVerdict` and `ConfirmationVerdict` have been
+   * append-only and trigger-guarded since ADR-0003, and until this method
+   * **nothing read any of them back as a dataset**. `docs/ARCHITECTURE.md`
+   * marks that layer *"data built, nothing reads it"*, and the concrete cost
+   * was that `scoreH2` had no production caller — so the MVP's own acceptance
+   * metric was defined, scored in unit tests, and **not computable from the
+   * database it was being collected in**.
+   *
+   * ── The second query, which is the part most likely to be deleted ────────
+   *
+   * The obvious spine is `ShiftOutcome`, and on its own it is WRONG here.
+   * `Changeset.outcomeId` is nullable and `Changeset.contractId` stays — the
+   * schema says so in as many words, because *"a document Shift that produces
+   * no ShiftOutcome — every one that has ever run — must keep working
+   * unchanged"*. Every changeset written before the outcome spine landed has a
+   * null `outcomeId`, so a reader that walked outcomes only would silently drop
+   * the entire pre-spine history of the ORIGINAL H2 denominator and report a
+   * confident rate over whatever came after. That failure has no symptom: the
+   * number arrives, it is a percentage, and it is measured over the wrong
+   * corpus. So there are two queries, and the second one is not an edge case.
+   *
+   * There is no double counting: the second query takes `outcomeId: null`, and
+   * a changeset the first query reached by definition has one.
+   *
+   * ── No parameter, and the same argument `factsForEveryProject` makes ─────
+   *
+   * The whole trajectory or nothing. Filtering by contract would mean a caller
+   * assembling an id list, which is the bound-variable growth this file has
+   * already been bitten by, and H2 is a claim about a corpus rather than about
+   * one Shift.
+   *
+   * ── Ordering ─────────────────────────────────────────────────────────────
+   *
+   * By `producedAt` across productions, then by the writer's `ordinal`, then
+   * document order within a changeset. Oldest first, because the question this
+   * dataset exists to answer next is whether the rate is moving.
+   */
+  trajectory(): Promise<TrajectoryUnit[]>
 }
 
 function shiftOutcomeRepository(prisma: PrismaClient): ShiftOutcomeRepository {
@@ -1266,6 +1946,105 @@ function shiftOutcomeRepository(prisma: PrismaClient): ShiftOutcomeRepository {
       await prisma.outcomeVerdict.create({
         data: { outcomeId, verdict, ...(editedText === undefined ? {} : { editedText }) },
       })
+    },
+
+    trajectory: async () => {
+      const CONTRACT = { id: true, intentionId: true, output: true } as const
+      // Document order inside a changeset, matching `forOutcome` and
+      // `forContract` — so "the third change" is the same change in the report,
+      // on the review screen and in this dataset.
+      const CHANGES = {
+        orderBy: { startOffset: 'asc' },
+        select: { id: true, verdict: { select: { verdict: true } } },
+      } as const
+
+      const produced = await prisma.shiftOutcome.findMany({
+        orderBy: [{ createdAt: 'asc' }, { ordinal: 'asc' }],
+        select: {
+          id: true,
+          kind: true,
+          reversibility: true,
+          createdAt: true,
+          verdict: { select: { verdict: true } },
+          run: { select: { contract: { select: CONTRACT } } },
+          changeset: { select: { changes: CHANGES } },
+        },
+      })
+
+      // The pre-spine half. Argued at `trajectory()` in the interface above;
+      // deleting this query is how the metric silently changes corpus.
+      const unattached = await prisma.changeset.findMany({
+        where: { outcomeId: null },
+        orderBy: { createdAt: 'asc' },
+        select: { createdAt: true, contract: { select: CONTRACT }, changes: CHANGES },
+      })
+
+      const units: TrajectoryUnit[] = []
+
+      for (const outcome of produced) {
+        const contract = outcome.run.contract
+        const shared = {
+          contractId: contract.id,
+          intentionId: contract.intentionId,
+          outputMode: contract.output,
+          outcomeId: outcome.id,
+          decidable: isDecidable(outcome.reversibility),
+          producedAt: outcome.createdAt,
+        }
+
+        /**
+         * Branching on the KIND rather than on whether a changeset happens to
+         * be attached, and the difference is not cosmetic.
+         *
+         * `document-changes` never receives an `OutcomeVerdict` — it is decided
+         * one `ProposedChange` at a time — so a document outcome whose
+         * changeset is missing has NOTHING decidable under it. Branching on the
+         * changeset's presence would emit one unit for that outcome with a null
+         * verdict, and a null verdict reads as *waiting on the person* forever.
+         * The unit is a phantom: nobody can ever decide it, because there is no
+         * control anywhere that would write the row.
+         *
+         * Spelt as a comparison rather than as a Prisma filter deliberately:
+         * `tests/architecture.test.ts` greps for the ASSIGNMENT form
+         * `kind: '<a ShiftOutcomeKind>'` to prove one file assigns a kind. This
+         * reads one back, which that grep can tell apart and several other
+         * readers already do.
+         */
+        if (outcome.kind === 'document-changes') {
+          for (const change of outcome.changeset?.changes ?? []) {
+            units.push({ ...shared, changeId: change.id, verdict: change.verdict?.verdict ?? null })
+          }
+          continue
+        }
+
+        units.push({ ...shared, changeId: null, verdict: outcome.verdict?.verdict ?? null })
+      }
+
+      for (const changeset of unattached) {
+        for (const change of changeset.changes) {
+          units.push({
+            contractId: changeset.contract.id,
+            intentionId: changeset.contract.intentionId,
+            outputMode: changeset.contract.output,
+            outcomeId: null,
+            changeId: change.id,
+            // A ProposedChange addresses character offsets into an immutable
+            // base version held inside Propositum. There is no way for one to
+            // have landed anywhere, so this is a property of the shape rather
+            // than a reversibility being assigned to a row that has none.
+            decidable: true,
+            verdict: change.verdict?.verdict ?? null,
+            producedAt: changeset.createdAt,
+          })
+        }
+      }
+
+      // Both halves arrive sorted; merging them is what needs the pass. Sort is
+      // stable in V8, so units produced in the same millisecond keep the order
+      // their query gave them — ordinal for outcomes, document order within a
+      // changeset.
+      units.sort((a, b) => a.producedAt.getTime() - b.producedAt.getTime())
+      return units
     },
   }
 }

@@ -41,7 +41,10 @@ import type { ShiftOutcomeKind } from '../domain/outcome/shift-outcome'
  */
 export const MAX_OBSERVATIONS = 500
 
-/** Once declined, stay quiet about the same origin for this long. */
+/** Once declined, stay quiet about the same thing for this long. One number for
+ *  both units — an origin, from the extension's decline endpoint, and a thread
+ *  signature, from the front door's per-strand "Not now". `service-worker.js`
+ *  mirrors it rather than reading it, and says so. */
 export const SNOOZE_MS = 60 * 60_000
 
 /** A thread that has been named, keyed by the terms that defined it. */
@@ -140,15 +143,81 @@ export interface AmbientStore {
   pagesOfThread(signature: string): readonly string[]
   /** Observations for an explicit set of pages. */
   forUrls(urls: readonly string[], nowMs: number): readonly AmbientObservation[]
-  /** Record one ambient observation. Trims by window and cap on the way in. */
+  /**
+   * Record one ambient observation. Trims by window and cap on the way in.
+   *
+   * A titleless ENGAGEMENT inherits the most recent title still held IN THE
+   * WINDOW for the same URL, from a navigation or a query — the extension sends
+   * a title on those and not on an engagement, and a page whose navigation has
+   * aged out would otherwise keep reporting minutes of reading under an empty
+   * name. Nothing outside the window is consulted, and a copy is never itself
+   * copied, so a title is at most just under two windows old — once for the
+   * navigation's own life, once for the copy's. See the implementation for the
+   * whole argument, including what it deliberately does not build.
+   */
   record(observation: AmbientObservation, nowMs: number): void
   /** Everything still inside the window, oldest first. */
   since(nowMs: number): readonly AmbientObservation[]
+  /**
+   * Which buffer this is. A counter, changed once by every `clear()`.
+   *
+   * The question `isComposing` cannot answer. That one says whether a call is
+   * running under some signature; this one says whether the buffer the caller
+   * read its inputs out of still exists. They come apart precisely when it
+   * matters: a `clear()` empties the in-flight markers AND the attempt memory,
+   * so the very next poll can start a second call under the same signature —
+   * at which point `isComposing` is true again and is true about somebody
+   * else's work.
+   *
+   * `composeOffer`'s retry is the only caller and the only reason this exists.
+   * It holds a prompt built out of a person's page titles and typed searches
+   * across an await, and a marker that can come back true is not a safe thing
+   * to ask before spending money on sending it.
+   */
+  generation(): number
   /** Forget everything. Called on decline, on session start, and on stop. */
   clear(): void
   /** Stop offering for this origin until the snooze expires. */
   decline(origin: string, nowMs: number): void
   isSnoozed(origin: string, nowMs: number): boolean
+  /**
+   * The person turned down ONE strand. Forget its pages; leave the others.
+   *
+   * ── Why this is not `decline` with a different argument ──────────────
+   *
+   * `decline` drops every observation on an ORIGIN, which was right while one
+   * afternoon produced one offer. It is wrong the moment `detectThreads`
+   * returns three, because strands share sites — an afternoon that begins with
+   * three google searches puts `https://www.google.com` at the head of all
+   * three, so "not now" to Kalman filters would drop the searches that seeded
+   * the robotics strand and the DMD-vs-SPO strand as well. The two other
+   * strands would vanish from the screen with nothing saying why, which is the
+   * silent kind of wrong.
+   *
+   * So the unit here is the THREAD: its own pages go, keyed by the URLs it was
+   * made of, and a page another strand also holds cannot be one of them —
+   * `findThreads` claims each page exclusively, so the URL sets are disjoint by
+   * construction.
+   *
+   * ── And the signature is snoozed, not the site ───────────────────────
+   *
+   * Dropping the pages is not enough on its own: the person is probably still
+   * reading, and the same subject would re-form and be offered again within a
+   * poll or two. `SNOOZE_MS` against the signature is what makes "not now" mean
+   * an hour, exactly as it does for an origin.
+   *
+   * ── What is still coarse, named rather than discovered ───────────────
+   *
+   * `decline(origin)` remains, because `/api/capture/ambient/decline` takes an
+   * origin from the extension and the extension is not being changed here. A
+   * decline through that path is still origin-wide and can still take a second
+   * strand's pages with it. That path only ever names the strongest strand — the
+   * notification does — so the person is turning down the one thing they were
+   * shown, and the collateral is invisible to them. It is a real gap and it
+   * closes when the extension can send a signature.
+   */
+  declineThread(signature: string, urls: readonly string[], nowMs: number): void
+  isThreadSnoozed(signature: string, nowMs: number): boolean
   /** Observations for one origin, for folding into a session on accept. */
   forOrigin(origin: string, nowMs: number): readonly AmbientObservation[]
   size(): number
@@ -157,6 +226,10 @@ export interface AmbientStore {
 export function createAmbientStore(): AmbientStore {
   let observations: AmbientObservation[] = []
   const declined = new Map<string, number>()
+  /** Separate from `declined` rather than sharing it, because the two are keyed
+   *  by different things and one map holding origins and signatures at once is
+   *  a lookup that can only be read correctly by knowing which it meant. */
+  const declinedThreads = new Map<string, number>()
   const names = new Map<string, NamedThread>()
   const naming = new Set<string>()
   const offers = new Map<string, WorkOffer>()
@@ -174,6 +247,16 @@ export function createAmbientStore(): AmbientStore {
   const attemptedNames = new Set<string>()
   const attemptedOffers = new Set<string>()
 
+  /**
+   * How many buffers ago this is. Counts `clear()`s and nothing else.
+   *
+   * A number rather than a boolean because "has it been cleared" is not the
+   * question — a caller that started under buffer 3 needs to know it is still
+   * buffer 3, and a clear-then-refill would answer a boolean wrongly. It never
+   * resets, which is what makes "still mine" decidable by equality.
+   */
+  let generation = 0
+
   const trim = (nowMs: number) => {
     observations = observations.filter((o) => nowMs - o.at <= WINDOW_MS)
     if (observations.length > MAX_OBSERVATIONS) {
@@ -182,9 +265,131 @@ export function createAmbientStore(): AmbientStore {
     }
   }
 
+  /**
+   * The same page's title, when this report arrived without one.
+   *
+   * ── The signal this recovers ─────────────────────────────────────────
+   *
+   * `content.js` sends `title` on a navigation and NOT on an engagement, which
+   * sends url, dwell, scroll and whether anyone interacted. Inside the window
+   * that costs nothing — `pagesOf` already keeps the most informative title per
+   * URL, so the navigation's title covers its own engagements. It starts
+   * costing the moment the NAVIGATION ages out and the engagements do not: the
+   * page is still open, still being read, still reporting every fifteen
+   * seconds, and every one of those reports now has an empty title, so
+   * `termsOf('', url)` falls back to the URL alone.
+   *
+   * Observed exactly that way: `robot-colosseum.github.io` held three engaged
+   * minutes — the most of anything in the buffer — with an empty title, and
+   * contributed almost nothing to thread formation. The page read hardest was
+   * the page that counted least.
+   *
+   * ── Why here and not in the extension ────────────────────────────────
+   *
+   * The extension has no build step, so shipping a fix through it means asking
+   * a person to reload an unpacked extension by hand — a manual step nobody
+   * else can take for them, on the one component whose whole point is that it
+   * runs unattended. The buffer already holds the title, keyed by URL. Fixing
+   * it on the side that redeploys itself is the smaller change.
+   *
+   * ── What this deliberately is NOT ────────────────────────────────────
+   *
+   * Not a title map, not a cache, not an index — no structure of any kind that
+   * outlives the window or survives `clear()`. ADR-0008's argument is that this
+   * buffer is non-durable and bounded twice, and a lookup table of "titles we
+   * have seen for URLs" would be a NEW RETENTION SURFACE introduced as a bug
+   * fix, which is the worst way for one to arrive. So this reads the same array
+   * everything else reads, after the same trim, and when a page's navigation
+   * has already aged out there is nothing to carry forward and the title stays
+   * empty. That is the correct outcome, not a gap to be plugged.
+   *
+   * ── One hop, and why it had to be exactly one ────────────────────────
+   *
+   * ~~A title CAN outlive the observation it came from. Engagement at 10:00
+   * copies the title from a 09:35 navigation; at 10:30 that navigation is gone
+   * but the 10:00 engagement is still here carrying the copy, and the 10:30
+   * engagement copies it again. Chained far enough, a title from an hour ago
+   * survives on a page still being read now. That is more than "the last thirty
+   * minutes of titles", and it is worth saying rather than discovering. It is
+   * not a retention surface: every copy lives on an ordinary row, inside the
+   * window, counted against `MAX_OBSERVATIONS`, dropped by `decline`, and
+   * erased by `clear` along with everything else. But it is a longer life than
+   * the row it was copied from had, and that is a real widening rather than a
+   * neutral one.~~
+   *
+   * **Amended 2026-08-16 — "worth saying" was not enough, and the chain is
+   * closed.** Said out loud it still sounded bounded. Measured, it is not: one
+   * navigation titled at 10:00 and a titleless engagement every ten minutes
+   * afterwards kept that title alive for three hours, six times the window, and
+   * would have kept it alive for as long as the tab stayed open. ADR-0008's
+   * decision table says the buffer is bounded by a 30-minute window AND a
+   * 500-row cap, and names the title as one of the four things it holds. A
+   * title with no upper bound on its age is that row of the ADR being false,
+   * and a comment conceding it does not make it true.
+   *
+   * So a copy is made under two conditions, and together they bound the chain
+   * at exactly one hop:
+   *
+   *   - **Only a row the extension itself titled may be the SOURCE.** A
+   *     navigation and a query arrive from `content.js` with the document's own
+   *     title; an engagement never does.
+   *   - **Only an engagement may RECEIVE one.** This is the half that does the
+   *     proving. Without it a titleless navigation could take a copy and then
+   *     be a source for the next one, and the chain would be back by a longer
+   *     road.
+   *
+   * A source's title is therefore always one the extension sent, and the bound
+   * that gives is a number rather than a hope — but it is not thirty minutes,
+   * and rounding it to thirty would be the same kind of wrong this replaces.
+   * The worst case is a navigation at 10:00 and an engagement at 10:29 that
+   * copies from it one minute before it expires: that copy is dropped at 10:59,
+   * so a title can be **just under two windows old**, and never more, because
+   * nothing may copy it again. Twice a stated bound is a real widening; an
+   * unbounded one was a different thing entirely. ADR-0008's decision table
+   * carries the same sentence, so the two do not disagree.
+   *
+   * What that gives up, stated: a titleless NAVIGATION for a page already in
+   * the buffer keeps its empty title. `content.js` sends the document title on
+   * a navigation, so a titleless one is a page that genuinely had no title at
+   * that moment, and inventing its old one back is a guess. The defect this
+   * whole function exists for was engagements, and engagements are what it
+   * still fixes.
+   */
+  const withCarriedTitle = (observation: AmbientObservation): AmbientObservation => {
+    if (observation.title !== '') return observation
+    if (observation.kind !== 'engagement') return observation
+
+    // Backwards: the most recent title for this URL is the one that describes
+    // it now. A single-page app rewrites its title without navigating.
+    for (let i = observations.length - 1; i >= 0; i -= 1) {
+      const earlier = observations[i]
+      if (earlier === undefined) continue
+      if (earlier.url !== observation.url) continue
+      if (earlier.kind !== 'navigation' && earlier.kind !== 'query') continue
+      if (earlier.title === '') continue
+      return { ...observation, title: earlier.title }
+    }
+
+    return observation
+  }
+
   return {
+    /**
+     * Trimmed on the way IN as well as after, and the first trim is the
+     * load-bearing one.
+     *
+     * `withCarriedTitle` reads whatever is in the array, so what is in the
+     * array when it reads has to be what is inside the window. Without the
+     * first call, a buffer that had gone forty minutes without a report would
+     * still be holding rows the window has expired, and a title could be
+     * carried forward off one of them — quietly making the carry-forward the
+     * one thing here that is not bounded by the window. The second call is the
+     * original bound, unchanged, and it is still needed because a push can put
+     * the array one over `MAX_OBSERVATIONS`.
+     */
     record(observation, nowMs) {
-      observations.push(observation)
+      trim(nowMs)
+      observations.push(withCarriedTitle(observation))
       trim(nowMs)
     },
 
@@ -192,6 +397,8 @@ export function createAmbientStore(): AmbientStore {
       trim(nowMs)
       return observations
     },
+
+    generation: () => generation,
 
     /**
      * Forget everything, and mean everything.
@@ -208,8 +415,14 @@ export function createAmbientStore(): AmbientStore {
      * about on every poll; a clear only happens when a person has started a
      * session or turned an offer down, and whatever browsing comes afterwards
      * is genuinely new.
+     *
+     * `generation` is the one thing here that goes UP rather than away, and it
+     * is what lets a call already in flight find out that this happened. See
+     * the interface doc: dropping the markers is what makes them unsafe to ask
+     * about afterwards, so something has to survive to say so.
      */
     clear() {
+      generation += 1
       observations = []
       names.clear()
       naming.clear()
@@ -229,6 +442,29 @@ export function createAmbientStore(): AmbientStore {
 
     isSnoozed(origin, nowMs) {
       const at = declined.get(origin)
+      return at !== undefined && nowMs - at < SNOOZE_MS
+    },
+
+    /**
+     * One strand turned down. Its pages go; every other strand is untouched.
+     *
+     * The name cache, the offer cache and the remembered pages are left alone
+     * on purpose, and this is the one place that decision is visible. `clear()`
+     * empties all of them because a clear means the whole buffer is forgotten;
+     * this is narrower by design, and emptying a map that is keyed by signature
+     * for a signature nobody asked about would be reaching past the strand the
+     * person actually answered. The declined signature's own entries are
+     * unreachable afterwards anyway — its pages are gone, so it cannot be
+     * detected again, and `isThreadSnoozed` refuses it for an hour regardless.
+     */
+    declineThread(signature, urls, nowMs) {
+      declinedThreads.set(signature, nowMs)
+      const dropped = new Set(urls)
+      observations = observations.filter((o) => !dropped.has(o.url))
+    },
+
+    isThreadSnoozed(signature, nowMs) {
+      const at = declinedThreads.get(signature)
       return at !== undefined && nowMs - at < SNOOZE_MS
     },
 
@@ -428,7 +664,8 @@ export function describeWork(
   threadSignature: string,
   named?: NamedThread | null,
 ): Suggestion {
-  const words = detected.terms.slice(0, 3).join(' ')
+  // `labels`, not `terms`: the spelling a person saw, not the matching key.
+  const words = detected.labels.slice(0, 3).join(' ')
   const sites = detected.origins.length
   const where = sites === 1 ? hostOf(detected.origins[0] ?? '') : `${sites} sites`
 
@@ -438,8 +675,16 @@ export function describeWork(
         // honest vague one, and the vague one is still true.
         `Looks like you're working on ${named.subject}.`
       : words
-        ? `You have been looking into ${words} — across ${where}.`
-        : `You have been reading across ${where}.`
+        ? // No site count here, though it used to carry one. This sentence is
+          // never shown alone: Home sets `because` directly beneath it and the
+          // extension badge concatenates the two, so "— across 4 sites." landed
+          // one line above "read 4 pages across 4 sites." and said the same
+          // thing twice in a row. The naming half says what it is about; the
+          // grounds half says what was seen. One job each.
+          `You have been looking into ${words}.`
+        : // Nothing to name, so this one keeps the count — without it the
+          // sentence would say nothing at all.
+          `You have been reading across ${where}.`
 
   return {
     kind: 'start-session',

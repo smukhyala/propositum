@@ -56,12 +56,34 @@
  * friction that matters is everything above the buttons; a second gate would
  * train exactly the reflex — get past whatever is in the way — that this whole
  * mechanism is spent on preventing.
+ *
+ * ── The one fact here that is not printed as it is stored ────────────────
+ *
+ * Everything else on this screen is rendered exactly as it arrived, because
+ * rendering it any other way would be Propositum standing between the person
+ * and the thing they are checking. The action's kind is the exception: it is
+ * looked up in `./agreement`'s `ACTION_LABEL` — the same wording the person
+ * read beside the tick box when they granted it — rather than printed.
+ *
+ * This screen used to render `detail.attested.actionKind` straight out, so the
+ * one place somebody authorises something that cannot be taken back said
+ * `click-element`. That is an internal name, in Propositum's own voice, on the
+ * screen whose entire claim is that a person can check every line of it. A
+ * token nobody outside this repository can read is not a fact; and the same
+ * person had already been shown *"Click something on the page"* for the same
+ * `ActionKind` one screen earlier, so it was two wordings for one permission
+ * as well as an unreadable one.
+ *
+ * A kind with no wording is a real reachable case and renders as a refusal to
+ * describe it. See `Doing`.
  */
 
 'use client'
 
 import type { ReactNode } from 'react'
 
+import { ACTION_KINDS } from '../domain/handoff/policy'
+import { ACTION_LABEL } from './agreement'
 import { Button, Masthead, Section } from './primitives'
 import { Quotation } from './reading'
 
@@ -77,6 +99,9 @@ export const CONFIRM_CSS = `
 .cf-key { font-family: var(--mono); font-size: 0.6875rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--faint); }
 .cf-val { margin: 0; font-size: 0.9375rem; overflow-wrap: anywhere; }
 .cf-absent { color: var(--faint); font-style: italic; }
+/* Not the same thing as absent, and must not look like it: absent is a gap,
+   this is a fact the screen is holding and cannot say out loud. */
+.cf-unnamed { color: var(--attention); }
 
 .cf-verbatim { margin: 0; padding: 0.8rem 0.9rem; background: var(--raised); border-left: 2px solid var(--accent); font-family: var(--mono); font-size: 0.875rem; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
 .cf-verbatim-note { margin: 0.5rem 0 0; font-size: 0.8125rem; color: var(--muted); }
@@ -164,6 +189,65 @@ function Fact({ label, value }: { readonly label: string; readonly value: string
   )
 }
 
+/**
+ * The wording for a stored kind, or nothing — never the kind itself.
+ *
+ * `ACTION_LABEL` is typed `Record<ActionKind, string>`, so **the known half is
+ * exhaustive by compile error**: adding a capability to `ActionKind` without a
+ * sentence a person can read fails `npm run typecheck` in `./agreement`, before
+ * this function is ever reached. That is the assertion; there is no test here
+ * that could say it better.
+ *
+ * The walk over `ACTION_KINDS` is doing the narrowing rather than decorating
+ * it. `actionKind` arrives as a `string` off a stored row — `src/runtime/
+ * history.ts` makes the same point about the same column — so it is genuinely
+ * not an `ActionKind`, and an index into the map with a cast would be this
+ * screen asserting something it does not know.
+ */
+function labelFor(actionKind: string): string | null {
+  for (const kind of ACTION_KINDS) {
+    if (kind === actionKind) return ACTION_LABEL[kind]
+  }
+  return null
+}
+
+/**
+ * What Propositum is asking to do, in the words it was granted in.
+ *
+ * ── When there is no wording ─────────────────────────────────────────────
+ *
+ * A row written by a build that knew a kind this one does not is reachable,
+ * and there are exactly two wrong answers to it: throw, and print the token
+ * anyway. Throwing takes the whole screen down and loses the *Don't* button
+ * along with it. Printing the token puts an unreadable internal name in front
+ * of somebody about to authorise something irreversible, which is the defect
+ * this function exists to fix.
+ *
+ * So the unnamed case says it is unnamed, and it is **the only line on this
+ * screen that names a button**. That is deliberate rather than an escape: the
+ * question this screen asks is *does this look right to you*, and a person
+ * cannot answer it about a thing the screen would not describe. `Fact`'s
+ * *"Propositum was not told"* is the wrong sentence here — Propositum was
+ * told, and cannot repeat it.
+ */
+function Doing({ actionKind }: { readonly actionKind: string }): ReactNode {
+  const said = labelFor(actionKind)
+
+  return (
+    <li>
+      <span className="cf-key">Doing</span>
+      {said === null ? (
+        <p className="cf-val cf-unnamed">
+          Propositum has no plain words for what it recorded here, so it will not put its own
+          name for it in front of you. Say don&rsquo;t.
+        </p>
+      ) : (
+        <p className="cf-val">{said}</p>
+      )}
+    </li>
+  )
+}
+
 export interface ConfirmationScreenProps {
   readonly detail: ConfirmationDetail
   /** The person says yes to this one thing. */
@@ -216,7 +300,11 @@ export function ConfirmationScreen({ detail, goAhead, dont }: ConfirmationScreen
               Cancel on a button that posts an order; it cannot make Chrome
               report a POST as a GET. */}
           <Fact label="Sends" value={detail.attested.method} />
-          <Fact label="Doing" value={detail.attested.actionKind} />
+          {/* Attested too, and deliberately NOT a `Fact`: the kind is the one
+              value here that has a human wording somewhere else in the
+              product, and this screen owes the person that wording rather
+              than the enum member behind it. */}
+          <Doing actionKind={detail.attested.actionKind} />
         </ul>
 
         {detail.typedText === null ? null : (

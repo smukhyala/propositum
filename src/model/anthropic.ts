@@ -55,7 +55,17 @@ export interface AnthropicModelClientOptions {
   readonly onCall?: (telemetry: CallTelemetry, failure?: FailureKind) => void
 }
 
-const DEFAULT_MODEL = 'claude-opus-5'
+/**
+ * The model every boundary runs on unless configuration says otherwise.
+ *
+ * Exported so `provider.ts` can fall back to it by name rather than by copying
+ * the string. It was copied three times before that — here, in `scripts/eval.ts`
+ * and in `scripts/verify-model.ts` — and two of the three were the id the
+ * harness PRINTED while this one was the id the client actually called. Two
+ * copies of a model id is how a scoring worksheet comes to name a model that
+ * never ran.
+ */
+export const DEFAULT_MODEL = 'claude-opus-5'
 
 export class AnthropicModelClient implements ModelClient {
   private readonly sdk: Anthropic
@@ -169,7 +179,7 @@ export class AnthropicModelClient implements ModelClient {
         )
       }
 
-      this.onCall?.(telemetry)
+      this.record(telemetry)
       return { ok: true, value: validated.data, telemetry }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
@@ -186,8 +196,58 @@ export class AnthropicModelClient implements ModelClient {
     failure: FailureKind,
     detail: string,
   ): BoundaryResult<T> {
-    this.onCall?.(telemetry, failure)
+    this.record(telemetry, failure)
     return { ok: false, failure, detail, telemetry }
+  }
+
+  /**
+   * The hook, held at arm's length.
+   *
+   * ── Why the try/catch is HERE, and what it cannot cover ──────────────────
+   *
+   * A failure to write a telemetry row must never fail the model call that
+   * produced it, and there are two ways a hook can break that promise. This
+   * catch holds the first: a hook that throws SYNCHRONOUSLY. Only this class
+   * can hold that one, because it is the only code between the hook and the
+   * `BoundaryResult`, and both call sites turn a throw into a lie:
+   *
+   *   - The success call sits INSIDE the try that classifies model failures, so
+   *     a throwing hook would be caught there and reported as `transport` — a
+   *     network failure that never happened, invented by the thing recording it.
+   *   - `fail()` sits outside every try, so a throw there escapes `run()` as an
+   *     exception. That is precisely what this file's header forbids: *"an
+   *     exception thrown through the worker loop loses the telemetry and turns a
+   *     recoverable boundary failure into a dead run."*
+   *
+   * The second way — an ASYNCHRONOUS rejection from the write — cannot be held
+   * here at all. `onCall` returns `void`, so the promise never crosses back and
+   * there is nothing here to await or catch. That half is `provider.ts`'s, and
+   * it says so.
+   *
+   * ── The weakness, not rounded up ─────────────────────────────────────────
+   *
+   * This swallows silently. A hook that throws on every call is invisible from
+   * here, and it stays invisible: this class has no logger, and giving the
+   * observed thing a second reporting channel to report on its observer is
+   * worse than the gap. The consequence is real — telemetry can stop being
+   * written and nothing in the model layer will say so.
+   *
+   * **There is no mitigation, and this docblock used to claim one.** It said the
+   * sink `provider.ts` builds reports its own failures; `provider.ts` says the
+   * opposite in as many words — *"a telemetry write that fails is LOST SILENTLY
+   * and nothing counts the losses"* — and its `.catch` is empty, because there
+   * is no logger in `src/` at all. Two files disagreeing about whether a silent
+   * failure is reported is worse than the silence: a reader of this one was
+   * told the loss surfaces somewhere. It does not. `provider.ts` holds the
+   * honest statement and names where the count belongs when a
+   * `ModelCallRecord` reader lands.
+   */
+  private record(telemetry: CallTelemetry, failure?: FailureKind): void {
+    try {
+      this.onCall?.(telemetry, failure)
+    } catch {
+      /* See above. The call's own result is the thing being protected. */
+    }
   }
 }
 
