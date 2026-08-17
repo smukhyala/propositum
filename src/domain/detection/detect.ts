@@ -50,7 +50,7 @@
 const FAST = process.env['PROPOSITUM_FAST_DETECT'] === '1'
 const SPEED = FAST ? 20 : 1
 
-import { findThreads, searchQueryOf, termsOf } from './topics'
+import { canonicalise, findThreads, searchQueryOf, termsOf } from './topics'
 import type { ThreadPage } from './topics'
 
 /** The window everything is measured inside. Older observations are dropped. */
@@ -137,6 +137,20 @@ export interface WorkDetected {
  * report per URL rather than the sum — see `engagedByUrl`. Arrivals are counted
  * separately, by `visitsByUrl`, and the two must not be conflated: one is a
  * maximum and the other is a tally.
+ *
+ * ── Why the canonicalisation pass lives here and not in either caller ─────
+ *
+ * This is the only function both page-building paths go through. `detectWork`
+ * calls it and hands the result to `findThreads`; `threadPagesOf` calls it and
+ * filters the result down to the thread's URLs, for `compose-offer.ts` and the
+ * ambient debug route. `grounds.ts` then intersects the second path's
+ * `page.terms` with the first path's `detected.terms`.
+ *
+ * Collapsing near-identical spellings in one of those and not the other would
+ * put the two views of one page into disagreement about which word is on it —
+ * `pursuitOf` would find no overlap, every intent ground would stop firing, and
+ * nothing would look wrong: a green suite and a product that quietly never
+ * offers. Both paths are given the same window, so both get the same rewrite.
  */
 function pagesOf(observations: readonly AmbientObservation[]): ThreadPage[] {
   const dwell = engagedByUrl(observations)
@@ -166,7 +180,7 @@ function pagesOf(observations: readonly AmbientObservation[]): ThreadPage[] {
     })
   }
 
-  return [...byUrl.values()]
+  return canonicalise([...byUrl.values()])
 }
 
 /**

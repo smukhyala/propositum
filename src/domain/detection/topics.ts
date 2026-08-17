@@ -34,6 +34,11 @@
  * This is string arithmetic over titles and search terms. It can say WHICH
  * words recur; it cannot say what they mean. Naming the subject in a sentence a
  * person would recognise is a separate step, and a separate decision.
+ *
+ * That includes `vocabularyOf`, which decides that two spellings are one word.
+ * It is counting and edit distance, it is deterministic, and it never asks
+ * anything what a word means — see its own block for why the distance is the
+ * least of the three rules there, and what the other two are for.
  */
 
 /**
@@ -178,6 +183,491 @@ export function surfacesOf(title: string, url: string): Map<string, string> {
   return surfaces
 }
 
+/** A term must recur across at least this many origins to bind a thread. */
+export const ORIGINS_FOR_THREAD = 2
+
+/** Pages a thread needs before it is a subject rather than a coincidence.
+ *
+ *  Both of these sit above `vocabularyOf` rather than beside `findThreads`
+ *  because they now have two readers. `findThreads` uses them to decide whether
+ *  a thread exists; `vocabularyOf` uses them to decide whether a word has enough
+ *  evidence behind it to absorb another word's spelling. Those must be the same
+ *  bar, or a merge could manufacture the very thread the bar was refusing. */
+export const PAGES_FOR_THREAD = 3
+
+/**
+ * The shortest term this may touch.
+ *
+ * ~~At one edit apart, short words are a minefield: form/from, trial/trail,
+ * cat/cot, bear/beat, host/cost. Every one of those is two words a person means
+ * differently, and none of them is a typo of the other often enough to be worth
+ * the merge. Six is where the density of one-edit neighbours in English drops
+ * far enough that "one edit apart" starts to mean "one of these is a slip".~~
+ *
+ * **That second sentence was made up, and it is false.** Measured over
+ * `/usr/share/dict/words` with the `oneEditApart` below, counting only
+ * neighbours that share a first letter and also clear the floor:
+ *
+ *     >= 6 chars   218,002 words   81,121 have such a neighbour   37.2%
+ *     >= 7 chars   200,533         66,848                          33.3%
+ *     >= 8 chars   176,810         51,662                          29.2%
+ *     >= 9 chars   146,957         37,123                          25.3%
+ *     >= 10 chars  114,662         24,618                          21.5%
+ *
+ * There is no cliff. More than a third of long English words have a one-edit
+ * real-word neighbour, and going to ten characters — which would kill `robotc`,
+ * one of the two cases this exists for — still leaves a fifth of them. Sampled
+ * pairs at six and above: filter/filler, content/contest, course/coarse,
+ * banking/baking, sharing/staring, writing/waiting, founder/founded,
+ * present/prevent, hosting/hoisting, designer/designed. Every one is two words.
+ *
+ * So the floor buys the 3-to-5-character band, where the density is worse and
+ * the pairs are commoner still, and nothing else. **It is not the safety
+ * argument and it never was.** The safety argument is the pair of rules below
+ * it: the absorbed word must have been TYPED, once, and the word absorbing it
+ * must already carry a thread on its own. Six is kept because it is free and it
+ * excludes the worst band; the two real cases clearing it at six and eleven is a
+ * fact about the cases, not evidence about the number.
+ */
+export const CANONICAL_MIN_LENGTH = 6
+
+/**
+ * Exactly one Damerau-Levenshtein edit apart — substitute, insert, delete, or
+ * swap two neighbours. Never two.
+ *
+ * Written out rather than run as a DP matrix because at a distance of one the
+ * whole thing is three cases, and three named cases are easier to argue with
+ * than a table.
+ *
+ * The transposition case is the one plain Levenshtein counts as two edits and
+ * refuses. It has to be here: `robotcs` for `robotics` is a dropped letter and
+ * `teh` for `the` is a swap, and a hand typing too fast produces both equally.
+ * Counting a swap as two would exclude half of what a typo actually is.
+ */
+function oneEditApart(a: string, b: string): boolean {
+  if (a === b) return false
+
+  const difference = a.length - b.length
+  if (difference > 1 || difference < -1) return false
+
+  if (difference === 0) {
+    // Walk in from both ends. What is left in the middle is the whole edit.
+    let head = 0
+    while (head < a.length && a[head] === b[head]) head += 1
+    let tail = a.length - 1
+    while (tail > head && a[tail] === b[tail]) tail -= 1
+
+    // One character differs: a substitution.
+    if (head === tail) return true
+    // Two adjacent characters differ and are each other's: a transposition.
+    return tail === head + 1 && a[head] === b[tail] && a[tail] === b[head]
+  }
+
+  // One character more on one side. Skip the first mismatch in the longer
+  // string; everything after it must line up with what is left of the shorter.
+  const longer = difference === 1 ? a : b
+  const shorter = difference === 1 ? b : a
+  let at = 0
+  while (at < shorter.length && longer[at] === shorter[at]) at += 1
+  return longer.slice(at + 1) === shorter.slice(at)
+}
+
+/**
+ * One subject, spelled wrong once.
+ *
+ * ── The observation ──────────────────────────────────────────────────────
+ *
+ * Watched live. In one sitting a person searched, in this order:
+ *
+ *     "techniques to measure peturbation robotcs"   google
+ *     "DMD vs SPO robotics"                          google
+ *     "Extended Kalman Filters"                      google -> medium.com
+ *
+ * After `singular` the buffer holds `robotc` from the first and `robotic` from
+ * the second. One edit apart, obviously one subject to any person reading the
+ * two lines, and two unrelated tokens to everything below `termsOf`.
+ *
+ * ── What this does NOT fix, said before anything else ────────────────────
+ *
+ * **This change would not have produced an offer in that session, and it would
+ * not even have merged those two terms.** Both failures are worth writing down
+ * because either one alone would be enough to make the claim false.
+ *
+ *   - The first two searches were both on google.com. A term must recur across
+ *     `ORIGINS_FOR_THREAD` origins to seed a thread, and merging two google-only
+ *     searches produces one origin, not two. No thread, so no offer. The real
+ *     blocker in that sitting was that the person never clicked through.
+ *   - The frequency rule below would have refused the merge anyway. `robotc`
+ *     was seen once and `robotic` was seen once; neither is strictly more
+ *     frequent than the other, so neither may absorb the other. `peturbation`
+ *     is worse still — the correct spelling never appeared in that sitting at
+ *     all, so there was nothing for it to merge into.
+ *
+ * So this is a fix for the class, not for the instance. It pays off in a sitting
+ * long enough to be worth offering anything about, where the destination pages
+ * carry the word spelled correctly a dozen times and the typo appears once, in
+ * one search URL. That asymmetry is the whole design.
+ *
+ * ── Why canonicalisation, and not fuzzy comparison ───────────────────────
+ *
+ * The obvious change is to make the comparisons approximate: `findThreads` uses
+ * `Set.has`, `matchProject` counts exact overlap, `pursuitOf` intersects sets,
+ * and `signatureOf` joins terms into an offer's identity. Making all four fuzzy
+ * is four blast radii, and the last one is the worst: a signature built from
+ * approximately-equal strings is a signature that can change while the subject
+ * does not, and `extension/src/service-worker.js` already records a signature
+ * flapping A->B->A across polls. That is not a defect to enlarge.
+ *
+ * So the window is canonicalised ONCE — near-identical terms are clustered and
+ * each is rewritten to one representative — and every existing exact-match
+ * consumer keeps comparing strings for equality, unchanged.
+ *
+ * ── The rule that shipped first, and why it was not a safety argument ────
+ *
+ * ~~A term merges into a neighbour only when the neighbour is **strictly more
+ * frequent across the window**. A typo is by nature a one-off; the word it was
+ * a typo of is the one the person keeps meeting.~~
+ *
+ * The prose said "a one-off". The code said `if (count <= mine) continue`, which
+ * is not that. Thirty-nine pages merged into forty. `contest` on three pages was
+ * absorbed by `content` on four, both ordinary words, no typo anywhere; and
+ * `modeling` on three was absorbed by `modelling` on four, which is not even a
+ * misspelling, just the other side of the Atlantic. Both were measured against
+ * the working tree, not imagined. The gap between what a
+ * comment claims and what the line under it does is the whole defect, and it is
+ * worth leaving the strikethrough in place so the next reader can see that this
+ * file once argued for a rule it had not written.
+ *
+ * Three things went wrong downstream of that gap, all measured against the
+ * working tree:
+ *
+ *   - **A sitting refiled itself.** Three contest pages and four content pages,
+ *     no typo. `contest` was erased from `detected.terms`, and `matchProject`
+ *     moved the sitting from the Contest project to the Content project — the
+ *     silent false merge `match-project.ts` spends its header naming as the
+ *     expensive one.
+ *   - **One unrelated page manufactured a detection.** Two `waiting` pages on
+ *     two origins detect nothing. Add one page titled "writing an outline" and
+ *     `writing` merges into `waiting`, which supplies the third page AND the
+ *     third origin, and the outline lands in `detected.urls` — the list that
+ *     becomes approved sources on accept.
+ *   - **A merge dissolved as the window slid.** One buffer polled two minutes
+ *     apart across the 30-minute edge produced two different signatures, where
+ *     the code before the pass produced one. `signatureOf(detected.terms)` keys
+ *     the offer cache and is a durable column.
+ *
+ * ── What the rule is now ─────────────────────────────────────────────────
+ *
+ * Two conditions, and between them they are the safety argument. Neither is
+ * distance, and the length floor's own block explains why it is not either.
+ *
+ * **1. The absorbed word was TYPED, exactly once.** It must appear on exactly
+ * one page in the window, and that page must be a search — `searchQueryOf`, the
+ * domain's own test, not the extension's `?`-spotting.
+ *
+ * This is the rule the observation actually supports, and the earlier version
+ * was a generalisation of it that nothing had asked for. **The only string in
+ * this pipeline a person typed is a search query.** Titles are written by the
+ * author of the page, and a word an author spelled unusually is a word they
+ * meant — it is consistent, it is theirs, and repairing it is not ours to do.
+ * `robotcs` was typed. `writing an outline` was a page somebody wrote.
+ *
+ * The two together are what make this affordable: a word that appears once, in
+ * something a person typed, is the shape of a slip in a way that "a word that
+ * appears once" alone is not.
+ *
+ * **2. The absorbing word already carries a thread on its own.**
+ * `PAGES_FOR_THREAD` pages across `ORIGINS_FOR_THREAD` origins, counted before
+ * any merge. So the absorbed page can never be the page or the origin that
+ * brings a thread into existence: the thread is there without it, and all a
+ * merge can do is add one page to something that already qualified.
+ *
+ * The first rule is precision, the second is blast radius. The second one is
+ * the more important, because it is the one that holds even when the first is
+ * wrong about a particular word.
+ *
+ * ── Two consequences worth stating, because they are load-bearing ────────
+ *
+ * **Nothing is erased.** `rewrite` UNIONS: a page keeps the word it used and
+ * gains the representative beside it. The first version replaced, and that is
+ * how `contest` vanished from a sitting that had three contest pages on it.
+ * `matchProject` compares thread terms against `projectTerms(name)`, which is
+ * not canonicalised and cannot be — the project was named before this window
+ * existed. A rewrite that deletes an observed word is a rewrite that can make
+ * two things stop matching without anything on screen saying so.
+ *
+ * **A chain cannot form.** Absorbing needs three pages; being absorbed needs
+ * one. No word can do both, so the chain-following loop that used to sit here
+ * is gone rather than guarded. It was reaching results two edits from where they
+ * started — `cashing` -> `caching` -> `coaching` — which is exactly what
+ * `oneEditApart`'s own block says never happens, and what a test in
+ * `canonical-terms.test.ts` claims to pin. If rule 1 is ever loosened, the worst
+ * this can now do is refuse to follow a hop, which is the cheap direction.
+ *
+ * ── Where this is still wrong, named rather than discovered ──────────────
+ *
+ * Somebody searches once, mid-afternoon, for something unrelated whose subject
+ * word is six or more characters, shares a first letter with what they are
+ * researching, and is one edit from it. That search page joins the thread and
+ * becomes one of the approved sources on accept. `writing`/`waiting`,
+ * `content`/`contest` and `course`/`coarse` are all still reachable this way.
+ *
+ * The cost is now one page inside a detection that already existed, rather than
+ * a detection that would not have existed — the second rule is what moved it,
+ * and it is the difference between diluting a real thread and inventing one.
+ * That is the cheap direction, but it is not free, and it is the same class as
+ * the search for "nissan altima" that became evidence for a hiking trip.
+ *
+ * **The line where this stops being affordable is a longer window.** Every
+ * guard here is a count over a 30-minute buffer of a handful of pages. Widen
+ * the window and the number of six-letter words in it goes up, "appears exactly
+ * once" stops being rare, and the chance that some search that afternoon is one
+ * edit from the subject approaches certainty. At that size the answer is not a
+ * tighter count — it is a dictionary, which this file refuses for the same
+ * reason it refuses a blocklist, or dropping the pass. It is not a bigger
+ * version of what is written below.
+ */
+
+/**
+ * The spelling seen most, ties broken lexicographically.
+ *
+ * Deterministic for the same reason the canonical term is: the label rides
+ * beside `terms` in `WorkDetected`, and a sentence about somebody's afternoon
+ * that changes wording between two polls of an unchanged buffer reads as a
+ * system making things up.
+ */
+function commonest(counted: Map<string, number> | undefined): string | null {
+  if (counted === undefined) return null
+
+  let best: string | null = null
+  let bestCount = 0
+  // Sorted, then strictly greater, so equal counts keep the first alphabetically.
+  for (const word of [...counted.keys()].sort()) {
+    const count = counted.get(word) ?? 0
+    if (count > bestCount) {
+      best = word
+      bestCount = count
+    }
+  }
+  return best
+}
+
+/**
+ * What the window's words are, and how each of them is spelled.
+ *
+ * One object rather than two functions, because the two halves are answers to
+ * the same question and a caller that took only one of them would be a caller
+ * whose labels and whose terms could disagree.
+ */
+export interface Vocabulary {
+  /** Every term seen in the window, mapped to the spelling that stands for it.
+   *  Representatives map to themselves. */
+  readonly canonical: ReadonlyMap<string, string>
+  /** Each canonical term to the most common surface behind it, ties broken
+   *  lexicographically. For sentences shown to somebody; never for comparison. */
+  readonly surface: ReadonlyMap<string, string>
+}
+
+/**
+ * The window's vocabulary.
+ *
+ * ── Read from titles and URLs, never from `page.terms`, and this is load-bearing
+ *
+ * The counts come from `surfacesOf(page.title, page.url)`, whose keys are
+ * exactly what `termsOf` returns for the same page — one tokeniser, so this is
+ * not a second notion of what a page is about. It matters that it reads the
+ * TITLE rather than `page.terms`: it makes the vocabulary a pure function of the
+ * window's raw contents, so applying it to `page.terms` and then computing it
+ * again gives the identical answer. That is what makes `canonicalise`
+ * idempotent, and idempotence is what lets the pass sit on more than one path
+ * without the paths disagreeing.
+ *
+ * ── Why the label is the representative's OWN spellings, and nothing else ─
+ *
+ * `findThreads` used to pick a label from the thread's own members, first
+ * spelling seen. Both halves of that break once a cluster can merge: the
+ * mistyped search is often the FIRST page in the buffer — it is what started the
+ * sitting — so first-seen renders the whole thread as "robotcs".
+ *
+ * ~~Counting across the window rather than the members is what makes the label
+ * reliably the representative's own spelling: the representative is by
+ * construction on more pages than the typo, so its spelling outnumbers the
+ * typo's wherever those pages ended up.~~
+ *
+ * **That inference does not hold and the counting version was measured doing the
+ * exact thing it claimed to prevent.** The representative's PAGES outnumber the
+ * typo's; its SPELLINGS need not, because `singular` deliberately folds
+ * `robotics` and `robotic` into one term while leaving them two surfaces. Five
+ * pages — `robotics` once, `robotic` twice, `robotcs` twice — pooled to
+ * `{robotics:1, robotic:2, robotcs:2}`, and the lexicographic tie-break handed
+ * the label to `robotcs`. The thread rendered as "robotcs learning" on the front
+ * page, and `page.tsx` turns those same words into a created Project's NAME.
+ * Before the pass existed, that fixture labelled itself `robotics`.
+ *
+ * So the pool is gone. A representative's label comes from ITS OWN spellings,
+ * counted across the window, and an absorbed word's spelling is never a
+ * candidate for anything. That is what the paragraph above was trying to
+ * describe, said as code instead of as an inference about counts. It is also
+ * free: rule 2 guarantees a representative has at least `PAGES_FOR_THREAD`
+ * spellings of its own to choose between, so there is no fallback case.
+ *
+ * The remaining cost is real and small: a term spelled one way inside a thread
+ * and another way on an unrelated page elsewhere in the window is labelled with
+ * whichever spelling is commoner overall. Both are spellings of the same word.
+ */
+export function vocabularyOf(pages: readonly ThreadPage[]): Vocabulary {
+  const pagesByTerm = new Map<string, number>()
+  const originsByTerm = new Map<string, Set<string>>()
+  /** True while every page carrying this term was a search — i.e. every time
+   *  this word appeared, a person had typed it. One page written by somebody
+   *  else is enough to make it the author's spelling rather than a slip. */
+  const typedByTerm = new Map<string, boolean>()
+  const spellings = new Map<string, Map<string, number>>()
+
+  for (const page of pages) {
+    // The domain's own test, never `page.searched` — that field needs the
+    // extension to have labelled the navigation a query, and the extension
+    // labels any URL with a `?` a query. `grounds.ts` refuses to trust it for
+    // the same reason and this must not be looser than the bar above it.
+    const typed = searchQueryOf(page.url) !== null
+
+    for (const [term, word] of surfacesOf(page.title, page.url)) {
+      pagesByTerm.set(term, (pagesByTerm.get(term) ?? 0) + 1)
+      const origins = originsByTerm.get(term) ?? new Set<string>()
+      origins.add(page.origin)
+      originsByTerm.set(term, origins)
+      typedByTerm.set(term, (typedByTerm.get(term) ?? true) && typed)
+      const counted = spellings.get(term) ?? new Map<string, number>()
+      counted.set(word, (counted.get(word) ?? 0) + 1)
+      spellings.set(term, counted)
+    }
+  }
+
+  // Sorted, so nothing below depends on the order the buffer happened to
+  // arrive in. `signatureOf` derives an offer's identity from these strings; a
+  // canonical choice that flapped with insertion order would make an offer
+  // impossible to explain an hour afterwards.
+  const terms = [...pagesByTerm.keys()].sort()
+  const into = new Map<string, string>()
+
+  for (const term of terms) {
+    if (term.length < CANONICAL_MIN_LENGTH) continue
+    // Rule 1, both halves. Once, and typed. A word on two pages is a word the
+    // person met twice, and nobody makes the same slip twice in half an hour
+    // often enough to be worth what agreeing costs when this is wrong.
+    if ((pagesByTerm.get(term) ?? 0) !== 1) continue
+    if (typedByTerm.get(term) !== true) continue
+
+    let best: string | null = null
+    let bestCount = 0
+
+    for (const other of terms) {
+      if (other === term) continue
+      if (other.length < CANONICAL_MIN_LENGTH) continue
+      // Typos rarely land on the first letter, and this cuts a whole class of
+      // false merge for the price of one comparison.
+      if (other[0] !== term[0]) continue
+
+      // Rule 2. The absorbing word has to carry a thread WITHOUT the page being
+      // absorbed, so a merge can only ever add a page to a thread that already
+      // exists. This is what stops one unrelated search from supplying a
+      // thread's deciding page and deciding origin at the same time — and
+      // therefore from putting a page nobody was researching into
+      // `detected.urls`, which is the list that becomes approved sources.
+      const count = pagesByTerm.get(other) ?? 0
+      if (count < PAGES_FOR_THREAD) continue
+      if ((originsByTerm.get(other)?.size ?? 0) < ORIGINS_FOR_THREAD) continue
+
+      if (!oneEditApart(term, other)) continue
+
+      // Strictly greater, over a list already sorted ascending, so equal counts
+      // resolve to the lexicographically first candidate — the same one, every
+      // time, for the same window.
+      if (count > bestCount) {
+        best = other
+        bestCount = count
+      }
+    }
+
+    if (best !== null) into.set(term, best)
+  }
+
+  // One hop, and there is deliberately no loop here. Absorbing needs
+  // `PAGES_FOR_THREAD` pages and being absorbed needs exactly one, so no word
+  // can be on both ends of a merge and a chain cannot form. The loop that used
+  // to follow one was reaching results two edits from where they started —
+  // `cashing` -> `caching` -> `coaching` — which contradicts `oneEditApart`'s
+  // own block and the test that claims to pin it.
+  const canonical = new Map<string, string>()
+  for (const term of terms) canonical.set(term, into.get(term) ?? term)
+
+  // A representative is labelled from its own spellings. An absorbed word's
+  // spelling is never in the running, for any term, ever — see the block above
+  // for the fixture where pooling them rendered a thread as "robotcs".
+  const surface = new Map<string, string>()
+  for (const term of terms) {
+    if ((canonical.get(term) ?? term) !== term) continue
+    surface.set(term, commonest(spellings.get(term)) ?? term)
+  }
+
+  return { canonical, surface }
+}
+
+/**
+ * The representative added BESIDE the word the page used, never instead of it.
+ *
+ * Replacing was the first version and it is how `contest` disappeared from a
+ * sitting with three contest pages on it. `matchProject` compares thread terms
+ * against `projectTerms(name)`, which is not canonicalised and cannot be — the
+ * project was named in some other window, possibly months ago. So a rewrite that
+ * deletes an observed word can make a thread stop matching the project it
+ * belongs to, and `match-project.ts` spends its header explaining that this is
+ * the failure with nothing on screen to notice.
+ *
+ * The union costs one string in a set and keeps the invariant that a page's
+ * terms always contain what the page actually said. Clustering still works,
+ * because every page in a cluster now carries the representative too.
+ *
+ * A one-page word cannot reach `Thread.terms` — `findThreads` keeps only terms
+ * on more than one member — so nothing a typo added survives into a signature.
+ */
+function rewrite(
+  pages: readonly ThreadPage[],
+  canonical: ReadonlyMap<string, string>,
+): ThreadPage[] {
+  return pages.map((page) => {
+    const terms = new Set(page.terms)
+    for (const term of page.terms) {
+      const representative = canonical.get(term)
+      if (representative !== undefined) terms.add(representative)
+    }
+    return { ...page, terms }
+  })
+}
+
+/**
+ * The window with near-identical terms rewritten to one spelling each.
+ *
+ * ── This must sit where BOTH page-building paths go through it ───────────
+ *
+ * Two independent paths build `ThreadPage[]` from one buffer: `detectWork` ->
+ * `findThreads`, and `threadPagesOf`, which `compose-offer.ts` and the ambient
+ * debug route call separately. `grounds.ts`'s `pursuitOf` intersects the second
+ * path's `page.terms` with the first path's `detected.terms`. Canonicalising in
+ * one and not the other would leave the two views of the same page disagreeing
+ * about what word is on it, grounds would silently stop firing, and the suite
+ * would stay green while the product never offered anything again.
+ *
+ * So it is applied in `pagesOf`, which is the one function both paths build
+ * pages with, and again at the top of `findThreads` for callers holding pages
+ * they built themselves. Applying it twice is safe by construction — see
+ * `vocabularyOf` on why the vocabulary is derived from titles rather than from
+ * the terms it rewrites.
+ */
+export function canonicalise(pages: readonly ThreadPage[]): ThreadPage[] {
+  return rewrite(pages, vocabularyOf(pages).canonical)
+}
+
 /**
  * Query parameters that carry something a person typed.
  *
@@ -280,12 +770,6 @@ export interface Thread {
   readonly searches: number
 }
 
-/** A term must recur across at least this many origins to bind a thread. */
-export const ORIGINS_FOR_THREAD = 2
-
-/** Pages a thread needs before it is a subject rather than a coincidence. */
-export const PAGES_FOR_THREAD = 3
-
 /**
  * Group pages into subject threads.
  *
@@ -294,7 +778,14 @@ export const PAGES_FOR_THREAD = 3
  * offer that names two overlapping subjects asks the person to do the
  * disambiguating this is meant to save.
  */
-export function findThreads(pages: readonly ThreadPage[]): Thread[] {
+export function findThreads(input: readonly ThreadPage[]): Thread[] {
+  // Near-identical spellings collapse before anything counts them. Already done
+  // in `pagesOf` on the detection path; done again here because `findThreads` is
+  // exported and a caller holding hand-built pages must not get a different
+  // answer from the same buffer. Idempotent — see `canonicalise`.
+  const vocabulary = vocabularyOf(input)
+  const pages = rewrite(input, vocabulary.canonical)
+
   const originsByTerm = new Map<string, Set<string>>()
   const countByTerm = new Map<string, number>()
 
@@ -326,14 +817,8 @@ export function findThreads(pages: readonly ThreadPage[]): Thread[] {
     // Every term the members share, ordered by how often it recurs — this is
     // what a naming step would be given.
     const within = new Map<string, number>()
-    const surfaces = new Map<string, string>()
     for (const page of members) {
       for (const term of page.terms) within.set(term, (within.get(term) ?? 0) + 1)
-      // Rebuilt from the page's own title and URL, so the spelling shown is one
-      // that was actually on a page rather than a stem dressed up as a word.
-      for (const [term, word] of surfacesOf(page.title, page.url)) {
-        if (!surfaces.has(term)) surfaces.set(term, word)
-      }
     }
 
     const terms = [...within]
@@ -344,7 +829,15 @@ export function findThreads(pages: readonly ThreadPage[]): Thread[] {
 
     threads.push({
       terms,
-      labels: terms.map((term) => surfaces.get(term) ?? term),
+      // Taken from the window's vocabulary rather than rebuilt from the members'
+      // titles here. The old version tokenised again and kept the first spelling
+      // it met, and that breaks once a cluster can merge: the mistyped search is
+      // often the FIRST page in the buffer, because it is what started the
+      // sitting, so first-seen would render the whole thread as "robotcs".
+      // `vocabularyOf` counts each representative's OWN spellings instead — the
+      // version that counted a merged pool rendered a thread as "robotcs" too,
+      // by a different route, and its block records that fixture.
+      labels: terms.map((term) => vocabulary.surface.get(term) ?? term),
       pages: members,
       origins: [...new Set(members.map((p) => p.origin))],
       engagedMs: members.reduce((total, p) => total + p.engagedMs, 0),
