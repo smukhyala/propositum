@@ -247,6 +247,38 @@ function engagedMs() {
   return Math.max(0, Date.now() - seenAt - hidden)
 }
 
+/**
+ * Where `scrollFraction` goes, and the one hop that still drops it.
+ *
+ * Worth writing down here because this is where the value is produced and it
+ * spent the whole build being computed for nobody.
+ *
+ * On the SESSION path it has always been consumed: the service worker forwards
+ * the raw signal, `rawSignalSchema` validates it at `min(0).max(1)`, and
+ * `classifyEngagement` reads it against `ENGAGEMENT_SCROLL_FRACTION`.
+ *
+ * On the AMBIENT path — the one that runs when nobody has started a session,
+ * and the one detection is built on — it was discarded, because
+ * `src/app/api/capture/ambient/route.ts` had no field to receive it. **That
+ * field exists as of 2026-08-17.** One hop is still missing and it is not in
+ * this file: `flushAmbient` in `service-worker.js` projects each buffered signal
+ * onto the wire shape by hand and copies `dwellMs` across as `engagedMs` without
+ * copying `scrollFraction`. Until that line exists the app's new field is
+ * reachable by `curl` and by nothing the extension sends.
+ *
+ * ── Why the rounding here is not a bound, and no clamp was added ─────────
+ *
+ * `Math.round(deepest * 100) / 100` is a precision decision, not a range one:
+ * `deepest` is a ratio of live layout numbers, and a container that reports a
+ * `scrollTop` past its own maximum — overscroll, a transform, a resize mid-event
+ * — yields a value above 1. The bound lives at the app's two doors, where a
+ * non-browser caller is bounded by the same rule.
+ *
+ * A clamp here was considered and rejected: `rawSignalSchema` currently REFUSES
+ * an engagement whose scroll exceeds 1, so clamping would start admitting rows
+ * the session path drops today. That is a change to which events reach the
+ * ledger, which is not this change.
+ */
 function reportEngagement() {
   // Never seen, never read. See `wasSeen`: this is the guard that stops a
   // background tab's `pagehide` reporting hours of imaginary attention.

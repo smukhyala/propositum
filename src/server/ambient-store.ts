@@ -10,9 +10,26 @@
  *     process, and there is no path by which it can outlive one. The ledger
  *     still means "the record of a session", which is what makes
  *     `ObservationEvent` interpretable at all.
- *   - **Metadata only.** A cleaned URL, a title, dwell and scroll. There is no
- *     field for page text, and the 2,000-character excerpt begins only after a
- *     session starts. A test asserts the shape so this cannot drift.
+ *   - **Metadata only.** A cleaned URL, a title, dwell and ~~scroll~~ **— a
+ *     scroll fraction if one arrives, and today none does**. There is no field
+ *     for page text, and the 2,000-character excerpt begins only after a session
+ *     starts. A test asserts the shape so this cannot drift.
+ *
+ *     *"and scroll" was corrected twice on 2026-08-17; this is the second
+ *     correction and it narrows the first.* The line originally described a rule
+ *     the code did not have — the ambient schema had no field for the scroll
+ *     fraction `content.js` computes. The field exists now and `record` carries
+ *     it unchanged, which `tests/ambient-store.test.ts` proves. **What does not
+ *     exist is a sender.** `flushAmbient` in `extension/src/service-worker.js`
+ *     builds the ambient wire shape field by field and does not copy
+ *     `scrollFraction`, so the only way a value reaches this store is a direct
+ *     POST — `curl`, or a test. Saying "dwell and scroll" of what is actually
+ *     held would be the same false sentence in a narrower place.
+ *
+ *     Nothing reads it to decide anything either; `tests/reachability.test.ts`
+ *     holds that claim as a deferred assertion so wiring it cannot happen
+ *     quietly. Landing the producer line is a separate change with a real
+ *     consequence — see ADR-0008's capture row for why it was not taken here.
  *   - **Bounded twice** — by a rolling time window and by a hard row cap, so a
  *     day of browsing cannot accumulate into a profile.
  *   - **Discarded by default.** Declining an offer clears it. Accepting one
@@ -367,6 +384,13 @@ export function createAmbientStore(): AmbientStore {
       if (earlier.url !== observation.url) continue
       if (earlier.kind !== 'navigation' && earlier.kind !== 'query') continue
       if (earlier.title === '') continue
+      // Spread, not a field list, and that is load-bearing rather than
+      // idiomatic: the ONLY thing being replaced here is the title, and an
+      // engagement is the one kind that carries `scrollFraction`. Rewriting this
+      // as an explicit `{ at, origin, url, title, kind, engagedMs }` would drop
+      // scroll from precisely the observations that have it, and would do it
+      // silently — nothing reads the field yet, so no test outside
+      // `tests/ambient-store.test.ts` would notice.
       return { ...observation, title: earlier.title }
     }
 

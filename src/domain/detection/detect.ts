@@ -17,8 +17,24 @@
  *     reaching a model while nobody is watching, and an event stream the eval
  *     harness cannot replay. A deterministic detector keeps both.
  *   - **No page text reaches this layer at all.** Ambient capture carries a
- *     cleaned URL, a title, dwell and scroll. Nothing else. The 2,000-character
+ *     cleaned URL, a title, dwell and ~~scroll~~ **— a scroll fraction where one
+ *     is sent, and nothing sends one yet**. Nothing else. The 2,000-character
  *     excerpt begins only after a session starts.
+ *
+ *     *"and scroll" was aspirational until 2026-08-17, and this line should not
+ *     have said it. Corrected again the same day, because the first correction
+ *     overshot.* `content.js` has computed a scroll fraction on every engagement
+ *     report since the report existed, and the ambient path drops it — first in
+ *     `flushAmbient`, which hand-builds the wire shape and omits the field, and
+ *     then, until 2026-08-17, in a schema that had nowhere to put it. The schema
+ *     half is fixed and `AmbientObservation.scrollFraction` below is real. **The
+ *     extension half is not**, so an ambient observation with a scroll fraction
+ *     on it comes from a test or a `curl` and from nothing a browser does. That
+ *     is the failure `tests/reachability.test.ts` exists to remember, in its
+ *     documentation form rather than its dead-code one, and it took two passes
+ *     to state correctly. **Nothing reads the field either, deliberately** —
+ *     landing a signal and consulting it are two decisions and neither has been
+ *     finished. See the note on `WINDOW_MS`.
  *   - **Detection never starts a session.** It produces a suggestion. A human
  *     act still starts the session, which is the invariant `SessionPhase`
  *     depends on.
@@ -53,7 +69,73 @@ const SPEED = FAST ? 20 : 1
 import { canonicalise, findThreads, searchQueryOf, termsOf } from './topics'
 import type { Thread, ThreadPage } from './topics'
 
-/** The window everything is measured inside. Older observations are dropped. */
+/**
+ * The window everything is measured inside. Older observations are dropped.
+ *
+ * ── Honest limit, recorded 2026-08-17: thirty minutes is inherited folklore ──
+ *
+ * **The number is not changed here and that is the decision, not an oversight.**
+ * `docs/research/intent-suggestion-quality.md` §3.1 and §10.4 went looking for
+ * the primary source behind the thirty-minute session and found that it does not
+ * say what everyone cites it for. Written down so the next person to touch this
+ * constant finds the argument rather than rediscovering it:
+ *
+ *   - **The origin is 25.5 minutes, not 30.** Catledge & Pitkow (WWW3, 1995)
+ *     delineated a new session at gaps over **25.5 minutes**, which they derived
+ *     as *mean + 1.5 SD of inter-event idle gaps* across 107 XMosaic users. They
+ *     never justified the 1.5, never reported the SD, and never checked the
+ *     cutoff against any ground truth. Thirty is a later rounding of it.
+ *   - **It was never a boundary between two pieces of work.** Its stated purpose
+ *     was detecting *"users will often leave XMosaic running for extended
+ *     periods of time without interacting with it"* — when somebody walked away
+ *     from the browser. Using it to mean *"work older than this is not part of
+ *     this thread"* is a repurposing the source does not support.
+ *   - **Measured, it is worse than doing nothing — on one of the two analyses,
+ *     and the figures must not be mixed.** *(Corrected 2026-08-17: this bullet
+ *     originally paired one analysis's accuracies with the other's trained
+ *     optima, which read as a single measurement and was two.)* Jones & Klinkner
+ *     (CIKM 2008) report both, and they disagree:
+ *
+ *       - **Table 8, repeat queries removed.** A 30-minute timeout scores
+ *         **57.2%** on goal boundaries against a **63.1%** always-say-no
+ *         baseline — worse than doing nothing. The trained optima in that same
+ *         table are *"1.5 mins for goals and 6 mins for missions"*.
+ *       - **Table 3, repeat queries included.** The 30-minute timeout scores
+ *         **66.5%** on goal boundaries against a **54.2%** baseline — better
+ *         than doing nothing — and there the trained optima are *"5 mins and 13
+ *         minutes"*. Even so, five minutes beats thirty on goals, 71.2% to
+ *         66.5%.
+ *
+ *     So *"worse than doing nothing"* is specific to goal boundaries with
+ *     repeats removed, and it is stated that narrowly on purpose. What both
+ *     analyses agree on is that thirty is not the best number in either of them,
+ *     and the authors' own summary is unconditional: *"The 30-minute standard
+ *     receives no support from our results."*
+ *
+ *     The same pairing sits in `docs/research/intent-suggestion-quality.md`
+ *     §3.1 and §10.4 — a table headed by Table 8's accuracies with Table 3's
+ *     optima printed under it — which is where this comment inherited it.
+ *     Correcting the note is owed and is not this file.
+ *
+ * **What that does and does not license.** This constant does two jobs and only
+ * one of them is hit. As a **retention bound** — how much Propositum is willing
+ * to hold in memory about somebody who has not started a session — thirty
+ * minutes is a privacy decision, it is argued in ADR-0008, and none of the above
+ * touches it. As an implicit **claim about thread membership** it is unsupported
+ * in both directions, and Jones & Klinkner also measured that a 30-minute timeout
+ * breaks up 15% of goals — so the error is not even one-sided.
+ *
+ * `SUSTAINED_MS` in `grounds.ts` already half-spotted this: *"a rule that asks a
+ * thread to span half the life of the buffer it is measured inside is measuring
+ * the window as much as the person"*. The literature says that comment is right.
+ *
+ * **Deliberately not retuned.** Moving this number would change which sessions
+ * qualify, on evidence that argues the number is arbitrary rather than that some
+ * other number is correct — and the two jobs above want it moved in opposite
+ * directions. Recording the finding is the change; retuning is a separate one,
+ * with its own ADR, and it needs the offer-rate measurement §10.5 says nothing
+ * currently takes.
+ */
 export const WINDOW_MS = (30 * 60_000) / SPEED
 
 /**
@@ -100,8 +182,63 @@ export interface AmbientObservation {
   readonly url: string
   readonly title: string
   readonly kind: 'navigation' | 'query' | 'engagement' | 'away'
-  /** Engagement only. Already past the dwell and scroll thresholds. */
+  /**
+   * Engagement only. Cumulative dwell for this page, in milliseconds.
+   *
+   * ~~Already past the dwell and scroll thresholds.~~ **Amended 2026-08-17: it
+   * never was, on this path.** `ENGAGEMENT_DWELL_MS` and
+   * `ENGAGEMENT_SCROLL_FRACTION` live in `src/capture/semantics.ts` and are
+   * applied by `classifyEngagement`, which sits on the SESSION path behind
+   * `capture-adapter.ts`. An ambient observation never passes through it:
+   * `content.js` reports every fifteen seconds for any visible page it has seen,
+   * and the service worker forwards the report whole. `content.js`'s own
+   * `wasSeen` docblock says so in as many words — *"That lands in the ambient
+   * path, which has no engagement threshold of its own"* — and names the
+   * consequence, which is that the largest such report becomes the most
+   * confident-looking row in the buffer.
+   *
+   * So this is raw dwell, filtered by nothing, and the sentence claiming
+   * otherwise read as proof of a floor that is not here. The floors that DO bind
+   * ambient dwell are `ENGAGED_MS_FOR_WORK` above and `READ_AROUND_MS` in
+   * `grounds.ts`, both of them in the domain, both of them named.
+   */
   readonly engagedMs?: number | undefined
+  /**
+   * Engagement only. How far down the page they got, 0 to 1 inclusive.
+   *
+   * ── Landed 2026-08-17, and read by nothing on purpose ────────────────────
+   *
+   * `content.js` has computed this on every engagement report since the report
+   * existed — including the awkward part, a scroll container that is not the
+   * window — and the ambient schema had no field for it, so it was discarded on
+   * arrival while three places in the corpus said it was captured. This is the
+   * field those sentences were describing.
+   *
+   * **Second-best-evidenced implicit signal in the literature, and the cheapest.**
+   * `docs/research/intent-suggestion-quality.md` §2.1 and §10.2: Claypool et al.
+   * (IUI 2001) found *"the time spent on a page, the amount of scrolling on a
+   * page and the combination of time and scrolling had a strong correlation with
+   * explicit interest"*, where clicks and individual scroll methods did not. The
+   * caution is in the same place and belongs beside the number: Fox et al. (TOIS
+   * 2005) had scroll among their nineteen predictors and it did **not** make the
+   * top two, so this should be expected to buy less than exit type would.
+   *
+   * **Nothing here decides anything with it, and that is enforced rather than
+   * intended.** `tests/reachability.test.ts` asserts, in its *deferred, and
+   * asserted as deferred* block, that no file under `src/domain/detection`
+   * consults this beyond the declaration you are reading. Consuming it would
+   * change which afternoons clear the offer bar, and the product owner chose to
+   * record the research findings without retuning — see the note on `WINDOW_MS`.
+   * Wiring it turns that test red, which is the point: the claim has to be moved
+   * up deliberately rather than slipped in.
+   *
+   * **Bounded at the door, not here.** `ambientSchema` refuses anything outside
+   * `[0, 1]`, matching `rawSignalSchema`'s bound on the session path, so this
+   * layer cannot be handed `1e9` by a hostile or buggy sender. The domain reads
+   * no clock and validates nothing; the boundary is where a fraction is proved
+   * to be one.
+   */
+  readonly scrollFraction?: number | undefined
 }
 
 /** What was noticed, in enough detail to phrase an offer and to explain it. */

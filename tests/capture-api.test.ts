@@ -7,11 +7,14 @@
  * because a dead service worker cannot report its own death.
  */
 
-import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest'
 import { execFileSync } from 'node:child_process'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { POST as ambientRoute } from '../src/app/api/capture/ambient/route'
+import { CUSTOM_HEADER } from '../src/capture/transport'
+import { ambientStore } from '../src/server/capture-store'
 import { createDatabase } from '../src/persistence/client'
 import type { Database } from '../src/persistence/client'
 import { createRepositories } from '../src/persistence/repositories/index'
@@ -143,5 +146,134 @@ describe('the sweeper writes the gap to the ledger', () => {
     store.heartbeat(1_000)
 
     expect(await sweepForGap({ store, ledger, now: () => 2_000 })).toBe(false)
+  })
+})
+
+/**
+ * How far down the page they got, from the wire into the buffer.
+ *
+ * `content.js` has computed a scroll fraction on every engagement report for as
+ * long as the report has existed, and `ambientSchema` had no field for it — so
+ * it was dropped on arrival while ADR-0008's decision table and two comments in
+ * `detect.ts` all said ambient capture carried "dwell and scroll". Three
+ * true-sounding sentences over a discarded field.
+ *
+ * The route handler is exercised directly rather than through `fetch`, the same
+ * way `tests/act-channel.test.ts` drives the control channel: the thing worth
+ * pinning is the SCHEMA and the projection into `AmbientObservation`, and a
+ * running server would add nothing but flakiness.
+ *
+ * ── Where this stops, said rather than implied ───────────────────────────
+ *
+ * `store.since()` is exactly the array `/api/capture/ambient/debug` renders
+ * from, so this covers the round trip up to that endpoint's own projection —
+ * which aggregates per origin and does not yet emit scroll. That route was out
+ * of scope for this change and its one-line addition is owed. Nothing here
+ * pretends otherwise.
+ */
+describe('the ambient path carries how far down the page they got', () => {
+  const ambientPost = (observations: readonly unknown[]) =>
+    new Request('http://127.0.0.1:3117/api/capture/ambient', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        [CUSTOM_HEADER]: '1',
+        // A forbidden header name, so no page can forge it, and free to a
+        // non-browser caller. See src/capture/transport.ts.
+        'sec-fetch-site': 'none',
+      },
+      body: JSON.stringify({ observations }),
+    })
+
+  const engagement = (at: number, scrollFraction?: unknown) => ({
+    at,
+    url: 'https://a.example/1',
+    title: 'World Models Survey',
+    kind: 'engagement',
+    engagedMs: 45_000,
+    ...(scrollFraction === undefined ? {} : { scrollFraction }),
+  })
+
+  beforeEach(() => {
+    // The store is a process-wide singleton hung off globalThis. `clear()` is
+    // not enough — a snooze deliberately outlives one — so the honest reset is
+    // to drop the instance, as tests/multiple-threads.test.ts does.
+    globalThis.__propositumAmbient = undefined
+  })
+
+  it('lands a scroll fraction in the buffer the detector reads', async () => {
+    const now = Date.now()
+
+    const response = await ambientRoute(ambientPost([engagement(now, 0.62)]))
+    expect(response.status).toBe(200)
+
+    const held = ambientStore().since(now)
+    expect(held).toHaveLength(1)
+    expect(held[0]?.scrollFraction).toBe(0.62)
+    // And the field it sits beside is untouched, so this is an addition rather
+    // than a reshuffle.
+    expect(held[0]?.engagedMs).toBe(45_000)
+  })
+
+  it('keeps both ends of the range, because 0 and 1 are real readings', async () => {
+    const now = Date.now()
+
+    await ambientRoute(ambientPost([engagement(now, 0), { ...engagement(now, 1), url: 'https://a.example/2' }]))
+
+    expect(ambientStore().since(now).map((o) => o.scrollFraction)).toEqual([0, 1])
+  })
+
+  it('leaves the field absent when the sender says nothing, rather than calling it zero', async () => {
+    // Absent and zero are different facts — "nobody measured" against "they did
+    // not scroll" — and a default would put a navigation and an unscrolled page
+    // in the same bucket.
+    const now = Date.now()
+
+    await ambientRoute(ambientPost([engagement(now)]))
+
+    const held = ambientStore().since(now)
+    expect(held).toHaveLength(1)
+    expect(held[0]?.scrollFraction).toBeUndefined()
+    expect(Object.keys(held[0] ?? {})).not.toContain('scrollFraction')
+  })
+
+  /**
+   * A fraction that is not a fraction refuses the batch.
+   *
+   * The route has no session token — that is the whole reason it accepts
+   * metadata only — so the schema is doing more work here than it does on the
+   * ledger path. An unbounded "fraction" is the field a hostile or buggy sender
+   * puts `1e9` in, and the buffer holds it for the life of the window.
+   */
+  for (const [name, value] of [
+    ['a negative fraction', -0.1],
+    ['a fraction above one', 1.5],
+    ['a wildly out-of-range number', 1e9],
+    ['a number sent as a string', '0.5'],
+    ['a null', null],
+    ['a boolean', true],
+  ] as const) {
+    it(`refuses ${name}, and holds nothing`, async () => {
+      const now = Date.now()
+
+      const response = await ambientRoute(ambientPost([engagement(now, value)]))
+
+      expect(response.status).toBe(400)
+      expect(await response.json()).toEqual({ ok: false, reason: 'malformed' })
+      // Refusing the batch means refusing all of it. A partial write here would
+      // be a row nobody can account for.
+      expect(ambientStore().size()).toBe(0)
+    })
+  }
+
+  it('refuses the whole batch, so one bad row cannot smuggle the rest past', async () => {
+    const now = Date.now()
+
+    const response = await ambientRoute(
+      ambientPost([engagement(now, 0.5), { ...engagement(now, 42), url: 'https://a.example/2' }]),
+    )
+
+    expect(response.status).toBe(400)
+    expect(ambientStore().size()).toBe(0)
   })
 })

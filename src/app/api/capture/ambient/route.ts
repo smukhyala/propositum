@@ -33,6 +33,38 @@ import { ambientStore, captureStore, expectedOrigin } from '@/server/capture-sto
 /**
  * What the extension may send. There is no field for page text, and adding one
  * would be a change to the privacy promise rather than to a schema.
+ *
+ * ── `scrollFraction`, added 2026-08-17 ───────────────────────────────────
+ *
+ * It is metadata about how far down a page somebody got. It carries no page
+ * content, names nothing on the page, and widens the privacy promise by not one
+ * word — which is why it is a schema change and not an ADR. What it corrects is
+ * the opposite kind of drift: `content.js` has computed and sent this on every
+ * engagement report for as long as the report has existed, THIS SCHEMA had no
+ * field for it, and `docs/adr/0008-ambient-detection.md` plus two comments in
+ * `src/domain/detection/detect.ts` all said ambient capture carried "dwell and
+ * scroll". Three true-sounding sentences over a field that was dropped on
+ * arrival.
+ *
+ * **Bounded, and bounded to the same numbers as the session path.** A fraction
+ * is `[0, 1]`; `rawSignalSchema` in `src/server/capture-adapter.ts` already says
+ * so with `z.number().min(0).max(1)`, and a second definition of the same word
+ * is how two paths start disagreeing about one page. Not `.int()`, obviously,
+ * and not `.nonnegative()` alone — an unbounded "fraction" is the field a
+ * hostile or buggy sender puts `1e9` in, and `engagedByUrl`-shaped code that
+ * takes a maximum would then hold that number for the life of the window.
+ *
+ * **Optional, exactly as `engagedMs` is.** Only an engagement report has one.
+ * A navigation, a query and an `away` have nothing to say about scrolling, and
+ * an absent field must mean absent rather than zero — zero is a real reading
+ * ("they did not scroll"), and conflating the two would put a page nobody
+ * scrolled and a page nobody measured into the same bucket.
+ *
+ * **A bad value refuses the batch rather than being silently repaired.** Same
+ * as every other field here: a clamp would let a sender establish a value the
+ * schema says is impossible, and a drop would make one malformed row invisible.
+ * The service worker's 4xx handling drops a refused batch instead of retrying
+ * it, which is the behaviour that keeps a bad field from becoming a wedge.
  */
 const ambientSchema = z.object({
   observations: z
@@ -43,6 +75,7 @@ const ambientSchema = z.object({
         title: z.string().max(300),
         kind: z.enum(['navigation', 'query', 'engagement', 'away']),
         engagedMs: z.number().int().nonnegative().optional(),
+        scrollFraction: z.number().min(0).max(1).optional(),
       }),
     )
     .max(100),
@@ -96,6 +129,10 @@ export async function POST(request: Request) {
         title: raw.title,
         kind: raw.kind,
         ...(raw.engagedMs === undefined ? {} : { engagedMs: raw.engagedMs }),
+        // Spread the same way `engagedMs` is, and for the same reason: under
+        // `exactOptionalPropertyTypes` an explicit `undefined` is not the same
+        // as an absent key, and `AmbientObservation` means absent.
+        ...(raw.scrollFraction === undefined ? {} : { scrollFraction: raw.scrollFraction }),
       },
       now,
     )

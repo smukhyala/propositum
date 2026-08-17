@@ -1003,6 +1003,79 @@ describe('deferred, and asserted as deferred', () => {
       'a run drives the browser now — move this into the section above',
     ).toEqual([])
   })
+
+  it('scroll lands on the ambient path and no ground consults it', () => {
+    /**
+     * Correct, tested, carried end to end — and deliberately called by nothing.
+     *
+     * This is the shape at the top of this file, created on purpose, so it is
+     * asserted here rather than left to be discovered. `scrollFraction` has been
+     * computed by `content.js` since the engagement report existed and dropped
+     * on arrival because `ambientSchema` had no field for it; on 2026-08-17 the
+     * field landed. Nothing in the detector reads it.
+     *
+     * ── What would consume it ────────────────────────────────────────────
+     *
+     * `readAround` in `src/domain/detection/grounds.ts`, and `READ_AROUND_MS`
+     * says so about itself: *"Twenty seconds is a floor on a glance, not a bar
+     * on skimming. Twelve newsletter links at forty-five seconds each clear it
+     * comfortably."* Scroll is the signal that separates a page read from a page
+     * held open — Claypool et al. (IUI 2001) measured time, scroll and their
+     * combination as the three things that correlated with stated interest, and
+     * `docs/research/intent-suggestion-quality.md` §10.2 names `read-around` as
+     * where it would go. `deepestRead` and `read-deeply` are the second
+     * candidate, and the same research's §10.1 argues exit type would be worth
+     * more than either.
+     *
+     * ── Why it is not consumed yet ───────────────────────────────────────
+     *
+     * Because consuming it is a different decision from carrying it, and only
+     * the first has been taken. Every one of those uses moves which afternoons
+     * clear the offer bar — ADR-0008 names the false positive as the expensive
+     * failure, and a threshold that moves as a side effect of a plumbing change
+     * is exactly the silent widening `detect.ts`'s own header refuses. The
+     * research this lands was recorded WITHOUT retuning; see the honest-limit
+     * note beside `WINDOW_MS`.
+     *
+     * ── The producer half, which is also not done ────────────────────────
+     *
+     * `flushAmbient` in `extension/src/service-worker.js` projects each buffered
+     * signal onto the wire shape by hand and does not copy `scrollFraction`
+     * across, so today the field is reachable by `curl` and by nothing the
+     * extension sends. That file was out of scope for this change. It is named
+     * here rather than asserted because a red test in a file this change may not
+     * touch would be a tripwire nobody owning it agreed to.
+     *
+     * If you are here because this went red: that is the system working. Move it
+     * up, and say in the commit which afternoons started qualifying.
+     */
+    const detectTs = join('src', 'domain', 'detection', 'detect.ts')
+
+    // Not vacuous. With the field deleted every count below is zero and this
+    // would pass green while deferring something that no longer exists.
+    expect(
+      stripComments(readFileSync(join(repo, detectTs), 'utf8')),
+      'AmbientObservation no longer declares scrollFraction — this deferral is about a field that is gone',
+    ).toMatch(/readonly scrollFraction\?/)
+
+    const consumers: string[] = []
+    for (const file of PRODUCTION) {
+      const name = relative(repo, file)
+      if (!name.startsWith(join('src', 'domain', 'detection'))) continue
+
+      const mentions =
+        stripImports(stripComments(readFileSync(file, 'utf8'))).match(/\bscrollFraction\b/g) ?? []
+      // Exactly one in `detect.ts` — the interface field itself. None anywhere
+      // else in the detector. A second mention there is a reader too.
+      const allowed = name === detectTs ? 1 : 0
+      if (mentions.length > allowed) consumers.push(`${name} (${mentions.length})`)
+    }
+
+    expect(
+      consumers,
+      'the detector reads scrollFraction now — move this into the section above, and say which afternoons started or stopped qualifying',
+    ).toEqual([])
+  })
 })
 
 describe('the extension can actually capture', () => {

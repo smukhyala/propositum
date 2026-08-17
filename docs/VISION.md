@@ -191,11 +191,18 @@ source.
 that guarantee from structural to behavioural and said plainly that behavioural is weaker; this
 document had not caught up, which is exactly the drift the Now/Later split exists to prevent.)*
 
-What Chrome still refuses to hand over is the existence of any **other tab** — no `tabs` permission,
-and the acting agent never enumerates targets. Rewind's exclusion controls were sincere, documented,
+~~What Chrome still refuses to hand over is the existence of any **other tab** — no `tabs` permission,
+and the acting agent never enumerates targets.~~ **Struck 2026-08-17
+([`docs/research/intent-signals.md`](./research/intent-signals.md) §2.1). Chrome refuses no such
+thing.** `chrome.tabs.query()` needs no permission, and under the `https://*/*` host grant ADR-0008
+took it returns the URL and title of every open `https` tab. No line in the extension calls it, and
+what keeps that true is [`tests/extension-permissions.test.ts`](../tests/extension-permissions.test.ts)
+— our code declining, not the browser refusing. The same sentence is amended in
+[`docs/SECURITY_AND_PRIVACY.md`](./SECURITY_AND_PRIVACY.md), which states the trade at length.
+Rewind's exclusion controls were sincere, documented,
 and leaked anyway, because exclusions built on a see-everything vehicle leak. That warning now
-applies to us in the part that is behavioural, and it is quoted here against ourselves rather than
-against them.
+applies to us in the part that is behavioural — which, after this amendment, is more of it than this
+document used to say — and it is quoted here against ourselves rather than against them.
 
 **Later.** Structured integrations with the tools people actually work in. Editors, note apps,
 calendars — each with the same posture: least privilege, enforced by the platform where possible.
@@ -210,6 +217,18 @@ it is the whole content of the repository's **Stage 2 — Event-Driven Understan
 
 **Not planned, at any horizon.** Full-screen recording. Keystroke logging. Automatic access to
 every application. These are not sequencing decisions.
+
+*(Argued rather than amended, 2026-08-17
+([ADR-0012](./adr/0012-screen-capture-refused.md)). A rolling screenshot cache of the person's own
+screen, roughly an hour deep, was proposed and refused. **The bullet above is unchanged, word for
+word** — what is new is the argument it had been carrying without: screen capture
+is row 15 of 16 on the ranked signal list *(corrected 2026-08-17; this said "row 13 of 14", and so
+did the ADR)* and costs the strictest permission gate macOS has; the
+returns on additional behavioural signal flatten after two, and the two cost almost nothing; the
+comparison that would settle it has never been published in either direction. The ADR also states
+what would have to be true to revisit, and names its own strongest counter-argument — that
+Propositum cannot see work which does not happen in Chrome, and for the people it is aimed at that
+is a real fraction of the work.)*
 
 ---
 

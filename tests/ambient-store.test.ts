@@ -58,6 +58,87 @@ describe('it is bounded, twice', () => {
   })
 })
 
+/**
+ * Scroll survives the buffer, including the one place a row is rewritten.
+ *
+ * `withCarriedTitle` is the only function that returns a DIFFERENT observation
+ * from the one it was handed, and it does it by spreading. An engagement is both
+ * the only kind that can receive a carried title and the only kind that carries a
+ * scroll fraction, so those two meet on exactly the same rows — and a future
+ * rewrite of that spread into an explicit field list would drop scroll from
+ * every page that was being read hardest, silently, because nothing consults the
+ * field yet and no other test would go red.
+ */
+describe('it carries how far down the page they got', () => {
+  const engaged = (at: number, url: string, scrollFraction: number, title = url): AmbientObservation => ({
+    at,
+    origin: ORIGIN,
+    url,
+    title,
+    kind: 'engagement',
+    engagedMs: 45_000,
+    scrollFraction,
+  })
+
+  it('holds it unchanged through record and since', () => {
+    const store = createAmbientStore()
+    store.record(engaged(T0, '/a', 0.62), T0)
+
+    expect(store.since(T0).map((o) => o.scrollFraction)).toEqual([0.62])
+  })
+
+  it('keeps it when a titleless engagement inherits a title', () => {
+    // The rewrite path. The engagement arrives with no title, takes the
+    // navigation's, and must still be the row it was in every other respect.
+    const store = createAmbientStore()
+    store.record(obs(T0, '/a'), T0)
+    store.record(engaged(T0 + 1_000, '/a', 0.81, ''), T0 + 1_000)
+
+    const carried = store.since(T0 + 1_000).find((o) => o.kind === 'engagement')
+
+    expect(carried?.title).toBe('/a')
+    expect(carried?.scrollFraction).toBe(0.81)
+    expect(carried?.engagedMs).toBe(45_000)
+  })
+
+  it('leaves it absent on the kinds that have none', () => {
+    // A navigation has nothing to say about scrolling, and absent must not
+    // become zero — zero is a real reading.
+    const store = createAmbientStore()
+    store.record(obs(T0, '/a'), T0)
+
+    expect(store.since(T0)[0]?.scrollFraction).toBeUndefined()
+  })
+
+  it('is forgotten with everything else', () => {
+    // It is metadata about somebody's reading, so it lives under the same rules
+    // as the rest of the buffer and gets no exemption from clear().
+    const store = createAmbientStore()
+    store.record(engaged(T0, '/a', 0.62), T0)
+    store.clear()
+
+    expect(store.since(T0)).toEqual([])
+  })
+
+  it('goes out of the window with the row it sits on', () => {
+    const store = createAmbientStore()
+    store.record(engaged(T0, '/a', 0.62), T0)
+
+    expect(store.since(T0 + WINDOW_MS + 1)).toEqual([])
+  })
+
+  it('is carried into a session by the paths that fold the buffer in', () => {
+    // `forOrigin` and `forUrls` are what the accept path reads, so a field the
+    // buffer holds and those drop would be a signal that exists only until
+    // somebody says yes.
+    const store = createAmbientStore()
+    store.record(engaged(T0, '/a', 0.62), T0)
+
+    expect(store.forOrigin(ORIGIN, T0).map((o) => o.scrollFraction)).toEqual([0.62])
+    expect(store.forUrls(['/a'], T0).map((o) => o.scrollFraction)).toEqual([0.62])
+  })
+})
+
 describe('it forgets when told', () => {
   it('clear drops everything', () => {
     const store = createAmbientStore()

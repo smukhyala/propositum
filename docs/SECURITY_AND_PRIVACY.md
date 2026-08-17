@@ -154,13 +154,59 @@ merely unimplemented.
 - **Full page text.** Only the bounded excerpt above, and — while acting — the bounded accessibility
   tree of the tab Propositum opened.
 - **A list of your open tabs.** The extension is not granted `tabs`, `webNavigation` or `history`,
-  and the acting agent never calls `chrome.debugger.getTargets`. There is no call it can make that
-  returns a tab it did not create itself. **This one is still enforced by the browser rather than by
-  our code.** *(Amended 2026-08-11: this bullet used to say "anything from a source you have not
-  approved". Since [ADR-0008](./adr/0008-ambient-detection.md) the extension holds broad host
-  permission and does see every `https` page you visit — as metadata, in memory. What Chrome still
-  refuses to hand over is the existence of any other tab, which is a narrower promise than the one
-  this bullet used to make, and it is the true one.)*
+  and the acting agent never calls `chrome.debugger.getTargets`. ~~There is no call it can make that
+  returns a tab it did not create itself.~~ ~~**This one is still enforced by the browser rather than
+  by our code.**~~
+
+  **Amended 2026-08-17 ([`docs/research/intent-signals.md`](./research/intent-signals.md) §2.1):
+  both struck sentences were false, and the second one was false in the way that costs the most.**
+  `chrome.tabs.query()` needs no permission to call. Chrome's own reference says the `tabs`
+  permission *"does not give access to the `chrome.tabs` namespace"* — it only *"grants an extension
+  the ability to call `tabs.query()` against four sensitive properties on `tabs.Tab` instances:
+  `url`, `pendingUrl`, `title`, and `favIconUrl`"* — and that *"host permissions allow an extension
+  to read and query a matching tab's four sensitive `tabs.Tab` properties"*. Since
+  [ADR-0008](./adr/0008-ambient-detection.md) the manifest holds
+  `host_permissions: ["https://*/*"]`. So one line in the service worker would return the URL and
+  the title of **every open `https` tab, in every window**, today. No line in the extension is that
+  line. That is discipline, not Chrome.
+
+  **The promise is now held by a test rather than by the browser, and a test is weaker than a
+  refusal.** This is the register [ADR-0010](./adr/0010-acting-in-the-browser.md) used about its own
+  replacement — *"a pause is strictly weaker than an absence"* — and it applies here unchanged. A
+  refusal cannot be forgotten in a hurry, cannot be deleted by somebody who is sure it is redundant,
+  and cannot pass because the file it searched got renamed. A test can be all three. The mechanism
+  is [`tests/extension-permissions.test.ts`](../tests/extension-permissions.test.ts): it greps the
+  extension for `chrome.tabs.query`, `chrome.tabs.get`, `chrome.history.*` and
+  `chrome.webNavigation.*`, and it pins the manifest's permission list to an explicit set, so adding
+  one has to be a deliberate act rather than an edit nobody reviews.
+
+  **And that mechanism shipped with a hole in it, found and closed the same day.** The grep strips
+  comments before searching, and the first version did it with a regular expression that read the
+  two characters `/*` **inside a string literal** in `extension/src/panel.html` as the start of a
+  comment — deleting thirty-three lines of live side-panel code, in the one file the search was
+  extended to cover. A `chrome.tabs.query()` written in that span passed the whole suite. It is
+  fixed, and the fix is a scanner plus a per-file check that no code line goes missing. It is
+  recorded here rather than quietly repaired because it is the point the paragraph above was
+  making: a test can be forgotten, deleted, or **wrong**, and a refusal cannot.
+
+  **The date this stopped being structural is 2026-08-11**, the day ADR-0008 widened
+  `optional_host_permissions` into `https://*/*`. It was noticed on 2026-08-17, by research
+  commissioned about something else. Six days is the honest measure of how long a written guarantee
+  can go on being read as true after the decision underneath it has moved.
+
+  **And the surviving half is thinner than it reads.** `chrome.debugger.getTargets` is genuinely
+  never called and [`tests/extension-cdp.test.ts`](../tests/extension-cdp.test.ts) has greped for it
+  since ADR-0010 — but ADR-0010 also *granted* `debugger`, so that refusal is our code declining
+  too, not Chrome refusing. The research note calls this half "still structurally true"; it is not,
+  quite, and this document is not going to round it up. What is left is two greps over a component
+  with no build step, which is a real guard and a weaker one than the sentence it replaced.
+
+  *(Amended 2026-08-11: this bullet used to say "anything from a source you have not approved".
+  Since [ADR-0008](./adr/0008-ambient-detection.md) the extension holds broad host permission and
+  does see every `https` page you visit — as metadata, in memory. ~~What Chrome still refuses to
+  hand over is the existence of any other tab, which is a narrower promise than the one this bullet
+  used to make, and it is the true one.~~ **Struck 2026-08-17: Chrome refuses no such thing, and had
+  already stopped refusing it on the day that amendment was written.**)*
 - **Keystrokes.** No key logging anywhere.
 - **Your screen.** No screen recording, no video, and no screenshot of anything you are doing. The
   only images Propositum ever takes are of the tab it opened itself, while acting under an agreement

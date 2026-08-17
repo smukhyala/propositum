@@ -18,10 +18,12 @@ import {
   WINDOW_MS,
   WORKED_MS_FOR_HANDOFF,
   detectPause,
+  detectThreads,
   detectWork,
   threadPagesOf,
 } from '../src/domain/detection/detect'
 import type { AmbientObservation } from '../src/domain/detection/detect'
+import { DEEP_READ_MS, READ_AROUND_MS, groundsFor } from '../src/domain/detection/grounds'
 
 const T0 = 1_000_000
 
@@ -336,6 +338,125 @@ describe('a natural stopping point', () => {
   it('stops firing once everything has aged out', () => {
     // Measured from the last observation, not the first.
     expect(detectPause(worked, T0 + 1 + WINDOW_MS + 1)).toBeNull()
+  })
+})
+
+/**
+ * Scroll arrives, and nothing about the answer moves.
+ *
+ * `scrollFraction` landed on `AmbientObservation` on 2026-08-17 after being
+ * computed by `content.js` and dropped on arrival for the whole build. Carrying
+ * a signal and consulting it are two decisions, and only the first was taken —
+ * the research that motivated it (`docs/research/intent-suggestion-quality.md`)
+ * was recorded as honest limits WITHOUT retuning any constant.
+ *
+ * So this is the guard on that promise, and it is deliberately not a grep.
+ * `tests/reachability.test.ts` asserts that no file under `src/domain/detection`
+ * mentions the field; this asserts the thing anybody actually cares about, which
+ * is that the same afternoon produces the same detection and the same grounds
+ * whether or not the scroll is there. The two catch different mistakes: a grep
+ * would miss a consumer that reached the value through a spread, and this would
+ * miss a consumer whose effect happens to be nil on one fixture.
+ *
+ * ADR-0008 names the false positive as the expensive failure, so what must be
+ * pinned is that a plumbing change moved no bar in either direction.
+ */
+describe('landing scroll changes no detection outcome', () => {
+  const NOW = T0 + 10 * 60_000
+
+  /**
+   * An afternoon that clears the offer bar, so the comparison is between two
+   * real answers rather than two nulls.
+   *
+   * ── Widened 2026-08-17, twice over, after review ─────────────────────────
+   *
+   * The first version was three origins with one page each and about four
+   * minutes of reading, and it was too small in two ways that both made
+   * assertions in this block quietly weaker than they read:
+   *
+   *  - **`read-around` never fired.** It wants `PAGES_ON_ONE_ORIGIN` pages on a
+   *    single origin, each held past `READ_AROUND_MS`, and one page per origin
+   *    can never satisfy it. That is the ground the deferral is *about*: a
+   *    scroll fraction would be consulted there first, so an equality that
+   *    cannot see `read-around` cannot see the change it is guarding against.
+   *    `a.example` now has three pages.
+   *  - **`detectPause` returned `null` on both sides**, so the stopping-point
+   *    test asserted `null === null`. `WORKED_MS_FOR_HANDOFF` is ten minutes and
+   *    the fixture held four. The engagement figures below total eleven, which
+   *    clears it with room and leaves every other bar in the same place.
+   */
+  const afternoon: AmbientObservation[] = [
+    { at: T0, origin: 'https://www.google.com', url: 'https://www.google.com/search?q=world+models', title: 'world models - Google Search', kind: 'query' },
+    { at: T0 + 1_000, origin: 'https://a.example', url: 'https://a.example/1', title: 'World Models Survey', kind: 'navigation' },
+    { at: T0 + 2_000, origin: 'https://a.example', url: 'https://a.example/1', title: 'World Models Survey', kind: 'engagement', engagedMs: DEEP_READ_MS * 3 },
+    { at: T0 + 3_000, origin: 'https://a.example', url: 'https://a.example/2', title: 'World Models Benchmarks', kind: 'navigation' },
+    { at: T0 + 4_000, origin: 'https://a.example', url: 'https://a.example/2', title: 'World Models Benchmarks', kind: 'engagement', engagedMs: READ_AROUND_MS * 3 },
+    { at: T0 + 5_000, origin: 'https://a.example', url: 'https://a.example/3', title: 'World Models Criticism', kind: 'navigation' },
+    { at: T0 + 6_000, origin: 'https://a.example', url: 'https://a.example/3', title: 'World Models Criticism', kind: 'engagement', engagedMs: READ_AROUND_MS * 3 },
+    { at: T0 + 7_000, origin: 'https://b.example', url: 'https://b.example/1', title: 'World Models Explained', kind: 'navigation' },
+    { at: T0 + 8_000, origin: 'https://b.example', url: 'https://b.example/1', title: 'World Models Explained', kind: 'engagement', engagedMs: DEEP_READ_MS * 3 },
+    { at: T0 + 9_000, origin: 'https://c.example', url: 'https://c.example/1', title: 'Training World Models', kind: 'navigation' },
+    { at: T0 + 10_000, origin: 'https://c.example', url: 'https://c.example/1', title: 'Training World Models', kind: 'engagement', engagedMs: DEEP_READ_MS * 3 },
+  ]
+
+  /**
+   * The same afternoon, with scroll on every engagement.
+   *
+   * Deliberately a value a consumer would be tempted to threshold on: 0.05 is
+   * "they read the first screenful and stopped", which is the case
+   * `READ_AROUND_MS`'s own docstring admits it cannot refuse. If anything starts
+   * reading this field, this is the buffer whose answer changes first.
+   */
+  const scrolled: AmbientObservation[] = afternoon.map((o) =>
+    o.kind === 'engagement' ? { ...o, scrollFraction: 0.05 } : o,
+  )
+
+  const groundsOf = (observations: readonly AmbientObservation[]) => {
+    const detected = detectWork(observations, NOW)
+    expect(detected, 'the fixture stopped qualifying — this test is comparing two nulls').not.toBeNull()
+    return groundsFor(detected!, threadPagesOf(observations, detected!, NOW))
+  }
+
+  it('detects the same thread', () => {
+    expect(detectWork(scrolled, NOW)).toEqual(detectWork(afternoon, NOW))
+  })
+
+  it('detects the same strands, in the same order', () => {
+    expect(detectThreads(scrolled, NOW)).toEqual(detectThreads(afternoon, NOW))
+  })
+
+  it('builds the same pages, so ThreadPage gained nothing to threshold on', () => {
+    const detected = detectWork(afternoon, NOW)!
+    expect(threadPagesOf(scrolled, detected, NOW)).toEqual(threadPagesOf(afternoon, detected, NOW))
+  })
+
+  it('computes the same grounds, kinds sentences and sufficiency alike', () => {
+    const without = groundsOf(afternoon)
+
+    // Non-vacuous: a fixture that fires nothing would make the equality below
+    // true for the wrong reason. `read-around` is named explicitly because it is
+    // the ground a scroll fraction would be consulted by first — an equality
+    // over a grounds set that does not contain it is not guarding the thing this
+    // block is about.
+    expect(without.kinds).toContain('read-around')
+    expect(without.kinds.length).toBeGreaterThan(0)
+    expect(groundsOf(scrolled)).toEqual(without)
+  })
+
+  it('finds the same stopping point', () => {
+    const paused = [...afternoon, { at: T0 + 10_000, origin: 'https://c.example', url: 'https://c.example/1', title: '', kind: 'away' } as const]
+    const scrolledPause = paused.map((o) =>
+      o.kind === 'engagement' ? { ...o, scrollFraction: 0.05 } : o,
+    )
+
+    const without = detectPause(paused, NOW)
+
+    // The guard the other two assertions in this block already had and this one
+    // did not: `detectPause` returned `null` on both sides of the original
+    // fixture, so this read `expect(null).toEqual(null)` and would have stayed
+    // green through any change to `detectPause` whatsoever.
+    expect(without, 'the fixture stopped pausing — this test is comparing two nulls').not.toBeNull()
+    expect(detectPause(scrolledPause, NOW)).toEqual(without)
   })
 })
 
