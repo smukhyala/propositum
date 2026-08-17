@@ -51,7 +51,7 @@ const FAST = process.env['PROPOSITUM_FAST_DETECT'] === '1'
 const SPEED = FAST ? 20 : 1
 
 import { canonicalise, findThreads, searchQueryOf, termsOf } from './topics'
-import type { ThreadPage } from './topics'
+import type { Thread, ThreadPage } from './topics'
 
 /** The window everything is measured inside. Older observations are dropped. */
 export const WINDOW_MS = (30 * 60_000) / SPEED
@@ -256,28 +256,78 @@ function engagedTotal(observations: readonly AmbientObservation[]): number {
 }
 
 /**
- * Is coherent work underway on some origin?
+ * How many strands of one afternoon may be shown at once.
  *
- * Returns the strongest candidate, or null. One origin at a time on purpose: an
- * offer that names two sites is asking the person to do the disambiguating,
- * which is the work the feature exists to save.
+ * ~~One origin at a time on purpose: an offer that names two sites is asking
+ * the person to do the disambiguating, which is the work the feature exists to
+ * save.~~
+ *
+ * **Amended 2026-08-17. Half of that survives and the other half stopped being
+ * true a while ago, so it is worth separating them rather than striking the
+ * whole line.**
+ *
+ * *"One origin"* was already false. A thread has been multi-origin since
+ * `topics.ts` replaced per-origin detection — `WorkDetected.origins` is a list,
+ * and *"General Intuition, across 3 sites"* is the sentence the front door
+ * ships. The comment was describing a rule the code had not had for some time.
+ *
+ * The argument underneath it is still right, and it is about an OFFER: a
+ * notification that names two subjects and asks which one is making the person
+ * do the disambiguating. That is why the extension badge and the notification
+ * still name only the strongest strand, and why nothing here multiplies
+ * notifications — ADR-0008 names interruption as the expensive failure and
+ * PRODUCT_PRINCIPLES §13 requires notifications be actionable and sparse.
+ *
+ * **Showing several named strands on a page somebody chose to open is a
+ * different act from interrupting them with a choice.** Home is a place a
+ * person goes; nothing about arriving there is an interruption, so more
+ * information on it costs nothing this ADR is protecting.
+ *
+ * Three, and the number carries its own argument rather than being a round one:
+ * a wall of suggestions is its own kind of noise, and the fourth strand of an
+ * afternoon is rarely the one somebody wants. It is exported so the two places
+ * that must agree about it — the screen and the poll that names and composes
+ * for what the screen will show — read the same constant.
+ *
+ * **Amended 2026-08-17. It bounds what is SHOWN, and it was being spent on
+ * strands nobody could see.** Both callers handed it to `detectThreads` and
+ * filtered the snoozed strands out of the RESULT, so a subject somebody had
+ * already answered "not now" to still consumed one of the three slots and a
+ * qualifying strand behind it fell off the screen with nothing saying so. That
+ * is the exact failure this whole change exists to remove — a strand found and
+ * discarded in silence — reintroduced one line further down from where it was
+ * fixed. Measured: four qualifying strands with the strongest snoozed showed
+ * two, and the fourth was never named or pinned either.
+ *
+ * So the cut happens AFTER the filters, in both places. The number is unchanged
+ * and no more strands reach the screen than before; what changed is that the
+ * three are three the person can actually see.
  */
-export function detectWork(
-  observations: readonly AmbientObservation[],
-  now: number,
-): WorkDetected | null {
-  const recent = inWindow(observations, now)
-  if (recent.length === 0) return null
+export const MAX_THREADS_SHOWN = 3
 
-  const threads = findThreads(pagesOf(recent))
-  const thread = threads[0]
-  if (!thread) return null
+/**
+ * Every strand, however many there are.
+ *
+ * The limit for asking *which strands exist*, which is a different question from
+ * *how many may be shown at once* and needs a different answer. Four callers ask
+ * it, and every one of them is wrong when it is bounded:
+ *
+ *   - `noticedStrands` and the poll, which do the filtering that decides what
+ *     the three shown strands ARE. Cutting before the filter is the defect
+ *     above.
+ *   - `strandBySignature` and `declineThreadOffer`, which SELECT a strand by the
+ *     signature a button carried. A button on the third row has to find its own
+ *     subject, and it cannot if the lookup only ever considers the first three
+ *     the detector ranked — the person would press "Set this up for me" on a
+ *     strand in front of them and be told it had gone quiet.
+ *
+ * It widens nothing anybody sees. `MAX_THREADS_SHOWN` still bounds the screen
+ * and the poll; it is applied at the end rather than at the start.
+ */
+export const EVERY_STRAND = Number.MAX_SAFE_INTEGER
 
-  // A thread is already several pages across several sites sharing a subject.
-  // The remaining bar is that they actually read some of it, so a burst of tabs
-  // opened and abandoned does not qualify.
-  if (thread.engagedMs < ENGAGED_MS_FOR_WORK && thread.searches === 0) return null
-
+/** One found thread, as the rest of the system reads it. */
+function detectedFrom(thread: Thread): WorkDetected {
   const focusPage = [...thread.pages].sort((a, b) => b.engagedMs - a.engagedMs)[0]
 
   return {
@@ -293,6 +343,81 @@ export function detectWork(
     urls: thread.pages.map((p) => p.url),
     because: thread.searches > 0 ? 'searched-and-followed' : 'followed-across-sites',
   }
+}
+
+/**
+ * Every strand of work underway, strongest first.
+ *
+ * ── The loss this recovers is one line ───────────────────────────────────
+ *
+ * `findThreads` has always returned EVERY thread, disjoint — each page is
+ * claimed by exactly one — and `detectWork` took `threads[0]` and dropped the
+ * rest on the floor. A recorded afternoon had three strands: a
+ * perturbation/robotics search, a DMD-vs-SPO search, and Kalman filters
+ * followed through to an article. Only the last surfaced. The other two were
+ * found and discarded, which is a worse failure than not finding them, because
+ * nothing anywhere said they had been.
+ *
+ * ── The same bar, and no back door ───────────────────────────────────────
+ *
+ * Every strand returned clears the bar `detectWork` already applied — a thread,
+ * plus enough reading or one search. The check is written once, here, so a
+ * second strand cannot arrive on a screen under a bar the first would have
+ * failed. A thread that fails it is SKIPPED rather than ending the scan: the
+ * sort is by searches, breadth and dwell, not by this bar, so the strand after
+ * a weak one can be perfectly strong.
+ *
+ * ── What that changes about `detectWork`, said rather than discovered ────
+ *
+ * `detectWork` is now `detectThreads(…, 1)[0]`, and that is not identical to
+ * what it did. Before, a strongest thread that failed the bar meant NULL even
+ * when a weaker thread cleared it; now the cleared one is returned. That is the
+ * filter and the ranking applied in the honest order, and it can only ever
+ * return a thread that passed the bar — so it widens what is offered by exactly
+ * the set of afternoons where the top-ranked strand was skimmed and a real one
+ * sat behind it. It is the cheap direction (ADR-0008: a missed detection costs
+ * a suggestion nobody sees), and it is stated here because a silent widening in
+ * this file is the thing this file's own header refuses.
+ */
+export function detectThreads(
+  observations: readonly AmbientObservation[],
+  now: number,
+  limit: number = MAX_THREADS_SHOWN,
+): WorkDetected[] {
+  if (limit <= 0) return []
+
+  const recent = inWindow(observations, now)
+  if (recent.length === 0) return []
+
+  const detected: WorkDetected[] = []
+
+  for (const thread of findThreads(pagesOf(recent))) {
+    if (detected.length >= limit) break
+
+    // A thread is already several pages across several sites sharing a subject.
+    // The remaining bar is that they actually read some of it, so a burst of
+    // tabs opened and abandoned does not qualify.
+    if (thread.engagedMs < ENGAGED_MS_FOR_WORK && thread.searches === 0) continue
+
+    detected.push(detectedFrom(thread))
+  }
+
+  return detected
+}
+
+/**
+ * Is coherent work underway? The strongest strand, or null.
+ *
+ * Defined in terms of `detectThreads` rather than beside it, so the two cannot
+ * disagree about what a detection is. Every caller that wants one answer — the
+ * poll's badge, the notification, `offerForThread`'s "is this still the thread"
+ * check — reads this one.
+ */
+export function detectWork(
+  observations: readonly AmbientObservation[],
+  now: number,
+): WorkDetected | null {
+  return detectThreads(observations, now, 1)[0] ?? null
 }
 
 /**

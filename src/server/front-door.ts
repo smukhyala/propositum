@@ -33,6 +33,10 @@
 import { INTENTION_STATES, intentionState } from '../domain/intention/state'
 import type { IntentionStateId } from '../domain/intention/state'
 import type { IntentionStateFacts } from '../persistence/repositories/index'
+import { EVERY_STRAND, MAX_THREADS_SHOWN, detectThreads } from '../domain/detection/detect'
+import type { AmbientObservation, WorkDetected } from '../domain/detection/detect'
+import { signatureOf } from './ambient-store'
+import type { AmbientStore } from './ambient-store'
 
 /** One sitting, as `sessions.forProject` returns it. A sitting is over when its
  *  phase says so — that reader carries no `endedAt`. */
@@ -157,4 +161,127 @@ export function frontDoorRow(input: {
  */
 export function statusWordFor(state: IntentionStateId | null): string {
   return state === null ? 'nothing stated yet' : INTENTION_STATES[state].consumerLabel
+}
+
+/* ── what the front door has noticed, and would show ────────────────────── */
+
+/** One strand of an afternoon, as the front door renders it. */
+export interface NoticedStrand {
+  readonly detected: WorkDetected
+  /** The thread's identity. The only thing the accept and decline forms carry,
+   *  and the key everything per-thread is stored under. */
+  readonly signature: string
+}
+
+/**
+ * Every strand this screen will show, in order, already filtered and deduped.
+ *
+ * ── Why this is not eight lines inside `page.tsx` ────────────────────────
+ *
+ * The same argument this file opens with, now load-bearing for something that
+ * can go wrong in a worse way than a status word. There are three decisions
+ * here and each of them fails silently:
+ *
+ *   - **The bar.** Every strand must clear the one `detectWork` applies. That is
+ *     enforced inside `detectThreads`, and this function must not widen it.
+ *   - **The snooze.** Two of them, asking different questions — a strand
+ *     somebody turned down here, and the coarser origin decline the extension
+ *     still sends. A missing check means "not now" does not hold.
+ *   - **The signature.** It keys `rememberThread`, the name cache, the offer
+ *     cache, and the hidden field under every button on the screen. Two strands
+ *     sharing one would put the second one's button in front of the first one's
+ *     work.
+ *
+ * A `.tsx` server component is the one thing in this repo nothing can assert
+ * against, and "the wrong strand was started" is not a defect anybody would spot
+ * by looking. So the derivation lives here and `page.tsx` keeps the markup.
+ *
+ * ── The bound is the detector's number, applied here, and that is the fix ─
+ *
+ * ~~`detectThreads` defaults to `MAX_THREADS_SHOWN` and carries the argument for
+ * the number. This does not re-state it, because two places holding one limit is
+ * how the screen and the poll that names for the screen come apart.~~
+ *
+ * **Amended 2026-08-17.** Letting the detector do the cutting meant the cut
+ * happened BEFORE the three filters below, so a snoozed strand spent one of the
+ * three slots and a qualifying strand behind it never reached the screen — found
+ * and discarded in silence, which is the failure this function exists to end.
+ * Measured at four qualifying strands: snoozing the strongest showed two.
+ *
+ * So the detector is asked for `EVERY_STRAND` and the bound is applied at the
+ * bottom of this loop. The number is still the detector's and is still imported
+ * rather than written twice; what moved is where it bites. `MAX_THREADS_SHOWN`
+ * carries the amendment and the poll does the same thing in the same order, so
+ * the screen and the pass that names for it still agree about which three exist.
+ */
+export function noticedStrands(
+  store: AmbientStore,
+  observations: readonly AmbientObservation[],
+  nowMs: number,
+): NoticedStrand[] {
+  const strands: NoticedStrand[] = []
+  const seen = new Set<string>()
+
+  for (const detected of detectThreads(observations, nowMs, EVERY_STRAND)) {
+    // The bound, spent only on strands that survived everything below it.
+    if (strands.length >= MAX_THREADS_SHOWN) break
+
+    const signature = signatureOf(detected.terms)
+    if (seen.has(signature)) continue
+    // This screen's own "Not now", against the subject the person answered.
+    if (store.isThreadSnoozed(signature, nowMs)) continue
+    // The extension's coarser decline, against a site. Kept because the decline
+    // endpoint takes an origin; it can suppress a strand that merely shares a
+    // site with one somebody turned down, and `AmbientStore.declineThread`
+    // records that gap rather than hiding it.
+    if (store.isSnoozed(detected.origins[0] ?? '', nowMs)) continue
+
+    seen.add(signature)
+    strands.push({ detected, signature })
+  }
+
+  return strands
+}
+
+/**
+ * The strand a button belonged to, found again in a buffer that has moved.
+ *
+ * ── Why the form carries a signature and the rest is recomputed ──────────
+ *
+ * `page.tsx` recomputes detection on accept rather than trusting a hidden field,
+ * and its own note says why: the buffer moves while a page sits open, and the
+ * pages pinned as "the thread" are exactly what gets folded into the ledger. The
+ * screen can now show three strands, so something has to say WHICH — and the
+ * signature is already the only identifier this product lets a request carry.
+ *
+ * It SELECTS among strands detected a moment ago. It supplies no subject, no
+ * page list and no origin, so the second strand's button carries the second
+ * strand's pages, freshly computed, and a crafted value finds nothing.
+ *
+ * Null is the ordinary "gone quiet" answer as well as the crafted one, and both
+ * want the same sentence.
+ *
+ * ── Unbounded, deliberately, and it is `MAX_THREADS_SHOWN`'s doing ───────
+ *
+ * `EVERY_STRAND` rather than the display bound, because this is asking WHICH
+ * STRAND, not how many to show. Once the bound is applied after the snooze
+ * filters — which is the fix in `noticedStrands` — the third row of the screen
+ * can be the detector's fourth-ranked strand, and a bounded lookup here would
+ * answer a button that is on screen with "that has gone quiet". This does not
+ * widen anything: it can still only return a strand that cleared the detector's
+ * own bar, and the caller already had its signature.
+ */
+export function strandBySignature(
+  observations: readonly AmbientObservation[],
+  nowMs: number,
+  signature: string,
+): WorkDetected | null {
+  const wanted = signature.trim()
+  if (wanted === '') return null
+
+  return (
+    detectThreads(observations, nowMs, EVERY_STRAND).find(
+      (candidate) => signatureOf(candidate.terms) === wanted,
+    ) ?? null
+  )
 }

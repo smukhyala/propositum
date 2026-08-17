@@ -58,6 +58,15 @@
  * `tests/front-door.test.ts` can assert the word a person actually reads. What
  * is left here is markup and one call each.
  *
+ * **`noticedStrands` and `strandBySignature` moved there for the same reason on
+ * 2026-08-17**, when this screen started showing every strand of an afternoon
+ * rather than the strongest. Three decisions came with that — the snooze
+ * filters, the refusal of a duplicate signature, and which strand a button
+ * belongs to — and each of them fails without anything on screen looking wrong.
+ * The last is the worst of the three: a button that starts the wrong subject
+ * approves the wrong sites, and the person finds out from a session that reads
+ * slightly oddly.
+ *
  * ── Why the forms are plain server actions ───────────────────────────────
  *
  * No client state, so no client component: the form posts, the action returns a
@@ -71,14 +80,18 @@ import { redirect } from 'next/navigation'
 
 import { Empty, Masthead, Section, Sheet } from '@/ui/primitives'
 import { Away, Handover, Watching } from '@/ui/sprites'
-import { carryOnCandidate, declineOffer, startFromSuggestion } from '@/server/actions'
+import { carryOnCandidate, declineThreadOffer, startFromSuggestion } from '@/server/actions'
 import type { CarriedProject } from '@/server/actions'
 import { ambientStore, captureStore } from '@/server/capture-store'
 import { describeWork, signatureOf } from '@/server/ambient-store'
 import type { NamedThread } from '@/server/ambient-store'
-import { detectWork } from '@/domain/detection/detect'
 import type { WorkDetected } from '@/domain/detection/detect'
-import { frontDoorRow, statusWordFor } from '@/server/front-door'
+import {
+  frontDoorRow,
+  noticedStrands,
+  statusWordFor,
+  strandBySignature,
+} from '@/server/front-door'
 import type { FrontDoorRow } from '@/server/front-door'
 import type { IntentionStateFacts } from '@/persistence/repositories/index'
 
@@ -117,6 +130,15 @@ const CSS = `
 .hm-go { display: inline-block; font-size: 0.8125rem; line-height: 1.4; padding: 0.35rem 0.9rem; border: 1px solid var(--accent); background: var(--accent); color: var(--ground); border-radius: 3px; text-decoration: none; }
 .hm-go:hover { filter: brightness(1.07); text-decoration: none; }
 .hm-go:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* One strand of an afternoon. A hairline between them rather than a card each:
+   this is one thing Propositum is saying, in two or three parts, and boxing
+   them would read as two or three separate demands. */
+.hm-strand { padding: 1.5rem 0; border-bottom: 1px solid var(--attention); }
+.hm-strand:first-of-type { padding-top: 0; }
+.hm-strand:last-of-type { border-bottom: none; padding-bottom: 0.25rem; }
+/* The sentence above the strands, which qualifies all of them. */
+.hm-strands { margin: 0 0 1.5rem; }
 
 /* The carry-on box. Indented under the offer, because it is a qualification of
    the offer rather than a second one. */
@@ -197,6 +219,14 @@ function subjectOf(detected: WorkDetected, named: NamedThread | null): string {
  * now, and the pages pinned as "the thread" are exactly what gets folded into
  * the ledger — so they have to be the current ones.
  *
+ * ── What the form DOES carry, and why that is not the same concession ────
+ *
+ * The signature, and nothing else. `strandBySignature` in `front-door.ts` holds
+ * the whole of that argument and is where it can be tested; the short version is
+ * that the signature SELECTS among strands detected a moment ago and supplies
+ * nothing of its own, so accepting the second strand carries the second strand's
+ * pages, freshly computed.
+ *
  * ── Why it lives out here and not inside the component ───────────────────
  *
  * The two `'use server'` closures below call it, and anything an inline server
@@ -204,10 +234,10 @@ function subjectOf(detected: WorkDetected, named: NamedThread | null): string {
  * serialisable, so declaring this beside them throws at render — found by
  * loading the page, not by the typechecker.
  */
-async function accept(treatAsNewWork: boolean): Promise<never> {
+async function accept(threadSignature: string, treatAsNewWork: boolean): Promise<never> {
   const store = ambientStore()
   const at = Date.now()
-  const fresh = detectWork(store.since(at), at)
+  const fresh = strandBySignature(store.since(at), at, threadSignature)
   if (!fresh) {
     redirect(
       `/?problem=${encodeURIComponent('That has gone quiet. Propositum will offer again when it sees a subject come back.')}`,
@@ -327,49 +357,87 @@ export default async function Home({
   )
 
   /**
-   * Has Propositum noticed work nobody told it about?
+   * Has Propositum noticed work nobody told it about — and how much of it?
    *
    * Rendered only when no session is running, because during one the timeline
    * already shows what is being seen — an offer to start something that has
    * started would be nonsense.
+   *
+   * ── Every strand, and why that is not the same decision as notifying ─────
+   *
+   * `detectThreads` returns each disjoint strand of the afternoon, strongest
+   * first, bounded by `MAX_THREADS_SHOWN`. All of them are shown HERE and only
+   * the strongest reaches the extension's badge and notification. The asymmetry
+   * is the whole point: ADR-0008 names interruption as the expensive failure and
+   * PRODUCT_PRINCIPLES §13 wants notifications sparse, but this is a screen a
+   * person chose to open, and more information on it interrupts nobody.
+   *
+   * ── And the derivation is not in this file, for the reason it never is ──
+   *
+   * `noticedStrands` filters the snoozed, refuses a duplicate signature, and
+   * keeps the bound — three decisions that all fail silently, in a `.tsx` server
+   * component nothing in this suite can assert against. `front-door.ts` opens
+   * with that argument and this is the second thing to move for it. What stays
+   * here is markup and one call.
    */
   const ambient = ambientStore()
   // `nowMs` is the instant the lifecycle words above were computed from, rather
   // than a second reading of the clock. Two "now"s on one render is two answers
   // to one question, and this screen puts both answers on the same page.
-  const detected = live ? null : detectWork(ambient.since(nowMs), nowMs)
-  const named = detected ? ambient.nameFor(signatureOf(detected.terms)) : null
-  const offer =
-    detected && !ambient.isSnoozed(detected.origins[0] ?? '', nowMs)
-      ? describeWork(detected, signatureOf(detected.terms), named)
-      : null
+  const noticed = live ? [] : noticedStrands(ambient, ambient.since(nowMs), nowMs)
 
-  const subject = detected ? subjectOf(detected, named) : ''
+  /**
+   * Each strand as the screen renders it, including which project it would join.
+   *
+   * The carry-on question is asked per strand, because it is a per-strand answer
+   * — two subjects in one afternoon can belong to two different projects, and
+   * one of them can be new work. Issued together rather than in series, and
+   * bounded by `MAX_THREADS_SHOWN`, so the worst case on the most-hit route is
+   * three of these rather than an unbounded walk. Nothing is asked at all on the
+   * ordinary quiet screen, where `noticed` is empty.
+   */
+  const strands = await Promise.all(
+    noticed.map(async (thread) => {
+      const named = ambient.nameFor(thread.signature)
+      const subject = subjectOf(thread.detected, named)
+      const described = describeWork(thread.detected, thread.signature, named)
+      const candidate = await carryOnCandidate(subject)
 
-  // Only asked when there is something to ask about, so the ordinary quiet
-  // screen does not walk every project for nothing.
-  let backOn: CarriedProject | null = null
-  if (offer !== null && offer.kind === 'start-session') {
-    const candidate = await carryOnCandidate(subject)
-    if (candidate.ok) backOn = candidate.value
-  }
+      return {
+        signature: thread.signature,
+        named,
+        sentence: described.sentence,
+        because: described.because,
+        backOn: candidate.ok ? candidate.value : (null as CarriedProject | null),
+      }
+    }),
+  )
 
-  async function carryOn() {
+  /**
+   * One set of actions for every strand, told apart by a hidden field.
+   *
+   * Not a closure per strand. An inline `'use server'` function declared inside
+   * the render closes over whatever is in scope and that gets serialised across
+   * the boundary — the note on `accept` records what happens when something
+   * unserialisable is in there. A hidden input avoids the question entirely, and
+   * it is the shape the "Not now" form already had.
+   */
+  async function carryOn(formData: FormData) {
     'use server'
 
-    await accept(false)
+    await accept(String(formData.get('thread') ?? ''), false)
   }
 
-  async function asNewWork() {
+  async function asNewWork(formData: FormData) {
     'use server'
 
-    await accept(true)
+    await accept(String(formData.get('thread') ?? ''), true)
   }
 
   async function notNow(formData: FormData) {
     'use server'
 
-    await declineOffer(String(formData.get('origin') ?? ''))
+    await declineThreadOffer(String(formData.get('thread') ?? ''))
     redirect('/')
   }
 
@@ -411,76 +479,110 @@ export default async function Home({
         </Section>
       ) : null}
 
-      {offer === null || offer.kind !== 'start-session' ? null : (
+      {/* ONE Section, however many strands are inside it. `Section` budgets a
+          single `tone='attention'` per screen — two attentions is none — and
+          three bands down the page would spend that budget three times over on
+          what is, to the person, one thing Propositum has to say. */}
+      {strands.length === 0 ? null : (
         <Section title="Propositum noticed" tone="attention" index={2}>
-          {/* The named sentence only when the model was sure. A confident wrong
-              name reads as Propositum knowing something it does not; the
-              deterministic sentence is vaguer and always true. */}
-          <p className="hm-lede">
-            {named?.confident ? `Looks like you are working on ${named.subject}.` : offer.sentence}
-          </p>
-          <p className="hm-note">{offer.because}</p>
+          {/* Said once, above all of them, because it is the fact that makes
+              three buttons honest. Only one session runs at a time, so only one
+              of these can be taken — and starting one stops the watching that
+              was holding the others, so they end rather than wait. A screen
+              offering three choices without saying that would be implying the
+              other two keep. */}
+          {strands.length > 1 ? (
+            <p className="hm-note hm-strands">
+              You have had more than one thing going. Propositum watches one at a time, so saying
+              yes to one of these starts that one and lets the rest go &mdash; what it saw of the
+              others is thrown away rather than kept waiting. Turning one down on its own leaves
+              the others where they are.
+            </p>
+          ) : null}
+
+          {strands.map((strand) => (
+            <div className="hm-strand" key={strand.signature}>
+              {/* The named sentence only when the model was sure. A confident
+                  wrong name reads as Propositum knowing something it does not;
+                  the deterministic sentence is vaguer and always true. */}
+              <p className="hm-lede">
+                {strand.named?.confident
+                  ? `Looks like you are working on ${strand.named.subject}.`
+                  : strand.sentence}
+              </p>
+              <p className="hm-note">{strand.because}</p>
+
+              {strand.backOn === null ? (
+                <div className="hm-acts">
+                  <form action={carryOn}>
+                    <input type="hidden" name="thread" value={strand.signature} />
+                    <button className="hm-submit hm-submit-primary" type="submit">
+                      {'Set this up for me'}
+                    </button>
+                  </form>
+                  <form action={notNow}>
+                    <input type="hidden" name="thread" value={strand.signature} />
+                    <button className="hm-submit" type="submit">
+                      Not now
+                    </button>
+                  </form>
+                </div>
+              ) : (
+                <>
+                  {/* Filing is a decision Propositum made, so it is stated before
+                      it is acted on — and the way out of it is beside it, not
+                      buried on the screen you land on afterwards. */}
+                  <div className="hm-back-on">
+                    <p className="hm-note" style={{ marginTop: 0 }}>
+                      Looks like you are back on
+                    </p>
+                    <p className="hm-back-on-name">{strand.backOn.name}</p>
+                    <p className="hm-back-on-meta">
+                      {strand.backOn.sittings}{' '}
+                      {strand.backOn.sittings === 1 ? 'sitting' : 'sittings'} &middot;{' '}
+                      {strand.backOn.sources} {strand.backOn.sources === 1 ? 'source' : 'sources'}{' '}
+                      &middot; {strand.backOn.documents}{' '}
+                      {strand.backOn.documents === 1 ? 'document' : 'documents'} &middot;{' '}
+                      {strand.backOn.overlap} {strand.backOn.overlap === 1 ? 'word' : 'words'} in
+                      common
+                    </p>
+                  </div>
+
+                  <div className="hm-acts">
+                    <form action={carryOn}>
+                      <input type="hidden" name="thread" value={strand.signature} />
+                      <button className="hm-submit hm-submit-primary" type="submit">
+                        Carry on with it
+                      </button>
+                    </form>
+                    <form action={asNewWork}>
+                      <input type="hidden" name="thread" value={strand.signature} />
+                      <button className="hm-submit" type="submit">
+                        No &mdash; this is new work
+                      </button>
+                    </form>
+                    <form action={notNow}>
+                      <input type="hidden" name="thread" value={strand.signature} />
+                      <button className="hm-submit" type="submit">
+                        Not now
+                      </button>
+                    </form>
+                  </div>
+                </>
+              )}
+            </div>
+          ))}
+
+          {/* Once, at the foot, because it is true of every strand above it and
+              repeating it three times would read as three separate promises. */}
           <p className="hm-note">
             Nothing has been recorded. What Propositum saw is held in memory for half an hour and
             thrown away unless you say yes &mdash; and it never included the words on the page.
           </p>
-
-          {backOn === null ? (
-            <div className="hm-acts">
-              <form action={carryOn}>
-                <button className="hm-submit hm-submit-primary" type="submit">
-                  {'Set this up for me'}
-                </button>
-              </form>
-              <form action={notNow}>
-                <input type="hidden" name="origin" value={offer.origin} />
-                <button className="hm-submit" type="submit">
-                  Not now
-                </button>
-              </form>
-            </div>
-          ) : (
-            <>
-              {/* Filing is a decision Propositum made, so it is stated before it
-                  is acted on — and the way out of it is beside it, not buried
-                  on the screen you land on afterwards. */}
-              <div className="hm-back-on">
-                <p className="hm-note" style={{ marginTop: 0 }}>
-                  Looks like you are back on
-                </p>
-                <p className="hm-back-on-name">{backOn.name}</p>
-                <p className="hm-back-on-meta">
-                  {backOn.sittings} {backOn.sittings === 1 ? 'sitting' : 'sittings'} &middot;{' '}
-                  {backOn.sources} {backOn.sources === 1 ? 'source' : 'sources'} &middot;{' '}
-                  {backOn.documents} {backOn.documents === 1 ? 'document' : 'documents'} &middot;{' '}
-                  {backOn.overlap} {backOn.overlap === 1 ? 'word' : 'words'} in common
-                </p>
-              </div>
-
-              <div className="hm-acts">
-                <form action={carryOn}>
-                  <button className="hm-submit hm-submit-primary" type="submit">
-                    Carry on with it
-                  </button>
-                </form>
-                <form action={asNewWork}>
-                  <button className="hm-submit" type="submit">
-                    No &mdash; this is new work
-                  </button>
-                </form>
-                <form action={notNow}>
-                  <input type="hidden" name="origin" value={offer.origin} />
-                  <button className="hm-submit" type="submit">
-                    Not now
-                  </button>
-                </form>
-              </div>
-            </>
-          )}
         </Section>
       )}
 
-      <Section title="What Propositum has picked out" index={offer ? 3 : 2}>
+      <Section title="What Propositum has picked out" index={strands.length > 0 ? 3 : 2}>
         {identified.length === 0 ? (
           <Empty
             title="Nothing yet."
@@ -527,7 +629,7 @@ export default async function Home({
         )}
       </Section>
 
-      <Section title="How this works" index={offer ? 4 : 3}>
+      <Section title="How this works" index={strands.length > 0 ? 4 : 3}>
         <p className="hm-prose">
           Propositum watches the sites you have let Chrome share with it and works out what you are
           reading about. When a subject holds up across a few sites, it offers to pick it up &mdash;

@@ -46,7 +46,7 @@ import {
 } from '../model/boundaries/session-reading'
 import type { PromptEvent } from '../model/boundaries/session-reading'
 import { handoffBoundary, sourceHandlesFor } from '../model/boundaries/handoff'
-import { detectWork, threadPagesOf } from '../domain/detection/detect'
+import { EVERY_STRAND, detectThreads, threadPagesOf } from '../domain/detection/detect'
 import { groundsFor } from '../domain/detection/grounds'
 import { matchProject, projectTerms } from '../domain/detection/match-project'
 import type { ProjectCandidate } from '../domain/detection/match-project'
@@ -1377,15 +1377,30 @@ export async function offerForThread(threadSignature: string): Promise<
      * is cheap arithmetic over the same observations the detector just read.
      */
     const observations = ambient.since(now)
-    const detected = detectWork(observations, now)
-    const stillThisThread = detected !== null && signatureOf(detected.terms) === thread
+    /**
+     * THIS strand, not the strongest one.
+     *
+     * It used to be `detectWork` plus an equality check, which is the same thing
+     * only while an afternoon has one strand in it. With three, opening the
+     * offer screen for the second — which the front door and the extension link
+     * both do, by signature — found the first, failed the equality check, and
+     * fell through to no grounds and a generic sentence. The strand was
+     * perfectly detectable; it was simply not the one being looked at.
+     *
+     * `EVERY_STRAND` for the same reason `strandBySignature` uses it, added
+     * 2026-08-17: the display bound is applied after the snooze filters now, so
+     * the third strand on the screen can be the detector's fourth, and a lookup
+     * bounded at three would answer a link that is on screen with nothing.
+     */
+    const detected =
+      detectThreads(observations, now, EVERY_STRAND).find(
+        (candidate) => signatureOf(candidate.terms) === thread,
+      ) ?? null
     const grounds =
       composed?.grounds.sentences ??
-      (stillThisThread && detected
-        ? groundsFor(detected, threadPagesOf(observations, detected, now)).sentences
-        : [])
+      (detected ? groundsFor(detected, threadPagesOf(observations, detected, now)).sentences : [])
 
-    const describedFor = stillThisThread && detected ? describeWork(detected, thread, named) : null
+    const describedFor = detected ? describeWork(detected, thread, named) : null
     const sentence =
       describedFor?.sentence ?? `You have been looking into ${subject}.`
     const because = describedFor?.because ?? `Across ${patterns.length} sites.`
@@ -1831,12 +1846,88 @@ export async function splitIntoNewProject(
   })
 }
 
-/** The person says no. Forget it, and stay quiet about that site for a while. */
-export async function declineOffer(origin: string): Promise<ActionResult<{ origin: string }>> {
+/**
+ * ~~The person says no. Forget it, and stay quiet about that site for a
+ * while.~~ **`declineOffer(origin)` is deleted, 2026-08-17.**
+ *
+ * It had exactly one caller, the front door's "Not now" button, and that button
+ * now names a THREAD. Declining by origin is still what the extension's
+ * `/api/capture/ambient/decline` route does, and that route calls
+ * `AmbientStore.decline` directly rather than through here — so this was an
+ * exported action nothing reached, which is worse than a gap because it reads as
+ * a supported way to do something.
+ *
+ * `declineThread` carries the argument for why the unit changed.
+ */
+
+/**
+ * The person says no to ONE strand of an afternoon.
+ *
+ * ── Why the pages are recomputed and not taken from the caller ────────────
+ *
+ * The same reason the accept path recomputes: a hidden field would carry a page
+ * list that was true when the screen rendered, and dropping pages a strand no
+ * longer has — or missing ones it has picked up since — would leave the
+ * declined subject able to re-form out of the remainder. The signature is the
+ * only thing that crosses, exactly as it is on accept, and everything else is
+ * read off the buffer here.
+ *
+ * `pagesOfThread` is the fallback rather than the primary, and the order
+ * matters: the fresh detection is what the strand IS now, and the remembered
+ * list is what it was when something last pinned it. When the strand has
+ * already stopped being detected, the remembered list is all there is, and
+ * dropping those pages is still better than dropping nothing — otherwise "not
+ * now" on a strand that just aged below the bar would leave every one of its
+ * pages in the buffer to seed it again.
+ *
+ * The signature is snoozed either way, including when neither list has
+ * anything. A snooze against a subject nobody can find is harmless and costs a
+ * map entry; failing to record one because the strand blinked is an hour of
+ * "not now" that does not hold.
+ *
+ * ── Unbounded, added 2026-08-17 ──────────────────────────────────────────
+ *
+ * `EVERY_STRAND`, because the display bound is now applied after the snooze
+ * filters and the third strand on the screen can be the detector's fourth. A
+ * lookup bounded at three would miss it, fall through to `pagesOfThread`, and
+ * quietly do the weaker thing — snoozing the signature while leaving the pages
+ * that will re-form it in an hour's time. That failure is invisible: the strand
+ * disappears from the screen for the snooze and comes back afterwards, which is
+ * what a snooze looks like anyway.
+ *
+ * ── What "not now" here does not buy ─────────────────────────────────────
+ *
+ * Quiet from the notification channel. This snoozes one signature; the poll
+ * promotes whichever strand is next and the extension may notify about that one
+ * within a poll or two, because `quietUntil` in `service-worker.js` is set only
+ * by the notification's own "Not now" and nothing here reaches it. That is
+ * deliberate as far as this screen is concerned — it tells the person that
+ * turning one down leaves the others where they are — and it is written down in
+ * ADR-0008 rather than only here, because it is the notification channel's
+ * behaviour and not this action's.
+ */
+export async function declineThreadOffer(
+  threadSignature: string,
+): Promise<ActionResult<{ thread: string; pagesDropped: number }>> {
   return attempt(async () => {
-    ambientStore().decline(origin, Date.now())
+    const thread = threadSignature.trim()
+    if (thread === '') {
+      return no<{ thread: string; pagesDropped: number }>(
+        'invalid-input',
+        'Propositum could not tell which of those you meant. Reload and try again.',
+      )
+    }
+
+    const ambient = ambientStore()
+    const now = Date.now()
+    const fresh = detectThreads(ambient.since(now), now, EVERY_STRAND).find(
+      (candidate) => signatureOf(candidate.terms) === thread,
+    )
+    const urls = fresh ? fresh.urls : ambient.pagesOfThread(thread)
+
+    ambient.declineThread(thread, urls, now)
     refresh()
-    return ok({ origin })
+    return ok({ thread, pagesDropped: urls.length })
   })
 }
 

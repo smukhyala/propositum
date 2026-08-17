@@ -283,6 +283,16 @@ Propositum may offer, not a ceiling on how often it may speak, and there is no m
 would catch an offer rate creeping upward. Notifications are the obvious place this erodes first,
 because a notification is the cheapest thing to add and the hardest to attribute.
 
+**It eroded there on 2026-08-17, exactly as predicted, and the path is worth naming.** Showing three
+strands on the front door was a screen change and interrupted nobody; composing an offer for all
+three, which arrived with it, was not — a composed offer is what the poll returns as
+`kind: 'work-offer'` and what the extension turns into a `requireInteraction` notification, so a
+strand that had never been advertised was arriving ready to interrupt. Nothing failed. No test went
+red, no rate was measured, and the sentence estimating the cost said *usually no offer* while two of
+three strands cleared the bar. Composing is gated on leadership now
+([ADR-0008](./adr/0008-ambient-detection.md)), and what caught it was somebody reading the estimate
+against the fixture — which is the whole of the enforcement on this half.
+
 ---
 
 ## 14. Models are workers, not the product

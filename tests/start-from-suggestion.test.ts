@@ -27,6 +27,9 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+import { detectThreads } from '../src/domain/detection/detect'
+import { signatureOf } from '../src/server/ambient-store'
+
 // `revalidatePath` needs a request store that does not exist in a test process.
 // It is Next's cache talking to itself and has nothing to do with what is under
 // test here.
@@ -360,5 +363,145 @@ describe('a link cannot approve a site Propositum never saw', () => {
     expect(result.ok).toBe(true)
     if (!result.ok) return
     expect(result.value.discardedOrigins).toBe(1)
+  })
+})
+
+/**
+ * An afternoon with three subjects in it, accepted one at a time.
+ *
+ * The front door now shows every strand `detectThreads` returns, so the button
+ * under the second one has to start the SECOND one. Everything that decides
+ * which pages reach the ledger runs off the thread signature —
+ * `observedOriginPatterns` reads `pagesOfThread`, and the carry-over loop reads
+ * it again — so getting the signature right is the whole difference between a
+ * person accepting one subject and getting another's sources approved.
+ *
+ * This is that claim against a real database. The domain-level version, and the
+ * fixture's own argument, are in `tests/multiple-threads.test.ts`.
+ */
+describe('accepting one strand of an afternoon carries that strand', () => {
+  const MINUTE = 60_000
+  const GOOGLE = 'https://www.google.com'
+
+/**
+   * A query as a search engine writes it: spaces as `+`, not `%20`.
+   *
+   * Not cosmetic. `cleanUrl` re-serialises a URL through `URLSearchParams`, which
+   * emits `+`, so a fixture written with `%20` is a URL that changes shape on its
+   * way into the ledger and stops matching the constant it was built from.
+   */
+  function searchable(query: string): string {
+    return encodeURIComponent(query).replace(/%20/g, '+')
+  }
+
+  const KALMAN_SEARCH = `${GOOGLE}/search?q=${searchable('Extended Kalman Filters')}`
+  const KALMAN_ARTICLE = 'https://medium.com/@someone/extended-kalman-filters'
+  const KALMAN_PRACTICE = 'https://tds.example/ekf'
+  const PERTURBATION_SEARCH = `${GOOGLE}/search?q=${searchable('techniques to measure peturbation robotcs')}`
+  const PERTURBATION_PAPER = 'https://arxiv.org/abs/2401.1'
+
+  /** The same three strands the domain tests use, stamped against the wall
+   *  clock because every reader here windows against `Date.now()`. */
+  function browseAll(): void {
+    const at = Date.now()
+    const record = (
+      offset: number,
+      url: string,
+      origin: string,
+      title: string,
+      kind: 'navigation' | 'query',
+      engagedMs?: number,
+    ) => {
+      stores.ambientStore().record(
+        {
+          at: at - (10 * MINUTE - offset),
+          origin,
+          url,
+          title,
+          kind,
+          ...(engagedMs === undefined ? {} : { engagedMs }),
+        },
+        at,
+      )
+    }
+
+    record(0, PERTURBATION_SEARCH, GOOGLE, 'techniques to measure peturbation robotcs - Google Search', 'query')
+    record(MINUTE, PERTURBATION_PAPER, 'https://arxiv.org', 'Perturbation-Aware Robotics Navigation', 'navigation', 90_000)
+    record(2 * MINUTE, 'https://science.example/legged', 'https://science.example', 'Robustness to Perturbation in Legged Robotics', 'navigation', 40_000)
+    record(3 * MINUTE, 'https://github.example/sim', 'https://github.example', 'Perturbation Simulation for Robotics', 'navigation', 30_000)
+
+    record(4 * MINUTE, KALMAN_SEARCH, GOOGLE, 'Extended Kalman Filters - Google Search', 'query')
+    record(5 * MINUTE, KALMAN_ARTICLE, 'https://medium.com', 'Extended Kalman Filters', 'navigation', 4 * MINUTE)
+    record(6 * MINUTE, KALMAN_PRACTICE, 'https://tds.example', 'Extended Kalman Filters in Practice', 'navigation', 2 * MINUTE)
+
+    record(7 * MINUTE, `${GOOGLE}/search?q=${searchable('DMD vs SPO policy optimization')}`, GOOGLE, 'DMD vs SPO policy optimization - Google Search', 'query')
+    record(8 * MINUTE, 'https://arxiv.org/abs/2402.2', 'https://arxiv.org', 'DMD versus SPO for Policy Optimization', 'navigation', 40_000)
+    record(9 * MINUTE, 'https://blog.example/dmd-spo', 'https://blog.example', 'Comparing DMD and SPO Policy Optimization', 'navigation', 20_000)
+  }
+
+  /**
+   * Exactly what the front door's accept path does: detect afresh, pick the
+   * strand the button named, pin its pages, start.
+   *
+   * Written out here rather than imported, because `accept` in `src/app/page.tsx`
+   * ends in a `redirect()` and is not callable from a test process. The three
+   * lines that matter — find by signature, `rememberThread` with THAT strand's
+   * urls, pass THAT signature — are the ones reproduced.
+   */
+  async function acceptStrandWith(url: string) {
+    const at = Date.now()
+    const strand = detectThreads(stores.ambientStore().since(at), at).find((candidate) =>
+      candidate.urls.includes(url),
+    )
+    expect(strand).toBeDefined()
+    if (strand === undefined) throw new Error('no strand')
+
+    const signature = signatureOf(strand.terms)
+    stores.ambientStore().rememberThread(signature, strand.urls)
+
+    return actions.startFromSuggestion(
+      strand.labels.slice(0, 3).join(' '),
+      strand.origins,
+      'deep-research',
+      signature,
+    )
+  }
+
+  it('carries the second strand when the second strand is the one accepted', async () => {
+    browseAll()
+
+    const result = await acceptStrandWith(KALMAN_ARTICLE)
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+
+    const carried = await carriedPages(result.value.sessionId)
+    expect(carried.map((page) => page.url).sort()).toEqual(
+      [KALMAN_SEARCH, KALMAN_ARTICLE, KALMAN_PRACTICE].sort(),
+    )
+
+    // The failure this exists for: the strongest strand's pages arriving under
+    // the second strand's subject. They share `www.google.com`, so an accept
+    // path that carried by SITE rather than by thread would bring the
+    // perturbation search along with them.
+    expect(carried.map((page) => page.url)).not.toContain(PERTURBATION_SEARCH)
+    expect(carried.map((page) => page.url)).not.toContain(PERTURBATION_PAPER)
+
+    for (const page of carried) {
+      expect(page.filedUnder).toBe(`${new URL(page.url).origin}/*`)
+    }
+  })
+
+  it('carries the first strand when the first strand is the one accepted', async () => {
+    // The other half. Without it the test above would pass against an accept
+    // path that always carried whichever strand happened to be second.
+    browseAll()
+
+    const result = await acceptStrandWith(PERTURBATION_SEARCH)
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+
+    const carried = await carriedPages(result.value.sessionId)
+    expect(carried.map((page) => page.url)).toContain(PERTURBATION_PAPER)
+    expect(carried.map((page) => page.url)).not.toContain(KALMAN_ARTICLE)
   })
 })

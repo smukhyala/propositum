@@ -41,7 +41,10 @@ import type { ShiftOutcomeKind } from '../domain/outcome/shift-outcome'
  */
 export const MAX_OBSERVATIONS = 500
 
-/** Once declined, stay quiet about the same origin for this long. */
+/** Once declined, stay quiet about the same thing for this long. One number for
+ *  both units — an origin, from the extension's decline endpoint, and a thread
+ *  signature, from the front door's per-strand "Not now". `service-worker.js`
+ *  mirrors it rather than reading it, and says so. */
 export const SNOOZE_MS = 60 * 60_000
 
 /** A thread that has been named, keyed by the terms that defined it. */
@@ -177,6 +180,44 @@ export interface AmbientStore {
   /** Stop offering for this origin until the snooze expires. */
   decline(origin: string, nowMs: number): void
   isSnoozed(origin: string, nowMs: number): boolean
+  /**
+   * The person turned down ONE strand. Forget its pages; leave the others.
+   *
+   * ── Why this is not `decline` with a different argument ──────────────
+   *
+   * `decline` drops every observation on an ORIGIN, which was right while one
+   * afternoon produced one offer. It is wrong the moment `detectThreads`
+   * returns three, because strands share sites — an afternoon that begins with
+   * three google searches puts `https://www.google.com` at the head of all
+   * three, so "not now" to Kalman filters would drop the searches that seeded
+   * the robotics strand and the DMD-vs-SPO strand as well. The two other
+   * strands would vanish from the screen with nothing saying why, which is the
+   * silent kind of wrong.
+   *
+   * So the unit here is the THREAD: its own pages go, keyed by the URLs it was
+   * made of, and a page another strand also holds cannot be one of them —
+   * `findThreads` claims each page exclusively, so the URL sets are disjoint by
+   * construction.
+   *
+   * ── And the signature is snoozed, not the site ───────────────────────
+   *
+   * Dropping the pages is not enough on its own: the person is probably still
+   * reading, and the same subject would re-form and be offered again within a
+   * poll or two. `SNOOZE_MS` against the signature is what makes "not now" mean
+   * an hour, exactly as it does for an origin.
+   *
+   * ── What is still coarse, named rather than discovered ───────────────
+   *
+   * `decline(origin)` remains, because `/api/capture/ambient/decline` takes an
+   * origin from the extension and the extension is not being changed here. A
+   * decline through that path is still origin-wide and can still take a second
+   * strand's pages with it. That path only ever names the strongest strand — the
+   * notification does — so the person is turning down the one thing they were
+   * shown, and the collateral is invisible to them. It is a real gap and it
+   * closes when the extension can send a signature.
+   */
+  declineThread(signature: string, urls: readonly string[], nowMs: number): void
+  isThreadSnoozed(signature: string, nowMs: number): boolean
   /** Observations for one origin, for folding into a session on accept. */
   forOrigin(origin: string, nowMs: number): readonly AmbientObservation[]
   size(): number
@@ -185,6 +226,10 @@ export interface AmbientStore {
 export function createAmbientStore(): AmbientStore {
   let observations: AmbientObservation[] = []
   const declined = new Map<string, number>()
+  /** Separate from `declined` rather than sharing it, because the two are keyed
+   *  by different things and one map holding origins and signatures at once is
+   *  a lookup that can only be read correctly by knowing which it meant. */
+  const declinedThreads = new Map<string, number>()
   const names = new Map<string, NamedThread>()
   const naming = new Set<string>()
   const offers = new Map<string, WorkOffer>()
@@ -397,6 +442,29 @@ export function createAmbientStore(): AmbientStore {
 
     isSnoozed(origin, nowMs) {
       const at = declined.get(origin)
+      return at !== undefined && nowMs - at < SNOOZE_MS
+    },
+
+    /**
+     * One strand turned down. Its pages go; every other strand is untouched.
+     *
+     * The name cache, the offer cache and the remembered pages are left alone
+     * on purpose, and this is the one place that decision is visible. `clear()`
+     * empties all of them because a clear means the whole buffer is forgotten;
+     * this is narrower by design, and emptying a map that is keyed by signature
+     * for a signature nobody asked about would be reaching past the strand the
+     * person actually answered. The declined signature's own entries are
+     * unreachable afterwards anyway — its pages are gone, so it cannot be
+     * detected again, and `isThreadSnoozed` refuses it for an hour regardless.
+     */
+    declineThread(signature, urls, nowMs) {
+      declinedThreads.set(signature, nowMs)
+      const dropped = new Set(urls)
+      observations = observations.filter((o) => !dropped.has(o.url))
+    },
+
+    isThreadSnoozed(signature, nowMs) {
+      const at = declinedThreads.get(signature)
       return at !== undefined && nowMs - at < SNOOZE_MS
     },
 

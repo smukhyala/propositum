@@ -35,7 +35,7 @@ back and the cost stated.
 | **How work is recognised** | Arithmetic. No model call. |
 | **What detection produces** | A suggestion. Never a session, never an action. |
 | **What accepting does** | Approves the source, starts the session, folds the buffer in, **and drafts a contract from the offer** — one click, all four the person's. *(Fourth clause added 2026-08-11 by [ADR-0009](0009-composed-offers.md). The row above it is unchanged and is restated verbatim there.)* |
-| **What declining does** | Drops the observations and snoozes the origin for an hour. |
+| **What declining does** | ~~Drops the observations and snoozes the origin for an hour.~~ *(Amended 2026-08-17.)* Drops the observations and snoozes for an hour — **by THREAD from the front door, by origin from the extension**. The unit had to split when one afternoon started producing several offers: strands share sites, an afternoon that begins with three searches puts `www.google.com` at the head of all of them, and an origin-wide decline of one would silently take the other two's seed pages with it. `AmbientStore.declineThread` is the narrow one; `decline` stays because `/api/capture/ambient/decline` takes an origin and the extension is not being changed. The coarse path is a real gap and is named in that method's own block. |
 
 Two detectors, both deterministic. `detectWork` fires on pages-and-dwell or on query-then-reading.
 `detectPause` fires on real work followed by a real gap, and feeds the proactive hand-off offer.
@@ -94,6 +94,83 @@ intact rather than being argued away:
 It runs in the background, never on the request path: the poll returns the deterministic offer
 immediately and the next one carries the name. The model's sentence is used only when it reports
 confidence — a confident wrong name is worse than an honest vague one.
+
+## Several strands, one notification
+
+*(Added 2026-08-17. The product owner: "it should also be able to detect multiple threads at once
+if needed.")*
+
+`findThreads` has always returned **every** thread, disjoint — each page is claimed by exactly one —
+and `detectWork` took `threads[0]`. A recorded afternoon had three strands: a perturbation/robotics
+search, a DMD-vs-SPO search, and Extended Kalman Filters followed through to an article. Only the
+last surfaced. The other two were found and discarded, which is worse than not finding them, because
+nothing anywhere recorded that they had been.
+
+**The screen shows every strand. The badge and the notification still name only the strongest.**
+
+| | |
+|---|---|
+| **Where several are shown** | The front door, bounded by `MAX_THREADS_SHOWN = 3` — applied **after** the snooze filters, so a strand somebody already answered cannot spend a slot *(corrected 2026-08-17; it was applied before, and four qualifying strands with the strongest snoozed showed two)* |
+| **What names each one** | `/api/session/current`, once per signature, in the background — up to `MAX_THREADS_SHOWN` naming calls of about 2.7 seconds each |
+| **What composes an offer** | The leading strand only, and up to `COMPOSE_ATTEMPTS = 2` calls for it. ~~Usually nothing, because `composeOffer` returns at its own `grounds.sufficient` gate.~~ *(Struck 2026-08-17: measured, 2 of the recorded afternoon's 3 strands clear that gate. Being secondary is a ranking, not a weakness, so the gate was never going to keep them cheap — see below.)* |
+| **What the poll returns** | One `suggestion`, the strongest. The response shape is unchanged |
+| **What accepting one does to the others** | Ends them. `clear()` runs on session start and ambient capture stops while a session runs, so the other strands necessarily die — and the screen says so rather than implying they wait |
+| **What declining one does to the others** | Leaves them where they are, and the screen says so. It buys **no quiet from the notification channel**: the next strand is promoted and may be notified about within a poll or two. `quietUntil` in `service-worker.js` is written only by the notification's own "Not now" *(stated 2026-08-17 — see below)* |
+
+The asymmetry is this ADR's own argument, applied one step further. Interruption is the expensive
+failure and `docs/PRODUCT_PRINCIPLES.md` §13 requires notifications be actionable and sparse — but
+**Home is a place a person chooses to visit**, so more information there is not an interruption.
+
+The comment this replaces read *"One origin at a time on purpose: an offer that names two sites is
+asking the person to do the disambiguating."* Half of that had already stopped being true — a thread
+has been multi-origin since `topics.ts` replaced per-origin detection, and *"across 3 sites"* is the
+sentence that ships. The half that survives is about an **offer**: a notification naming two subjects
+and asking which is making somebody disambiguate. Showing several named strands on a page they opened
+is a different act, and nothing here multiplies notifications.
+
+### Why composing is gated on leadership, and what turning one down still does not buy
+
+*(Added 2026-08-17, after the first version of this section shipped.)*
+
+The first version composed an offer for every named strand, on the reasoning in the struck table row
+above. Both halves of that reasoning were wrong, and the second one cost something.
+
+**The gate does not keep secondary strands cheap.** `grounds.sufficient` wants one intent ground and
+two investment ones. A strand that was searched for, read for two minutes and followed across three
+sites clears it whether or not it is the strongest — two of the recorded afternoon's three did.
+
+**And a composed offer is notification-ready.** The poll returns `kind: 'work-offer'` for whichever
+strand leads, and the service worker turns exactly that into a `requireInteraction` notification. So
+a strand that had never been advertised was arriving already holding an offer, and the first poll
+after somebody turned the leading strand down at the front door interrupted them about a different
+subject. Measured, on this ADR's own three-strand fixture.
+
+So `composeOffer` runs for the leading strand only. The property that restores is worth naming: **a
+strand cannot be ready to interrupt somebody before it has been advertised.** A strand that leads
+later is composed then, one poll behind, exactly as it was before the screen showed several. Naming
+is unaffected and still runs for all three, because a name is what the front door renders and it
+interrupts nobody.
+
+**What that does not fix, and what it would take.** The front door's "Not now" buys no quiet from the
+notification channel at all. It snoozes one signature; the next strand is promoted, composed a poll
+later, notified about a poll after that — roughly a minute, on an afternoon whose strands do not
+share a site. `quietUntil` is written in one place in `extension/src/service-worker.js`, inside the
+notification's own "Not now", and no server-side decline reaches it.
+
+That is behaviour from before this section existed rather than something it introduced, and it is not
+being narrowed here, because narrowing it is a **product decision nobody has taken**: making one
+front-door decline silence the others for `SNOOZE_MS` would contradict what the screen tells the
+person in as many words — *"Turning one down on its own leaves the others where they are."* Both
+readings are defensible and only one of them can be true, so it is recorded as an open question
+rather than settled in a review. §13's honest limit already names notifications as the place this
+erodes first; this row is that limit with a specific path attached to it.
+
+**What it costs, stated.** `detectWork` is now `detectThreads(…, 1)[0]`, which is not identical to
+what it was: a strongest thread that failed the engagement bar used to mean *nothing*, even when a
+weaker thread cleared it. Filtering before ranking is the honest order and can only return a thread
+that passed the bar, so the widening is exactly the afternoons where the top-ranked strand was
+skimmed and a real one sat behind it. That is the cheap direction by this ADR's own asymmetry, and it
+is recorded rather than left to be found.
 
 ## Why the buffer is memory and not a table
 

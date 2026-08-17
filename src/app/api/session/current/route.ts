@@ -34,12 +34,18 @@ import { CUSTOM_HEADER, fromOurExtension } from '@/capture/transport'
 import { appContext } from '@/server/db'
 import { ambientStore, captureStore, expectedOrigin } from '@/server/capture-store'
 import { describeOffer, describePause, describeWork, signatureOf } from '@/server/ambient-store'
+import type { NamedThread, WorkOffer } from '@/server/ambient-store'
 import { nameThread } from '@/server/name-thread'
 import { composeOffer } from '@/server/compose-offer'
 import { createModelClient } from '@/model/provider'
 import type { ModelCallSink } from '@/model/provider'
-import { detectPause, detectWork, threadPagesOf } from '@/domain/detection/detect'
-import { groundsFor } from '@/domain/detection/grounds'
+import {
+  EVERY_STRAND,
+  MAX_THREADS_SHOWN,
+  detectPause,
+  detectThreads,
+} from '@/domain/detection/detect'
+import type { WorkDetected } from '@/domain/detection/detect'
 
 /**
  * Where the two ambient model calls are written down.
@@ -132,60 +138,212 @@ export async function GET(request: Request) {
     const ambient = ambientStore()
     const now = Date.now()
     const observations = ambient.since(now)
-    const detected = detectWork(observations, now)
 
-    if (!detected || ambient.isSnoozed(detected.origins[0] ?? '', now)) {
+    /**
+     * Every strand the front door will show, named — and one of them composed
+     * for. Only one suggestion comes back.
+     *
+     * ── Why this side does the work for a screen it does not render ──────
+     *
+     * Naming is cached against a signature in the ambient store, and this poll
+     * is the only thing that runs on a timer. If it named only the strongest
+     * strand, the second and third would arrive on Home with no subject — the
+     * degraded sentence, forever, because Home is rendered on demand and there
+     * is nothing there to kick a background call off from reliably. So the bound
+     * is shared: `MAX_THREADS_SHOWN` decides what the screen shows and therefore
+     * what this names.
+     *
+     * Composing does NOT follow that bound, and the gate below carries the
+     * argument. The short version: a name is something the front door renders,
+     * and an offer is something the extension interrupts with.
+     *
+     * ── What the extra strands cost, measured rather than estimated ──────
+     *
+     * **One naming call of about 2.7 seconds per strand shown**, once each, in
+     * the background — `attemptedNaming` is keyed per signature, so a strand is
+     * asked about once and never again for as long as the buffer lives.
+     *
+     * ~~Composing is usually free on top of that: `composeOffer` returns at its
+     * own `grounds.sufficient` gate before spending anything, and a secondary
+     * strand rarely clears the higher bar. So the honest worst case is three
+     * naming calls and one offer, and the ordinary case is one naming call per
+     * strand and no offer for the weak ones.~~
+     *
+     * **Struck 2026-08-17 — measured, and wrong in the reassuring direction.**
+     * On the recorded three-strand afternoon this change was built around, TWO
+     * of the three clear `grounds.sufficient`. The bar is one intent ground and
+     * two investment ones, and a strand that was searched for, read for two
+     * minutes and followed across three sites clears it whether or not it is the
+     * strongest — being secondary is a ranking, not a weakness.
+     * `tests/multiple-threads.test.ts` pins that number now, so the next guess
+     * about it has to argue with a fixture.
+     *
+     * The ceiling that IS true, after the gate below: up to `MAX_THREADS_SHOWN`
+     * naming calls, plus up to `COMPOSE_ATTEMPTS` offer calls for the one strand
+     * the response is about. Not three naming calls and one offer — the offer
+     * side is a retry bound, and that number belongs to `compose-offer.ts`.
+     *
+     * ── And the badge still names one thing ──────────────────────────────
+     *
+     * The response shape is unchanged: one `suggestion`, the strongest. The
+     * extension badges and notifies from it, and ADR-0008 names interruption as
+     * the expensive failure — three strands is more information for a screen
+     * somebody opened, never three notifications.
+     *
+     * ── Filter first, then cut ───────────────────────────────────────────
+     *
+     * `EVERY_STRAND` and a `slice` at the end, rather than the bound handed to
+     * the detector. Cutting first spent a slot on a strand the person had said
+     * "not now" to and dropped a qualifying one off the end — off this pass as
+     * well as off the screen, so it was never named and never `rememberThread`-
+     * pinned either, and accepting it would have been refused for having no
+     * pages. `noticedStrands` does the same thing in the same order, which is
+     * what keeps the screen and this pass agreeing about which three exist.
+     */
+    const detected = detectThreads(observations, now, EVERY_STRAND)
+      .filter(
+        (thread) =>
+          !ambient.isThreadSnoozed(signatureOf(thread.terms), now) &&
+          !ambient.isSnoozed(thread.origins[0] ?? '', now),
+      )
+      .slice(0, MAX_THREADS_SHOWN)
+
+    if (detected.length === 0) {
       return NextResponse.json({ ok: true, session: null, suggestion: null })
     }
 
-    const signature = signatureOf(detected.terms)
-
-    // Pin which pages this thread was made of, so accepting later carries the
-    // thread and not everything that happened to be on the same sites. Done
-    // before anything can be returned, because the signature is now the ONLY
-    // thing the accept link carries and a thread nothing was recorded against
-    // approves nothing at all.
-    ambient.rememberThread(signature, detected.urls)
-
-    const named = ambient.nameFor(signature)
-
-    // Naming happens in the BACKGROUND. This poll exists to be cheap, a model
-    // call takes about 15 seconds, and a failure must not take the offer with
-    // it. The deterministic offer goes out now; the next poll carries the name.
     const apiKey = process.env['ANTHROPIC_API_KEY']
-    if (!named && apiKey) {
-      void nameThread(ambient, createModelClient({ apiKey, record: recordAmbientCall }), detected)
-    }
-
-    const composed = ambient.offerFor(signature)
 
     /**
-     * Composing needs a CONFIDENT name first.
+     * Each strand with what is known about it, in strength order.
      *
-     * The subject boundary runs on titles and produces the two or three words
-     * the offer is about; asking the offer boundary to invent that as well
-     * would be one call doing two jobs.
-     *
-     * `confident: false` means the pages did not agree on a subject, and
-     * `describeWork` already refuses to put an unsure name in a sentence for
-     * exactly that reason. Composing on one would undo that at the next step:
-     * `describeOffer` reads the offer's own `confident` flag, but the SUBJECT
-     * it is about would already be a guess nobody flagged. A hedge that
-     * survives one screen and not the next is not a hedge.
-     *
-     * The second, higher bar — `OfferGrounds.sufficient` — is checked inside
-     * `composeOffer` rather than here, so the one function in the codebase that
-     * can turn observation into a proposal to act carries its own gate. A guard
-     * that lives only in its caller is a guard the next caller will not have.
+     * Collected as the loop goes rather than looked up again afterwards, so the
+     * response describes what this pass saw — a background call landing between
+     * two reads cannot make one answer disagree with itself.
      */
-    if (!composed && named?.confident && apiKey) {
-      void composeOffer(
-        ambient,
-        createModelClient({ apiKey, record: recordAmbientCall }),
-        detected,
-        named,
-        now,
-      )
+    const strands: {
+      readonly detected: WorkDetected
+      readonly signature: string
+      readonly named: NamedThread | null
+      readonly composed: WorkOffer | null
+    }[] = []
+
+    /**
+     * A signature is an identity, so two strands must not share one.
+     *
+     * `signatureOf` keys the offer cache, the name cache, `rememberThread`, the
+     * notification id and the durable `WorkOffer.threadSignature`. Threads are
+     * disjoint in pages and a term on two threads' members would have seeded one
+     * thread over both, so a collision should not be constructible — but "should
+     * not" is not a guard, and the failure if one happened is the expensive one:
+     * the second `rememberThread` would overwrite the first, and somebody
+     * accepting one subject would get the other's sources approved. So the later
+     * strand is dropped rather than allowed to overwrite, and the strongest one
+     * keeps the signature.
+     */
+    const seen = new Set<string>()
+
+    for (const thread of detected) {
+      const signature = signatureOf(thread.terms)
+      if (seen.has(signature)) continue
+      seen.add(signature)
+
+      /** Whether this is the strand the `suggestion` below will be about. The
+       *  first one to survive the dedupe, because `detected` is in strength
+       *  order and `strands[0]` is what `leading` reads. */
+      const leads = strands.length === 0
+
+      // Pin which pages this thread was made of, so accepting later carries the
+      // thread and not everything that happened to be on the same sites. Done
+      // before anything can be returned, because the signature is now the ONLY
+      // thing the accept link carries and a thread nothing was recorded against
+      // approves nothing at all.
+      ambient.rememberThread(signature, thread.urls)
+
+      const named = ambient.nameFor(signature)
+
+      // Naming happens in the BACKGROUND. This poll exists to be cheap, a model
+      // call takes about 2.7 seconds, and a failure must not take the offer with
+      // it. The deterministic offer goes out now; the next poll carries the name.
+      if (!named && apiKey) {
+        void nameThread(ambient, createModelClient({ apiKey, record: recordAmbientCall }), thread)
+      }
+
+      const composed = ambient.offerFor(signature)
+
+      /**
+       * Composing needs a CONFIDENT name first.
+       *
+       * The subject boundary runs on titles and produces the two or three words
+       * the offer is about; asking the offer boundary to invent that as well
+       * would be one call doing two jobs.
+       *
+       * `confident: false` means the pages did not agree on a subject, and
+       * `describeWork` already refuses to put an unsure name in a sentence for
+       * exactly that reason. Composing on one would undo that at the next step:
+       * `describeOffer` reads the offer's own `confident` flag, but the SUBJECT
+       * it is about would already be a guess nobody flagged. A hedge that
+       * survives one screen and not the next is not a hedge.
+       *
+       * The second, higher bar — `OfferGrounds.sufficient` — is checked inside
+       * `composeOffer` rather than here, so the one function in the codebase that
+       * can turn observation into a proposal to act carries its own gate. A guard
+       * that lives only in its caller is a guard the next caller will not have.
+       *
+       * ── And only for the strand this response is about ────────────────────
+       *
+       * ~~It is also what keeps the secondary strands cheap: a weaker strand
+       * returns there before it spends anything.~~
+       *
+       * **Struck 2026-08-17. Two of the recorded afternoon's three strands clear
+       * that bar, and composing for all of them cost something nobody agreed
+       * to.** It bought nothing visible: the front door renders the
+       * deterministic sentence and the model's SUBJECT, never a composed offer,
+       * and the one screen that renders an offer — `/start?thread=…` — is reached
+       * from the badge, which names the leading strand. What it did buy was
+       * measured. A strand that had never been advertised arrived at the next
+       * poll already holding a `WorkOffer`, so the moment the leading strand was
+       * turned down at the front door the poll returned `kind: 'work-offer'`
+       * about a different subject and `service-worker.js` interrupted with a
+       * `requireInteraction` notification for it. Reproduced: the second poll
+       * held offers for strands one and two while strand one was still leading,
+       * and the first poll after the decline notified about strand two.
+       *
+       * So the property this restores, which is the one worth having a name
+       * for: **a strand cannot be ready to interrupt somebody before it has been
+       * advertised.** A strand that leads later is composed then, one poll
+       * behind, exactly as it was before this screen showed more than one.
+       *
+       * ── What this does NOT fix ───────────────────────────────────────────
+       *
+       * The front door's "Not now" still buys no quiet from the notification
+       * channel. `declineThreadOffer` snoozes one signature; the next strand is
+       * promoted, composed a poll later and notified about a poll after that —
+       * roughly a minute, on an afternoon whose strands do not share a site.
+       * `quietUntil` is written in exactly one place in `service-worker.js`,
+       * inside the notification's own "Not now", and nothing on this path
+       * reaches it. That is behaviour from before this screen showed several
+       * strands rather than something introduced with them, and making one
+       * decline silence the OTHERS is a product decision nobody has taken — the
+       * screen currently promises the opposite. ADR-0008 carries it as a row of
+       * its own rather than leaving it here.
+       */
+      if (leads && !composed && named?.confident && apiKey) {
+        void composeOffer(
+          ambient,
+          createModelClient({ apiKey, record: recordAmbientCall }),
+          thread,
+          named,
+          now,
+        )
+      }
+
+      strands.push({ detected: thread, signature, named, composed })
+    }
+
+    const leading = strands[0]
+    if (leading === undefined) {
+      return NextResponse.json({ ok: true, session: null, suggestion: null })
     }
 
     /**
@@ -198,9 +356,14 @@ export async function GET(request: Request) {
      * that could not render — and it is now simply yesterday's behaviour.
      */
     const suggestion =
-      composed && named
-        ? describeOffer(detected, signature, named.subject, composed)
-        : describeWork(detected, signature, named)
+      leading.composed && leading.named
+        ? describeOffer(
+            leading.detected,
+            leading.signature,
+            leading.named.subject,
+            leading.composed,
+          )
+        : describeWork(leading.detected, leading.signature, leading.named)
 
     return NextResponse.json({ ok: true, session: null, suggestion })
   }
