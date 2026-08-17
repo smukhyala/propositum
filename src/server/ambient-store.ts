@@ -675,8 +675,16 @@ export function describeWork(
         // honest vague one, and the vague one is still true.
         `Looks like you're working on ${named.subject}.`
       : words
-        ? `You have been looking into ${words} — across ${where}.`
-        : `You have been reading across ${where}.`
+        ? // No site count here, though it used to carry one. This sentence is
+          // never shown alone: Home sets `because` directly beneath it and the
+          // extension badge concatenates the two, so "— across 4 sites." landed
+          // one line above "read 4 pages across 4 sites." and said the same
+          // thing twice in a row. The naming half says what it is about; the
+          // grounds half says what was seen. One job each.
+          `You have been looking into ${words}.`
+        : // Nothing to name, so this one keeps the count — without it the
+          // sentence would say nothing at all.
+          `You have been reading across ${where}.`
 
   return {
     kind: 'start-session',

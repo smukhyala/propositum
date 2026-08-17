@@ -738,7 +738,7 @@ describe('the safety machinery is reachable from the product', () => {
     ).toContain('scripts/worker.ts')
   })
 
-  it('the lifecycle word is computed and rendered, or the Intention is invisible', () => {
+  it('the lifecycle state is computed and acted on, or the Intention is invisible', () => {
     /**
      * Moved up out of *deferred, and asserted as deferred* when Home began
      * deriving each row's status word from `intentionState` — which is that
@@ -769,7 +769,25 @@ describe('the safety machinery is reachable from the product', () => {
      * is now caught by a test rather than by a grep it could walk past.
      *
      * The second hop is asserted below, because a helper Home stopped calling
-     * would leave both lines above green and the screen wordless.
+     * would leave both lines above green and the screen blind.
+     *
+     * ── Why the second needle is no longer `statusWordFor` ─────────────────
+     *
+     * Because that call had stopped meaning anything, in a way this file could
+     * not see. Home renders re-entry rows off a list it has ALREADY filtered to
+     * `state === 'needs-you'`, so `statusWordFor(work.state)` could only ever
+     * return *Needs you* — four of the five lifecycle words were unreachable
+     * from the screen — beside a link that said "While you were away" on the
+     * same row. A grep is satisfied by a call whose result is discarded, which
+     * is the failure the block above records; it is equally satisfied by a call
+     * whose result the caller has constant-folded, which is this one. The word
+     * is gone from the screen and the assertion has moved to the thing that is
+     * actually load-bearing there: which rows appear at all.
+     *
+     * The state id is grepped rather than the helper because the filter IS the
+     * rendering decision — a Home that stopped consulting `needs-you` would put
+     * "While you were away" on projects with nothing waiting, which is the
+     * expensive direction and the one `frontDoorRow` exists to get right.
      *
      * What this still does NOT check is ADR-0011's softest claim — *on screen
      * wherever it is used*. That is a requirement on `.tsx` files, and nothing
@@ -791,12 +809,12 @@ describe('the safety machinery is reachable from the product', () => {
     ).toContain(frontDoor)
     expect(
       callersOf('frontDoorRow(', frontDoor),
-      'Home derives no row state — the computed word reaches no screen',
+      'Home derives no row state — the computed state reaches no screen',
     ).toContain('src/app/page.tsx')
     expect(
-      callersOf('statusWordFor(', frontDoor),
-      'Home renders no lifecycle word — the state is computed and dropped',
-    ).toContain('src/app/page.tsx')
+      stripImports(stripComments(readFileSync(join(repo, 'src/app/page.tsx'), 'utf8'))),
+      'Home no longer gates re-entry rows on needs-you — a finished shift is hidden, or a quiet project is announced as one',
+    ).toContain("'needs-you'")
   })
 
   it('the re-entry note is reachable from the front door, or it stays four clicks deep', () => {

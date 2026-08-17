@@ -20,23 +20,47 @@ import type { ReactNode } from 'react'
 interface SpriteProps {
   readonly size?: number | undefined
   readonly delay?: number | undefined
+  /**
+   * How wide the drawn line should be **in CSS pixels**, rather than in the
+   * 24-unit grid these are drawn on.
+   *
+   * ── Why the default is a grid width and this is not ──────────────────────
+   *
+   * `strokeWidth` is in user units, so it scales with `size`: 1.4 units at
+   * `size={16}` lands at 0.93 CSS px and the same 1.4 at `size={64}` lands at
+   * 3.73 — four times every hairline in the product, on the one element whose
+   * file claims it is drawn in the same hand as the rest of the interface. It
+   * looked like clip art scaled up, because that is arithmetically what it was.
+   *
+   * The default is left alone rather than made size-aware, because every call
+   * site outside the front door is 14–20px and already draws at 0.8–1.2 CSS px.
+   * Changing it would move four other screens to fix one. So this is opt-in:
+   * pass `pen` and the mark is drawn with the pen you asked for at any size.
+   */
+  readonly pen?: number | undefined
   readonly title: string
 }
 
+/** `strokeWidth` is deliberately absent — `Frame` sets it on the `<svg>`, where
+ *  it is inherited, so `pen` can override it once for every line in a mark. */
 const stroke = {
   fill: 'none',
   stroke: 'currentColor',
-  strokeWidth: 1.4,
   strokeLinecap: 'round' as const,
   strokeLinejoin: 'round' as const,
 }
 
+/** The grid these are drawn on. `pen` converts out of it. */
+const GRID = 24
+
 function Frame({
   size = 20,
+  pen,
   title,
   children,
 }: {
   size?: number | undefined
+  pen?: number | undefined
   title: string
   children: ReactNode
 }) {
@@ -47,6 +71,7 @@ function Frame({
       viewBox="0 0 24 24"
       role="img"
       aria-label={title}
+      strokeWidth={pen === undefined ? 1.4 : (pen * GRID) / size}
       style={{ flexShrink: 0, overflow: 'visible' }}
     >
       <title>{title}</title>
@@ -71,11 +96,11 @@ function Drawn({ d, delay = 0, dur = 0.7 }: { d: string; delay?: number; dur?: n
 }
 
 /** Observing — an open eye. Breathes slowly, because capture is live. */
-export function Watching({ size, delay = 0, title = 'Watching' }: Partial<SpriteProps>) {
+export function Watching({ size, pen, delay = 0, title = 'Watching' }: Partial<SpriteProps>) {
   const still = useReducedMotion()
 
   return (
-    <Frame size={size} title={title}>
+    <Frame size={size} pen={pen} title={title}>
       <Drawn d="M2 12s3.8-5.6 10-5.6S22 12 22 12s-3.8 5.6-10 5.6S2 12 2 12Z" delay={delay} />
       <motion.circle
         cx="12"
@@ -103,20 +128,20 @@ export function Watching({ size, delay = 0, title = 'Watching' }: Partial<Sprite
 }
 
 /** Away — a crescent. The person has left; the lamp is still on. */
-export function Away({ size, delay = 0, title = 'Away' }: Partial<SpriteProps>) {
+export function Away({ size, pen, delay = 0, title = 'Away' }: Partial<SpriteProps>) {
   return (
-    <Frame size={size} title={title}>
+    <Frame size={size} pen={pen} title={title}>
       <Drawn d="M20 14.4A8.6 8.6 0 0 1 9.6 4a8.6 8.6 0 1 0 10.4 10.4Z" delay={delay} dur={0.9} />
     </Frame>
   )
 }
 
 /** Handed over — a mark passing from one hand to another. */
-export function Handover({ size, delay = 0, title = 'Handed over' }: Partial<SpriteProps>) {
+export function Handover({ size, pen, delay = 0, title = 'Handed over' }: Partial<SpriteProps>) {
   const still = useReducedMotion()
 
   return (
-    <Frame size={size} title={title}>
+    <Frame size={size} pen={pen} title={title}>
       <Drawn d="M3 12h13" delay={delay} dur={0.5} />
       <Drawn d="M12.5 7.5 17 12l-4.5 4.5" delay={delay + 0.3} dur={0.35} />
       <motion.circle
@@ -133,9 +158,9 @@ export function Handover({ size, delay = 0, title = 'Handed over' }: Partial<Spr
 }
 
 /** Done — a check that lands. */
-export function Done({ size, delay = 0, title = 'Done' }: Partial<SpriteProps>) {
+export function Done({ size, pen, delay = 0, title = 'Done' }: Partial<SpriteProps>) {
   return (
-    <Frame size={size} title={title}>
+    <Frame size={size} pen={pen} title={title}>
       <Drawn d="M4 12.8 9.2 18 20 6.5" delay={delay} dur={0.45} />
     </Frame>
   )
@@ -143,9 +168,9 @@ export function Done({ size, delay = 0, title = 'Done' }: Partial<SpriteProps>) 
 
 /** Refused — absence of capability, drawn as a closed door rather than an X,
  *  because nothing went wrong. */
-export function Refused({ size, delay = 0, title = 'Not allowed' }: Partial<SpriteProps>) {
+export function Refused({ size, pen, delay = 0, title = 'Not allowed' }: Partial<SpriteProps>) {
   return (
-    <Frame size={size} title={title}>
+    <Frame size={size} pen={pen} title={title}>
       <Drawn d="M6 3.5h9a1.5 1.5 0 0 1 1.5 1.5v14A1.5 1.5 0 0 1 15 20.5H6" delay={delay} />
       <Drawn d="M6 3.5v17" delay={delay + 0.2} dur={0.4} />
       <Drawn d="M12.6 12h.01" delay={delay + 0.5} dur={0.2} />
@@ -154,9 +179,9 @@ export function Refused({ size, delay = 0, title = 'Not allowed' }: Partial<Spri
 }
 
 /** Unknown — a question, for the routine outcome nobody can adjudicate. */
-export function Unknown({ size, delay = 0, title = 'Unknown' }: Partial<SpriteProps>) {
+export function Unknown({ size, pen, delay = 0, title = 'Unknown' }: Partial<SpriteProps>) {
   return (
-    <Frame size={size} title={title}>
+    <Frame size={size} pen={pen} title={title}>
       <Drawn d="M9 8.6a3.1 3.1 0 1 1 4.4 2.8c-.9.45-1.4 1.2-1.4 2.1v.6" delay={delay} />
       <Drawn d="M12 18.2h.01" delay={delay + 0.45} dur={0.2} />
     </Frame>
@@ -164,9 +189,9 @@ export function Unknown({ size, delay = 0, title = 'Unknown' }: Partial<SpritePr
 }
 
 /** A pen, mid-stroke. Used where something was written. */
-export function Wrote({ size, delay = 0, title = 'Wrote' }: Partial<SpriteProps>) {
+export function Wrote({ size, pen, delay = 0, title = 'Wrote' }: Partial<SpriteProps>) {
   return (
-    <Frame size={size} title={title}>
+    <Frame size={size} pen={pen} title={title}>
       <Drawn d="M4 20.2 5 16l11-11a2.1 2.1 0 0 1 3 3L8 19l-4 1.2Z" delay={delay} dur={0.8} />
       <Drawn d="M14.4 6.6 17.4 9.6" delay={delay + 0.5} dur={0.25} />
     </Frame>

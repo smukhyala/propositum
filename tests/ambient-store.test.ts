@@ -427,7 +427,16 @@ describe('what the offer says', () => {
     const detected = detectWork(working, T0 + 5)
     if (!detected) throw new Error('expected a detection')
 
-    expect(describeWork(detected, signatureOf(detected.terms)).sentence).toContain('3 sites')
+    const suggestion = describeWork(detected, signatureOf(detected.terms))
+
+    // Amended 2026-08-17. This asserted the count on `sentence`, and its own
+    // reason — *because that is the evidence* — names the field it should have
+    // been reading. `sentence` says what the subject is; `because` says what was
+    // seen. They are rendered one directly above the other on the front door and
+    // concatenated by the extension badge, so the count on both read as "across
+    // 4 sites." immediately above "read 4 pages across 4 sites."
+    expect(suggestion.because).toContain('3 sites')
+    expect(suggestion.sentence).not.toContain('3 sites')
   })
 
   it('says what was seen and never what it means', () => {
