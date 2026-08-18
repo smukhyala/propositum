@@ -857,3 +857,112 @@ describe('a call landing after the buffer was cleared', () => {
     expect(store.isNaming('parcel+rates')).toBe(false)
   })
 })
+
+/**
+ * The three markers that let a count be taken once.
+ *
+ * ── What is being defended ───────────────────────────────────────────────
+ *
+ * `docs/PRODUCT_PRINCIPLES.md` §13's honest limit was that *"there is no metric
+ * anywhere that would catch an offer rate creeping upward"*. The counts live in
+ * `offer_tally`; what lives here is the only reason those counts mean anything
+ * — a strand is counted ONCE however many times it is re-detected, and a minute
+ * of watching is counted once however many batches arrive in it.
+ *
+ * Get either wrong and the metric is not slightly off, it is a different
+ * number: the poll re-detects the same afternoon every thirty seconds, so an
+ * undeduplicated showing would report one offer as a hundred and twenty.
+ *
+ * The other half is which markers `clear()` takes. A signature IS a subject, so
+ * both signature sets go with the names and the offers; the minute is a number
+ * about a clock and stays, because losing it would let one minute be counted
+ * twice and a doubled denominator LOWERS a reported offer rate. Every rounding
+ * in this measurement has to point the same way — toward reporting that
+ * Propositum spoke more than you thought, never less.
+ */
+describe('counting an offer without recording what it was about', () => {
+  it('reports a strand as new exactly once', () => {
+    const store = createAmbientStore()
+
+    expect(store.newlyShown('kalman+filter')).toBe(true)
+    expect(store.newlyShown('kalman+filter')).toBe(false)
+    expect(store.newlyShown('kalman+filter')).toBe(false)
+  })
+
+  it('keeps showing and suppressing apart, because one strand can be both', () => {
+    const store = createAmbientStore()
+
+    // Cut by the display bound on one render; promoted onto the screen when the
+    // strand ahead of it is declined. That is one suppression and one showing,
+    // and a shared marker would hide the second.
+    expect(store.newlySuppressed('rust+async')).toBe(true)
+    expect(store.newlyShown('rust+async')).toBe(true)
+
+    expect(store.newlySuppressed('rust+async')).toBe(false)
+    expect(store.newlyShown('rust+async')).toBe(false)
+  })
+
+  it('forgets both signature markers on clear, with everything else keyed by signature', () => {
+    const store = createAmbientStore()
+    store.newlyShown('kalman+filter')
+    store.newlySuppressed('rust+async')
+
+    // A person accepted an offer, or declined one.
+    store.clear()
+
+    // The over-count this buys, named in `newlyShown`'s own doc: a strand
+    // detected again after a clear is counted again, because this object cannot
+    // know it is the same strand and must not be able to.
+    expect(store.newlyShown('kalman+filter')).toBe(true)
+    expect(store.newlySuppressed('rust+async')).toBe(true)
+  })
+
+  it('counts a minute of observed browsing once, however many batches arrive in it', () => {
+    const store = createAmbientStore()
+    // Aligned to a minute boundary, because the unit is `floor(ms / 60000)` and
+    // an unaligned base would put "59 seconds later" in the next minute — which
+    // is correct behaviour and a fixture that tested the wrong thing.
+    const onTheMinute = Math.floor(T0 / MINUTE) * MINUTE
+
+    expect(store.newlyObservedMinute(onTheMinute)).toBe(true)
+    expect(store.newlyObservedMinute(onTheMinute + 1_000)).toBe(false)
+    expect(store.newlyObservedMinute(onTheMinute + 59_000)).toBe(false)
+    expect(store.newlyObservedMinute(onTheMinute + MINUTE)).toBe(true)
+  })
+
+  it('keeps the minute across a clear, because a doubled denominator quiets the metric', () => {
+    const store = createAmbientStore()
+    store.newlyObservedMinute(T0)
+
+    store.clear()
+
+    // The one marker `clear()` does not take. It names no page, no site and no
+    // subject — it is a minute number, and `generation` is the precedent for
+    // something surviving a clear because something has to.
+    expect(store.newlyObservedMinute(T0)).toBe(false)
+    expect(store.newlyObservedMinute(T0 + MINUTE)).toBe(true)
+  })
+
+  it('refuses a minute at or before the last one, so a backwards clock loses rather than doubles', () => {
+    const store = createAmbientStore()
+    expect(store.newlyObservedMinute(T0 + 10 * MINUTE)).toBe(true)
+
+    // An NTP correction, or a laptop waking up.
+    expect(store.newlyObservedMinute(T0)).toBe(false)
+    expect(store.newlyObservedMinute(T0 + 10 * MINUTE)).toBe(false)
+  })
+
+  it('holds no counts of its own, because a tally that dies with the process answers nothing', () => {
+    const store = createAmbientStore()
+    store.newlyShown('kalman+filter')
+    store.newlySuppressed('rust+async')
+    store.newlyObservedMinute(T0)
+
+    // Nothing here totals anything. `size()` is the buffer's row count and is
+    // the only number this object has ever reported. The counts live in
+    // `offer_tally`, one row per day, because an offer rate creeping upward is
+    // only visible across days and this object does not survive one.
+    const numbers = Object.entries(store).filter(([, value]) => typeof value === 'number')
+    expect(numbers).toEqual([])
+  })
+})

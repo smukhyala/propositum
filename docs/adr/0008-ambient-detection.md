@@ -308,5 +308,12 @@ erase — only to forget. The stronger guarantee is the one above it: none of it
   cannot guarantee.
 - **A false positive is observed in real use.** The thresholds are guesses, set before any real
   browsing existed. They are constants in one file for that reason.
-- **Anyone proposes writing ambient observations to disk.** That is not a tuning change; it is a
-  different decision and needs its own ADR.
+- ~~**Anyone proposes writing ambient observations to disk.** That is not a tuning change; it is a
+  different decision and needs its own ADR.~~ **Fired 2026-08-18 —
+  [ADR-0015](0015-measuring-loudness-and-saving-an-afternoon.md).** Two things now write off this
+  path: `npm run capture:afternoon`, a hand-run command that saves the buffer to a JSON fixture, and
+  `offer_tally`, a durable per-day count of how often Propositum spoke. ADR-0015 argues them
+  separately, because only one of them is a profile and the product cannot make that one. The trigger
+  is left struck rather than deleted, and it is worth reading twice: **the code landed before the
+  ADR did**, with the argument living in a docblock, which is the location this bullet exists to move
+  it out of.

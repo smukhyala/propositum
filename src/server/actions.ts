@@ -35,6 +35,7 @@ import { appContext } from './db'
 import { readableCause } from './problem'
 import { confirmRequest, haltRun, rejectRequest } from './confirmations'
 import { ambientStore, captureStore } from './capture-store'
+import { countQuietly } from './offer-tally'
 import { describeWork, signatureOf } from './ambient-store'
 // ADR-0014. Three imports, none of which can decide anything: a nullable
 // suggestion, the one function that joins it to a drafted contract, and a
@@ -1931,6 +1932,25 @@ export async function declineThreadOffer(
     const urls = fresh ? fresh.urls : ambient.pagesOfThread(thread)
 
     ambient.declineThread(thread, urls, now)
+
+    /**
+     * One "Not now", counted as a bare integer.
+     *
+     * ── The decline rate, and what it must not become ────────────────────
+     *
+     * `docs/research/intent-suggestion-quality.md` §10.5 asks for this beside
+     * the offer rate. What is recorded is the number 1: no signature, no
+     * subject, no origin, no time of day beyond the calendar date. *"One offer
+     * was declined on the 18th"* is a fact about how loud Propositum was.
+     * *"Offer for 'perturbation robotics' declined at 14:32"* is the row
+     * ADR-0008 refuses, and there is no column in `offer_tally` it could go in.
+     *
+     * Not deduplicated, unlike the showing above it — a decline is an act a
+     * person performed, and two of them are two. `newlyShown` deduplicates
+     * because a poll re-computes the same detection every thirty seconds;
+     * nobody presses this button on a timer.
+     */
+    countQuietly({ offersDeclined: 1 }, now)
     refresh()
     return ok({ thread, pagesDropped: urls.length })
   })

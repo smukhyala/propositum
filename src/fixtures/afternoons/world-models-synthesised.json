@@ -1,0 +1,205 @@
+{
+  "note": "SYNTHESISED, not a recording — 2026-08-18. Twelve observations posted through the real /api/capture/ambient route and read back out of the real /api/capture/ambient/debug route in one process, so the file is a genuine capture of a genuine buffer and the browsing in it is invented. It stands in for an afternoon of reading world-model surveys: two searches, three arXiv abstracts, one OpenReview page, and a return to the first abstract. Nobody browsed this.",
+  "held": 12,
+  "now": 1787088713159,
+  "origins": [
+    {
+      "origin": "https://arxiv.org",
+      "pages": 3,
+      "engagedMinutes": 2,
+      "titles": [
+        "World Models: A Survey of Learned Simulators",
+        "Learning World Models from Video — a Survey",
+        "Latent World Models: Survey and Open Problems"
+      ]
+    },
+    {
+      "origin": "https://openreview.net",
+      "pages": 1,
+      "engagedMinutes": 1,
+      "titles": [
+        "World Model Benchmarks — A Survey Track Submission"
+      ]
+    },
+    {
+      "origin": "https://www.google.com",
+      "pages": 2,
+      "engagedMinutes": 0,
+      "titles": [
+        "world models survey - Google Search",
+        "world models survey benchmark - Google Search"
+      ]
+    }
+  ],
+  "detectsWork": {
+    "terms": [
+      "world",
+      "model",
+      "survey",
+      "abs",
+      "benchmark"
+    ],
+    "labels": [
+      "world",
+      "models",
+      "survey",
+      "abs",
+      "benchmark"
+    ],
+    "origins": [
+      "https://www.google.com",
+      "https://arxiv.org",
+      "https://openreview.net"
+    ],
+    "pages": 6,
+    "searches": 2,
+    "engagedMs": 222000,
+    "since": 1787087213144,
+    "focus": "World Models: A Survey of Learned Simulators",
+    "titles": [
+      "world models survey - Google Search",
+      "World Models: A Survey of Learned Simulators",
+      "Learning World Models from Video — a Survey",
+      "Latent World Models: Survey and Open Problems",
+      "world models survey benchmark - Google Search",
+      "World Model Benchmarks — A Survey Track Submission"
+    ],
+    "urls": [
+      "https://www.google.com/search?q=world+models+survey",
+      "https://arxiv.org/abs/2401.11111",
+      "https://arxiv.org/abs/2401.22222",
+      "https://arxiv.org/abs/2401.33333",
+      "https://www.google.com/search?q=world+models+survey+benchmark",
+      "https://openreview.net/forum"
+    ],
+    "because": "searched-and-followed"
+  },
+  "detectsPause": null,
+  "grounds": {
+    "kinds": [
+      "searched-then-read",
+      "refined-the-search",
+      "came-back",
+      "read-deeply",
+      "followed-across",
+      "read-around"
+    ],
+    "sufficient": true,
+    "sentences": [
+      "You searched, then read 4 more pages.",
+      "You searched 2 different ways.",
+      "You went back to arxiv.org after leaving it.",
+      "You spent 2 minutes on a single page.",
+      "You followed it across 3 sites.",
+      "You read 3 pages on arxiv.org."
+    ]
+  },
+  "observations": [
+    {
+      "at": 1787087213144,
+      "origin": "https://www.google.com",
+      "url": "https://www.google.com/search?q=world+models+survey",
+      "title": "world models survey - Google Search",
+      "kind": "query",
+      "arrival": "no-referrer"
+    },
+    {
+      "at": 1787087243144,
+      "origin": "https://arxiv.org",
+      "url": "https://arxiv.org/abs/2401.11111",
+      "title": "World Models: A Survey of Learned Simulators",
+      "kind": "navigation",
+      "arrival": "cross-origin"
+    },
+    {
+      "at": 1787087333144,
+      "origin": "https://arxiv.org",
+      "url": "https://arxiv.org/abs/2401.11111",
+      "title": "World Models: A Survey of Learned Simulators",
+      "kind": "engagement",
+      "engagedMs": 75000,
+      "scrollFraction": 0.68,
+      "exitType": "left-unloaded"
+    },
+    {
+      "at": 1787087393144,
+      "origin": "https://arxiv.org",
+      "url": "https://arxiv.org/abs/2401.22222",
+      "title": "Learning World Models from Video — a Survey",
+      "kind": "navigation",
+      "arrival": "same-origin"
+    },
+    {
+      "at": 1787087453144,
+      "origin": "https://arxiv.org",
+      "url": "https://arxiv.org/abs/2401.22222",
+      "title": "Learning World Models from Video — a Survey",
+      "kind": "engagement",
+      "engagedMs": 41000,
+      "scrollFraction": 0.42,
+      "exitType": "left-cached"
+    },
+    {
+      "at": 1787087573144,
+      "origin": "https://arxiv.org",
+      "url": "https://arxiv.org/abs/2401.33333",
+      "title": "Latent World Models: Survey and Open Problems",
+      "kind": "navigation",
+      "arrival": "same-origin"
+    },
+    {
+      "at": 1787087633144,
+      "origin": "https://arxiv.org",
+      "url": "https://arxiv.org/abs/2401.33333",
+      "title": "Latent World Models: Survey and Open Problems",
+      "kind": "engagement",
+      "engagedMs": 33000,
+      "scrollFraction": 0.55,
+      "exitType": "hidden"
+    },
+    {
+      "at": 1787087753144,
+      "origin": "https://www.google.com",
+      "url": "https://www.google.com/search?q=world+models+survey+benchmark",
+      "title": "world models survey benchmark - Google Search",
+      "kind": "query",
+      "arrival": "no-referrer"
+    },
+    {
+      "at": 1787087813144,
+      "origin": "https://openreview.net",
+      "url": "https://openreview.net/forum",
+      "title": "World Model Benchmarks — A Survey Track Submission",
+      "kind": "navigation",
+      "arrival": "cross-origin"
+    },
+    {
+      "at": 1787087873144,
+      "origin": "https://openreview.net",
+      "url": "https://openreview.net/forum",
+      "title": "World Model Benchmarks — A Survey Track Submission",
+      "kind": "engagement",
+      "engagedMs": 52000,
+      "scrollFraction": 0.31,
+      "exitType": "left-unloaded"
+    },
+    {
+      "at": 1787088053144,
+      "origin": "https://arxiv.org",
+      "url": "https://arxiv.org/abs/2401.11111",
+      "title": "World Models: A Survey of Learned Simulators",
+      "kind": "navigation",
+      "arrival": "back-or-forward"
+    },
+    {
+      "at": 1787088113144,
+      "origin": "https://arxiv.org",
+      "url": "https://arxiv.org/abs/2401.11111",
+      "title": "World Models: A Survey of Learned Simulators",
+      "kind": "engagement",
+      "engagedMs": 96000,
+      "scrollFraction": 0.91,
+      "exitType": "hidden"
+    }
+  ]
+}

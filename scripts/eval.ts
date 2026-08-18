@@ -8,7 +8,8 @@
  *   npm run eval -- --baseline        also run the raw-log baseline
  *   npm run eval -- --worksheet       create blank score slots in eval-scores.json
  *   npm run eval -- --report          apply the H1 gates to what you have scored,
- *                                     and compute H2 from the database
+ *                                     compute H2 from the database, and print the
+ *                                     offer rate beside it
  *
  * Produces a scoring worksheet per scenario. It does not produce H1 scores —
  * those are entered by a person, because a model judge shares the generator's
@@ -22,6 +23,20 @@
  * `OutcomeVerdict` rows in SQLite. So `--report` opens the database and every
  * other path here still does not. That is a genuine asymmetry rather than an
  * inconsistency — a fixture cannot accept anything.
+ *
+ * ── And a third thing, which is measured and never scored ────────────────
+ *
+ * *(Added 2026-08-18.)* `--report` also prints the offer rate: how often
+ * Propositum spoke, how much watching produced it, how often somebody said "Not
+ * now", and how many strands it found and did not show.
+ * `docs/PRODUCT_PRINCIPLES.md` §13 said *"there is no metric anywhere that would
+ * catch an offer rate creeping upward"*, and this is that metric. It is read off
+ * `offer_tally`, which holds four integers per day and nothing about what any
+ * offer was concerned with.
+ *
+ * It carries no pass mark and cannot change the exit code — `src/eval/offer-rate.ts`
+ * argues why, and the short version is that the only published calibration is
+ * per session while this is per hour.
  */
 
 import { createModelClient, modelId } from '../src/model/provider'
@@ -33,8 +48,10 @@ import { renderWorksheet, runScenario } from '../src/eval/run'
 import { blankEntry, isComplete, readScores, resultFor, writeScores } from '../src/eval/record'
 import { H1_COMPONENTS } from '../src/eval/scenario'
 import { H2_PASS_RATE, reportH2, tallyH2 } from '../src/eval/score'
+import { OFFER_RATE_CAUTION, reportOfferRate } from '../src/eval/offer-rate'
 import { createDatabase } from '../src/persistence/client'
 import { createRepositories } from '../src/persistence/repositories/index'
+import type { Repositories } from '../src/persistence/repositories/index'
 
 try {
   process.loadEnvFile('.env')
@@ -101,7 +118,7 @@ if (args.has('--worksheet')) {
   process.exit(0)
 }
 
-/* ── H2, read off the durable trajectory ─────────────────────────────────── */
+/* ── H2 and the offer rate, read off the durable database ────────────────── */
 
 /**
  * The acceptance rate, computed from rows rather than from a worksheet.
@@ -125,24 +142,10 @@ if (args.has('--worksheet')) {
  * may have no database at all. An H1 report that exits non-zero because SQLite
  * was absent would teach everyone to ignore the exit code.
  */
-async function printH2(): Promise<'passed' | 'failed' | 'nothing-to-score'> {
+async function printH2(repos: Repositories): Promise<'passed' | 'failed' | 'nothing-to-score'> {
   console.log('\nH2 — acceptance over the durable trajectory')
 
-  let db
-  try {
-    // `createDatabase` rather than a bare PrismaClient: it is the only handle
-    // that installs the append-only guards, and it refuses rather than hands
-    // back an unguarded one. A read-only caller has no excuse to be the first
-    // exception to that.
-    db = await createDatabase({})
-  } catch (error) {
-    console.log(`  · no database to read — ${error instanceof Error ? error.message : String(error)}`)
-    console.log('    H1 above is unaffected: it is scored against sealed fixtures.')
-    return 'nothing-to-score'
-  }
-
-  try {
-    const repos = createRepositories(db.prisma)
+  {
     const units = await repos.outcomes.trajectory()
     // Read off the accepted contract rather than off the production, because a
     // Shift that made nothing leaves no production to be read. `trajectory()`
@@ -217,6 +220,136 @@ async function printH2(): Promise<'passed' | 'failed' | 'nothing-to-score'> {
     }
 
     return report.verdict
+  }
+}
+
+/* ── the offer rate, read off the same database ──────────────────────────── */
+
+/**
+ * How often Propositum spoke, and how much watching produced it.
+ *
+ * ── Printed, never scored ────────────────────────────────────────────────
+ *
+ * This returns nothing and cannot change the exit code, which is deliberate and
+ * argued in `src/eval/offer-rate.ts`: the only published calibration is per
+ * SESSION and these are per HOUR, and inventing the conversion factor to make a
+ * gate work would produce a threshold nobody could defend and a habit of raising
+ * it. H1 and H2 have pass marks because `docs/MVP.md` set them before anybody
+ * ran anything. This has none because nothing has.
+ *
+ * ── Why the per-day column is the point ──────────────────────────────────
+ *
+ * §13's hole is an offer rate *creeping upward*. A single total cannot show a
+ * change over time, so the totals are the summary and the days are the finding.
+ * Somebody reading down that column is the whole enforcement mechanism, which is
+ * weaker than a test and is what there is.
+ */
+async function printOfferRate(repos: Repositories): Promise<void> {
+  console.log('\nOffer rate — how often Propositum spoke, and after how much watching')
+
+  /**
+   * A missing TABLE is tolerated the same way a missing DATABASE is.
+   *
+   * `offer_tally` arrived on 2026-08-18, and a database created before that has
+   * every H1 and H2 row this command exists to print and no tally at all.
+   * Crashing there would take the whole report down over the one section that
+   * has no pass mark, which is the same trade `printFromTheDatabase` already
+   * refuses one level up.
+   */
+  let days
+  try {
+    days = await repos.offerTally.all()
+  } catch (error) {
+    // The LAST line of a Prisma error, not the whole thing: it prints the
+    // failing query with line numbers and file paths, and the reason a person
+    // needs is the sentence at the bottom of it.
+    const said = (error instanceof Error ? error.message : String(error))
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line !== '')
+    console.log(`  · no counts to read — ${said[said.length - 1] ?? 'unknown error'}`)
+    console.log('    A database older than 2026-08-18 has no offer_tally. `npx prisma db push`,')
+    console.log('    then restart the app and the worker so the append-only guards are reinstalled.')
+    return
+  }
+
+  const report = reportOfferRate(days)
+
+  if (report.days === 0) {
+    // The ordinary state until somebody uses the product, and an absence rather
+    // than a zero for `scoreH2`'s reason: "0 offers per hour" and "nothing has
+    // ever been counted" are different claims about the product.
+    console.log('  ·  nothing counted yet — no browsing has been observed by this database.')
+    console.log('     Not 0 offers per hour, which would be a different claim.')
+  } else {
+    const rate =
+      report.perObservedHour === null
+        ? 'no observed browsing to divide by'
+        : `${report.perObservedHour.toFixed(2)} offers per hour of observed browsing`
+    const declined =
+      report.declineRate === null
+        ? 'nothing shown, so no decline rate'
+        : `${(report.declineRate * 100).toFixed(0)}% declined`
+
+    console.log(`  ·  ${rate}`)
+    console.log(
+      `       ${report.offersShown} shown · ${report.offersDeclined} declined (${declined}) · ${report.strandsSuppressed} detected and not shown`,
+    )
+    console.log(
+      `       over ${report.observedMinutes} observed minute(s) across ${report.days} day(s), ${report.firstDay} → ${report.lastDay}`,
+    )
+    // A strand cut by MAX_THREADS_SHOWN is the one ADR-0008 calls worse than not
+    // finding it. Said out loud when it happens, because a number in a row of
+    // four is easy to read past.
+    if (report.strandsSuppressed > 0) {
+      console.log(
+        `       ⚠ ${report.strandsSuppressed} strand(s) cleared the bar and were cut by MAX_THREADS_SHOWN`,
+      )
+    }
+
+    console.log(`\n     the last ${report.recent.length} day(s) — read this column, not the total:`)
+    for (const day of report.recent) {
+      const perHour = day.perObservedHour === null ? '   —  ' : day.perObservedHour.toFixed(2)
+      console.log(
+        `       ${day.day}  ${perHour} /h   ${day.offersShown} shown · ${day.offersDeclined} declined · ${day.strandsSuppressed} cut · ${day.observedMinutes} min observed`,
+      )
+    }
+  }
+
+  console.log('')
+  for (const line of OFFER_RATE_CAUTION) console.log(`     ${line}`)
+}
+
+/**
+ * Open the database once, print everything that is read from rows, close it.
+ *
+ * ── And why a missing database is still not a failure ────────────────────
+ *
+ * `--report` is also how a person checks H1 scores they typed on a machine that
+ * may have no database at all. An H1 report that exits non-zero because SQLite
+ * was absent would teach everyone to ignore the exit code. The verdict returned
+ * is H2's alone: the offer rate has no pass mark to contribute.
+ */
+async function printFromTheDatabase(): Promise<'passed' | 'failed' | 'nothing-to-score'> {
+  let db
+  try {
+    // `createDatabase` rather than a bare PrismaClient: it is the only handle
+    // that installs the append-only guards, and it refuses rather than hands
+    // back an unguarded one. A read-only caller has no excuse to be the first
+    // exception to that.
+    db = await createDatabase({})
+  } catch (error) {
+    console.log('\nH2 — acceptance over the durable trajectory')
+    console.log(`  · no database to read — ${error instanceof Error ? error.message : String(error)}`)
+    console.log('    H1 above is unaffected: it is scored against sealed fixtures.')
+    return 'nothing-to-score'
+  }
+
+  try {
+    const repos = createRepositories(db.prisma)
+    const verdict = await printH2(repos)
+    await printOfferRate(repos)
+    return verdict
   } finally {
     await db.close()
   }
@@ -256,7 +389,7 @@ if (args.has('--report')) {
     if (entry.notes) console.log(`       note: ${entry.notes}`)
   }
 
-  const h2 = await printH2()
+  const h2 = await printFromTheDatabase()
 
   console.log(
     '\nEvery H1 number above is n=1, scored by the person who wrote the answer key,' +

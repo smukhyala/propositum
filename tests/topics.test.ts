@@ -43,7 +43,35 @@ function page(
   }
 }
 
-/** Verbatim from `/api/capture/ambient/debug` on 2026-08-11. */
+/**
+ * ~~Verbatim from `/api/capture/ambient/debug` on 2026-08-11.~~
+ *
+ * **"Verbatim" was as true as it could be and that was not very, 2026-08-18.**
+ * Nothing below is wrong and nothing below changes: this is still the recorded
+ * afternoon that per-origin detection could not see, and it still pins the
+ * defect it was written for. What the word could not mean is the point.
+ *
+ * It was made by reading that endpoint's response on a terminal and retyping it
+ * as `ThreadPage` literals, so it holds what the SUMMARY chose to show —
+ * origins, page counts, engaged minutes and titles — and it holds it at
+ * whatever granularity a person's hand produced. `scrollFraction`, `exitType`
+ * and `arrival` are all absent from these six pages, and no amount of care
+ * could have put them here: the endpoint did not emit them, so a fixture built
+ * this way STRUCTURALLY could not carry them. `docs/PRODUCT_PRINCIPLES.md` §13
+ * records what the same practice cost elsewhere — a pinned fixture written at
+ * three pages standing in for a session its own docstring recorded as twelve.
+ *
+ * **The next one is not made this way.** `/api/capture/ambient/debug` now emits
+ * the buffer's rows whole beside its summary, `src/fixtures/afternoon.ts` loads
+ * one back, and `npm run capture:afternoon` is the deliberate act that writes
+ * the file. `tests/afternoon-capture.test.ts` proves a capture replays to the
+ * same answers the live buffer gave, which is the property a hand-copy never
+ * had and could not be tested for.
+ *
+ * This fixture stays as it is. Re-typing it from a fuller capture would be
+ * inventing detail for an afternoon nobody can browse again, and a fixture that
+ * claims more than it recorded is precisely the failure above.
+ */
 const REAL_SESSION: ThreadPage[] = [
   page('https://meet.google.com', 'https://meet.google.com/abc-defg', 'Google Meet', 27),
   page('https://chatgpt.com', 'https://chatgpt.com/c/1', '', 2),

@@ -89,10 +89,42 @@ page wrote.
 
 Where it goes matters as much as what it is:
 
-- **In memory only.** It never reaches the database. It dies when the app process does.
+- ~~**In memory only.** It never reaches the database. It dies when the app process does.~~
+  **In memory only — the observations. One count is not.** *(Corrected 2026-08-18. See the two
+  paragraphs below; the sentence above was written before anything durable sat beside this buffer,
+  and this document is the worst place in the repository to leave a promise that has quietly stopped
+  being exactly true.)*
 - **Bounded twice** — a rolling 30-minute window *and* a 500-row cap.
 - **Discarded by default.** Declining an offer drops it. Accepting one folds it into the session
   you just started, where it becomes an ordinary `ObservationEvent` marked `ambient: true`.
+
+**What is now durable, stated exactly.** *(2026-08-18 —
+[ADR-0015](./adr/0015-measuring-loudness-and-saving-an-afternoon.md).)* Nothing you looked at reaches
+the database: no URL, no title, no dwell, no scroll, no exit type, no arrival, no tab group label,
+and there is no column any of them could sit in. What reaches it is a **count**, in one table called
+`offer_tally`, one row per calendar day, holding five things — the date, how many distinct minutes
+the extension had something to report, how many suggestions Propositum put in front of you, how many
+you turned down, and how many it found and did not show. *"Four suggestions in forty observed
+minutes on the 18th"* is the whole of what that row can say. It cannot say what any of them was
+about, and no amount of reading the table will tell anybody what you were working on.
+
+It exists because the alternative was worse: the bar for speaking to you was lowered twice in two
+days and there was no number anywhere that would have shown whether that made Propositum noisier.
+**The cost, named rather than rounded past:** the table does record *which days you browsed with the
+extension running, and roughly how much*. That is a real fact about you. It is bounded by being
+exactly that — a finer bucket than a day would start to sketch when in the day you work, which is a
+fact about a person rather than about the product, and was refused for that reason. Nothing in the
+product deletes this table; see *Retention and deletion*.
+
+**One more thing changed the same day, and it widens what a caller can read back.** The debug
+endpoint — `/api/capture/ambient/debug`, the only window into the buffer — used to answer with a
+per-origin summary. It now returns the buffer's rows **whole**: every cleaned URL, every title, the
+dwell, the scroll, the exit type and the arrival, exactly as the detector holds them. That is more
+than it handed over before, on the most privacy-sensitive path in the product, and it is deliberate:
+three signals were being collected that nobody could see, so nobody could judge them. It is reachable
+only from something that is not a web page — two transport controls a browser will not let a page
+forge, spelled out in that route's own docblock — and it reads the same buffer this section
+describes, so it can never hand back anything the table above does not list.
 
 The extension holds `host_permissions: ["https://*/*"]`, so Chrome shows **"Read and change all your
 data on all websites"** at install. That warning is accurate. What limits the exposure is no longer
@@ -473,6 +505,24 @@ document that still said it would be false in the place it can least afford to b
 | Everything else | persists until you delete it |
 | `ActionEvidence` | deleted once you have decided what the Shift produced, and in any case after **seven days** — see *Acting*, above |
 | `ActionEvidence` attached to a confirmation question | **kept indefinitely.** The one exception, argued in full above |
+| `offer_tally` | **persists, and nothing in the product deletes it** — see below |
+
+**`offer_tally` is the one table no button reaches** *(added 2026-08-18 —
+[ADR-0015](./adr/0015-measuring-loudness-and-saving-an-afternoon.md))*. It holds one row per calendar
+day: the date, minutes of observed browsing, suggestions shown, suggestions declined, suggestions
+found and not shown. It belongs to no `Project`, so deleting a Project does not reach it, and there
+is no other delete path — the code that writes it can add to a day and read the series back, and
+that is all it can do. The catch-all row above says *"persists until you delete it"*, and for this
+table the honest reading of "you delete it" is **you, in SQLite**:
+
+```
+sqlite3 propositum.db 'DELETE FROM offer_tally'
+```
+
+That is not a good answer and it is written down rather than smoothed over. It is survivable because
+of what the row holds: four numbers and a date, no subject, nothing that says what any suggestion was
+about. The reason it has no delete button is that nothing has been built that would offer one, not
+that anybody decided it should be permanent — ADR-0015 records that as open.
 
 **Nothing from a calendar is retained at all** *(2026-08-18 —
 [ADR-0014](./adr/0014-reading-free-busy.md))*. Busy intervals are read, used to offer one number,

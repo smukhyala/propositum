@@ -71,6 +71,16 @@ export interface Repositories {
    * nothing else here changes.
    */
   readonly calendar: CalendarConnectionRepository
+  /**
+   * The other row here that is not about the person's work — and the only one
+   * that is about Propositum itself.
+   *
+   * It holds four integers per day and no subject of any kind. Beside
+   * `calendar` because both are outside the ledger's story: that one holds a
+   * credential, this one holds how loud the product has been. See the schema's
+   * docblock for the argument against ADR-0008's refused row.
+   */
+  readonly offerTally: OfferTallyRepository
 }
 
 export function createRepositories(prisma: PrismaClient): Repositories {
@@ -93,6 +103,7 @@ export function createRepositories(prisma: PrismaClient): Repositories {
     evidence: actionEvidenceRepository(prisma),
     dispatches: actionDispatchRepository(prisma),
     calendar: calendarConnectionRepository(prisma),
+    offerTally: offerTallyRepository(prisma),
   }
 }
 
@@ -2714,5 +2725,93 @@ function calendarConnectionRepository(prisma: PrismaClient): CalendarConnectionR
     forget: async (provider) => {
       await prisma.calendarConnection.deleteMany({ where: { provider } })
     },
+  }
+}
+
+/* ── OfferTally ────────────────────────────────────────────────────────── */
+
+/** One day's counts, as the harness reads them. Four integers and a date, and
+ *  the absence of a fifth field is the design — see the model's docblock. */
+export interface OfferTallyDay {
+  readonly day: string
+  readonly observedMinutes: number
+  readonly offersShown: number
+  readonly offersDeclined: number
+  readonly strandsSuppressed: number
+}
+
+/** What to add to a day. Every field optional and every absent one means zero,
+ *  because each call site knows about exactly one of the four. */
+export interface OfferTallyDelta {
+  readonly observedMinutes?: number
+  readonly offersShown?: number
+  readonly offersDeclined?: number
+  readonly strandsSuppressed?: number
+}
+
+/**
+ * How loud Propositum has been, day by day.
+ *
+ * Mutable, like `Project` and `Intention` — no triggers, no `REQUIRED_GUARDS`
+ * entry, and the schema's docblock carries the argument for why a tally needs
+ * no append-only guarantee.
+ *
+ * There is deliberately no `byDay`, no `since` and no delete. `add` is the only
+ * writer and `all` is the only reader, because the one consumer is
+ * `npm run eval -- --report`, which wants the whole series to look at the
+ * trend. A narrower read would be invented for a caller that does not exist.
+ */
+export interface OfferTallyRepository {
+  /** Add to a day, creating it if this is the day's first count. */
+  add(day: string, delta: OfferTallyDelta): Promise<void>
+  /** Every day recorded, oldest first. */
+  all(): Promise<readonly OfferTallyDay[]>
+}
+
+function offerTallyRepository(prisma: PrismaClient): OfferTallyRepository {
+  const COUNTS = {
+    day: true,
+    observedMinutes: true,
+    offersShown: true,
+    offersDeclined: true,
+    strandsSuppressed: true,
+  } as const
+
+  return {
+    /**
+     * An upsert whose update half is four `increment`s.
+     *
+     * Increments rather than a read-modify-write, so two counts arriving in the
+     * same instant cannot lose one to a stale read — the poll and a Home render
+     * genuinely can land together. What this does NOT survive is two creates of
+     * the same day racing, which SQLite answers with a unique-constraint error;
+     * the caller swallows it and loses that one count. Named rather than
+     * rounded up: it is the only error in this measurement that can go in
+     * either direction, and it needs the day's first two writes to collide.
+     */
+    add: async (day, delta) => {
+      const zeroed = {
+        observedMinutes: delta.observedMinutes ?? 0,
+        offersShown: delta.offersShown ?? 0,
+        offersDeclined: delta.offersDeclined ?? 0,
+        strandsSuppressed: delta.strandsSuppressed ?? 0,
+      }
+
+      await prisma.offerTally.upsert({
+        where: { day },
+        create: { day, ...zeroed },
+        update: {
+          observedMinutes: { increment: zeroed.observedMinutes },
+          offersShown: { increment: zeroed.offersShown },
+          offersDeclined: { increment: zeroed.offersDeclined },
+          strandsSuppressed: { increment: zeroed.strandsSuppressed },
+        },
+        select: { day: true },
+      })
+    },
+
+    // Lexicographic order on `YYYY-MM-DD` is chronological order, which is the
+    // one thing that format is for.
+    all: () => prisma.offerTally.findMany({ select: COUNTS, orderBy: { day: 'asc' } }),
   }
 }

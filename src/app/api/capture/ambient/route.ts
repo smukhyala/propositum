@@ -29,6 +29,7 @@ import { z } from 'zod'
 import { CUSTOM_HEADER, REQUIRED_CONTENT_TYPE, fromOurExtension } from '@/capture/transport'
 import { cleanUrl } from '@/capture/url'
 import { ambientStore, captureStore, expectedOrigin } from '@/server/capture-store'
+import { countQuietly } from '@/server/offer-tally'
 
 /**
  * What the extension may send. There is no field for page text, and adding one
@@ -215,6 +216,13 @@ export async function POST(request: Request) {
   const store = ambientStore()
   const now = Date.now()
 
+  /**
+   * How many rows this batch actually put in the buffer, which is not how many
+   * arrived. See the observed-minute count below for why the difference is the
+   * whole point of counting it.
+   */
+  let recorded = 0
+
   for (const raw of parsed.data.observations) {
     // Cleaned here as well as at the ledger door. This buffer never reaches the
     // ledger, so it would otherwise be the one place a credential in a URL
@@ -255,6 +263,62 @@ export async function POST(request: Request) {
       },
       now,
     )
+    recorded += 1
+  }
+
+  /**
+   * One minute of observed browsing, counted at most once.
+   *
+   * ── The denominator, and why it is measured here ─────────────────────
+   *
+   * `docs/research/intent-suggestion-quality.md` §10.5 asks for *offers shown
+   * per hour of observed browsing*, and the second half is the half that gets
+   * dropped: four offers is restraint across a day and a pathology across ten
+   * minutes. This route is the only place that knows watching happened at all.
+   *
+   * **What it actually measures, stated exactly.** Minutes in which the
+   * extension had something to report while no session was running — a visible
+   * tab reporting every fifteen seconds, flushed every thirty. Not minutes the
+   * person was at the keyboard, and not minutes they were reading: a person
+   * staring at one page reports the same as a person walking through ten. It
+   * is a measure of how much watching there was, which is exactly what an
+   * offer rate needs to be divided by.
+   *
+   * ── And what it is not ───────────────────────────────────────────────
+   *
+   * It is one integer per day in `offer_tally` and it names nothing. No URL, no
+   * origin, no title, no term — this loop has all four in hand and passes none
+   * of them on. A count of minutes cannot say what any of them was about, which
+   * is the line ADR-0008 draws and the reason a tally is allowed to be durable
+   * where the buffer it counts is not.
+   *
+   * The store answers *is this minute new* and holds one number to do it; the
+   * response is not made to wait for the write, and a lost count is the correct
+   * failure here — see `countQuietly`.
+   *
+   * ── `recorded`, not `observations.length`, 2026-08-18 ────────────────
+   *
+   * *(Corrected the day this landed, after review.)* ~~The guard was
+   * `parsed.data.observations.length > 0` — what the extension SENT.~~ That is
+   * the wrong quantity and it rounds in the one direction this measurement may
+   * not round in. A batch whose rows all fall out of the loop above — every URL
+   * unparseable, so every one hits `continue` — observed nothing, and still
+   * counted a full minute of *"observed browsing"*. Proved against the real
+   * route: two unparseable URLs returned `{"ok":true,"held":0}`, meaning the
+   * buffer kept nothing, beside `observedMinutes: 1`.
+   *
+   * A minute of watching that was not watching inflates the denominator, which
+   * LOWERS the reported offer rate — quieting the alarm this whole measurement
+   * exists to raise. `newlyObservedMinute`'s own docblock says the same
+   * sentence about a double-counted minute; this is the same error arriving
+   * through the numerator's door instead.
+   *
+   * `recorded > 0 &&` short-circuits, so a batch that recorded nothing does not
+   * even mark the minute as counted — the next batch in the same minute that
+   * does record something still gets it.
+   */
+  if (recorded > 0 && store.newlyObservedMinute(now)) {
+    countQuietly({ observedMinutes: 1 }, now)
   }
 
   return NextResponse.json({ ok: true, held: store.size() })

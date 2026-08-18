@@ -84,6 +84,27 @@
  *     folds it into the new session, where it becomes a normal, auditable
  *     ObservationEvent with the ordinary rules applying.
  *
+ * ── One durable thing sits beside this now, and it holds no subject ──────
+ *
+ * *(Added 2026-08-18.)* Three markers at the bottom of this interface —
+ * `newlyShown`, `newlySuppressed`, `newlyObservedMinute` — let a caller count
+ * an offer, a suppression or a minute of watching exactly once. The counts
+ * themselves are written to `offer_tally`, which IS durable, and the reason
+ * that does not contradict the four bullets above is worth stating here rather
+ * than only where the table is declared:
+ *
+ * **A bare tally is not a profile, and that distinction is the whole design.**
+ * *"Four offers were shown in the last hour of observed browsing"* says nothing
+ * about what they were about. *"Offer for 'perturbation robotics' declined at
+ * 14:32"* is exactly the row `WorkOffer`'s docblock below refuses. The table has
+ * four integer columns and a date, and no column a term, a signature, an origin,
+ * a title or a URL could be written in — so the refused row is refused
+ * structurally rather than by anybody remembering.
+ *
+ * What crosses out of this object is therefore a boolean, never a signature. The
+ * signatures the markers hold to deduplicate stay in here, bounded by the same
+ * buffer life and erased by the same `clear()`.
+ *
  * ── Why "discarded" is the honest word ───────────────────────────────────
  *
  * `clear()` drops the reference. Node may hold the memory until it collects,
@@ -286,6 +307,62 @@ export interface AmbientStore {
   /** Observations for one origin, for folding into a session on accept. */
   forOrigin(origin: string, nowMs: number): readonly AmbientObservation[]
   size(): number
+
+  /* ── three markers, so a count can be taken once ──────────────────────── */
+
+  /**
+   * True the FIRST time this strand is put in front of the person, and false
+   * afterwards. Marks it on the way through.
+   *
+   * ── Why this is here and the count is not ────────────────────────────
+   *
+   * These three answer *is this new?* and nothing else. They hold no totals,
+   * and a total in this object would answer nothing worth asking: the buffer
+   * dies with the process, so a tally inside it could never say what happened
+   * across a day, which is the only timescale on which an offer rate creeping
+   * upward is visible at all. The counts live in `offer_tally`, one row per
+   * day, four integers and no subject — see `src/server/offer-tally.ts` and the
+   * schema's docblock, which argues that table against ADR-0008's refused row
+   * directly.
+   *
+   * What is here is the deduplication, and it has to be here: the poll runs
+   * every 30 seconds and Home re-renders on every visit, so counting a
+   * detection each time it is *computed* would report an afternoon's one strand
+   * as a hundred offers. A strand is counted once per buffer.
+   *
+   * ── The two sets are signatures, so `clear()` takes them ─────────────
+   *
+   * A signature IS the subject — it is the thread's terms joined — so these
+   * cannot survive a decline or a session start when nothing else keyed that
+   * way does. They are erased with the names, the offers and the pinned pages,
+   * and they are no new category of held value: the same keys already sit in
+   * three maps above.
+   *
+   * The cost is an over-count. A strand shown, declined, and detected again an
+   * hour later is counted twice, because after `clear()` this object cannot
+   * know it is the same strand and must not be able to. That error is in the
+   * direction that raises an alarm rather than quiets one, which is the only
+   * direction a measurement of one's own loudness may round.
+   */
+  newlyShown(signature: string): boolean
+  /** True the first time this strand is found and NOT shown. Same marking, same
+   *  erasure, same over-count, same direction. */
+  newlySuppressed(signature: string): boolean
+  /**
+   * True the first time a report arrives in this minute of wall clock.
+   *
+   * The denominator's unit. One integer — the minute last counted — and never a
+   * set, so this holds no history of when anybody browsed; it can answer *have
+   * I already counted this minute* and no other question.
+   *
+   * **It deliberately survives `clear()`, and that is the one exception in this
+   * object.** `clear()` forgets what was SEEN; a minute number names no page,
+   * no site and no subject, and resetting it would let the same minute be
+   * counted twice — inflating the denominator, which lowers the offer rate.
+   * That is the direction this measurement may not round in. `generation` is
+   * the precedent: it survives a clear too, because something has to.
+   */
+  newlyObservedMinute(nowMs: number): boolean
 }
 
 export function createAmbientStore(): AmbientStore {
@@ -311,6 +388,23 @@ export function createAmbientStore(): AmbientStore {
    */
   const attemptedNames = new Set<string>()
   const attemptedOffers = new Set<string>()
+
+  /**
+   * Which strands have already been counted, so a poll cannot count one twice.
+   *
+   * Signatures, therefore erased by `clear()` with everything else keyed that
+   * way. See the interface docs on `newlyShown` for what that costs and why the
+   * cost is in the acceptable direction.
+   */
+  const countedShown = new Set<string>()
+  const countedSuppressed = new Set<string>()
+
+  /**
+   * The last minute of wall clock counted, as `floor(ms / 60000)`.
+   *
+   * A single number, never a list. Not erased by `clear()` — see `newlyObservedMinute`.
+   */
+  let countedMinute: number | null = null
 
   /**
    * How many buffers ago this is. Counts `clear()`s and nothing else.
@@ -508,6 +602,10 @@ export function createAmbientStore(): AmbientStore {
       attemptedNames.clear()
       attemptedOffers.clear()
       threads.clear()
+      // Signatures, so they go with the rest of the signatures. `countedMinute`
+      // is not one and stays — the argument is on `newlyObservedMinute`.
+      countedShown.clear()
+      countedSuppressed.clear()
     },
 
     decline(origin, nowMs) {
@@ -630,6 +728,45 @@ export function createAmbientStore(): AmbientStore {
     },
 
     size: () => observations.length,
+
+    newlyShown(signature) {
+      if (countedShown.has(signature)) return false
+      countedShown.add(signature)
+      return true
+    },
+
+    /**
+     * Marked in its own set rather than sharing `countedShown`.
+     *
+     * A strand can be suppressed on one render and shown on the next — the
+     * bound is applied after the snooze filters, so declining the leader
+     * promotes the fourth strand onto the screen. One set would make that
+     * strand's promotion invisible, which is the specific silence ADR-0008
+     * says the multi-strand change existed to remove. Two sets count it as one
+     * suppression and one showing, which is what happened.
+     */
+    newlySuppressed(signature) {
+      if (countedSuppressed.has(signature)) return false
+      countedSuppressed.add(signature)
+      return true
+    },
+
+    /**
+     * `<=` rather than `!==`, which costs nothing and closes one direction.
+     *
+     * Equality would count minute 100 a second time if the clock ever went
+     * backwards over a minute boundary — an NTP correction, a laptop waking —
+     * and a double-counted minute inflates the denominator and lowers the
+     * reported offer rate. Refusing anything at or before the last counted
+     * minute means the worst a backwards clock can do is lose minutes, which
+     * is the direction that reports MORE offers per hour than really happened.
+     */
+    newlyObservedMinute(nowMs) {
+      const minute = Math.floor(nowMs / 60_000)
+      if (countedMinute !== null && minute <= countedMinute) return false
+      countedMinute = minute
+      return true
+    },
   }
 }
 

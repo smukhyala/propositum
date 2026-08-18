@@ -36,6 +36,7 @@ import { ambientStore, captureStore, expectedOrigin } from '@/server/capture-sto
 import { describeOffer, describePause, describeWork, signatureOf } from '@/server/ambient-store'
 import type { NamedThread, WorkOffer } from '@/server/ambient-store'
 import { nameThread } from '@/server/name-thread'
+import { countQuietly } from '@/server/offer-tally'
 import { composeOffer } from '@/server/compose-offer'
 import { createModelClient } from '@/model/provider'
 import type { ModelCallSink } from '@/model/provider'
@@ -364,6 +365,33 @@ export async function GET(request: Request) {
             leading.composed,
           )
         : describeWork(leading.detected, leading.signature, leading.named)
+
+    /**
+     * One strand advertised, counted once.
+     *
+     * ── Why the notification channel is the one that must not be missed ──
+     *
+     * `docs/PRODUCT_PRINCIPLES.md` §13 names notifications as *"the obvious
+     * place this erodes first, because a notification is the cheapest thing to
+     * add and the hardest to attribute"*, and it eroded there on 2026-08-17
+     * exactly as predicted. This response is the only thing that ever reaches
+     * that channel: the service worker badges from `suggestion` and turns a
+     * `work-offer` into a `requireInteraction` notification. A count that
+     * watched only Home would be blind to the half the principle warns about.
+     *
+     * ── Once per strand, not once per poll ───────────────────────────────
+     *
+     * This route runs every thirty seconds and returns the same leading strand
+     * every time until something changes. Counting each response would report
+     * an afternoon's one offer as a hundred and twenty. `newlyShown` is the
+     * store's marker and it is shared with Home, so a strand rendered there and
+     * badged here is one offer rather than two.
+     *
+     * What crosses to the counter is a boolean and an integer. Not the
+     * signature, not the subject, not the origins — see `src/server/offer-tally.ts`,
+     * which argues that against ADR-0008's refused row.
+     */
+    if (ambient.newlyShown(leading.signature)) countQuietly({ offersShown: 1 }, now)
 
     return NextResponse.json({ ok: true, session: null, suggestion })
   }

@@ -127,7 +127,8 @@ import { ambientStore, captureStore } from '@/server/capture-store'
 import { describeWork, signatureOf } from '@/server/ambient-store'
 import type { NamedThread } from '@/server/ambient-store'
 import type { WorkDetected } from '@/domain/detection/detect'
-import { frontDoorRow, noticedStrands, strandBySignature } from '@/server/front-door'
+import { frontDoorRow, noticedAfternoon, strandBySignature } from '@/server/front-door'
+import { countQuietly } from '@/server/offer-tally'
 import type { FrontDoorRow } from '@/server/front-door'
 import type { IntentionStateFacts } from '@/persistence/repositories/index'
 
@@ -534,7 +535,43 @@ export default async function Home({
   // `nowMs` is the instant the lifecycle words above were computed from, rather
   // than a second reading of the clock. Two "now"s on one render is two answers
   // to one question, and this screen puts both answers on the same page.
-  const noticed = live ? [] : noticedStrands(ambient, ambient.since(nowMs), nowMs)
+  const afternoon = live
+    ? { shown: [], suppressed: [] }
+    : noticedAfternoon(ambient, ambient.since(nowMs), nowMs)
+  const noticed = afternoon.shown
+
+  /**
+   * What this screen showed, and what it found and cut, counted once each.
+   *
+   * ── Why the count is taken here rather than inside the derivation ────────
+   *
+   * `noticedAfternoon` is a pure function of a buffer and a clock reading, and
+   * it stays one. This is the moment a strand is actually put in front of
+   * somebody, which is the event `docs/research/intent-suggestion-quality.md`
+   * §10.5 asks to be counted — GitHub's *completion-shown rate*, the metric they
+   * track beside acceptance and warn about optimising.
+   *
+   * `newlyShown` and `newlySuppressed` are markers on the buffer, so a person
+   * who reloads Home four times is one offer rather than four, and a strand
+   * badged by the poll and rendered here is one rather than two.
+   *
+   * ── The suppressed count is the one nothing had ─────────────────────────
+   *
+   * `MAX_THREADS_SHOWN` cuts the fourth strand and records nothing about it.
+   * ADR-0008's own argument is that a strand found and discarded in silence is
+   * the failure the multi-strand change existed to remove, and the display bound
+   * does exactly that. Now it is a number — per day, with nothing attached
+   * saying what was cut.
+   *
+   * Nothing about the SUBJECT crosses: `countQuietly` takes integers, and the
+   * signatures stay in the buffer that dies with the process.
+   */
+  for (const strand of afternoon.shown) {
+    if (ambient.newlyShown(strand.signature)) countQuietly({ offersShown: 1 }, nowMs)
+  }
+  for (const strand of afternoon.suppressed) {
+    if (ambient.newlySuppressed(strand.signature)) countQuietly({ strandsSuppressed: 1 }, nowMs)
+  }
 
   /**
    * Each strand as the screen renders it, including which project it would join.
