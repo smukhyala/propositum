@@ -63,7 +63,18 @@
  *     that needs its own ADR to spend.
  *   - **`listTabs` / `attachToTab`.** The agent works only in a tab Propositum
  *     opened. `chrome.debugger.getTargets` is never called and `tabs` is never
- *     requested, so there is no call that returns a tab we did not create.
+ *     requested, ~~so there is no call that returns a tab we did not create.~~
+ *
+ *     **Corrected 2026-08-18: both premises hold and the conclusion does not.**
+ *     `chrome.tabs.query()` needs no permission at all — the `tabs` permission
+ *     gates four properties, and *host* permissions restore them, and ADR-0008
+ *     took host permission for every `https` site. So a call that returns tabs
+ *     we did not create does exist; it is simply never made, and what holds
+ *     that is `tests/extension-permissions.test.ts` rather than Chrome.
+ *
+ *     The bullet above is the honest version of the same shape, and the
+ *     contrast is the point: a capability this surface refuses cannot be
+ *     reached by writing one more line, and a call nobody makes can.
  *   - **Cookie and storage reads.** No `Network.getCookies`, no
  *     `DOMStorage.getDOMStorageItems`. A session Propositum can act inside is
  *     not a session Propositum may copy out.
