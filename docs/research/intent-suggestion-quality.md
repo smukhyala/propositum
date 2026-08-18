@@ -399,17 +399,50 @@ task boundaries, achieving a **maximum precision of only 70%**"*; *"**The 30-min
 no support from our results**"*; *"this threshold is **no better than random** for identifying
 boundaries between user search tasks."*
 
-With repeated queries removed (their Table 8), the 30-minute timeout is **worse than doing nothing**:
+Jones & Klinkner report **two** analyses and they disagree, so the figures must not be mixed.
+
+*(Corrected 2026-08-18. This section originally showed Table 8's accuracies with Table 3's trained
+optima beneath them, read as one measurement. The consumer of this section —
+`src/domain/detection/detect.ts`'s note beside `WINDOW_MS` — was corrected on 2026-08-17; this, the
+source it cites, was not. Both tables below are re-extracted from the PDF with `pdftotext -layout`
+and every number is read off the table body, not off a summary of it.)*
+
+**Table 8** — features proposed in previous work. Here the 30-minute timeout is **worse than doing
+nothing** on goals:
 
 | | Goal boundary | Mission boundary |
 |---|---|---|
 | Baseline (always "no boundary") | **63.1%** | 59.9% |
 | 30-minute timeout | **57.2%** | 73.8% |
 | Trained timeout | 69.5% | 75.8% |
-| Best classifier | **87.3%** | **84.4%** |
+| `commonw` | 80.7% | 79.3% |
 
-Trained optima were **5 minutes** for goals and **13 minutes** for missions. Neither is anywhere near
-thirty.
+And the ceiling, from **Table 9** — their own best classifier on the same no-repeat data, which is
+what makes 57.2% worth reporting at all: **87.3%** on goals and **84.4%** on missions, against the
+same 63.1% and 59.9% baselines. *(That row sat in the Table 8 block until 2026-08-18. The two numbers
+were right; the table they were filed under was not.)*
+
+Table 8's caption gives that table's own optima: *"Trained time thresholds for boundaries were **1.5 mins
+for goals and 6 mins for missions**."*
+
+**Table 3** — *"for data which includes repeat queries"*. Here the same timeout is **better** than the
+baseline, and thirty is still not the best number in it:
+
+| | Goal boundary | Mission boundary |
+|---|---|---|
+| Baseline | 54.2% | 70.9% |
+| 5 minute | **71.2%** | 75.6% |
+| 30 minute | 66.5% | **78.6%** |
+| 60 minute | 64.2% | 77.6% |
+| Trained time | 71.2% | 78.6% |
+
+Its caption: *"Trained times for goal and mission boundaries were **5 mins and 13 minutes**."*
+
+So **"worse than doing nothing" is specific to goal boundaries in Table 8**, and saying it flatly
+overstates a result that is already strong enough. What both analyses agree on is that thirty is the
+best number in neither — five minutes beats it on goals in Table 3, 71.2% to 66.5% — and the authors'
+own summary is unconditional and needs no help: *"The 30-minute standard receives no support from our
+results."*
 
 ⚠️ Jones & Klinkner computed **no inter-annotator agreement**: *"One of the future directions for this
 work involves obtaining measures of inter-rater reliability for the editorial work."* The numbers are
@@ -1822,7 +1855,9 @@ smaller than the session it claims to stand for.
 mean + 1.5 SD of idle gaps, was never validated, and measures *"users will often leave XMosaic running
 for extended periods of time without interacting with it"* — not tasks. Jones & Klinkner: 57.2% against
 a 63.1% baseline, *"no better than random"*, *"The 30-minute standard receives no support from our
-results."* Their trained optima were 5 and 13 minutes. ProAgentBench's plateau is 5 minutes.
+results."* Their trained optima were 1.5 and 6 minutes on the analysis those accuracies come from
+(Table 8), and 5 and 13 on the other one (Table 3) — see §3.1, where pairing the two was corrected.
+ProAgentBench's plateau is 5 minutes.
 
 **What this does *not* mean.** It does not mean shorten it. The two uses are different:
 
