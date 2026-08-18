@@ -304,6 +304,18 @@ export interface IntentionRepository {
    * Which sittings are actually being captured. See `openSessions`.
    */
   factsForEveryProject(): Promise<IntentionStateFacts[]>
+  /**
+   * The same facts, for one Project.
+   *
+   * Deliberately not a second query: both entry points call one builder with a
+   * different `where`. Two readings of "where is this work" agree until the day
+   * somebody edits one of them — the shape `topics.ts` refuses for tokenisers
+   * and `front-door.ts` refuses for the derivation sitting on top of this.
+   *
+   * Null when the Project has no Intention. That is not a sixth state; the
+   * screen renders it as *nothing stated yet*, which `statusWordFor` owns.
+   */
+  factsForProject(projectId: string): Promise<IntentionStateFacts | null>
 }
 
 function intentionRepository(prisma: PrismaClient): IntentionRepository {
@@ -323,106 +335,118 @@ function intentionRepository(prisma: PrismaClient): IntentionRepository {
       }),
     forProject: (projectId) => prisma.intention.findUnique({ where: { projectId }, select: SELECT }),
 
-    factsForEveryProject: async () => {
-      /**
-       * `UNSETTLED` is declared beside the evidence sweep, a thousand lines
-       * further down this file, and is read here rather than re-derived.
-       *
-       * Its own docblock says why that matters: *"this is the one place that
-       * has to learn about it, and getting it wrong is silent"*. The predicate
-       * is not the obvious one — four of the five outcome kinds are settled by
-       * an `OutcomeVerdict` and `document-changes` never receives one at all,
-       * so the naive *"held with no verdict"* counts every document Shift as
-       * waiting forever. A second copy of that would put *Needs you* on the
-       * front door, permanently, for work the person finished weeks ago.
-       *
-       * Declaration order is not a hazard: this closure runs when a caller
-       * invokes the method, long after the module has finished evaluating.
-       */
-      const rows = await prisma.intention.findMany({
-        // A Project is what the front door lists. An Intention with no Project
-        // is legal in the schema and has no row on any screen to sit beside.
-        where: { projectId: { not: null } },
-        select: {
-          id: true,
-          projectId: true,
-          completedAt: true,
-          sessions: { where: { endedAt: null }, select: { id: true, phase: true } },
-          contracts: {
-            where: { status: 'accepted', acceptedAt: { not: null } },
-            // Newest first, so the first contract carrying a question is the
-            // one `waitingContractId` should open.
-            orderBy: { acceptedAt: 'desc' },
-            select: {
-              id: true,
-              runs: {
-                select: {
-                  status: true,
-                  confirmations: { where: { verdict: { is: null } }, select: { createdAt: true } },
-                  outcomes: { where: UNSETTLED, select: { id: true } },
-                },
+    factsForEveryProject: () => factsWhere({ projectId: { not: null } }),
+
+    factsForProject: async (projectId) => (await factsWhere({ projectId }))[0] ?? null,
+  }
+
+  /**
+   * One builder, two entry points. See `factsForProject` on the interface for
+   * why this is not two queries.
+   *
+   * The all-projects caller passes `{ projectId: { not: null } }` and the
+   * single-project caller passes an id — both exclude an Intention with no
+   * Project, which is legal in the schema and has no row on any screen.
+   */
+  async function factsWhere(where: Prisma.IntentionWhereInput): Promise<IntentionStateFacts[]> {
+    /**
+     * `UNSETTLED` is declared beside the evidence sweep, a thousand lines
+     * further down this file, and is read here rather than re-derived.
+     *
+     * Its own docblock says why that matters: *"this is the one place that
+     * has to learn about it, and getting it wrong is silent"*. The predicate
+     * is not the obvious one — four of the five outcome kinds are settled by
+     * an `OutcomeVerdict` and `document-changes` never receives one at all,
+     * so the naive *"held with no verdict"* counts every document Shift as
+     * waiting forever. A second copy of that would put *Needs you* on the
+     * front door, permanently, for work the person finished weeks ago.
+     *
+     * Declaration order is not a hazard: this closure runs when a caller
+     * invokes the method, long after the module has finished evaluating.
+     */
+    const rows = await prisma.intention.findMany({
+      // A Project is what the front door lists. An Intention with no Project
+      // is legal in the schema and has no row on any screen to sit beside.
+      where,
+      select: {
+        id: true,
+        projectId: true,
+        completedAt: true,
+        sessions: { where: { endedAt: null }, select: { id: true, phase: true } },
+        contracts: {
+          where: { status: 'accepted', acceptedAt: { not: null } },
+          // Newest first, so the first contract carrying a question is the
+          // one `waitingContractId` should open.
+          orderBy: { acceptedAt: 'desc' },
+          select: {
+            id: true,
+            runs: {
+              select: {
+                status: true,
+                confirmations: { where: { verdict: { is: null } }, select: { createdAt: true } },
+                outcomes: { where: UNSETTLED, select: { id: true } },
               },
-              report: { select: { decisions: { select: { id: true } } } },
             },
+            report: { select: { decisions: { select: { id: true } } } },
           },
         },
-      })
+      },
+    })
 
-      const facts: IntentionStateFacts[] = []
+    const facts: IntentionStateFacts[] = []
 
-      for (const row of rows) {
-        // Non-null by the WHERE above; the generated type does not know that,
-        // so it is narrowed rather than asserted — `acceptedForSession` makes
-        // the same move for the same reason.
-        if (row.projectId === null) continue
+    for (const row of rows) {
+      // Non-null by the WHERE above; the generated type does not know that,
+      // so it is narrowed rather than asserted — `acceptedForSession` makes
+      // the same move for the same reason.
+      if (row.projectId === null) continue
 
-        let liveAcceptedContracts = 0
-        let undecidedHeldOutcomes = 0
-        const unansweredConfirmationsAskedAt: Date[] = []
-        let waitingContractId: string | null = null
+      let liveAcceptedContracts = 0
+      let undecidedHeldOutcomes = 0
+      const unansweredConfirmationsAskedAt: Date[] = []
+      let waitingContractId: string | null = null
 
-        for (const contract of row.contracts) {
-          let live = false
-          // Toward WHICH note, never toward whether one is waiting. Nothing can
-          // clear a `DecisionNeeded`, so counting it into `openDecisions` pins
-          // *Needs you* on this Project for good — the argument is at
-          // `IntentionStateFacts.openDecisions` and it is longer than this line
-          // because it ends in a cost rather than in a fix.
-          let waitingHere = contract.report === null ? 0 : contract.report.decisions.length
+      for (const contract of row.contracts) {
+        let live = false
+        // Toward WHICH note, never toward whether one is waiting. Nothing can
+        // clear a `DecisionNeeded`, so counting it into `openDecisions` pins
+        // *Needs you* on this Project for good — the argument is at
+        // `IntentionStateFacts.openDecisions` and it is longer than this line
+        // because it ends in a cost rather than in a fix.
+        let waitingHere = contract.report === null ? 0 : contract.report.decisions.length
 
-          for (const run of contract.runs) {
-            if (LIVE_RUN_STATUSES.has(run.status)) live = true
+        for (const run of contract.runs) {
+          if (LIVE_RUN_STATUSES.has(run.status)) live = true
 
-            for (const request of run.confirmations) {
-              unansweredConfirmationsAskedAt.push(request.createdAt)
-            }
-            waitingHere += run.confirmations.length
-
-            undecidedHeldOutcomes += run.outcomes.length
-            waitingHere += run.outcomes.length
+          for (const request of run.confirmations) {
+            unansweredConfirmationsAskedAt.push(request.createdAt)
           }
+          waitingHere += run.confirmations.length
 
-          if (live) liveAcceptedContracts += 1
-          if (waitingContractId === null && waitingHere > 0) waitingContractId = contract.id
+          undecidedHeldOutcomes += run.outcomes.length
+          waitingHere += run.outcomes.length
         }
 
-        facts.push({
-          intentionId: row.id,
-          projectId: row.projectId,
-          completedAt: row.completedAt,
-          openSessions: row.sessions.map((sitting) => ({ id: sitting.id, phase: sitting.phase })),
-          liveAcceptedContracts,
-          unansweredConfirmationsAskedAt,
-          // Zero, always, and the field is kept rather than removed so the
-          // reasoning has somewhere to live. See its docblock.
-          openDecisions: 0,
-          undecidedHeldOutcomes,
-          waitingContractId: waitingContractId ?? row.contracts[0]?.id ?? null,
-        })
+        if (live) liveAcceptedContracts += 1
+        if (waitingContractId === null && waitingHere > 0) waitingContractId = contract.id
       }
 
-      return facts
-    },
+      facts.push({
+        intentionId: row.id,
+        projectId: row.projectId,
+        completedAt: row.completedAt,
+        openSessions: row.sessions.map((sitting) => ({ id: sitting.id, phase: sitting.phase })),
+        liveAcceptedContracts,
+        unansweredConfirmationsAskedAt,
+        // Zero, always, and the field is kept rather than removed so the
+        // reasoning has somewhere to live. See its docblock.
+        openDecisions: 0,
+        undecidedHeldOutcomes,
+        waitingContractId: waitingContractId ?? row.contracts[0]?.id ?? null,
+      })
+    }
+
+    return facts
   }
 }
 

@@ -771,7 +771,20 @@ describe('the safety machinery is reachable from the product', () => {
      * The second hop is asserted below, because a helper Home stopped calling
      * would leave both lines above green and the screen blind.
      *
-     * ── Why the second needle is no longer `statusWordFor` ─────────────────
+     * ── `statusWordFor` has a caller again, on the project screen ──────────
+     *
+     * *Added 2026-08-18.* Between the bare-Home rewrite and that date it had
+     * none, and this file did not say so — the one shape it exists to catch,
+     * missed. Four of the five lifecycle words rendered nowhere, and the fifth
+     * only because Home had constant-folded it.
+     *
+     * `src/app/projects/[projectId]/page.tsx` now derives the word from the
+     * same `frontDoorRow` and prints it. The assertion below greps for the call
+     * AND for the interpolation that puts its result in the kicker, because a
+     * grep for the call alone is satisfied by a result nobody renders — which
+     * is precisely how this went unnoticed the first time.
+     *
+     * ── Why the second needle on HOME is no longer `statusWordFor` ─────────
      *
      * Because that call had stopped meaning anything, in a way this file could
      * not see. Home renders re-entry rows off a list it has ALREADY filtered to
@@ -869,6 +882,35 @@ describe('the safety machinery is reachable from the product', () => {
  *
  * Each is a real gap with a real consequence, named in the map's fog.
  */
+describe('the lifecycle word is on a screen', () => {
+  const projectScreen = stripImports(
+    stripComments(readFileSync(join(repo, 'src/app/projects/[projectId]/page.tsx'), 'utf8')),
+  )
+
+  it('the project screen derives the word and renders it', () => {
+    const screen = projectScreen
+
+    expect(
+      screen,
+      'the project screen stopped calling statusWordFor — four of the five lifecycle words render nowhere again',
+    ).toMatch(/statusWordFor\(/)
+
+    // The call is not the point; the rendered result is. A call whose value is
+    // discarded is what made the previous version of this assertion vacuous.
+    expect(
+      screen,
+      'statusWordFor is called but its result is not interpolated into the kicker — that is the vacuous shape this file exists to refuse',
+    ).toMatch(/kicker=\{[^}]*statusWordFor\(/)
+  })
+
+  it('it comes from frontDoorRow, so there is one derivation and not two', () => {
+    expect(
+      projectScreen,
+      'the project screen computes a lifecycle state without frontDoorRow — that is the second derivation front-door.ts opens by refusing',
+    ).toMatch(/frontDoorRow\(/)
+  })
+})
+
 describe('deferred, and asserted as deferred', () => {
   it('boundary 6 is still unwired, so the narrative is a stop-rule label', () => {
     // `execute-run` stores `narrative: stopLabel` — a consumer label rendered
