@@ -159,19 +159,31 @@
  * computed member access walks past it, and it is a defence against somebody
  * who does not know they should not.
  *
- * **`tests/extension-cdp.test.ts` still uses the regex form, and is not
+ * ~~**`tests/extension-cdp.test.ts` still uses the regex form, and is not
  * exposed today by luck rather than by design:** it searches `.js` only, and
  * no `.js` source in `extension/src` currently loses a line to it (checked, the
  * same way). The first `'/*'` or `'//'` written in a string in `cdp.js` or
  * `service-worker.js` re-opens it there. Correcting that file is owed and is
- * not this one — the same form of debt ADR-0008 records about the manifest
- * comment.
+ * not this one.~~
+ *
+ * **Paid 2026-08-18.** There is one stripper now, in
+ * `tests/support/strip-comments.ts`, and both guards import it — because two
+ * that must agree are the same shape as the two tokenisers `topics.ts` refuses,
+ * and one of them was already wrong. The debt was called in by measurement
+ * rather than by a deadline: `service-worker.js` grew by a third the day
+ * before, and the counterfactual was run rather than argued. Injecting
+ * `const SWALLOW_CANARY = '/*'` followed by `chrome.debugger.getTargets()`
+ * into `service-worker.js`, the regex form left the call **invisible** and the
+ * CDP suite green; the shared scanner sees it and the suite fails. That call is
+ * ADR-0010's central property, and the guard over it was one string literal
+ * from blind.
  */
 
 import { describe, expect, it } from 'vitest'
 import { readFileSync, readdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
+import { losesNoCode, stripComments } from './support/strip-comments'
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), '..')
 const extensionDir = join(repo, 'extension', 'src')
@@ -200,57 +212,6 @@ const extensionDir = join(repo, 'extension', 'src')
  * would confuse it. No extension source has one — and if one arrives, the
  * per-file tail assertion below is what says so.
  */
-function stripComments(source: string): string {
-  let out = ''
-  let i = 0
-
-  while (i < source.length) {
-    const here = source[i]!
-    const next = source[i + 1]
-
-    if (here === '/' && next === '*') {
-      const end = source.indexOf('*/', i + 2)
-      out += ' '
-      i = end === -1 ? source.length : end + 2
-      continue
-    }
-
-    if (here === '/' && next === '/') {
-      const end = source.indexOf('\n', i + 2)
-      i = end === -1 ? source.length : end
-      continue
-    }
-
-    if (source.startsWith('<!--', i)) {
-      const end = source.indexOf('-->', i + 4)
-      out += ' '
-      i = end === -1 ? source.length : end + 3
-      continue
-    }
-
-    if (here === '"' || here === "'" || here === '`') {
-      out += here
-      i += 1
-      while (i < source.length) {
-        const inside = source[i]!
-        if (inside === '\\') {
-          out += source.slice(i, i + 2)
-          i += 2
-          continue
-        }
-        out += inside
-        i += 1
-        if (inside === here) break
-      }
-      continue
-    }
-
-    out += here
-    i += 1
-  }
-
-  return out
-}
 
 /**
  * Every file Chrome can execute a line of, not only the modules.
@@ -261,7 +222,13 @@ function stripComments(source: string): string {
  */
 const SOURCES = readdirSync(extensionDir)
   .filter((name) => name.endsWith('.js') || name.endsWith('.html'))
-  .map((name) => ({ name, code: stripComments(readFileSync(join(extensionDir, name), 'utf8')) }))
+  .map((name) => {
+    // `raw` is kept beside `code` because the per-line canary below has to
+    // compare the two. Re-reading the file there would let the check drift onto
+    // a different byte sequence than the one the greps actually search.
+    const raw = readFileSync(join(extensionDir, name), 'utf8')
+    return { name, raw, code: stripComments(raw) }
+  })
 
 const ALL_CODE = SOURCES.map(({ code }) => code).join('\n')
 
@@ -365,71 +332,19 @@ describe('the files this guard is written about are still here', () => {
      * The canary the `panel.html` swallow needed, and the only one of the four
      * that is per-file and per-line.
      *
-     * ── Why a tail token was not enough ──────────────────────────────────
+     * A tail token was written first and does not work: the swallow that
+     * shipped ran from `panel.html:177` to the next block-comment close at 233
+     * and then resumed, so the file's tail survived and a tail assertion stayed
+     * green over a hole in the middle.
      *
-     * The obvious version of this — pin a token from each file's last few
-     * lines — was written first and it does not work here. The swallow that
-     * shipped ran from `panel.html:177` to the next `*​/`, at line 233, and then
-     * the regex resumed: the file's tail survived intact and a tail assertion
-     * stayed green over a hole in the middle. A tail token only catches a
-     * swallow that runs to end-of-file.
-     *
-     * ── What this asserts instead ────────────────────────────────────────
-     *
-     * `stripComments` may only ever DELETE, so every line that looked like code
-     * before it ran must still be findable after. The check below reads the
-     * original with a deliberately stupid, independent heuristic — a line is
-     * comment-shaped if it is blank, opens or continues a `/*`-block, starts
-     * `//`, or falls inside an HTML comment — and requires every other line to
-     * survive the strip verbatim. It is not the lexer checking itself: it is a
-     * second, dumber reader disagreeing loudly when the first one eats
-     * something.
-     *
-     * Under the regex stripper this file shipped with, it fails on 32 lines of
-     * `panel.html`. Under the scanner it is clean across all seven sources.
-     *
-     * **What it skips, and why that is a real gap rather than a rounded one.**
-     * Lines containing `//` or `/*` anywhere are excluded, because a trailing
-     * comment is legitimately rewritten and this check cannot tell that from a
-     * swallow. So a stripper that ate a span where every single line carried a
-     * trailing comment would still pass. That is narrow, and it is the price of
-     * a cross-check that needs no second parser.
+     * `losesNoCode` is the check, and it lives in `tests/support/` because
+     * `tests/extension-cdp.test.ts` needs the identical one. Its heuristic is
+     * deliberately dumber than the scanner and shares no code with it, so the
+     * two agree by both being right rather than by being the same. What it
+     * skips is stated where it is defined.
      */
-    const COMMENT_SHAPED = /^(\*|\/\/|\/\*|<!--|-->|$)/
-
-    /** Line numbers inside `<!-- … -->`, found by regex rather than by the
-     *  scanner under test — HTML comments do not nest, so this is safe, and it
-     *  has to be independent of `stripComments` to be worth anything. */
-    const htmlCommentLines = (source: string): ReadonlySet<number> => {
-      const inside = new Set<number>()
-      for (const match of source.matchAll(/<!--[\s\S]*?-->/g)) {
-        const from = source.slice(0, match.index).split('\n').length
-        for (let line = from; line < from + match[0].split('\n').length; line += 1) {
-          inside.add(line)
-        }
-      }
-      return inside
-    }
-
-    for (const { name } of SOURCES) {
-      const source = readFileSync(join(extensionDir, name), 'utf8')
-      const stripped = stripComments(source)
-      const html = htmlCommentLines(source)
-      const lost: number[] = []
-
-      source.split('\n').forEach((line, index) => {
-        const text = line.trim()
-        if (html.has(index + 1)) return
-        if (COMMENT_SHAPED.test(text)) return
-        if (text.includes('//') || text.includes('/*')) return
-        if (stripped.includes(text)) return
-        lost.push(index + 1)
-      })
-
-      expect(
-        lost,
-        `stripComments ate code in ${name} at line(s) ${lost.join(', ')} — every assertion in this file is now running over a hole, and a forbidden call written there would pass`,
-      ).toEqual([])
+    for (const { name, raw } of SOURCES) {
+      expect(losesNoCode(raw), `${name}: the stripper swallowed code`).toEqual([])
     }
   })
 
