@@ -11,10 +11,32 @@
  *     still means "the record of a session", which is what makes
  *     `ObservationEvent` interpretable at all.
  *   - **Metadata only.** A cleaned URL, a title, dwell, scroll, how the page was
- *     left, and — where the person made one — the title of the tab group the
- *     page sits in. There is no field for page text, and the 2,000-character
- *     excerpt begins only after a session starts. A test asserts the shape so
- *     this cannot drift.
+ *     left, how it was arrived at, and — where the person made one — the title
+ *     of the tab group the page sits in. There is no field for page text, and
+ *     the 2,000-character excerpt begins only after a session starts. A test
+ *     asserts the shape so this cannot drift.
+ *
+ *     **"how it was arrived at" added 2026-08-18, and it is one word, not a
+ *     URL.** `arrival` is one of five closed values — `no-referrer`,
+ *     `same-origin`, `cross-origin`, `reloaded`, `back-or-forward` — computed
+ *     inside the content script from `document.referrer` and Navigation Timing.
+ *     The referrer URL itself is **not** on this path and is not held here. It
+ *     is on the session path, where `src/capture/semantics.ts` stores it,
+ *     because a session is consented and scoped and its rows are auditable. The
+ *     asymmetry is the point: a referrer names a page the person came FROM,
+ *     which may be somewhere this buffer never otherwise observes, and this
+ *     buffer is the part of the product that watches without being asked.
+ *
+ *     *(One correction worth carrying here even though it is about the
+ *     extension, 2026-08-18. The sentence above is about THIS store and was
+ *     always true — `flushAmbient` builds the wire shape by hand and never
+ *     copied a referrer. Four other places said the stronger thing, that the
+ *     URL never left the page at all, and that was false: the content script
+ *     cannot know whether a session is running, so it sends the referrer every
+ *     time, and the extension's service worker was buffering it in
+ *     `chrome.storage.session` on the no-session branch. It now deletes it
+ *     there, beside page text. The claim this file makes did not have to
+ *     change; the ones that overstated it did.)*
  *
  *     *"and scroll" was corrected twice on 2026-08-17 and then overtaken by the
  *     change it was describing.* ~~The field exists now and `record` carries it
@@ -28,11 +50,27 @@
  *     all four now arrive from a browser rather than from a `curl`, and the
  *     sentence above is true of what is held for the first time.
  *
- *     **Nothing reads scroll or exit type to decide anything**, and
- *     `tests/reachability.test.ts` holds both as deferred assertions so wiring
- *     one cannot happen quietly. The group title has exactly one reader and it
- *     is in this file: `describeWork` puts it in a sentence. It reaches no
- *     ground, no gate and no prompt, which is asserted rather than intended.
+ *     **Nothing reads scroll, exit type or arrival to decide anything**, and
+ *     `tests/reachability.test.ts` holds all three as deferred assertions so
+ *     wiring one cannot happen quietly.
+ *
+ *     *(Widened 2026-08-18, after review, and the correction is worth reading
+ *     because the sentence above was ahead of what the guard did. Each deferral
+ *     scanned only files under `src/domain/detection`, and `AmbientObservation`
+ *     is consumed in four files outside it — including `src/server/front-door.ts`,
+ *     which is the offer bar. A planted line there suppressing every strand
+ *     whenever any observation was `'no-referrer'` passed all 1,496 tests and
+ *     the typecheck. The guards now cover every file under `src` and `scripts`,
+ *     with an explicit allowance naming each transport site and its exact
+ *     count.)*
+ *
+ *     The group title has exactly one reader
+ *     and it is in this file: `describeWork` puts it in a sentence. It reaches
+ *     no ground, no gate and no prompt, which is asserted rather than intended.
+ *
+ *     Three unread signals is a number worth writing down rather than letting
+ *     accumulate. The deferred block carries what would end it, and what should
+ *     happen if that never arrives.
  *
  *     One thing worth naming while the list is being rewritten: a group title
  *     is the first thing this buffer holds that the PERSON wrote, rather than a

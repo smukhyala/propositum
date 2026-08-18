@@ -388,4 +388,139 @@ describe('the ambient path carries how far down the page they got', () => {
       expect(ambientStore().since(now)[0]?.groupTitle).toBe('world models')
     })
   })
+
+  /**
+   * How the page was arrived at — and, more to the point, what does NOT arrive.
+   *
+   * ── The half of this that is a privacy assertion ─────────────────────────
+   *
+   * `content.js` has sent `referrer` and `navigationType` on every navigation
+   * since the signal existed, and `src/capture/semantics.ts` cleans and stores
+   * both — on the SESSION path. This path deliberately takes neither. It takes
+   * one of five words computed from them inside the content script.
+   *
+   * ~~so the URL of the page somebody came from never leaves the page it was
+   * read on.~~ **Corrected 2026-08-18, the same day, after review.** It does
+   * leave the page: `content.js` cannot know whether a session is running — a
+   * page that could time what its own script may do would learn something about
+   * the person — so it sends the referrer every time, and the extension's
+   * service worker decides. On the no-session branch the worker now deletes it
+   * beside page text, and `flushAmbient` never copied it in any case. What this
+   * file can assert is the door: **no referrer reaches this endpoint, and if one
+   * were sent it would be dropped here.**
+   *
+   * The last test in this block is therefore not a schema test. It is the one
+   * that says a referrer sent to this door is dropped, which is what makes the
+   * paragraph above a property rather than an intention.
+   *
+   * ── And the ordinary half ────────────────────────────────────────────────
+   *
+   * A `z.enum` over a closed set written in three places — `ARRIVALS` in
+   * `content.js`, this schema, and `Arrival` in `detect.ts` — so the failure
+   * worth catching is a sixth value drifting in from the browser.
+   */
+  describe('and how the page was arrived at, without the page they came from', () => {
+    const navigation = (at: number, arrival?: unknown) => ({
+      at,
+      url: 'https://a.example/1',
+      title: 'World Models Survey',
+      kind: 'navigation',
+      ...(arrival === undefined ? {} : { arrival }),
+    })
+
+    for (const value of [
+      'no-referrer',
+      'same-origin',
+      'cross-origin',
+      'reloaded',
+      'back-or-forward',
+    ] as const) {
+      it(`carries the arrival "${value}" into the buffer`, async () => {
+        const now = Date.now()
+
+        const response = await ambientRoute(ambientPost([navigation(now, value)]))
+        expect(response.status).toBe(200)
+
+        const held = ambientStore().since(now)
+        expect(held).toHaveLength(1)
+        expect(held[0]?.arrival).toBe(value)
+        // Beside the page it is about, not instead of it.
+        expect(held[0]?.url).toBe('https://a.example/1')
+      })
+    }
+
+    it('refuses a sixth arrival rather than letting the vocabulary widen from the browser', async () => {
+      // The whole point of a `z.enum` over a `z.string()`, and the same
+      // assertion the exit type gets one block up. `content.js` owns the set at
+      // the one place a value leaves it; if it ever invents a member, it is
+      // refused here rather than arriving as a string nothing has a case for.
+      const now = Date.now()
+
+      const response = await ambientRoute(ambientPost([navigation(now, 'typed')]))
+
+      expect(response.status).toBe(400)
+      expect(ambientStore().size()).toBe(0)
+    })
+
+    it('refuses a referrer URL smuggled in as an arrival', async () => {
+      // The value that must never be on this path, offered in the field built
+      // to keep it off. A `z.string()` would have taken it.
+      const now = Date.now()
+
+      const response = await ambientRoute(
+        ambientPost([navigation(now, 'https://mail.example/inbox/9')]),
+      )
+
+      expect(response.status).toBe(400)
+      expect(ambientStore().size()).toBe(0)
+    })
+
+    it('leaves the arrival absent when none was sent — an unclassified navigation is not a value', async () => {
+      // `arrivalOf` returns nothing for a `prerender` entry, for a missing
+      // navigation entry, and for a referrer that will not parse. Absent must
+      // stay absent rather than defaulting to the member that reads as intent.
+      const now = Date.now()
+
+      await ambientRoute(ambientPost([navigation(now)]))
+
+      const held = ambientStore().since(now)
+      expect(held).toHaveLength(1)
+      expect(held[0]?.arrival).toBeUndefined()
+      expect(Object.keys(held[0] ?? {})).not.toContain('arrival')
+    })
+
+    it('has nowhere to put a referrer, so one sent anyway is dropped', async () => {
+      /**
+       * The assertion this whole block exists for.
+       *
+       * The session path stores a cleaned referrer URL, and that is defensible
+       * there: a session is consented, scoped to approved sources, and every
+       * row is auditable. This buffer is what Propositum saw while nobody
+       * asked, and a referrer names a page the person came FROM — possibly a
+       * site nothing else here observes. `ambientSchema` has no field for it,
+       * so Zod strips it, and a future hand that adds one has to turn this red
+       * first.
+       */
+      const now = Date.now()
+
+      const response = await ambientRoute(
+        ambientPost([
+          {
+            ...navigation(now, 'cross-origin'),
+            referrer: 'https://mail.example/inbox/9',
+            navigationType: 'navigate',
+          },
+        ]),
+      )
+
+      expect(response.status).toBe(200)
+
+      const held = ambientStore().since(now)
+      expect(held[0]?.arrival).toBe('cross-origin')
+      expect(Object.keys(held[0] ?? {})).not.toContain('referrer')
+      expect(Object.keys(held[0] ?? {})).not.toContain('navigationType')
+      // And not hiding anywhere else in the row either.
+      expect(JSON.stringify(held[0])).not.toContain('mail.example')
+    })
+  })
 })

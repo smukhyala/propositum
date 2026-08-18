@@ -17,10 +17,26 @@
  *     reaching a model while nobody is watching, and an event stream the eval
  *     harness cannot replay. A deterministic detector keeps both.
  *   - **No page text reaches this layer at all.** Ambient capture carries a
- *     cleaned URL, a title, dwell, scroll, how the page was left, and — where
- *     the person made one — the title of the tab group the page sits in.
- *     Nothing else. The 2,000-character excerpt begins only after a session
- *     starts.
+ *     cleaned URL, a title, dwell, scroll, how the page was left, how it was
+ *     arrived at, and — where the person made one — the title of the tab group
+ *     the page sits in. Nothing else. The 2,000-character excerpt begins only
+ *     after a session starts.
+ *
+ *     *"how it was arrived at" was added 2026-08-18, and the word doing the
+ *     work is "how".* It is one of five words — see `Arrival` — and it is
+ *     **not** the referrer URL those words are computed from. The session path
+ *     carries that URL and this one deliberately does not. ~~the computation
+ *     happens inside the content script so the URL never crosses a process
+ *     boundary.~~ **Corrected 2026-08-18, the same day.** It crosses one: the
+ *     content script sends the referrer on every navigation because it must not
+ *     be able to tell whether a session is running, and the extension's service
+ *     worker deletes it on the no-session branch, in the same destructure that
+ *     deletes page text. Nothing buffers it and nothing sends it here. The
+ *     claim this line may make is *"no referrer reaches this app on the ambient
+ *     path"*, which is what the list above is about. A list that said "the page
+ *     they came from" would be describing a different product; a list that
+ *     claimed the URL was never handled at all was describing a nicer version
+ *     of this one.
  *
  *     *"and scroll" was aspirational until 2026-08-17, and this line should not
  *     have said it. Corrected twice that day, because the first correction
@@ -40,6 +56,16 @@
  *     are two decisions, and only the first has been taken for either. See the
  *     note on `WINDOW_MS`, and `tests/reachability.test.ts`'s deferred block,
  *     which is where both claims are enforced rather than merely written down.
+ *
+ *     **`arrival` joined them on 2026-08-18, and makes three unread signals.**
+ *     Same shape as the other two — the value was already being computed and
+ *     transmitted on the session path, and the ambient projection dropped it —
+ *     and the same deferral, for reasons argued on the field itself. Three is
+ *     worth saying out loud rather than adding quietly: at one it was a lag
+ *     between landing and consuming, at three it is a habit, and a product that
+ *     defends narrow watching cannot also collect indefinitely against a use
+ *     nobody has argued. The deferred block carries the expiry that makes it a
+ *     decision — measure the offer rate and judge all three, or take them out.
  *
  *     The group title is the one exception and its limits are exact: it reaches
  *     the NAME and nothing else. It never enters `ThreadPage.terms`, so it
@@ -215,6 +241,67 @@ export const FAST_DETECT = FAST
 export type ExitType = 'hidden' | 'left-cached' | 'left-unloaded'
 
 /**
+ * How a page was ARRIVED at, as a closed set. Added 2026-08-18.
+ *
+ * Closed and code-owned on the same terms as `ExitType` above. Written three
+ * times — here, as a `z.enum` at `src/app/api/capture/ambient/route.ts`, and as
+ * `ARRIVALS` in `extension/src/content.js` — and the three are the same five
+ * strings. No `other`, no `unknown`, no fall-through.
+ *
+ * ── What this is a substitute FOR, and what it is not ────────────────────
+ *
+ * `webNavigation.transitionType` is the browser's own answer to *"did they type
+ * this or follow it"*, and `extension/manifest.json` refuses the permission on
+ * capability grounds: it is *"the most semantically loaded signal there is"*,
+ * and `tests/extension-permissions.test.ts` forbids it. What the content script
+ * can see instead is `document.referrer` and Navigation Timing, which the
+ * manifest already names as *"partial substitutes"*. This type is those two,
+ * classified where they are observed.
+ *
+ * It is genuinely partial. `transitionType` separates `typed` from `auto_bookmark`
+ * from `link` from `form_submit`; this separates a referrer's presence and its
+ * origin. The overlap is the one distinction `grounds.ts` is built on.
+ *
+ *   - `'no-referrer'` — the browser named no referring page. Typed, bookmarked,
+ *     or opened in a fresh tab. **It also covers a followed link whose page
+ *     suppressed its referrer** (`rel="noreferrer"`, `Referrer-Policy:
+ *     no-referrer`), which is chosen-looking evidence for an act nobody chose.
+ *   - `'same-origin'` — followed something inside one site.
+ *   - `'cross-origin'` — arrived from a different origin. A mail client's link
+ *     redirector produces one of these, naming the redirector.
+ *   - `'reloaded'` — the navigation type was `reload`. Not necessarily a person:
+ *     a page can reload itself.
+ *   - `'back-or-forward'` — Back **or** Forward, and it is named for both
+ *     because a content script cannot tell them apart. `'went-back'` would be
+ *     the same mistake `ExitType` refuses to make with `'left-unloaded'`.
+ *
+ * ── Why the ambient path carries this and not the referrer ───────────────
+ *
+ * A referrer is a URL for a page the person came from, which may be somewhere
+ * no other part of this product observes. The session path may hold one — a
+ * session is consented, scoped and auditable — and `src/capture/semantics.ts`
+ * does. The ambient buffer is what was seen while nobody asked, so it holds the
+ * classification and never the URL.
+ *
+ * ~~and the classification is computed in the content script so the URL never
+ * crosses a process boundary at all.~~ **Corrected 2026-08-18, after review.**
+ * It does cross one. The content script sends `referrer` on every navigation
+ * because the session path needs it and the script must not be able to tell
+ * whether a session is running; the extension's service worker then deletes it
+ * on the no-session branch, in the same destructure that deletes page text, so
+ * nothing buffers it and `flushAmbient` has nothing to leave behind. The claim
+ * this layer can make is the one that matters here and it is unchanged: **no
+ * referrer reaches this app on the ambient path.** There is no field for one,
+ * and the extension stops sending one two gates earlier.
+ */
+export type Arrival =
+  | 'no-referrer'
+  | 'same-origin'
+  | 'cross-origin'
+  | 'reloaded'
+  | 'back-or-forward'
+
+/**
  * One ambient observation. Metadata only — there is deliberately no field that
  * could carry page text, so this layer cannot see any even by mistake.
  */
@@ -331,6 +418,69 @@ export interface AmbientObservation {
    * `scrollFraction`'s, so wiring it turns that file red on purpose.
    */
   readonly exitType?: ExitType | undefined
+  /**
+   * Navigation and query only. How the page was arrived at. See `Arrival`.
+   *
+   * ── The third signal collected and consulted by nothing ──────────────────
+   *
+   * **That count is the important part of this docblock**, and it is written
+   * before the case for the field rather than after it. `scrollFraction` and
+   * `exitType` are already here, landed and unread. A third is the point at
+   * which "collect now, decide later" stops being a step and becomes a policy,
+   * and a policy of collecting signals nothing reads is not a neutral one in a
+   * product whose whole argument is that it watches narrowly. The deferral is
+   * therefore given an expiry in `tests/reachability.test.ts`: either the
+   * offer-rate measurement `docs/research/intent-suggestion-quality.md` §10.5
+   * says does not exist gets built, and these three get judged against it, or
+   * the honest move is to delete the fields rather than keep filling them.
+   *
+   * ── Why it is worth having anyway ────────────────────────────────────────
+   *
+   * `grounds.ts` is built on a distinction it currently approximates: *did they
+   * pursue this, or receive it?* — `INTENT_GROUNDS` against
+   * `INVESTMENT_GROUNDS`. Its header argues that *"somebody who read four pages
+   * of a site they arrived at from a newsletter chose nothing — the subject was
+   * handed to them"*. Today the only evidence of pursuit in that file is a
+   * search. An arrival classification is direct evidence of the same thing, and
+   * it is the closest thing available to `webNavigation.transitionType`, which
+   * this product refuses on capability grounds and will keep refusing.
+   *
+   * ── Why it is not read, which is a decision and not a to-do ──────────────
+   *
+   * Three reasons, in the order they bind. The first is specific to this field
+   * and is the one that would bite:
+   *
+   *  1. **It is weakest exactly where `grounds.ts` most needs it.** The
+   *     newsletter afternoon is the false positive that file spends its length
+   *     refusing, and a newsletter is among the things that strip referrers —
+   *     `rel="noreferrer"`, `Referrer-Policy: no-referrer`. Such a link arrives
+   *     as `'no-referrer'`, which is the value that reads as *the person chose
+   *     this*. Wiring it as an intent ground would hand the strongest available
+   *     evidence of pursuit to the exact session that pursued nothing. And the
+   *     value fires constantly in ordinary browsing besides: an omnibox search
+   *     reaches the results page unreferred, so almost every session that
+   *     contains a search also contains a `'no-referrer'` arrival.
+   *  2. **Consuming it moves the offer bar**, and ADR-0008 names the false
+   *     positive as the expensive failure. The standing decision recorded
+   *     beside `WINDOW_MS`, on `scrollFraction` and on `exitType` is to land
+   *     research without retuning.
+   *  3. **Nothing measures the offer rate** (§10.5), so there is no
+   *     before-and-after to judge a bar move by.
+   *
+   * What it would feed, so the next person meets a choice rather than a blank:
+   * `returnedTo` in `grounds.ts`, whose own docblock already names the exact
+   * narrowing — *"count a return only when the person went to a DIFFERENT
+   * origin in between"* — as the thing Adar, Teevan & Dumais's 612,000-user
+   * revisit study points at, and records that the product owner chose not to
+   * make it. A `'cross-origin'` arrival on a page already seen IS that
+   * narrowing, observed rather than inferred. Doing it would need `arrival`
+   * carried onto `ThreadPage`, which nothing does.
+   *
+   * **Bounded at the door, not here.** `ambientSchema` is a `z.enum` over the
+   * same five strings, so this layer cannot be handed a sixth. The domain reads
+   * no clock and validates nothing.
+   */
+  readonly arrival?: Arrival | undefined
   /**
    * The title a person typed for the tab group this page sits in, if any.
    *

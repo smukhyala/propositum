@@ -18,6 +18,7 @@ import {
 } from '../src/server/ambient-store'
 import { WINDOW_MS, detectWork } from '../src/domain/detection/detect'
 import type { AmbientObservation } from '../src/domain/detection/detect'
+import { ambientObservationFields } from './support/ambient-fields'
 
 const T0 = 1_000_000
 const MINUTE = 60_000
@@ -136,6 +137,135 @@ describe('it carries how far down the page they got', () => {
 
     expect(store.forOrigin(ORIGIN, T0).map((o) => o.scrollFraction)).toEqual([0.62])
     expect(store.forUrls(['/a'], T0).map((o) => o.scrollFraction)).toEqual([0.62])
+  })
+})
+
+/**
+ * How the page was arrived at survives the buffer, and the referrer never enters it.
+ *
+ * `arrival` sits on the opposite kind from scroll: it is a fact about a
+ * NAVIGATION, not about an engagement report, so it never meets
+ * `withCarriedTitle`'s rewrite — that function returns early for anything that
+ * is not an engagement. The block above is about a field the rewrite could drop;
+ * this one is about a field it cannot reach, and the assertion that the row is
+ * returned identically is what says so.
+ *
+ * The last test is the one that matters most and it is not about this file's
+ * behaviour: it is about the shape of `AmbientObservation`. There is no field
+ * for a referrer, so the buffer that watches while nobody asked cannot hold the
+ * URL of a page somebody came from even by mistake.
+ */
+describe('it carries how the page was arrived at', () => {
+  const arrivedAt = (at: number, url: string, arrival: AmbientObservation['arrival']): AmbientObservation => ({
+    at,
+    origin: ORIGIN,
+    url,
+    title: url,
+    kind: 'navigation',
+    arrival,
+  })
+
+  it('holds it unchanged through record and since', () => {
+    const store = createAmbientStore()
+    store.record(arrivedAt(T0, '/a', 'cross-origin'), T0)
+
+    expect(store.since(T0).map((o) => o.arrival)).toEqual(['cross-origin'])
+  })
+
+  it('is untouched by the title carry-forward, which only rewrites engagements', () => {
+    const store = createAmbientStore()
+    const navigation = arrivedAt(T0, '/a', 'no-referrer')
+    store.record(navigation, T0)
+
+    // The same object back, not a reconstruction of it.
+    expect(store.since(T0)[0]).toEqual(navigation)
+  })
+
+  it('leaves it absent on the kinds that have none', () => {
+    // An engagement report is not an arrival, and neither is `away`. Absent must
+    // stay absent rather than defaulting to the member that reads as intent.
+    const store = createAmbientStore()
+    store.record(obs(T0, '/a'), T0)
+
+    expect(store.since(T0)[0]?.arrival).toBeUndefined()
+  })
+
+  it('is forgotten with everything else', () => {
+    const store = createAmbientStore()
+    store.record(arrivedAt(T0, '/a', 'same-origin'), T0)
+    store.clear()
+
+    expect(store.since(T0)).toEqual([])
+  })
+
+  it('is carried into a session by the paths that fold the buffer in', () => {
+    const store = createAmbientStore()
+    store.record(arrivedAt(T0, '/a', 'reloaded'), T0)
+
+    expect(store.forOrigin(ORIGIN, T0).map((o) => o.arrival)).toEqual(['reloaded'])
+    expect(store.forUrls(['/a'], T0).map((o) => o.arrival)).toEqual(['reloaded'])
+  })
+
+  it('has no field for the referrer the classification was computed from', () => {
+    /**
+     * Structural, like `the detector cannot see page text` — and REWRITTEN
+     * 2026-08-18, because both of them asserted nothing.
+     *
+     * ~~The old body built an `AmbientObservation` literal and then checked
+     * `Object.keys` of the literal it had just built.~~ That can only fail if
+     * somebody edits this test. Proved by adding `readonly referrer?: string |
+     * undefined` to `AmbientObservation`: 51 files and 1,496 tests green, `tsc
+     * --noEmit` clean. An optional field is precisely the case a literal cannot
+     * see, and an optional field is what would actually be added.
+     *
+     * So this now reads the DECLARATION, and asserts the complete field list
+     * rather than a subset — a subset check passes on a field it does not know
+     * to look for, which is the same hole in a smaller form.
+     *
+     * The promise: the session path stores a cleaned referrer URL because a
+     * session is consented and its rows are auditable; this buffer is what was
+     * seen while nobody asked, so it gets the word and never the URL. Adding a
+     * field here is a change to that promise, and it has to turn this red
+     * first.
+     */
+    expect(ambientObservationFields()).toEqual([
+      'arrival',
+      'at',
+      'engagedMs',
+      'exitType',
+      'groupTitle',
+      'kind',
+      'origin',
+      'scrollFraction',
+      'title',
+      'url',
+    ])
+  })
+
+  it('cannot be given a referrer field without failing to compile', () => {
+    /**
+     * The second half, and the sharper one. `npm test` does not typecheck, so
+     * the assertion above goes red under `vitest` and this one goes red under
+     * `npm run typecheck` — two commands, one promise, and neither of them
+     * alone.
+     *
+     * `[Extract<…>] extends [never]` rather than a bare conditional: a
+     * conditional over `never` distributes and collapses to `never`, so the
+     * naive spelling would be trivially satisfied. The tuple stops the
+     * distribution.
+     *
+     * `navigationType` is in the list beside `referrer` because it rides the
+     * same message from `content.js`, is stripped in the same destructure in
+     * the extension's service worker, and is the other half of what the ambient
+     * path deliberately does not receive.
+     */
+    const noUrlOfWhereTheyCameFrom: [
+      Extract<keyof AmbientObservation, 'referrer' | 'navigationType'>,
+    ] extends [never]
+      ? true
+      : never = true
+
+    expect(noUrlOfWhereTheyCameFrom).toBe(true)
   })
 })
 

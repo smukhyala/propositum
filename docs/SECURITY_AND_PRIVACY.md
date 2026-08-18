@@ -40,6 +40,7 @@ while doing so is deliberately thin:
 | Interaction shape | dwell time and scroll depth |
 | Exit type | how the page was left, as one of three: **switched away from** (the tab stopped being on screen), **left with the page kept**, **left with the page destroyed**. The last one cannot tell moving on from closing the tab, from quitting, or from reloading — telling those apart needs permissions this product refuses. Nothing here records where you went next |
 | Tab group label | **only** the name you typed on a tab group that contains a page Propositum is already watching. Never the group's other tabs, and never a group you have not opened a watched page in |
+| How you arrived | one of five words, and **never the page you came from**: **no referring page** (typed, bookmarked, or opened in a fresh tab), **followed something inside this site**, **arrived from a different site**, **reloaded**, **went back or forward**. Chrome tells the page the address you came from; that address is compared to this page's own site *inside the page*, and the comparison — not the address — is what reaches Propositum. There is no field on the always-on path an address could sit in. See the correction below for what the extension does with the address in the meantime |
 
 *(Last two rows added 2026-08-17 — [ADR-0013](./adr/0013-authored-labels-and-exit-type.md). The
 second one costs a Chrome permission, `tabGroups`, whose install string is **"View and manage your
@@ -61,9 +62,30 @@ model boundary, so neither reaches a prompt in any form, datamarked or not**, an
 stays named as the required door **if** a prompt ever wants one — a future condition, not a control
 standing today.)*
 
+*(Last row added 2026-08-18. It costs **no new permission and changes no manifest entry** — the
+values are derived from `document.referrer`, which every page on the web can already read about
+itself. Two things are worth reading twice. **First: the row above the classification is what a
+different product would collect.** While a session you started is running, Propositum *does* store
+the cleaned address you came from, because a session is something you asked for, scoped to sites you
+approved, and its rows are ones you can read back. The always-on buffer described in this section
+gets the five-word classification and never the address, and that asymmetry is deliberate — an
+address you came from can name a site nothing else here ever sees. **Second: one of the five is
+honestly weaker than it reads.** A site can tell your browser not to say where you came from, and
+mail clients and newsletters do. A link like that arrives here as *"no referring page"* — the same
+value as you typing an address — so the word that looks most like a deliberate choice is also what a
+suppressed link looks like. Nothing in the product reads this field to decide anything; that limit
+is one of the reasons why.)*
+
+*(**Corrected 2026-08-18, the same day, after review.** The row above originally ended *"It is not sent, not held, and there is no field it could sit in"*. The last clause was true. The first two were not, and this document is the worst place in the repository to be wrong in the flattering direction, so the correction is here rather than in a commit message.
+
+What actually happened: the part of the extension that runs inside a web page **cannot be allowed to know whether a session is running** — a page that could time what its own script is permitted to do would learn something about you — so it sends the address you came from every time, and the part of the extension that does know decides what to do with it. When a session is running that address is stored, which is the row two paragraphs up and is the deliberate half. When no session is running it was being kept in the extension's own temporary storage until the next time the extension talked to the app, and longer if the app was not running.
+
+It never reached the app, never reached the database, and never left your computer — the code that builds what gets sent to the app was written field by field and never included it. But *"not held"* was still false, and it is now true: the extension deletes the address on the no-session path in the same line that deletes page text, before anything stores it. **What you can rely on, stated as narrowly as it is actually enforced:** while nothing is running, the address you came from is used for one comparison inside the page, is deleted by the extension before it is stored anywhere, and never reaches Propositum in any form. While a session you started is running, it is stored, and that is the row you can read back.)*
+
 **No page text. No selections. No excerpt.** There is no field in the ambient schema that could
-carry any, and a test asserts it. Neither of the two rows added above changes that: an exit type is
-an enum, and a tab group label is a name you typed rather than anything a page wrote.
+carry any, and a test asserts it. None of the three rows added above changes that: an exit type is
+an enum, an arrival is an enum, and a tab group label is a name you typed rather than anything a
+page wrote.
 
 Where it goes matters as much as what it is:
 

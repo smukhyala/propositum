@@ -22,8 +22,9 @@ import {
   detectWork,
   threadPagesOf,
 } from '../src/domain/detection/detect'
-import type { AmbientObservation, ExitType } from '../src/domain/detection/detect'
+import type { AmbientObservation, Arrival, ExitType } from '../src/domain/detection/detect'
 import { DEEP_READ_MS, READ_AROUND_MS, groundsFor } from '../src/domain/detection/grounds'
+import { ambientObservationFields } from './support/ambient-fields'
 
 const T0 = 1_000_000
 
@@ -680,18 +681,130 @@ describe.each(Object.keys(EVERY_EXIT_TYPE) as ExitType[])(
   },
 )
 
-describe('the detector cannot see page text', () => {
-  it('has no field that could carry it', () => {
-    // Structural, not a convention. If someone adds one, this fails and they
-    // have to argue for it — ambient capture is metadata only.
-    const observation: AmbientObservation = {
-      at: T0,
-      origin: 'https://northwind.example.com',
-      url: '/a',
-      title: 'Partners',
-      kind: 'navigation',
-    }
+/**
+ * The arrival classification lands, and nothing at all moves.
+ *
+ * The third signal carried and not consulted, after scroll and exit type, and
+ * the third block of this shape. `AmbientObservation.arrival` argues the
+ * deferral; the short version is the one that would actually bite. A
+ * `'no-referrer'` arrival reads as *the person chose this*, and it is produced
+ * both by somebody typing an address AND by a followed link whose page stripped
+ * its referrer — which newsletters and mail clients do. So the value that looks
+ * most like intent is produced by the exact afternoon `grounds.ts` exists to
+ * refuse, and by every omnibox search besides.
+ *
+ * The pairing with `tests/reachability.test.ts` is the same as for the other
+ * two. That file greps for a reader; this one asserts the thing anybody cares
+ * about, which is that the same afternoon produces the same answer either way.
+ * A grep cannot see a consumer that reaches the field through a helper, and an
+ * equality cannot see a reader that happens not to change this fixture.
+ */
+/**
+ * Every member of the enum, exhaustive by construction.
+ *
+ * The `Record<Arrival, …>` is what keeps this honest: a sixth member added to
+ * `Arrival` fails `npm run typecheck` here rather than quietly going
+ * unexercised. That is the correction `EVERY_EXIT_TYPE` above had to be given
+ * after shipping with one value.
+ */
+const EVERY_ARRIVAL: Record<Arrival, true> = {
+  'no-referrer': true,
+  'same-origin': true,
+  'cross-origin': true,
+  reloaded: true,
+  'back-or-forward': true,
+}
 
-    expect(Object.keys(observation).sort()).toEqual(['at', 'kind', 'origin', 'title', 'url'])
+describe.each(Object.keys(EVERY_ARRIVAL) as Arrival[])(
+  'landing the arrival changes no detection outcome (%s)',
+  (arrival) => {
+    const NOW = T0 + 10 * 60_000
+
+    /**
+     * The same afternoon, differing only by how each page was reached.
+     *
+     * Applied to navigations and queries rather than engagements, because that
+     * is where the field actually occurs — a navigation is an arrival and an
+     * engagement report is not. Getting that wrong would make this block pass
+     * over observations that never carry the value, which is the vacuous shape
+     * the exit-type block had to be corrected out of.
+     */
+    const arrived: AmbientObservation[] = afternoon.map((o) =>
+      o.kind === 'navigation' || o.kind === 'query' ? { ...o, arrival } : o,
+    )
+
+    it('detects the same strands, in the same order', () => {
+      expect(detectThreads(arrived, NOW)).toEqual(detectThreads(afternoon, NOW))
+    })
+
+    it('builds the same pages, so ThreadPage gained nothing to threshold on', () => {
+      const detected = detectWork(afternoon, NOW)!
+      expect(threadPagesOf(arrived, detected, NOW)).toEqual(threadPagesOf(afternoon, detected, NOW))
+    })
+
+    it('computes the same grounds, kinds sentences and sufficiency alike', () => {
+      const detected = detectWork(afternoon, NOW)!
+      const without = groundsFor(detected, threadPagesOf(afternoon, detected, NOW))
+
+      expect(without.kinds.length).toBeGreaterThan(0)
+
+      // Non-vacuous in the same way the exit-type block is: two nulls compare
+      // equal, so a consumer that zeroes the afternoon rather than re-scoring it
+      // would slip past a bare equality.
+      const withArrival = detectWork(arrived, NOW)
+      expect(
+        withArrival,
+        `the fixture stopped qualifying once every arrival was '${arrival}' — something reads arrival`,
+      ).not.toBeNull()
+
+      expect(groundsFor(withArrival!, threadPagesOf(arrived, withArrival!, NOW))).toEqual(without)
+    })
+  },
+)
+
+describe('the detector cannot see page text', () => {
+  /**
+   * REWRITTEN 2026-08-18. This was the precedent two other structural tests
+   * were built on, and it did not hold.
+   *
+   * ~~The body built an `AmbientObservation` literal and asserted `Object.keys`
+   * of the literal it had just built.~~ That fails only if somebody edits this
+   * test. `tests/ambient-store.test.ts` copied the shape, and the copy was
+   * caught in review; this is the original. Proved inert the same way: an
+   * optional field added to `AmbientObservation` left the whole suite green.
+   *
+   * Both halves now, for the reason `tests/support/ambient-fields.ts` gives —
+   * the source read fires under `vitest`, the type-level one under
+   * `npm run typecheck`, and neither command alone holds the promise.
+   */
+  it('declares exactly the fields it is supposed to, and no more', () => {
+    // The complete list, not a subset: a subset check passes on the field it
+    // was not told to look for, which is how a metadata-only record grows one.
+    expect(ambientObservationFields()).toEqual([
+      'arrival',
+      'at',
+      'engagedMs',
+      'exitType',
+      'groupTitle',
+      'kind',
+      'origin',
+      'scrollFraction',
+      'title',
+      'url',
+    ])
+  })
+
+  it('cannot be given a field that could carry page text without failing to compile', () => {
+    // The names a future field would plausibly have. Not exhaustive and cannot
+    // be — the list above is what makes this closed, and this is what makes the
+    // likely mistake loud. Ambient capture is metadata only; the 2,000-character
+    // excerpt begins only after a session starts.
+    const noPageText: [
+      Extract<keyof AmbientObservation, 'text' | 'excerpt' | 'selection' | 'body' | 'html'>,
+    ] extends [never]
+      ? true
+      : never = true
+
+    expect(noPageText).toBe(true)
   })
 })

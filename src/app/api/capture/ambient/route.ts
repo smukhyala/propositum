@@ -107,6 +107,65 @@ import { ambientStore, captureStore, expectedOrigin } from '@/server/capture-sto
  * `tests/reachability.test.ts` pins that containment rather than trusting it.
  * The day something wants to put it in a prompt, `datamark` is the door, on the
  * same terms as `detected.titles`.
+ *
+ * ── `arrival`, added 2026-08-18 ──────────────────────────────────────────
+ *
+ * **How the person got to the page, and deliberately not the page they came
+ * from.** `extension/src/content.js` has sent `referrer` and `navigationType`
+ * on every navigation for as long as the signal has existed, and
+ * `src/capture/semantics.ts` consumes both — on the SESSION path, where its own
+ * comment calls the referrer *"our partial substitute for transitionType, which
+ * lives behind `webNavigation`"*. Detection runs on this path, and this path
+ * dropped them: `flushAmbient` never copied them and this schema had no field
+ * for them. The same shape as `scrollFraction` above, found one day later.
+ *
+ * **This field is strictly less than the session path already carries, and that
+ * is the design rather than an accident of scope.** A referrer is the URL of a
+ * page somebody came FROM. It may name a site nothing else here observes and
+ * nobody approved. The ledger may hold one because a session is consented,
+ * scoped to approved sources and auditable row by row; this buffer is what
+ * Propositum saw while nobody asked, so it gets the classification and never
+ * the URL. The classification is computed in the content script — see
+ * `ARRIVALS` there. ~~and the URL it was computed from does not leave the
+ * page.~~ **Corrected 2026-08-18:** it leaves the page on every navigation,
+ * because the content script cannot know whether a session is running and the
+ * session path needs it; the extension's service worker deletes it on the
+ * no-session branch before anything is buffered. What this route can say for
+ * itself is the part that binds here — **there is no field on this schema a
+ * referrer could arrive in**, so a sender that tried would have it stripped by
+ * the parse below, and `flushAmbient` does not try.
+ *
+ * **A `z.enum`, for exactly the reason `exitType` is one.** Five values, closed
+ * in `ARRIVALS`, closed again here, and declared as `Arrival` in
+ * `src/domain/detection/detect.ts`. Three authors, one set, and the vocabulary
+ * cannot be widened from the browser: a sixth value invented in the extension
+ * is refused at this door rather than arriving as a string nothing downstream
+ * has a case for.
+ *
+ * **Optional, and absent means absent.** Only a navigation or a query has one;
+ * an engagement report and an `away` have nothing to say about how a page was
+ * reached. It is also absent for a navigation this product declines to
+ * classify — a `prerender` entry, a referrer that will not parse — and an
+ * absent field must not be read as any of the five.
+ *
+ * **What it is worth, and where it is weak, because the weakness is the reason
+ * nothing reads it.** `grounds.ts` is built on the distinction *did they pursue
+ * this, or receive it?*, and today the only evidence of pursuit is a search.
+ * Arrival is direct evidence of the same thing. It is also weakest precisely
+ * where that file most wants it: a link whose page suppressed its referrer
+ * arrives as `no-referrer` and reads as somebody typing an address, and
+ * newsletters and mail clients are among the things that suppress referrers.
+ * `tests/reachability.test.ts` holds the deferral and names what would justify
+ * lifting it.
+ *
+ * **A schema change and not an ADR, on the precedent `scrollFraction` set two
+ * fields up.** It costs no permission, changes no manifest entry, carries no
+ * page content, and names nothing on the page. What it does do — and this is
+ * the part that would have deserved an ADR had it gone the other way — is
+ * decline to carry a URL the session path already carries. Widening the ambient
+ * buffer to hold referrers WOULD be an ADR; narrowing a signal to five words on
+ * the way in is the schema doing its job. `docs/SECURITY_AND_PRIVACY.md` gains
+ * the row, because that is the document a person reads.
  */
 const ambientSchema = z.object({
   observations: z
@@ -119,6 +178,9 @@ const ambientSchema = z.object({
         engagedMs: z.number().int().nonnegative().optional(),
         scrollFraction: z.number().min(0).max(1).optional(),
         exitType: z.enum(['hidden', 'left-cached', 'left-unloaded']).optional(),
+        arrival: z
+          .enum(['no-referrer', 'same-origin', 'cross-origin', 'reloaded', 'back-or-forward'])
+          .optional(),
         groupTitle: z.string().max(120).optional(),
       }),
     )
@@ -178,6 +240,11 @@ export async function POST(request: Request) {
         // as an absent key, and `AmbientObservation` means absent.
         ...(raw.scrollFraction === undefined ? {} : { scrollFraction: raw.scrollFraction }),
         ...(raw.exitType === undefined ? {} : { exitType: raw.exitType }),
+        // Spread on the same terms as the two above. Nothing is derived from it
+        // here and nothing may be: the classification arrives already made, and
+        // the value it was made from — a referrer URL — is not on this request
+        // and must never be added to it.
+        ...(raw.arrival === undefined ? {} : { arrival: raw.arrival }),
         // Trimmed here as well as at the sender. A title of spaces is not a
         // label somebody authored, and `describeWork` would render it as one —
         // "You have been looking into  ." — which is worse than the term list
