@@ -35,6 +35,13 @@ this document is provisional; where a term's shape depends on a later ticket, it
 - Agents are ephemeral. Sessions, contracts, documents and ledgers persist.
 - **Bare `action` and bare `Objective` are banned.** Write `ActionKind` or `ActionIntent`;
   write "the reading's objective claim" or "the contract's stated objective".
+- **A calendar recommends; it never grants** *(added 2026-08-18,
+  [ADR-0014](docs/adr/0014-reading-free-busy.md))*. A `BusyInterval` may be OFFERED beside a dial a
+  person then sets — it does not pre-fill it, and the dial reads the same as it would with no
+  calendar until somebody presses the offer. It may not reach `compilePolicy`, `EnforcedPolicy` or the gate, may not raise or widen
+  anything, and is never persisted. This is the first thing in the vocabulary that comes from neither
+  our code nor the person, so the rule the first line of this list states about models is restated
+  here about a third party rather than assumed to generalise.
 
 ### Why the reversibility rule was weakened, and what holds it up now
 
@@ -977,6 +984,51 @@ TrustLevel · ConfidenceThreshold · TokenLimit · StopConditions (as a contract
 **Consumer:** "How far should I go?" · "What can I change?" · "Stop and ask me when…" · "Time limit".
 Output renders as **"Research only — don't write"** / **"Draft the changes"**.
 
+### BusyInterval — *value object, not persisted*
+`{ start, end }` — one stretch of a person's own calendar during which they are busy, as two moments
+and nothing else. Read from Google's `freebusy.query` under the single scope
+`calendar.freebusy`, which returns *"List of time ranges during which this calendar should be
+regarded as busy."* **There is no title on it, no attendee, no description, and no field that could
+carry one** — the same shape of promise `WorkOffer` makes about URLs, and for the same reason: the
+strongest form of *cannot* is *has nowhere to put it*.
+
+Specified 2026-08-18 by [ADR-0014](docs/adr/0014-reading-free-busy.md). It exists because
+`detectPause` can tell that somebody left and cannot tell **how long they will be gone**, which is the
+one thing `AutonomyControls.timeLimitMinutes` is denominated in.
+
+**What it is not, and this is the whole reason it has an entry.** Three refusals that would otherwise
+live only in an ADR:
+
+- **It is not an `ObservationEvent`.** It carries no `sessionId`, passes no ledger writer, and is
+  never persisted in any form. Nothing about a calendar is stored on this machine.
+- **It is not a `SessionClaim` and reaches no model.** No `ModelBoundary` has a field for one, and
+  there is no model anywhere in the path that reads it.
+- **It grants nothing.** A BusyInterval may be used to compute a **suggested** `timeLimitMinutes`
+  which a person then sets on the working-agreement screen. It may never reach `compilePolicy`,
+  `EnforcedPolicy` or the gate, and it may never raise, lower or widen a dial. **A calendar
+  recommends; it may never grant** — principle 15's asymmetry, applied to a third party instead of to
+  a model or to history.
+
+**The suggestion gets no term of its own, deliberately.** It is a candidate value of
+`timeLimitMinutes` — offered beside the dial, applied only by a press, and *not* pre-filled into it;
+weaker than `StatedIntent`'s fields, which do arrive pre-filled from a model. Giving the offered
+number a noun would make it a thing, and a thing acquires a column, and a column beside
+`timeLimitMinutes` is two stores for one truth, which is the mistake `EnforcedPolicy` below has a
+whole paragraph about.
+
+**Arithmetic over these takes `now` as a parameter.** Anything in `src/domain/**` that turns intervals
+into a number of minutes is given the moment; it does not read a clock, and it does not fetch.
+*Checked against the banned words:* not `signal` (displaced by ObservationEvent), not
+`ObservationEvent` (it is not one and cannot become one), not `Task`, not bare `action`, not bare
+`Objective`, not `telemetry`.
+*Displaces:* FreeBusy · FreeBusySlot · Availability · AvailabilityWindow · CalendarEvent · Event (in
+the calendar sense) · Meeting · AwayWindow · awayUntil · backAt · Busy (bare) · calendar block ·
+focus block.
+**Consumer:** when your calendar says you're busy. *(The interface never shows an interval. It shows
+the time limit it would have shown anyway, one sentence saying what the calendar said, and a button
+offering the number that fits. The sentence stays after the button is pressed, so a ratified limit
+never sheds where the number came from.)*
+
 ### EnforcedPolicy — *computed view*
 The deterministic rule set the gate evaluates, produced by the pure total function
 `compilePolicy(scope, controls)` over module-level constants:
@@ -1904,9 +1956,10 @@ Recorded so they are found deliberately rather than discovered.
 - **The injection surface grew by roughly two orders of magnitude**, from a 2,000-character excerpt
   read once to an accessibility tree read every turn, every accessible name of it page-authored.
   ADR-0006 says datamarking is depth, not a boundary, and depth scaled a hundredfold is still depth.
-- **~~This is 38 terms.~~ ~~This is 52.~~ ~~This is 54.~~ This is 55.** Fourteen were added on
-  2026-08-11 for composed offers and browser action, two on 2026-08-16 for persistent intentions —
-  `Intention` and `IntentionState` — and one on 2026-08-17 for authored labels: `AuthoredLabel`.
+- **~~This is 38 terms.~~ ~~This is 52.~~ ~~This is 54.~~ ~~This is 55.~~ This is 56.** Fourteen
+  were added on 2026-08-11 for composed offers and browser action, two on 2026-08-16 for persistent
+  intentions — `Intention` and `IntentionState` — one on 2026-08-17 for authored labels:
+  `AuthoredLabel` — and one on 2026-08-18 for reading a calendar: `BusyInterval`.
   Small against nine brief objects, seven model boundaries, an append-only
   ledger, a diff model, a policy gate and an acting agent. **Not small in absolute terms, and no
   longer arguably small at all.** The earlier note said roughly six earn their place only
@@ -1928,3 +1981,13 @@ Recorded so they are found deliberately rather than discovered.
   `SessionSubject` and an `Intention` in shape and neither in provenance. The promotion this
   vocabulary forbids most sharply is exactly the one a person's own words invite. **If the cut ever
   comes, this is a candidate; what must survive it is the refusal, not the noun.**
+  **`BusyInterval`, added 2026-08-18, fails the first half by the same test and passes the second by
+  a wider margin than either.** It names two fields on a value object that is never persisted and
+  never leaves the moment it was read in, which is exactly the shape the sentence above says to cut
+  first. It is added because it is the first term in this vocabulary naming something that **came
+  from outside the machine and from neither our code nor the person**, and because three prohibitions
+  have to be somewhere a reader will hit them: it is not an observation, it reaches no model, and it
+  authorises nothing. Left unnamed, the words `Availability`, `AwayWindow` and `CalendarEvent` all
+  arrive uncontested, and the last of those would be a promise the scope cannot keep — Propositum
+  never sees an event. **What must survive a cut is that a calendar recommends and never grants**;
+  the noun is expendable, and the entry says so in its own body rather than only here.

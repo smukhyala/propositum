@@ -36,6 +36,11 @@ import { readableCause } from './problem'
 import { confirmRequest, haltRun, rejectRequest } from './confirmations'
 import { ambientStore, captureStore } from './capture-store'
 import { describeWork, signatureOf } from './ambient-store'
+// ADR-0014. Three imports, none of which can decide anything: a nullable
+// suggestion, the one function that joins it to a drafted contract, and a
+// deletion. `compilePolicy` cannot receive any of them.
+import { disconnectCalendar, suggestedTimeLimit, withCalendarSuggestion } from './calendar'
+import type { CalendarTimeSuggestion } from './calendar'
 import { createModelClient } from '../model/provider'
 import type { ModelCallSink } from '../model/provider'
 import type { FailureKind, ModelClient } from '../model/client'
@@ -2264,6 +2269,22 @@ export interface ContractDrafted {
    * constraint is a pre-filled one with an extra click.
    */
   readonly quotedConstraints: readonly QuotedConstraint[]
+  /**
+   * What the person's calendar says about the next few hours — ADR-0014.
+   *
+   * **Optional, and ABSENT rather than null when there is nothing to say.** The
+   * distinction is the whole requirement: a `calendarSuggestion: null` on every
+   * drafted contract would be a person with no calendar being able to tell this
+   * shipped, and it would put a key in the serialised result that was not there
+   * before. `withCalendarSuggestion` is the only thing that sets it, and it
+   * returns its input unchanged when there is no suggestion.
+   *
+   * It grants nothing and sets nothing. It is a number of minutes drawn from
+   * `TIME_LIMIT_CHOICES` and a clock time, offered beside the dial for a person
+   * to click. `compilePolicy` cannot receive it, the gate never sees it, and the
+   * contract row was written before it was read.
+   */
+  readonly calendarSuggestion?: CalendarTimeSuggestion
 }
 
 /** Time limit, initiative, progress, interruption, output — plus the two prose
@@ -2541,18 +2562,74 @@ export async function draftContract(readingId: string): Promise<ActionResult<Con
       timeLimitMinutes: minutes,
     })
 
+    /**
+     * The calendar, read AFTER the row is written — which is the point.
+     *
+     * ADR-0014's hard constraint is that free/busy may never set, widen or
+     * lower a time limit. Two things hold it and this is the first: every
+     * statement that persists anything about this contract has already run.
+     * `createDraft` is above, `timeLimitMinutes: minutes` came from the model's
+     * proposal clamped to `[5, 480]` exactly as it did before ADR-0014, and
+     * there is no write below this line. So "the calendar cannot reach the
+     * database" is a fact about the order of statements rather than a promise
+     * somebody has to keep.
+     *
+     * The second is `withCalendarSuggestion`, which either adds one key or
+     * returns the same object. With no calendar connected — no client id, no
+     * connection, a rejected token, a dead network, a malformed body, an empty
+     * `busy[]` — `suggestedTimeLimit` returns null and this whole block is an
+     * identity function. `tests/calendar-freebusy.test.ts` compares the
+     * serialised results and they are byte-identical.
+     *
+     * It cannot throw: `suggestedTimeLimit` swallows its own failures and the
+     * `.catch` here is the second net, because a handoff that fell over because
+     * Google was down would be the exact opposite of degrading.
+     */
+    const calendarSuggestion = await suggestedTimeLimit(Date.now()).catch(() => null)
+
     refresh()
-    return ok({
-      contractId: contract.id,
-      objective: drafted.value.objective,
-      definitionOfDone: drafted.value.definitionOfDone,
-      suggestedTimeLimitMinutes: minutes,
-      approvedSourceIds,
-      allowedActionKinds,
-      documentTitle,
-      quotedConstraints,
-    })
+    return ok(
+      withCalendarSuggestion(
+        {
+          contractId: contract.id,
+          objective: drafted.value.objective,
+          definitionOfDone: drafted.value.definitionOfDone,
+          suggestedTimeLimitMinutes: minutes,
+          approvedSourceIds,
+          allowedActionKinds,
+          documentTitle,
+          quotedConstraints,
+        },
+        calendarSuggestion,
+      ),
+    )
   })
+}
+
+/**
+ * Forget the calendar credential.
+ *
+ * The only mutation this product performs on a secret, and it is a deletion.
+ * Best-effort revocation at Google, then a real DELETE locally — see
+ * `disconnectCalendar` in `src/server/calendar.ts` for why the second happens
+ * even when the first fails.
+ *
+ * Returns nothing, and the one failure worth naming is not Google's. The row is
+ * deleted whether or not the revocation reaches Google — and whether or not the
+ * `GOOGLE_OAUTH_*` variables are still set, which is the 2026-08-18 fix: they
+ * are what the REVOCATION is made with, and blanking them used to return before
+ * the delete and strand the credential. Google not hearing about it is settled
+ * from their own account page and needs no sentence here.
+ *
+ * What is left, stated rather than implied: if the DATABASE itself cannot
+ * perform the delete, this throws, and unlike the passive reads on this path
+ * that is deliberate. A person pressed Disconnect; the row is still there on the
+ * screen they come back to, and silently telling them otherwise would be the
+ * one lie a deletion control must not tell.
+ */
+export async function forgetCalendar(): Promise<void> {
+  await disconnectCalendar()
+  refresh()
 }
 
 /**

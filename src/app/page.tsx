@@ -115,8 +115,14 @@ import { redirect } from 'next/navigation'
 
 import { Sheet } from '@/ui/primitives'
 import { Away, Handover, Watching } from '@/ui/sprites'
-import { carryOnCandidate, declineThreadOffer, startFromSuggestion } from '@/server/actions'
+import {
+  carryOnCandidate,
+  declineThreadOffer,
+  forgetCalendar,
+  startFromSuggestion,
+} from '@/server/actions'
 import type { CarriedProject } from '@/server/actions'
+import { calendarRow } from '@/server/calendar'
 import { ambientStore, captureStore } from '@/server/capture-store'
 import { describeWork, signatureOf } from '@/server/ambient-store'
 import type { NamedThread } from '@/server/ambient-store'
@@ -236,6 +242,28 @@ const CSS = `
 .hm-wait-go { text-decoration: underline; text-underline-offset: 3px; text-decoration-thickness: 1px; }
 .hm-wait:hover .hm-wait-go { text-decoration-thickness: 2px; }
 .hm-wait:focus-visible { outline: 2px solid var(--ink); outline-offset: 4px; border-radius: 2px; }
+
+/* The calendar row, ADR-0014. Deliberately the quietest thing on the screen and
+   deliberately the last: it is about a credential rather than about the
+   person's work, and every other row here is about their work. It borrows the
+   hm-wait treatment because it is the same kind of object — one mono line with
+   something to press on the right — rather than inventing a fourth. */
+.hm-cal { margin-top: 2.25rem; border-top: 1px solid var(--rule); display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 0.25rem 1.25rem; padding: 0.9rem 0; font-family: var(--mono); font-size: 0.75rem; color: var(--muted); }
+.hm-cal-said { max-width: 26rem; }
+/* Two controls at most, and usually one: a rejected credential can be replaced
+   or removed, and both belong on the same line as each other rather than one of
+   them wrapping to a row of its own. */
+.hm-cal-acts { display: flex; align-items: baseline; gap: 1.25rem; }
+.hm-cal-go { font: inherit; color: var(--ink); background: none; border: 0; padding: 0; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; text-decoration-thickness: 1px; }
+.hm-cal-go:hover { text-decoration-thickness: 2px; }
+.hm-cal-go:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; border-radius: 2px; }
+
+/* One exception to "quietest": a rejected credential is the only thing here a
+   person did not ask to see and CAN fix, so it takes the ink the sentence above
+   it does not. Still not the hm-problem 2px rule — that belongs to a failure of
+   something they just did, and this is a failure of something they set up weeks
+   ago. */
+.hm-cal-stale .hm-cal-said { color: var(--ink); }
 
 .hm-link { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; text-decoration-thickness: 1px; }
 .hm-link:hover { text-decoration-thickness: 2px; }
@@ -411,6 +439,29 @@ export default async function Home({
   }
 
   const nowMs = Date.now()
+
+  /**
+   * What the calendar connection is doing, if there is one to have — ADR-0014.
+   *
+   * Null when no `GOOGLE_OAUTH_CLIENT_ID` is configured AND no connection is
+   * stored — which is the state of a fresh checkout and of the whole test suite.
+   * Null renders nothing at all: there is no greyed-out control, no "connect a
+   * calendar" invitation, and no trace of the feature on the screen. Configuring
+   * a client id is the opt-in, and this row is what that opt-in buys.
+   *
+   * A STORED connection renders either way, including with the client id blanked
+   * back out. That is the 2026-08-18 amendment and it is about a secret rather
+   * than about a screen: the row is the only place in the product that can
+   * delete the refresh token, so the row cannot be hidden by a setting while the
+   * token is still on disk.
+   *
+   * Read here rather than derived here — `calendarRow` owns the states and the
+   * argument for each, on the same rule `frontDoorRow` established: a decision
+   * that fails silently does not live in a `.tsx` file. It cannot throw; a
+   * calendar that cannot be read is a row that is not drawn, never a screen that
+   * is not drawn.
+   */
+  const calendar = await calendarRow()
 
   /**
    * Where every Intention is, in one read.
@@ -807,6 +858,68 @@ export default async function Home({
               ))}
             </div>
           ) : null}
+
+          {/* ── The calendar, last and quietest ────────────────────────────
+
+              Why it is HERE and not on the handoff screen, which is the screen
+              that actually uses the calendar: an expired credential is the one
+              calendar failure a person can fix, and the worst place to tell
+              them is where a suggestion would have been. That is a screen they
+              are trying to LEAVE from, at the one moment this feature exists to
+              smooth. This is a screen they chose to open — the same argument
+              this file already makes for showing every detected strand here
+              while sending only the strongest to the extension's badge.
+
+              ADR-0014 puts it more precisely than "somewhere else": the
+              connection's state is legible *where a person went looking for
+              it* — the surface that offers connecting and disconnecting — and
+              nowhere else. This product has no settings screen, so that
+              surface is this row, and the sentence and the control are the same
+              object rather than two.
+
+              Every other calendar failure says nothing anywhere. A dead
+              network, a 500, a body that did not parse, an empty afternoon:
+              the suggestion is absent, and nothing on any screen mentions it.
+
+              Three states and no fourth. `not-configured` is not a state here
+              — it is null, and null draws nothing.
+
+              Amended 2026-08-18: **every stored credential gets a Disconnect,
+              including a rejected one.** `reauthorise` used to offer only
+              "Connect it again", so the one row that says *this credential is
+              dead* was also the one row that could not delete it. And the
+              connect link is gated on `canReconnect`, because with no client id
+              the flow it starts cannot start — a stored connection still shows,
+              and still deletes, with no link beside it. */}
+          {calendar === null ? null : (
+            <div className={calendar.state === 'reauthorise' ? 'hm-cal hm-cal-stale' : 'hm-cal'}>
+              <span className="hm-cal-said">
+                {calendar.state === 'connected'
+                  ? calendar.canReconnect
+                    ? 'Propositum can see when your calendar says you are busy. Times only — never what anything is called.'
+                    : 'Your calendar permission is still stored on this machine, though this copy of Propositum is no longer set up to use it.'
+                  : calendar.state === 'reauthorise'
+                    ? 'Google stopped accepting Propositum’s calendar permission, so it is no longer reading it.'
+                    : 'Propositum can read when your calendar says you are busy, and use it to suggest how long to work for.'}
+              </span>
+
+              <span className="hm-cal-acts">
+                {calendar.state === 'not-connected' ? null : (
+                  <form action={forgetCalendar}>
+                    <button className="hm-cal-go" type="submit">
+                      Disconnect
+                    </button>
+                  </form>
+                )}
+
+                {calendar.state !== 'connected' && calendar.canReconnect ? (
+                  <Link className="hm-cal-go" href="/api/calendar/connect" prefetch={false}>
+                    {calendar.state === 'reauthorise' ? 'Connect it again' : 'Connect a calendar'}
+                  </Link>
+                ) : null}
+              </span>
+            </div>
+          )}
         </div>
       </div>
     </Sheet>

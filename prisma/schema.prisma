@@ -1106,3 +1106,96 @@ model ShiftReport {
 
   @@map("shift_report")
 }
+
+// ═══════════════════════════════════════════════════ 7. Outside credentials
+
+/// One person's authorisation to read their own free/busy, and nothing else.
+/// ADR-0014.
+///
+/// ── This row is a REVERSAL, and the schema is where it becomes real ──────
+///
+/// `docs/SECURITY_AND_PRIVACY.md` says *"Everything is local. SQLite on your
+/// machine. No account, no cloud, no sync, no server"*, with one named
+/// exception: prompts to the Anthropic API. `docs/VISION.md` says *"Everything
+/// is local. There is no cloud, no telemetry, and no account."*
+///
+/// A refresh token IS an account. This table doubles the secret set — until it
+/// existed the only secret was `ANTHROPIC_API_KEY`, which is the app's own
+/// credential and lives in `.env` — and it doubles the egress: a second host
+/// Propositum talks to, on a schedule a person did not ask about. Neither
+/// sentence above is true any more for somebody who connects a calendar.
+/// ADR-0014 opens on that rather than on the feature.
+///
+/// ── Why the token is HERE and the client id is in `.env` ─────────────────
+///
+/// They are different kinds of thing and the split is the argument, not a
+/// convenience. `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET`
+/// identify *the application* — they are the same for every copy of Propositum
+/// built from this source, they are configuration, and they belong beside
+/// `ANTHROPIC_API_KEY` where the app's own credentials already live. A refresh
+/// token identifies *the person*. It is theirs, it arrived because they clicked
+/// something, it is revocable by them, and it must disappear when they say so.
+/// Data about a person belongs in their database, not in a file they edit by
+/// hand and might paste into an issue.
+///
+/// **It is stored in the clear, and that is stated rather than dressed up.**
+/// SQLite on a local disk with no application-level encryption, because a key
+/// to decrypt it would have to live in `.env` beside the file it protects,
+/// which is theatre. What actually protects it is the operating system's file
+/// permissions and whatever full-disk encryption the machine has — the same
+/// things protecting `.env` itself. The honest summary: anyone who can read
+/// this file can read the token, and the mitigation is that `freebusy` grants
+/// them the ability to learn when the person is busy and nothing else.
+///
+/// ── MUTABLE, and it gets NO append-only triggers ─────────────────────────
+///
+/// Project's and Intention's reasoning, unchanged: it holds no inference and
+/// carries no provenance, so nothing about it is append-only. No
+/// REQUIRED_GUARDS entry, no triggers.sql change, no row in
+/// tests/append-only.test.ts's hand-maintained checklist. It must be DELETABLE
+/// — disconnecting is the whole revocation story — and a no-DELETE trigger and
+/// a revocation cannot both be true, which is `action_evidence`'s finding
+/// arriving a second time.
+model CalendarConnection {
+  id String @id @default(cuid())
+
+  /// Which service. UNIQUE, so at most one connection exists — the same
+  /// deferral-held-as-a-shape that `Intention.projectId` uses. There is one
+  /// member today, `google`, and a second one is a schema change rather than a
+  /// row somebody inserts.
+  provider String @unique
+
+  /// The exact OAuth scope string that was granted, as Google returned it.
+  ///
+  /// Stored rather than assumed, and checked on every read. The grep in
+  /// tests/calendar-scope.test.ts proves this SOURCE never asks for anything
+  /// but `calendar.freebusy`; it cannot prove what a row created by an older
+  /// build, or by a hand-edited authorisation URL, actually holds. A connection
+  /// whose scope is not exactly the constant is refused at the read path — the
+  /// feature goes quiet rather than quietly using a wider grant.
+  scope String
+
+  /// The secret. Never logged, never rendered, never in a model prompt.
+  ///
+  /// The repository deliberately has no method that returns a whole row: the
+  /// public read returns a status object with NO token field, and the token has
+  /// exactly one door named after what it is for. That is a shape rather than a
+  /// rule, and it is the only reason `console.log(connection)` is not one
+  /// keystroke from a leak.
+  refreshToken String
+
+  connectedAt DateTime @default(now())
+
+  /// When Google last refused this token, or null.
+  ///
+  /// The ONE failure a person is eventually told about, because it is the one
+  /// they can fix. Set only on an `invalid_grant` — a refusal of the credential
+  /// itself — and never on a timeout, a 5xx or an unparseable body, because a
+  /// flaky network that looked like a revoked grant would send somebody to
+  /// re-authorise something that was working.
+  refreshRejectedAt DateTime?
+
+  updatedAt DateTime @updatedAt
+
+  @@map("calendar_connection")
+}

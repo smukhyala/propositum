@@ -186,6 +186,48 @@ This is `ActionEvidence`, and four things about it are the whole promise:
   weaker than a trigger — it is a check on our own code rather than a refusal by the database — and
   it is the strongest thing available once a sweep has to exist.
 
+### 4. Calendar — only if you connect one, only times, never stored
+
+*(Added 2026-08-18 — [ADR-0014](./adr/0014-reading-free-busy.md). This is the first thing Propositum
+reads that did not come from your browser, and the first that requires an account. If you have not
+connected a calendar, none of this happens and nothing below exists.)*
+
+Propositum can tell that you left. It cannot tell how long you will be gone, and *"How long should I
+work for?"* is the one dial measured in time. If you connect a Google calendar, it asks Google one
+question, at the moment you are handing work over.
+
+| Collected | Detail |
+|---|---|
+| Busy intervals | **two timestamps each** — when a busy stretch starts and when it ends. Nothing else exists in the answer |
+
+What that means precisely, because the whole decision rests on it: the scope Propositum asks for is
+`calendar.freebusy`, which Google describes as *"View your availability in your calendars."* The
+method it calls returns *"List of time ranges during which this calendar should be regarded as
+busy."* **No event titles. No descriptions. No attendees. No locations, no links, no attachments.**
+An hour blocked for something private is the same two numbers as an hour blocked for lunch.
+
+- **Only your main calendar.** Propositum asks about the one calendar Google calls `primary` and no
+  other. It never asks what calendars you have, so it cannot learn that a shared or subscribed one
+  exists.
+- **Only a few hours ahead**, from the moment you are looking at the screen. Not a week, not a month.
+- **None of it is stored.** The answer is used to offer you a number and then dropped. There is no
+  row in the database holding anything from your calendar, so there is nothing to delete later and
+  nothing to leak.
+- **It decides nothing, and it does not even fill anything in.** *"Time limit"* on the
+  working-agreement screen arrives holding the number it would have held if you had no calendar. Next
+  to it is one sentence — *"Your calendar has you busy from 3:00 pm"* — and a button offering the
+  longest limit that stops before then. Nothing changes until you press it, the sentence stays there
+  after you do, and you can ignore it entirely. Nothing from a calendar reaches the part of
+  Propositum that decides what a run is allowed to do — see *Action authorization*, below.
+- **What Google is told.** The request contains the two ends of the window being asked about, the
+  word `primary`, and your access token. **Nothing about your browsing goes with it** — no page, no
+  title, no subject, no session. Google cannot tell what you were reading, or why anybody wants to
+  know whether you are free.
+- **If anything goes wrong, nothing appears.** No calendar connected, an expired grant, no network, a
+  bad day at Google — every one of these leaves the screen exactly as it looks today, with no error
+  and no banner. The trade is deliberate: you find out by looking at the connection, not by being
+  interrupted at the moment you were handing work over.
+
 ## Data explicitly not collected
 
 Not "not yet" — these are design commitments, and several are structurally impossible rather than
@@ -274,7 +316,17 @@ merely unimplemented.
   you ratified, when the accessibility tree was not enough to act on — and those are swept.
   *(Amended 2026-08-11. This bullet said "no screenshots" flatly, and that stopped being true with
   [ADR-0010](./adr/0010-acting-in-the-browser.md).)*
-- **Other applications.** Chrome only.
+- **Anything on your calendar except when you are busy.** No event titles, descriptions,
+  attendees, organisers, locations, meeting links or attachments — the scope Propositum asks for
+  cannot return any of them, which is why it is the scope it asks for. The wider scope that *would*
+  return them, `calendar.events.readonly`, was considered and refused: it carries a field where
+  people declare their own intent (*out of office*, *focus time*), which is the best signal in the
+  research, and it carries it bundled with the title of every appointment on every calendar. That
+  trade is argued in full in [ADR-0014](./adr/0014-reading-free-busy.md).
+  **No list of your calendars.** No calendar but your main one. No calendar belonging to anybody
+  else. *(Added 2026-08-18.)*
+- **Other applications.** Chrome only. *(A connected calendar is read over the network from Google,
+  not from an application on your machine. Propositum still reads nothing on this Mac but Chrome.)*
 - **Passwords, form contents, or clipboard contents** not deliberately selected in an approved
   source.
 - **Telemetry, analytics, or crash reports.** There is no server to send them to.
@@ -293,9 +345,20 @@ a vehicle that is never handed the data. ([ADR-0002](./adr/0002-observation-capt
 
 ## Event ingestion beyond the browser
 
-**One sensor exists, and it is the Chrome extension above.** Email, calendar, Slack, GitHub, Notion,
-local files, and agent output from anywhere else are **unbuilt, and this work does not build them** —
-they sit on the *do not build yet* list in [`MVP.md`](./MVP.md)'s Out of scope table. This section
+**One sensor exists, and it is the Chrome extension above.** Email, ~~calendar,~~ Slack, GitHub,
+Notion, local files, and agent output from anywhere else are **unbuilt, and this work does not build
+them** — they sit on the *do not build yet* list in [`MVP.md`](./MVP.md)'s Out of scope table.
+
+*(Amended 2026-08-18 — [ADR-0014](./adr/0014-reading-free-busy.md). A calendar is now read, and the
+word is struck from the list above so nobody reads this section as saying otherwise. **The argument
+below is unaffected, and it is worth being exact about why rather than letting the strike look like a
+crack in it.** Free/busy is not a sensor and produces no event: nothing it returns becomes an
+`ObservationEvent`, nothing it returns passes `ledger-writer.ts`, nothing it returns is persisted at
+all, and it is read once, on demand, at a moment a human is looking at the screen. Both structural
+facts below therefore still hold exactly as written — there is still no row an external event could
+become, still one writer, and still no model call on a timer. What ADR-0014 spent is the *account*,
+argued at length there and struck below under **Local versus remote**. What it did not spend is
+this.)* This section
 exists so the constraint is on record before a later reader takes the absence for an oversight and
 closes it with a connector.
 
@@ -328,13 +391,30 @@ product cannot keep.
 
 ## Local versus remote
 
-**Everything is local.** SQLite on your machine. No account, no cloud, no sync, no server.
+~~**Everything is local.** SQLite on your machine. No account, no cloud, no sync, no server.~~
 
-The single exception: **prompts sent to the Anthropic API**, which contain the observation events
-and document text a boundary needs. Nothing else leaves the machine.
+~~The single exception: **prompts sent to the Anthropic API**, which contain the observation events
+and document text a boundary needs. Nothing else leaves the machine.~~
 
-This is a privacy property today and a limitation tomorrow — it is also why a run stops when your
-Mac sleeps.
+**Struck 2026-08-18 — [ADR-0014](./adr/0014-reading-free-busy.md). The struck sentences are left
+here rather than deleted, because a reader has to be able to see what was promised.** *"No account"*
+was true in the strongest available sense: there was nothing to sign in to and nothing to sign in
+with. Connecting a Google calendar is signing in. It puts Propositum in your Google security
+settings under your connections to third-party apps, and it leaves a long-lived credential on your
+disk. That is an account, and calling it something else would be the kind of wording this document
+exists not to use.
+
+**What is true instead, as of 2026-08-18:**
+
+| | |
+|---|---|
+| **Your work stays local** | SQLite on your machine. No cloud, no sync, no server of ours, no telemetry, no analytics, no crash reports. Nothing about what you read, wrote or handed over is stored anywhere but here. **This half is unchanged** |
+| **One account, optional, off unless you connect it** | a Google calendar, for one question: how long you will be away. Nothing is created if you never connect one |
+| **Two things leave the machine** | **prompts to the Anthropic API**, which carry the observation events and document text a boundary needs — and, if you connected a calendar, **one request to Google** asking whether you are busy between two moments. That request carries no page, no title, no subject and nothing off your session |
+
+This is still a privacy property today and a limitation tomorrow — it is also why a run stops when
+your Mac sleeps, and answering the question that limit implies is the whole reason the calendar read
+exists.
 
 ### Send a worker the minimum it needs
 
@@ -372,12 +452,47 @@ document that still said it would be false in the place it can least afford to b
 | `ActionEvidence` | deleted once you have decided what the Shift produced, and in any case after **seven days** — see *Acting*, above |
 | `ActionEvidence` attached to a confirmation question | **kept indefinitely.** The one exception, argued in full above |
 
+**Nothing from a calendar is retained at all** *(2026-08-18 —
+[ADR-0014](./adr/0014-reading-free-busy.md))*. Busy intervals are read, used to offer one number,
+and dropped; no table holds them. The only thing a calendar connection writes to disk is the
+credential below, and disconnecting deletes it.
+
 Export is not implemented. The database is a single SQLite file you own and can copy.
 
 ## Secrets
 
-One credential: `ANTHROPIC_API_KEY`, in `.env`, gitignored. Never logged, never rendered, never sent
-anywhere but Anthropic.
+~~One credential: `ANTHROPIC_API_KEY`, in `.env`, gitignored. Never logged, never rendered, never
+sent anywhere but Anthropic.~~
+
+**Two, since 2026-08-18 — [ADR-0014](./adr/0014-reading-free-busy.md)**, and they are different kinds
+of thing, which is why they live in different places:
+
+| Credential | Where | What it is |
+|---|---|---|
+| `ANTHROPIC_API_KEY` | `.env`, gitignored | **the application's own.** The same string for every copy of Propositum; it says nothing about you |
+| The Google refresh token, **only if you connected a calendar** | a row in your local database | **yours.** It names you, it is issued to you, and it is revocable by you |
+
+The token is not in `.env`, deliberately: configuration is where the software's own credentials go,
+and a per-person credential in there is the sort of file people paste into an issue without thinking.
+It is not in the macOS Keychain either, which is where it ought to live — reaching the Keychain needs
+a signed native helper this product does not have and is not building
+([ADR-0012](./adr/0012-screen-capture-refused.md)).
+
+Both are **never logged, never rendered, never put in a prompt, and never in an error message.**
+Neither is ever sent anywhere but to the service it belongs to.
+
+**Two honest points about the token, stated rather than softened.** The database file is not
+encrypted, so anything running as you on this Mac can read it — the same trust model everything else
+here lives in. And it is long-lived, which is a different risk from an API key: it renews itself. What
+bounds that is the one property the alternatives did not have — **you can revoke it from Google at any
+time, without Propositum's cooperation, and disconnecting here deletes the row.** That is a
+mitigation and not an excuse; it does nothing for someone who never goes to look.
+
+*(Amended 2026-08-18.)* **Disconnecting deletes the row whatever else is true.** It does not depend
+on Google being reachable, and it does not depend on the two `GOOGLE_OAUTH_*` variables still being
+set — blanking those switches the feature off and does not delete anything, so the front door keeps
+showing a stored connection, with its Disconnect, until you remove it. A credential on this machine
+is never hidden from you by a setting.
 
 ## The permission model
 
@@ -389,6 +504,13 @@ anywhere but Anthropic.
 4. The contract names what may be read and what may be changed. The gate enforces it
    deterministically.
 5. You accept or reject every proposed change.
+
+*(Added 2026-08-18 — [ADR-0014](./adr/0014-reading-free-busy.md).)* **Connecting a calendar is
+outside that list on purpose.** It grants Propositum nothing: it is optional, off until you do it,
+revocable both here and from Google, and it can only offer a number you were going to set
+yourself — the dial arrives unchanged and the offer is a button beside it. Nothing about it can widen
+what a run may read or change. If it is disconnected, expired or
+broken, every screen behaves exactly as it did before it existed.
 
 **Approval scopes where Propositum may look. It confers no trust on what is found there.**
 
@@ -503,6 +625,13 @@ decision.
 - The gate is pure — set membership, comparison, boolean. **No model is consulted.**
 - Deny by default, no denylist.
 - Every refusal is recorded as an `ActionIntent` with a deterministic rule id.
+- **Nothing from your calendar is anywhere near this.** *(2026-08-18 —
+  [ADR-0014](./adr/0014-reading-free-busy.md).)* The function that compiles your settings into the
+  rule set the gate evaluates takes what a run may read and the four dials you set, and it has no
+  parameter a busy interval could arrive through. A calendar is neither deterministic code nor a
+  person in front of you, so it authorizes nothing, sets nothing, and cannot raise a limit you set.
+  It offers a number on a screen you were already reading, beside the dial, for you to press or
+  ignore. That is the whole of it.
 
 ### Capabilities that do not exist
 

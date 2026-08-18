@@ -150,6 +150,22 @@ Propositum *thinks* you are doing is rebuilt from nothing every sitting.)*
 evaluates: Initiative, Progress, Output, Budget. A control that only changes prompt wording is not
 shipped, on principle.
 
+*(Amended 2026-08-18 — [ADR-0014](./adr/0014-reading-free-busy.md). **Budget may now come with an
+offer beside it**, from a Google calendar you connected, when your calendar happens to say when you
+are next busy. It compiles to exactly what it compiled to before — a deadline derived from
+`acceptedAt + timeLimitMinutes` — and the calendar contributes no term to that derivation and reaches
+neither `compilePolicy` nor the gate.
+
+**Nothing arrives pre-filled, and that is the stronger claim.** The dial holds the number it would
+have held if you had no calendar at all; beside it is one sentence — *"Your calendar has you busy
+from 3:00 pm"* — and a button offering the largest limit that stops before then. Pressing it is the
+same act as pressing one of the five radios, and until you press something the calendar has changed
+nothing. That matters because **a pre-filled default is not neutral**: a suggested 90 becomes 90 for
+most people most of the time, which is a UI affordance doing the work of a decision. An offer that
+must be pressed cannot do that. The sentence stays on screen after you press it, so the number never
+sheds where it came from. This is principle 15's shape, in the one place it can be checked cheaply:
+**a calendar may recommend; it may never grant.**)*
+
 **Later.** Autonomy that earns itself. Propositum notices which decisions you always approve and
 proposes widening its own scope — with the widening itself requiring ratification. Preferences
 accruing on the `Project`, never on the agent.
@@ -225,10 +241,25 @@ one. ADR-0008's capture row said the opposite and has been amended to match — 
 was written from the row rather than from the diff it was part of.)*
 
 **Later.** Structured integrations with the tools people actually work in. Editors, note apps,
-calendars — each with the same posture: least privilege, enforced by the platform where possible.
+~~calendars~~ — each with the same posture: least privilege, enforced by the platform where possible.
 
-**Observation is one sensor, and today it is the only one.** An intention ought to move when the
-world moves — a reply arrives, a build goes red, a deadline passes. None of that can reach this
+*(Amended 2026-08-18 — [ADR-0014](./adr/0014-reading-free-busy.md). One calendar arrived early, and
+it arrived as the narrowest possible version of itself, so the word is struck from **Later** rather
+than left to imply the whole of it is still ahead. Propositum can tell that somebody left; it could
+not tell **how long they would be gone**, which is the one thing Budget is denominated in. Google's
+free/busy answers exactly that and nothing else: two timestamps per busy interval, no titles, no
+attendees, no descriptions. The wider scope — the one carrying `focusTime` and `outOfOffice`, a
+person declaring their own intent in a structured field, which the signal research rates the
+strongest thing it found — was refused, because it comes bundled with the title of every appointment
+on every calendar. **The posture in the sentence above held and the price was an account**, which the
+honest limits below record as struck rather than softened. This is a **sensor in no sense that
+matters**: nothing it returns becomes an observation, nothing is persisted, nothing reaches a model,
+and it suggests a number a person then sets.)*
+
+**Observation is one sensor, and today it is the only one.** *(Still true on 2026-08-18, and the
+calendar read above does not change it: free/busy produces no event, is not persisted, and cannot
+move an intention. It answers a question at a moment somebody is looking at a screen.)* An intention
+ought to move when the world moves — a reply arrives, a build goes red, a deadline passes. None of that can reach this
 system, and the reason is structural rather than unfinished: an `ObservationEvent` requires a
 `sessionId` and there is a single ledger writer, so **nothing that happens outside a sitting can be
 recorded at all.** That absence is why `IntentionState` ships with five members instead of six, and
@@ -357,8 +388,19 @@ it pretends to undo.
 - **That depth is now spread roughly a hundred times thinner.** An acting agent reads a whole
   accessibility tree every turn, and every label in it is written by the page. The boundary is
   unchanged; the surface behind it is not.
-- Everything is local. There is no cloud, no telemetry, and no account. That is a privacy property
-  today and a limitation tomorrow — it is also why a run stops when your Mac sleeps.
+- ~~Everything is local. There is no cloud, no telemetry, and no account.~~ **Struck 2026-08-18
+  ([ADR-0014](./adr/0014-reading-free-busy.md)), and left here rather than deleted so the promise is
+  visible beside what replaced it.** There is still no cloud, no telemetry and no server of ours, and
+  nothing about what you read or wrote leaves this machine except the prompts a boundary needs. **But
+  there is now an account**, optionally: a Google calendar, connected by you, for one question —
+  `calendar.freebusy`, *"View your availability in your calendars"*, which returns busy intervals as
+  bare start and end times and cannot return a title, an attendee or a description. It is off unless
+  you connect it, it is revocable from Google in one click, nothing it returns is stored, and it can
+  only offer a time limit you then set yourself. **The withdrawal is still a withdrawal**, and
+  ADR-0014 opens by saying so: a narrow scope makes the exposure small and does not make the promise
+  less broken.
+  That limit is a privacy property today and a limitation tomorrow — it is also why a run stops when
+  your Mac sleeps, and it is the sentence the calendar read exists to answer the other half of.
 - **An `Intention` is human-*ratified*, which is not the same as human-*written*.** It is born on
   the working-agreement screen, out of the `StatedIntent` fields a person ratifies there — and those
   fields arrive pre-filled, drafted by a model boundary from the sitting's `SessionReading`. The

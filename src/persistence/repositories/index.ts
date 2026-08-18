@@ -62,6 +62,15 @@ export interface Repositories {
   readonly confirmations: ConfirmationRepository
   readonly evidence: ActionEvidenceRepository
   readonly dispatches: ActionDispatchRepository
+  /**
+   * The one row in this database that is not about the person's work.
+   *
+   * It holds a credential rather than a fact, it is the reversal ADR-0014
+   * argues for, and it is last in this list for the same reason it is last in
+   * the schema: nothing else here depends on it, and the day it is removed
+   * nothing else here changes.
+   */
+  readonly calendar: CalendarConnectionRepository
 }
 
 export function createRepositories(prisma: PrismaClient): Repositories {
@@ -83,6 +92,7 @@ export function createRepositories(prisma: PrismaClient): Repositories {
     confirmations: confirmationRepository(prisma),
     evidence: actionEvidenceRepository(prisma),
     dispatches: actionDispatchRepository(prisma),
+    calendar: calendarConnectionRepository(prisma),
   }
 }
 
@@ -2588,6 +2598,121 @@ function actionDispatchRepository(prisma: PrismaClient): ActionDispatchRepositor
         data: { status: 'abandoned' },
       })
       return count === 1
+    },
+  }
+}
+
+/* ── CalendarConnection ────────────────────────────────────────────────── */
+
+/**
+ * Everything about a connection EXCEPT the secret.
+ *
+ * ── The absent field is the whole design ─────────────────────────────────
+ *
+ * There is no `refreshToken` here and there must never be one. This is the type
+ * every screen, every server action and every log statement sees, so the token
+ * cannot be leaked by carelessness — only by somebody calling the one method
+ * named for handing it over. `console.log(status)` is safe. `JSON.stringify` of
+ * anything a route returns is safe. A React prop drilled three components deep
+ * is safe.
+ *
+ * That is a shape rather than a rule, and it is the only kind of containment
+ * worth having for a secret: `tests/calendar-scope.test.ts` greps for the
+ * identifier and `tests/calendar-freebusy.test.ts` runs the whole path with a
+ * distinctive token and asserts it appears in nothing, but both of those are
+ * checks on discipline. A type with no field for the value is not.
+ */
+export interface CalendarConnectionStatus {
+  readonly provider: string
+  /** What was actually granted. The read path refuses anything that is not
+   *  exactly the free/busy scope — see `src/server/calendar.ts`. */
+  readonly scope: string
+  readonly connectedAt: Date
+  /** Non-null iff Google refused the refresh token itself. The one failure a
+   *  person is told about, and never set by a network error. */
+  readonly refreshRejectedAt: Date | null
+}
+
+/**
+ * The person's authorisation to read their own free/busy.
+ *
+ * Mutable, like `Project` and `Intention` — no triggers, no `REQUIRED_GUARDS`
+ * entry. `forget` is a real DELETE, deliberately: disconnecting has to actually
+ * remove the credential, and a soft-deleted secret is a secret.
+ */
+export interface CalendarConnectionRepository {
+  /** What a screen may know. Never the token — see `CalendarConnectionStatus`. */
+  status(provider: string): Promise<CalendarConnectionStatus | null>
+  /**
+   * The ONE door to the secret, named after the fact that it hands one over.
+   *
+   * Deliberately not `byId` returning a row, and deliberately not a field on
+   * `status()`. A caller has to type the word `refreshToken` to get a refresh
+   * token, which means a reviewer reading a diff can find every place one is
+   * reachable by searching for a single identifier. Two call sites exist and
+   * both are in `src/server/calendar.ts`.
+   */
+  refreshTokenFor(provider: string): Promise<string | null>
+  /**
+   * Store or replace the connection. Upsert on `provider`, because re-running
+   * the flow is how a person fixes a rejected token and a second row is
+   * impossible anyway — `provider` is unique.
+   *
+   * Writing a token always clears `refreshRejectedAt`: a fresh grant is by
+   * definition not a rejected one, and leaving the timestamp would leave the
+   * front door telling somebody to reconnect a calendar they just reconnected.
+   */
+  save(input: { provider: string; scope: string; refreshToken: string }): Promise<void>
+  /** Google refused the credential itself. Called only on `invalid_grant`. */
+  markRefreshRejected(provider: string, at: Date): Promise<void>
+  /** Disconnect. A real DELETE — the credential goes, not a flag. */
+  forget(provider: string): Promise<void>
+}
+
+function calendarConnectionRepository(prisma: PrismaClient): CalendarConnectionRepository {
+  const STATUS = {
+    provider: true,
+    scope: true,
+    connectedAt: true,
+    refreshRejectedAt: true,
+  } as const
+
+  return {
+    status: (provider) =>
+      prisma.calendarConnection.findUnique({ where: { provider }, select: STATUS }),
+
+    // The only `select` in this file that names the token, and the only method
+    // that returns it. Narrowed to the scalar rather than the row so that even
+    // here nothing else comes along with it.
+    refreshTokenFor: async (provider) => {
+      const row = await prisma.calendarConnection.findUnique({
+        where: { provider },
+        select: { refreshToken: true },
+      })
+      return row?.refreshToken ?? null
+    },
+
+    save: async ({ provider, scope, refreshToken }) => {
+      await prisma.calendarConnection.upsert({
+        where: { provider },
+        create: { provider, scope, refreshToken },
+        update: { scope, refreshToken, refreshRejectedAt: null },
+        select: { id: true },
+      })
+    },
+
+    markRefreshRejected: async (provider, at) => {
+      // `updateMany` rather than `update`: a connection the person deleted in
+      // another tab while a refresh was in flight is not an error worth
+      // throwing out of a path whose whole contract is that it degrades.
+      await prisma.calendarConnection.updateMany({
+        where: { provider },
+        data: { refreshRejectedAt: at },
+      })
+    },
+
+    forget: async (provider) => {
+      await prisma.calendarConnection.deleteMany({ where: { provider } })
     },
   }
 }
