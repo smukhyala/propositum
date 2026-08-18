@@ -10,26 +10,36 @@
  *     process, and there is no path by which it can outlive one. The ledger
  *     still means "the record of a session", which is what makes
  *     `ObservationEvent` interpretable at all.
- *   - **Metadata only.** A cleaned URL, a title, dwell and ~~scroll~~ **— a
- *     scroll fraction if one arrives, and today none does**. There is no field
- *     for page text, and the 2,000-character excerpt begins only after a session
- *     starts. A test asserts the shape so this cannot drift.
+ *   - **Metadata only.** A cleaned URL, a title, dwell, scroll, how the page was
+ *     left, and — where the person made one — the title of the tab group the
+ *     page sits in. There is no field for page text, and the 2,000-character
+ *     excerpt begins only after a session starts. A test asserts the shape so
+ *     this cannot drift.
  *
- *     *"and scroll" was corrected twice on 2026-08-17; this is the second
- *     correction and it narrows the first.* The line originally described a rule
- *     the code did not have — the ambient schema had no field for the scroll
- *     fraction `content.js` computes. The field exists now and `record` carries
- *     it unchanged, which `tests/ambient-store.test.ts` proves. **What does not
+ *     *"and scroll" was corrected twice on 2026-08-17 and then overtaken by the
+ *     change it was describing.* ~~The field exists now and `record` carries it
+ *     unchanged, which `tests/ambient-store.test.ts` proves. **What does not
  *     exist is a sender.** `flushAmbient` in `extension/src/service-worker.js`
  *     builds the ambient wire shape field by field and does not copy
  *     `scrollFraction`, so the only way a value reaches this store is a direct
- *     POST — `curl`, or a test. Saying "dwell and scroll" of what is actually
- *     held would be the same false sentence in a narrower place.
+ *     POST — `curl`, or a test.~~
  *
- *     Nothing reads it to decide anything either; `tests/reachability.test.ts`
- *     holds that claim as a deferred assertion so wiring it cannot happen
- *     quietly. Landing the producer line is a separate change with a real
- *     consequence — see ADR-0008's capture row for why it was not taken here.
+ *     **ADR-0013 added the sender**, along with `exitType` and `groupTitle`. So
+ *     all four now arrive from a browser rather than from a `curl`, and the
+ *     sentence above is true of what is held for the first time.
+ *
+ *     **Nothing reads scroll or exit type to decide anything**, and
+ *     `tests/reachability.test.ts` holds both as deferred assertions so wiring
+ *     one cannot happen quietly. The group title has exactly one reader and it
+ *     is in this file: `describeWork` puts it in a sentence. It reaches no
+ *     ground, no gate and no prompt, which is asserted rather than intended.
+ *
+ *     One thing worth naming while the list is being rewritten: a group title
+ *     is the first thing this buffer holds that the PERSON wrote, rather than a
+ *     page. Same window, same row cap, same discard on decline — but it is a
+ *     different category from a URL and a page's own title, and filing it
+ *     silently under "metadata" would be the kind of rounding-up this header
+ *     exists to refuse.
  *   - **Bounded twice** — by a rolling time window and by a hard row cap, so a
  *     day of browsing cannot accumulate into a profile.
  *   - **Discarded by default.** Declining an offer clears it. Accepting one
@@ -386,11 +396,16 @@ export function createAmbientStore(): AmbientStore {
       if (earlier.title === '') continue
       // Spread, not a field list, and that is load-bearing rather than
       // idiomatic: the ONLY thing being replaced here is the title, and an
-      // engagement is the one kind that carries `scrollFraction`. Rewriting this
-      // as an explicit `{ at, origin, url, title, kind, engagedMs }` would drop
-      // scroll from precisely the observations that have it, and would do it
-      // silently — nothing reads the field yet, so no test outside
-      // `tests/ambient-store.test.ts` would notice.
+      // engagement is the one kind that carries `scrollFraction` and `exitType`.
+      // Rewriting this as an explicit `{ at, origin, url, title, kind,
+      // engagedMs }` would drop both from precisely the observations that have
+      // them, and would do it silently — nothing reads either field yet, so no
+      // test outside `tests/ambient-store.test.ts` would notice.
+      //
+      // `groupTitle` is on every kind rather than only engagements, and is the
+      // same argument one step stronger: it is the only person-authored value
+      // in the buffer, and losing it here would show up as a thread quietly
+      // reverting to its stemmed-word name with nothing saying why.
       return { ...observation, title: earlier.title }
     }
 
@@ -682,6 +697,42 @@ export function hostOf(origin: string): string {
  * sites", never "you are researching frontier world-model labs". Naming the
  * subject in a sentence a person would recognise needs a model, and that is a
  * separate decision — see ADR-0008.
+ *
+ * ── One exception, added 2026-08-17: a name the person typed themselves ──
+ *
+ * `detected.authoredLabel` is the title of the tab group the thread's pages sit
+ * in. It is not a reading and it is not a model's: `docs/research/intent-signals.md`
+ * §4.3 argues that a group titled *"world models"* IS the sentence this file
+ * otherwise approximates with a bag of stemmed words, *"typed by the person,
+ * for free"*. So where one exists, it replaces `words` in the middle branch.
+ *
+ * **This is the only thing that consumes the field, and it consumes it into a
+ * SENTENCE and nowhere else.** It cannot make an offer fire — `groundsFor`
+ * never sees it, and `tests/detection.test.ts` pins that grounds and
+ * sufficiency are byte-identical with and without a group title in the buffer.
+ * All it can do is change what a person reads about their own afternoon.
+ *
+ * ── Why it does not outrank a confident model name, which is arguable ────
+ *
+ * The research points the other way and it is worth saying so rather than
+ * pretending the ordering is obvious: §4.3's case is that an authored label has
+ * *"no confidence flag, and no possibility of a confidently-wrong name"*, which
+ * is an argument for putting it first. It is second anyway, for two reasons:
+ *
+ *   - The model's subject is composed from the thread's titles and searches —
+ *     more evidence than one label, and evidence about all of the pages. A tab
+ *     group title is a label somebody typed once, possibly before the work
+ *     turned into what it is now.
+ *   - People label groups "misc", "temp" and "Group 3". Nothing here can tell
+ *     those from a subject, and letting one displace *"Looks like you're
+ *     working on the Q3 partner review"* would be a downgrade at exactly the
+ *     moment the product had its best sentence available.
+ *
+ * What it DOES displace is the term list, and against that it wins on every
+ * reading: the term list is at best three stemmed words with no grammar. If the
+ * ordering is ever revisited, the thing to measure is how often a group title
+ * is a real subject rather than a filing word — which nothing measures today,
+ * and which is why this is a judgement rather than a finding.
  */
 export function describeWork(
   detected: WorkDetected,
@@ -693,22 +744,34 @@ export function describeWork(
   const sites = detected.origins.length
   const where = sites === 1 ? hostOf(detected.origins[0] ?? '') : `${sites} sites`
 
+  // Trimmed at both doors already; guarded here anyway, because this is the one
+  // line that puts it in front of a person and an empty label rendered as a
+  // name would read as the product losing its place mid-sentence.
+  const authored = detected.authoredLabel?.trim()
+
   const sentence =
     named && named.confident
       ? // Only when the model was sure. A confident wrong name is worse than an
         // honest vague one, and the vague one is still true.
         `Looks like you're working on ${named.subject}.`
-      : words
-        ? // No site count here, though it used to carry one. This sentence is
-          // never shown alone: Home sets `because` directly beneath it and the
-          // extension badge concatenates the two, so "— across 4 sites." landed
-          // one line above "read 4 pages across 4 sites." and said the same
-          // thing twice in a row. The naming half says what it is about; the
-          // grounds half says what was seen. One job each.
-          `You have been looking into ${words}.`
-        : // Nothing to name, so this one keeps the count — without it the
-          // sentence would say nothing at all.
-          `You have been reading across ${where}.`
+      : authored
+        ? // What they called it. Same frame as the term list below rather than
+          // the confident one above: "You have been looking into X" is a
+          // statement about what was observed, and a group title is observed
+          // rather than concluded. Promoting it to "Looks like you're working
+          // on X" would claim a reading nobody made.
+          `You have been looking into ${authored}.`
+        : words
+          ? // No site count here, though it used to carry one. This sentence is
+            // never shown alone: Home sets `because` directly beneath it and the
+            // extension badge concatenates the two, so "— across 4 sites." landed
+            // one line above "read 4 pages across 4 sites." and said the same
+            // thing twice in a row. The naming half says what it is about; the
+            // grounds half says what was seen. One job each.
+            `You have been looking into ${words}.`
+          : // Nothing to name, so this one keeps the count — without it the
+            // sentence would say nothing at all.
+            `You have been reading across ${where}.`
 
   return {
     kind: 'start-session',

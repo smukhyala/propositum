@@ -38,6 +38,69 @@
 
 const BUDGET = 2000 // published product constant, see SECURITY_AND_PRIVACY.md
 
+/**
+ * How a page was left. ADR-0013.
+ *
+ * ── Why this is worth a field at all ─────────────────────────────────────
+ *
+ * `docs/research/intent-suggestion-quality.md` §2.1 quotes the ablation inside
+ * Fox et al. (TOIS 2005), the study that founded implicit-feedback research:
+ * *"The two most important variables in the Bayesian model were Difference in
+ * Seconds and Exit Type… Using just these two variables… accuracy for
+ * predicting SAT was 66%… very close to the model using the full set of 19
+ * predictor variables."* Dwell is the one Propositum already has. Exit type is
+ * the other one, and §9's table calls it **the single best-evidenced addition**.
+ *
+ * ── The set is CLOSED, and it is closed here ─────────────────────────────
+ *
+ * Three values, listed once, in code, exactly as `ObservationKind` and
+ * `GroundKind` are. There is deliberately no `other` and no `unknown`: a
+ * catch-all is where a value nobody argued for goes to live, and the first
+ * consumer that treats it as "probably fine" has silently invented a fourth
+ * meaning. A lifecycle transition this file does not recognise sends nothing,
+ * and the absence is honest — `exitType` is optional at every layer below.
+ *
+ * ── What each one IS, and what a content script can actually see ──────────
+ *
+ *   'hidden'         `visibilitychange` fired and the document is still alive.
+ *                    The tab stopped being the one on screen. Two people
+ *                    watching agree: the page is still open and nobody is
+ *                    looking at it.
+ *   'left-cached'    `pagehide` with `event.persisted === true`. The person
+ *                    navigated away and Chrome KEPT this document, so coming
+ *                    straight back runs no script at all. Chrome attests the
+ *                    flag; we do not infer it.
+ *   'left-unloaded'  `pagehide` with `event.persisted === false`. The document
+ *                    is being destroyed.
+ *
+ * ── What is NOT distinguishable, said rather than papered over ───────────
+ *
+ * **`'left-unloaded'` genuinely means four things**: navigated onward in this
+ * tab, closed the tab, quit the browser, and reloaded. A content script sees
+ * one `pagehide` for all four, and the APIs that would separate them —
+ * `chrome.tabs` events, `webNavigation.transitionType`, `chrome.history` — are
+ * refused by `manifest.json` and by `tests/extension-permissions.test.ts`.
+ * Splitting it would mean shipping a value that means two things and hoping,
+ * which is the thing this comment exists to refuse.
+ *
+ * That matters for what may later be built on it. Fox's decision-tree nodes
+ * condition on *"did not go back to the results list"* — a distinction inside
+ * the branch we cannot split. So the evidence for exit type is stronger than
+ * the evidence for **our** exit type, and any consumer has to argue that gap
+ * rather than inherit the citation. See the deferral in
+ * `tests/reachability.test.ts`.
+ *
+ * ── One exit can produce two rows ────────────────────────────────────────
+ *
+ * On an ordinary same-tab navigation Chrome fires `visibilitychange` (hidden)
+ * and then `pagehide`, so this page reports `'hidden'` and then `'left-cached'`
+ * or `'left-unloaded'`. Both are true and neither is a duplicate. A consumer
+ * must therefore take the LAST exit recorded for a URL, not the first; that
+ * rule is stated here because the place it would be got wrong is a layer that
+ * does not exist yet.
+ */
+const EXIT_TYPES = ['hidden', 'left-cached', 'left-unloaded']
+
 // When this page became visible. Engagement is measured from here, and the app
 // discards anything under its dwell threshold — so a glance costs a message and
 // no row, rather than becoming a false "they read this".
@@ -221,6 +284,43 @@ let hiddenMs = 0
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'hidden') {
     hiddenSince = Date.now()
+    /**
+     * Report on the way out of view, which is a NEW send and the only one.
+     *
+     * ── Why it has to be a send, and not a flag on the next report ────────
+     *
+     * A tab switched away from and never returned to fires nothing else, ever.
+     * `setInterval` skips hidden tabs by design, and `pagehide` may not come
+     * for hours or at all. So an exit that is only ever attached to some later
+     * report is an exit that is never reported for the commonest way of
+     * leaving a page — which is the case `visitsByUrl` in `detect.ts` already
+     * names as invisible to it: *"switching to a tab that is already loaded
+     * produces nothing at all."*
+     *
+     * ── What this changes, stated rather than discovered ──────────────────
+     *
+     * It is a full engagement report, deliberately, because the shape is what
+     * both doors already accept — `rawSignalSchema` requires `dwellMs` and
+     * `scrollFraction` on an engagement, so a leaner "exit only" message would
+     * be recorded as a REJECTED signal on the session path, once per tab
+     * switch, forever.
+     *
+     * The consequence is real and is not nothing: dwell for a page that gets
+     * hidden is now measured to the moment it was hidden, rather than to the
+     * last `REPORT_EVERY_MS` tick before it. The app takes the largest report
+     * per URL, so every hidden page's dwell rises by **up to one interval —
+     * fifteen seconds**. That can carry a page over `READ_AROUND_MS` (20s) or
+     * `DEEP_READ_MS` (60s) that would previously have fallen just short.
+     *
+     * It is argued rather than apologised for: the old figure under-reported by
+     * an amount that depended on where the polling tick happened to land, not
+     * on anything the person did. `hiddenMs` above already says dwell stops
+     * accruing at this instant; this is the report that finally carries the
+     * value that rule produces. An accurate measurement is not a threshold
+     * move — but it does move which afternoons qualify, so it is written down
+     * here, in ADR-0013, and in the commit rather than left to be found.
+     */
+    reportEngagement('hidden')
   } else if (hiddenSince !== null) {
     hiddenMs += Date.now() - hiddenSince
     hiddenSince = null
@@ -259,12 +359,19 @@ function engagedMs() {
  *
  * On the AMBIENT path — the one that runs when nobody has started a session,
  * and the one detection is built on — it was discarded, because
- * `src/app/api/capture/ambient/route.ts` had no field to receive it. **That
+ * `src/app/api/capture/ambient/route.ts` had no field to receive it. ~~**That
  * field exists as of 2026-08-17.** One hop is still missing and it is not in
  * this file: `flushAmbient` in `service-worker.js` projects each buffered signal
  * onto the wire shape by hand and copies `dwellMs` across as `engagedMs` without
  * copying `scrollFraction`. Until that line exists the app's new field is
- * reachable by `curl` and by nothing the extension sends.
+ * reachable by `curl` and by nothing the extension sends.~~
+ *
+ * **Closed 2026-08-17 (ADR-0013).** `flushAmbient` now copies it, so the field
+ * is reachable by a browser for the first time. It is copied only when it is
+ * already inside `[0, 1]` — see the clamp argument immediately below, and
+ * `flushAmbient`'s own note on why omitting an out-of-range reading is not the
+ * clamp that was refused. **Nothing in the detector reads it even now**;
+ * `tests/reachability.test.ts` holds that as a deferred assertion.
  *
  * ── Why the rounding here is not a bound, and no clamp was added ─────────
  *
@@ -279,7 +386,7 @@ function engagedMs() {
  * the session path drops today. That is a change to which events reach the
  * ledger, which is not this change.
  */
-function reportEngagement() {
+function reportEngagement(exitType) {
   // Never seen, never read. See `wasSeen`: this is the guard that stops a
   // background tab's `pagehide` reporting hours of imaginary attention.
   if (!wasSeen) return
@@ -291,6 +398,17 @@ function reportEngagement() {
     dwellMs: engagedMs(),
     scrollFraction: Math.round(deepest * 100) / 100,
     interacted,
+    /**
+     * The closed set, enforced at the one place a value leaves this file.
+     *
+     * `EXIT_TYPES` would otherwise be a comment with a list next to it, and a
+     * list nothing consults is the shape `detect.ts` spent two constants
+     * learning to distrust. A caller passing something not on it sends no exit
+     * rather than a fourth meaning — the app's schema refuses it too, and two
+     * bounds that agree about which is tighter is the discipline `flushAmbient`
+     * already argues for at length.
+     */
+    ...(EXIT_TYPES.includes(exitType) ? { exitType } : {}),
   })
 }
 
@@ -304,6 +422,26 @@ setInterval(() => {
   reportEngagement()
 }, REPORT_EVERY_MS)
 
-// Still report on the way out, so the final few seconds are not lost and a page
-// read for less than one interval is still counted.
-addEventListener('pagehide', reportEngagement)
+/**
+ * Still report on the way out, so the final few seconds are not lost and a page
+ * read for less than one interval is still counted.
+ *
+ * ── The wrapper is not decoration ────────────────────────────────────────
+ *
+ * This was `addEventListener('pagehide', reportEngagement)`. The moment
+ * `reportEngagement` took a parameter, that line started handing it the
+ * PageTransitionEvent as its exit type — which the `EXIT_TYPES.includes` guard
+ * above rejects, so the field would simply have gone missing on the one path
+ * that can produce two of the three values. Silent, and green.
+ *
+ * `event.persisted` is Chrome's own answer to "did I keep this document", so
+ * `'left-cached'` is attested rather than inferred. It is the closest thing
+ * available to Fox et al.'s *"went back to the results list"*: a page Chrome
+ * kept is a page the person can return to instantly, and a return served from
+ * bfcache runs no script — which is the defect `visitsByUrl` documents about
+ * itself. This does not fix that defect. It records the condition under which
+ * it is about to happen.
+ */
+addEventListener('pagehide', (event) => {
+  reportEngagement(event.persisted ? 'left-cached' : 'left-unloaded')
+})

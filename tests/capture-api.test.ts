@@ -276,4 +276,116 @@ describe('the ambient path carries how far down the page they got', () => {
     expect(response.status).toBe(400)
     expect(ambientStore().size()).toBe(0)
   })
+
+  /**
+   * How the page was left, and what the person called their own tabs. ADR-0013.
+   *
+   * Same door, same shape of guard, and the same reason it is worth having: the
+   * route holds no session token, so the schema is the whole of what stands
+   * between a `curl` and the buffer detection is computed from.
+   *
+   * The two fields are tested together because they arrive together and fail
+   * differently. `exitType` is a CLOSED SET written in three places —
+   * `EXIT_TYPES` in `content.js`, the `z.enum` here, and `ExitType` in
+   * `detect.ts` — and the failure worth catching is a fourth value drifting in
+   * from the browser. `groupTitle` is free text a person typed, and the failure
+   * worth catching is that it is unbounded.
+   */
+  describe('and how the page was left, and what the person called it', () => {
+    const withExit = (at: number, exitType?: unknown) => ({
+      ...engagement(at, 0.4),
+      ...(exitType === undefined ? {} : { exitType }),
+    })
+
+    for (const value of ['hidden', 'left-cached', 'left-unloaded'] as const) {
+      it(`carries the exit type "${value}" into the buffer`, async () => {
+        const now = Date.now()
+
+        const response = await ambientRoute(ambientPost([withExit(now, value)]))
+        expect(response.status).toBe(200)
+
+        const held = ambientStore().since(now)
+        expect(held[0]?.exitType).toBe(value)
+        // Beside the two figures it travels with, not instead of them.
+        expect(held[0]?.engagedMs).toBe(45_000)
+        expect(held[0]?.scrollFraction).toBe(0.4)
+      })
+    }
+
+    it('refuses a fourth exit type rather than letting the vocabulary widen from the browser', async () => {
+      // The whole point of a `z.enum` over a `z.string()`. `content.js` owns the
+      // set; if it ever invents a value, it is refused here rather than arriving
+      // as a string nothing downstream has a case for. Three authors, one set.
+      const now = Date.now()
+
+      const response = await ambientRoute(ambientPost([withExit(now, 'closed')]))
+
+      expect(response.status).toBe(400)
+      expect(ambientStore().size()).toBe(0)
+    })
+
+    it('leaves the exit absent when none was sent — an interval report is not an exit', async () => {
+      const now = Date.now()
+
+      await ambientRoute(ambientPost([withExit(now)]))
+
+      const held = ambientStore().since(now)
+      expect(held[0]?.exitType).toBeUndefined()
+      expect(Object.keys(held[0] ?? {})).not.toContain('exitType')
+    })
+
+    it('carries a tab group title, which is the one thing here the person wrote', async () => {
+      const now = Date.now()
+
+      await ambientRoute(
+        ambientPost([{ ...engagement(now, 0.4), groupTitle: 'world models' }]),
+      )
+
+      expect(ambientStore().since(now)[0]?.groupTitle).toBe('world models')
+    })
+
+    it('refuses a group title past the bound rather than truncating it', async () => {
+      /**
+       * The sender bounds it at 120 too (`AMBIENT_GROUP_TITLE_MAX`), so this can
+       * only be hit by a non-browser caller — which is exactly who this route
+       * has no token from. Refusing rather than truncating is the same rule the
+       * scroll fraction follows: a repair here would let a sender establish a
+       * value the schema says is impossible, and the extension's 4xx handling
+       * drops a refused batch rather than looping on it.
+       */
+      const now = Date.now()
+
+      const response = await ambientRoute(
+        ambientPost([{ ...engagement(now, 0.4), groupTitle: 'x'.repeat(121) }]),
+      )
+
+      expect(response.status).toBe(400)
+      expect(ambientStore().size()).toBe(0)
+    })
+
+    it('treats a whitespace-only group title as no group title at all', async () => {
+      // A label of spaces is not a name somebody authored, and `describeWork`
+      // would render it as one — "You have been looking into  ." — which reads
+      // as the product losing its place mid-sentence.
+      const now = Date.now()
+
+      await ambientRoute(ambientPost([{ ...engagement(now, 0.4), groupTitle: '   ' }]))
+
+      const held = ambientStore().since(now)
+      expect(held).toHaveLength(1)
+      expect(Object.keys(held[0] ?? {})).not.toContain('groupTitle')
+    })
+
+    it('trims a group title, so "  world models " and "world models" are one label', async () => {
+      // They have to be, or `authoredLabelOf`'s count splits across two spellings
+      // of the same thing and the tie-break picks whichever sorts first.
+      const now = Date.now()
+
+      await ambientRoute(
+        ambientPost([{ ...engagement(now, 0.4), groupTitle: '  world models ' }]),
+      )
+
+      expect(ambientStore().since(now)[0]?.groupTitle).toBe('world models')
+    })
+  })
 })

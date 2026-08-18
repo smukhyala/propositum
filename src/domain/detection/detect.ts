@@ -17,24 +17,35 @@
  *     reaching a model while nobody is watching, and an event stream the eval
  *     harness cannot replay. A deterministic detector keeps both.
  *   - **No page text reaches this layer at all.** Ambient capture carries a
- *     cleaned URL, a title, dwell and ~~scroll~~ **— a scroll fraction where one
- *     is sent, and nothing sends one yet**. Nothing else. The 2,000-character
- *     excerpt begins only after a session starts.
+ *     cleaned URL, a title, dwell, scroll, how the page was left, and — where
+ *     the person made one — the title of the tab group the page sits in.
+ *     Nothing else. The 2,000-character excerpt begins only after a session
+ *     starts.
  *
  *     *"and scroll" was aspirational until 2026-08-17, and this line should not
- *     have said it. Corrected again the same day, because the first correction
- *     overshot.* `content.js` has computed a scroll fraction on every engagement
- *     report since the report existed, and the ambient path drops it — first in
- *     `flushAmbient`, which hand-builds the wire shape and omits the field, and
- *     then, until 2026-08-17, in a schema that had nowhere to put it. The schema
- *     half is fixed and `AmbientObservation.scrollFraction` below is real. **The
+ *     have said it. Corrected twice that day, because the first correction
+ *     overshot; corrected a third time when the producer landed.* ~~`content.js`
+ *     has computed a scroll fraction on every engagement report since the report
+ *     existed, and the ambient path drops it — first in `flushAmbient`, which
+ *     hand-builds the wire shape and omits the field, and then, until
+ *     2026-08-17, in a schema that had nowhere to put it. The schema half is
+ *     fixed and `AmbientObservation.scrollFraction` below is real. **The
  *     extension half is not**, so an ambient observation with a scroll fraction
- *     on it comes from a test or a `curl` and from nothing a browser does. That
- *     is the failure `tests/reachability.test.ts` exists to remember, in its
- *     documentation form rather than its dead-code one, and it took two passes
- *     to state correctly. **Nothing reads the field either, deliberately** —
- *     landing a signal and consulting it are two decisions and neither has been
- *     finished. See the note on `WINDOW_MS`.
+ *     on it comes from a test or a `curl` and from nothing a browser does.~~
+ *
+ *     **ADR-0013 closed the extension half.** `flushAmbient` copies the scroll
+ *     fraction, and carries two new fields beside it: `exitType` and
+ *     `groupTitle`. So all four now arrive from a real browser. **Nothing reads
+ *     scroll or exit type, deliberately** — landing a signal and consulting it
+ *     are two decisions, and only the first has been taken for either. See the
+ *     note on `WINDOW_MS`, and `tests/reachability.test.ts`'s deferred block,
+ *     which is where both claims are enforced rather than merely written down.
+ *
+ *     The group title is the one exception and its limits are exact: it reaches
+ *     the NAME and nothing else. It never enters `ThreadPage.terms`, so it
+ *     cannot form or join a thread; `grounds.ts` never sees it, so it cannot
+ *     fire a ground or move sufficiency. That is pinned by a byte-equality test
+ *     rather than by this paragraph.
  *   - **Detection never starts a session.** It produces a suggestion. A human
  *     act still starts the session, which is the invariant `SessionPhase`
  *     depends on.
@@ -172,6 +183,38 @@ export const WORKED_MS_FOR_HANDOFF = (10 * 60_000) / SPEED
 export const FAST_DETECT = FAST
 
 /**
+ * How a page was left, as a closed set. ADR-0013.
+ *
+ * Closed and code-owned, in the same way `ObservationKind` and `GroundKind`
+ * are, and for the same reason: the capture layer's vocabulary must have one
+ * author. It is written three times — here, as a `z.enum` at
+ * `src/app/api/capture/ambient/route.ts`, and as `EXIT_TYPES` in
+ * `extension/src/content.js` — and the three are the same three strings. There
+ * is no `other`, no `unknown`, and no fall-through; an exit nothing recognises
+ * is absent, which every layer already handles.
+ *
+ * The values are argued at their source. What belongs HERE, because this is the
+ * type a future consumer will read and the citation it will reach for is
+ * stronger than the field deserves:
+ *
+ *   - `'hidden'` — the tab stopped being on screen and the document is alive.
+ *   - `'left-cached'` — the person navigated away and Chrome kept the document,
+ *     so a return runs no script. Chrome's `PageTransitionEvent.persisted`
+ *     attests this; it is not inferred.
+ *   - `'left-unloaded'` — the document was destroyed. **This one means four
+ *     things** — navigated onward, tab closed, browser quit, page reloaded —
+ *     and a content script cannot separate them without `tabs`,
+ *     `webNavigation` or `history`, none of which this product holds.
+ *
+ * That last bullet is the reason this is a fact rather than a reading, and also
+ * the reason it is not yet consulted: Fox et al.'s decision-tree nodes turn on
+ * *"did not go back to the results list"*, a distinction that lives INSIDE
+ * `'left-unloaded'`. The evidence for exit type is not automatically evidence
+ * for this exit type.
+ */
+export type ExitType = 'hidden' | 'left-cached' | 'left-unloaded'
+
+/**
  * One ambient observation. Metadata only — there is deliberately no field that
  * could carry page text, so this layer cannot see any even by mistake.
  */
@@ -237,8 +280,98 @@ export interface AmbientObservation {
    * layer cannot be handed `1e9` by a hostile or buggy sender. The domain reads
    * no clock and validates nothing; the boundary is where a fraction is proved
    * to be one.
+   *
+   * **Producer landed 2026-08-17 (ADR-0013).** The paragraph above described a
+   * field a browser could not fill: `flushAmbient` hand-built the wire shape and
+   * omitted it. It copies it now, so a real Chrome finally sends one. Nothing
+   * here consults it and the deferral above is unchanged — the two halves were
+   * always separate decisions and only the transport one has been taken.
    */
   readonly scrollFraction?: number | undefined
+  /**
+   * Engagement only. How the page was left. See `ExitType`.
+   *
+   * ── Collected, and deliberately consulted by nothing ─────────────────────
+   *
+   * **The single best-evidenced signal this product did not have.** Fox et al.
+   * (TOIS 2005), via `docs/research/intent-suggestion-quality.md` §2.1 and
+   * §10.1: dwell plus exit type predicts satisfaction 66% of the time against
+   * 70% for the full nineteen-signal model, and every decision-tree node quoted
+   * from that paper conditions on exit type rather than on dwell alone. §9's
+   * table calls it *"the single best-evidenced addition"*.
+   *
+   * ── Why it is not read, which is a decision and not a to-do ──────────────
+   *
+   * Three reasons, in the order they bind:
+   *
+   *  1. **The distinction the evidence rests on is inside the value we cannot
+   *     split.** Fox's satisfaction node is *"spent more than 58 s… and did not
+   *     go back to the results list"*; the dissatisfaction node is *"very
+   *     little time… and they did go back"*. Both turn on separating a return
+   *     from an onward navigation. Our `'left-unloaded'` contains both, and
+   *     separating them needs `tabs` or `webNavigation`, which ADR-0002 and the
+   *     manifest refuse. Consuming this today would be borrowing the citation,
+   *     not applying it.
+   *  2. **Consuming it moves the offer bar.** Every candidate use — a
+   *     conjunction in `readAround`, a qualifier on `deepestRead` — changes
+   *     which afternoons clear it. ADR-0008 names the false positive as the
+   *     expensive failure, and the standing decision recorded beside
+   *     `WINDOW_MS` and on `scrollFraction` is to land the research without
+   *     retuning. A third threshold moving as a side effect of a plumbing
+   *     change is exactly the silent widening this file's header refuses.
+   *  3. **Nothing measures the offer rate.** §10.5 of the same research says so.
+   *     Without it there is no before-and-after to judge a threshold move by,
+   *     which is the difference between tuning and guessing.
+   *
+   * What would justify wiring it: an offer-rate measurement, plus either a way
+   * to tell an onward navigation from a close — which would have to be argued
+   * as an observation rather than an inference — or a use that needs only the
+   * `'hidden'`/`'left-*'` split, which is honestly available today. The
+   * deferral is asserted in `tests/reachability.test.ts` beside
+   * `scrollFraction`'s, so wiring it turns that file red on purpose.
+   */
+  readonly exitType?: ExitType | undefined
+  /**
+   * The title a person typed for the tab group this page sits in, if any.
+   *
+   * ── The only thing here the PERSON wrote ─────────────────────────────────
+   *
+   * Every other field on this interface is a URL, a page's own title, or a
+   * number. This is a label a human authored about their own work, and
+   * `docs/research/intent-signals.md` found that pattern to be the top of its
+   * ranking four separate times: *"the best intent signals are the ones a
+   * person authored… each of which IS the sentence `topics.ts` and
+   * `boundaries/subject.ts` spend their length reconstructing, typed by the
+   * person, for free."*
+   *
+   * ── Naming only. This is a rule, not a habit ─────────────────────────────
+   *
+   * It reaches exactly one place: `Thread.authoredLabel` →
+   * `WorkDetected.authoredLabel` → the sentence `describeWork` renders. It is
+   * **not** in `ThreadPage.terms`, so it cannot seed a thread, join a page to
+   * one, or change a signature; it is not read by `grounds.ts`, so it cannot
+   * fire a ground or change sufficiency; and it is not in any model boundary's
+   * input, so it cannot reach a prompt. `tests/detection.test.ts` pins the
+   * grounds half byte-for-byte and `tests/reachability.test.ts` pins the
+   * containment, because a rule nothing enforces is a habit.
+   *
+   * The reason for the rule is the shape of the signal rather than distrust of
+   * the person: §4.3 of the same research says it is *"excellent when present
+   * and absent most of the time"*, which is the right shape for improving a
+   * name and the wrong shape for anything that decides. And it is untrusted
+   * text — bounded at 120 characters at both ends, never in a prompt without
+   * `datamark`, never past a gate.
+   *
+   * ── Where it is weak, named rather than discovered ───────────────────────
+   *
+   * People label groups "misc", "temp", "stuff" and "Group 3". Nothing here can
+   * tell one of those from "world models", and no rule short of a dictionary
+   * could. That is precisely why it may not outrank a confident model name and
+   * may not touch the grounds: the worst it can do is make one deterministic
+   * sentence vaguer than the term list it displaced, which is the same cost as
+   * the term list being wrong, and recoverable by reading the next line.
+   */
+  readonly groupTitle?: string | undefined
 }
 
 /** What was noticed, in enough detail to phrase an offer and to explain it. */
@@ -265,6 +398,28 @@ export interface WorkDetected {
   readonly urls: readonly string[]
   /** Which rule fired. Shown to the person, so it can never be a mystery. */
   readonly because: 'searched-and-followed' | 'followed-across-sites'
+  /**
+   * The name the person gave this thread themselves, if they gave one.
+   *
+   * The tab group title carried by most of the thread's pages — see
+   * `authoredLabelOf` in `topics.ts` for the tie-break and why it is
+   * deterministic. Absent when no page in the thread is in a titled group,
+   * which is most of the time.
+   *
+   * **Optional rather than `string | null`, and that is not laziness.** Every
+   * other field here is required, and a fixture that builds a `WorkDetected` by
+   * hand — `tests/grounds.test.ts` does, on purpose, so that a shape change is
+   * noticed — would otherwise have to invent a value for a field it has no
+   * opinion about. Absent means "the person named nothing", which is exactly
+   * what a fixture that says nothing means.
+   *
+   * Read by one thing: `describeWork` in `src/server/ambient-store.ts`. It is
+   * NOT in any model boundary's input, NOT read by `grounds.ts`, and NOT part
+   * of `signatureOf`, which is computed from `terms`. Adding a reader is a
+   * decision about untrusted person-authored text reaching a new place, and
+   * `tests/reachability.test.ts` is where it has to be argued.
+   */
+  readonly authoredLabel?: string | undefined
 }
 
 /**
@@ -314,6 +469,23 @@ function pagesOf(observations: readonly AmbientObservation[]): ThreadPage[] {
       // the extension cannot widen it.
       searched: (existing?.searched ?? false) || (o.kind === 'query' && searchQueryOf(o.url) !== null),
       visits: visits.get(o.url) ?? 0,
+      /**
+       * The most recent group title seen for this page, if any.
+       *
+       * Later non-empty wins, which is the same rule the title one line up
+       * follows and it is the same argument: a person can drag a tab into a
+       * group, or rename the group, at any time, and the current label is the
+       * one that describes what they are doing now. `??` rather than `||`
+       * because absent already means absent — the door strips a whitespace-only
+       * title, so there is no empty string to fall back past.
+       *
+       * Note what this does NOT do: it does not touch `terms`. A group title
+       * cannot seed a thread, cannot join a page to one, and cannot appear in a
+       * signature. See `AmbientObservation.groupTitle`.
+       */
+      ...(o.groupTitle === undefined && existing?.groupTitle === undefined
+        ? {}
+        : { groupTitle: o.groupTitle ?? existing?.groupTitle }),
     })
   }
 
@@ -479,6 +651,10 @@ function detectedFrom(thread: Thread): WorkDetected {
     titles: thread.pages.map((p) => p.title).filter((t) => t !== ''),
     urls: thread.pages.map((p) => p.url),
     because: thread.searches > 0 ? 'searched-and-followed' : 'followed-across-sites',
+    // Carried, never computed here. `findThreads` decides it from the members,
+    // which is where the tie-break has to live so that two callers holding the
+    // same thread cannot disagree about what the person called it.
+    ...(thread.authoredLabel === undefined ? {} : { authoredLabel: thread.authoredLabel }),
   }
 }
 

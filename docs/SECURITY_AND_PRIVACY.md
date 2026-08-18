@@ -38,9 +38,32 @@ while doing so is deliberately thin:
 | Cleaned URL | credentials and tracking parameters stripped |
 | Page title | as the page reports it |
 | Interaction shape | dwell time and scroll depth |
+| Exit type | how the page was left, as one of three: **switched away from** (the tab stopped being on screen), **left with the page kept**, **left with the page destroyed**. The last one cannot tell moving on from closing the tab, from quitting, or from reloading — telling those apart needs permissions this product refuses. Nothing here records where you went next |
+| Tab group label | **only** the name you typed on a tab group that contains a page Propositum is already watching. Never the group's other tabs, and never a group you have not opened a watched page in |
+
+*(Last two rows added 2026-08-17 — [ADR-0013](./adr/0013-authored-labels-and-exit-type.md). The
+second one costs a Chrome permission, `tabGroups`, whose install string is **"View and manage your
+tab groups."** — ~~the first permission this extension has asked for that shows a string of its
+own~~ **the first permission taken for a capture signal that shows a string of its own**. What it
+does and does not grant is spelled out under *Data explicitly not collected*, beside the tab-list
+bullet it sits next to, because a permission with "tab" in its name reads broader than it is.)*
+
+*(Two corrections the same day, both to sentences this section had no business making. **The exit
+type row** said the enum distinguishes *"moved on, closed it, went back, switched away"*. It does
+not and it cannot: there are three values, moving on and closing the tab are the SAME value, and
+*"went back"* is not a value at all. Separating them would need `tabs`, `webNavigation` or
+`history`, which is exactly the set this product refuses — so the row was claiming a discrimination
+that could only exist if the promise on this page were broken. **The containment sentence** said
+*"Both signals are untrusted content and are datamarked before they can reach a model."* No such
+control exists, and the truth is stronger rather than weaker: **neither field is an input to any
+model boundary, so neither reaches a prompt in any form, datamarked or not**, and
+`tests/reachability.test.ts`'s *"never reaches a model boundary"* is what holds it. `datamark()`
+stays named as the required door **if** a prompt ever wants one — a future condition, not a control
+standing today.)*
 
 **No page text. No selections. No excerpt.** There is no field in the ambient schema that could
-carry any, and a test asserts it.
+carry any, and a test asserts it. Neither of the two rows added above changes that: an exit type is
+an enum, and a tab group label is a name you typed rather than anything a page wrote.
 
 Where it goes matters as much as what it is:
 
@@ -53,6 +76,23 @@ The extension holds `host_permissions: ["https://*/*"]`, so Chrome shows **"Read
 data on all websites"** at install. That warning is accurate. What limits the exposure is no longer
 the permission — it is the behaviour above, enforced in three places and tested. ADR-0008 states
 plainly that this is a weaker kind of guarantee than the one it replaced.
+
+*(Amended 2026-08-17 — [ADR-0013](./adr/0013-authored-labels-and-exit-type.md). There is now a
+~~**second**~~ **further** string at install: **"View and manage your tab groups."**, for
+`tabGroups`. Unlike `tabs`, `webNavigation`, `topSites` and `favicon` — whose warnings Chrome
+absorbs into the all-websites prompt, so any of them could be added in an update without you being
+asked again — this one is **not absorbed**. It is shown. That is a cost and it is also the reason it
+was the acceptable permission to take: a capability that cannot be added quietly is the one you get
+to refuse.*
+
+*"Second" was wrong and is corrected the same day, against Chrome's own
+[permissions reference](https://developer.chrome.com/docs/extensions/reference/permissions-list).
+Counting the strings honestly, this extension's permissions show **three**: `notifications` —
+*"Display notifications."*; `debugger` — *"Access the page debugger backend."* and *"Read and change
+all your data on all websites."*; and now `tabGroups`. `alarms`, `idle`, `scripting`, `sidePanel`
+and `storage` show none. What is true of `tabGroups`, and is the part that mattered to the decision,
+is that it is the first string bought for a **capture signal** rather than for a mechanism, and that
+it is not absorbed by the all-websites prompt.)*
 
 ### 2. Session — only when you started one, only on approved sources
 
@@ -200,6 +240,27 @@ merely unimplemented.
   too, not Chrome refusing. The research note calls this half "still structurally true"; it is not,
   quite, and this document is not going to round it up. What is left is two greps over a component
   with no build step, which is a real guard and a weaker one than the sentence it replaced.
+
+  **And as of 2026-08-17 this bullet sits next to a permission whose name suggests otherwise, so it
+  has to say what that permission does.** [ADR-0013](./adr/0013-authored-labels-and-exit-type.md)
+  grants `tabGroups`, which Chrome describes at install as *"View and manage your tab groups."*
+  **The bullet above is unchanged and stays true: no tab is enumerated.** What `tabGroups` grants,
+  precisely:
+
+  | | |
+  |---|---|
+  | **Grants** | the label on a tab group — its `title`, plus `color`, `collapsed` and `shared`, which are of no use here and are not read |
+  | **Does not grant** | which tabs are in that group. Chrome's own reference says so in as many words: *"To group and ungroup tabs, or to query what tabs are in groups, use the `chrome.tabs` API."* `chrome.tabs` is the permission this extension does not hold and the namespace the guard forbids calling |
+  | **Does not grant** | any URL, title, favicon or tab id, for any tab, including the tabs in the very group whose name is read |
+  | **How the group is reached** | a page Propositum is **already watching** sends its ordinary report; the group id rides along on that message as `sender.tab.groupId`; the label is looked up for that one id. The chain starts at a page already in the buffer, so it cannot produce a tab that was not |
+  | **What would widen it** | `chrome.tabGroups.query()`, which returns every group in every window — including groups whose tabs Propositum has never seen. That is a different capability wearing the same permission, and ADR-0013 says it must stay on the forbidden list beside `chrome.tabs.query` |
+
+  **This is the same kind of guarantee as the one above it, and no stronger.** Chrome is not
+  refusing to tell us which tabs are in the group we asked about — it is refusing to tell us
+  *through this API*, while `chrome.tabs.query()` sits one line away needing no permission at all.
+  So what keeps the narrow path narrow is the same grep in the same test file, which is our code
+  declining. The honest word for it is still **behavioural**, and it was corrected to that word
+  earlier the same day. Nothing about adding a permission makes it structural again.
 
   *(Amended 2026-08-11: this bullet used to say "anything from a source you have not approved".
   Since [ADR-0008](./adr/0008-ambient-detection.md) the extension holds broad host permission and

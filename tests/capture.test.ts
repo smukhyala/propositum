@@ -44,7 +44,7 @@ describe('the manifest asks for nothing frightening', () => {
     host_permissions?: string[]
   }
 
-  it('requests only warning-free permissions, and one that is not', () => {
+  it('requests only warning-free permissions, and two that are not', () => {
     // `notifications` is warning-free and is the ONLY way to surface an offer
     // nobody asked for. `sidePanel.open()` needs a user gesture, so calling it
     // from an alarm silently throws — which is what happened: the app named
@@ -56,8 +56,28 @@ describe('the manifest asks for nothing frightening', () => {
     // paragraph that it is the first decision in the series whose net effect
     // on safety is negative. The test below is the half that still holds:
     // `debugger` WITHOUT `tabs` is confined to a tab Propositum opened.
+    //
+    // `tabGroups` is the second exception, added 2026-08-17 by ADR-0013, and it
+    // is the only one that costs a warning Chrome actually SHOWS — *"View and
+    // manage your tab groups"*, not absorbed by the broad host permission the
+    // way `tabs` and `webNavigation` would be. It is pinned here as well as in
+    // `tests/extension-permissions.test.ts` because that file's set assertion
+    // is the deliberate-act gate and this one is the second reader of the same
+    // list; two pins that can disagree is how a list stops meaning anything.
+    // The argument for the permission, what it does not grant, and the
+    // `sender.tab`-only mechanism that keeps it narrow all live in that file's
+    // docblock rather than being re-argued here.
     expect(manifest.permissions.sort()).toEqual(
-      ['alarms', 'debugger', 'idle', 'notifications', 'scripting', 'sidePanel', 'storage'].sort(),
+      [
+        'alarms',
+        'debugger',
+        'idle',
+        'notifications',
+        'scripting',
+        'sidePanel',
+        'storage',
+        'tabGroups',
+      ].sort(),
     )
   })
 

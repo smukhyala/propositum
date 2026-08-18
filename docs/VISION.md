@@ -204,6 +204,26 @@ and leaked anyway, because exclusions built on a see-everything vehicle leak. Th
 applies to us in the part that is behavioural — which, after this amendment, is more of it than this
 document used to say — and it is quoted here against ourselves rather than against them.
 
+*(Amended 2026-08-17 — [ADR-0013](./adr/0013-authored-labels-and-exit-type.md). The **Now** above
+gains two items, and the second one changes what this section costs. **Exit type** — how a page was
+left — joins the metadata list; it needs no permission, and Fox et al. rank it co-equal with dwell
+as the best-evidenced signal this product did not have. **A tab group label** — the name you typed
+on a group of tabs — is read for pages Propositum is already watching, and it costs a Chrome
+permission with an install string of its own: *"View and manage your tab groups."* It grants the
+label and not the group's contents; the ADR quotes Chrome's own sentence saying that answering
+*which tabs are in this group* requires the `tabs` permission, which is still absent. The struck
+paragraph above is unaffected — no tab is enumerated, and the guarantee that no tab is enumerated
+is still behavioural rather than structural — and so is the **Later** split. ~~And `scroll` in the
+metadata list above is a **specification rather than a description** — ADR-0008's capture row,
+amended twice on 2026-08-17, records that the extension does not send one; that row is the
+authority and this sentence is a pointer to it, not a second claim.~~
+
+**Struck the same day, because it pointed at an authority this change had already overtaken.**
+`scroll` is a description now: ADR-0013 landed the producer line in `flushAmbient`, which copies a
+scroll fraction onto the wire whenever the value is already inside `[0, 1]`, so a real browser sends
+one. ADR-0008's capture row said the opposite and has been amended to match — the sentence above
+was written from the row rather than from the diff it was part of.)*
+
 **Later.** Structured integrations with the tools people actually work in. Editors, note apps,
 calendars — each with the same posture: least privilege, enforced by the platform where possible.
 
@@ -228,7 +248,12 @@ returns on additional behavioural signal flatten after two, and the two cost alm
 comparison that would settle it has never been published in either direction. The ADR also states
 what would have to be true to revisit, and names its own strongest counter-argument — that
 Propositum cannot see work which does not happen in Chrome, and for the people it is aimed at that
-is a real fraction of the work.)*
+is a real fraction of the work.
+**What was taken instead is [ADR-0013](./adr/0013-authored-labels-and-exit-type.md)**, accepted the
+same day and amended into the **Now** above: exit type, and a label the person typed. The two ADRs
+are one decision — 0012 says what was refused, 0013 says what was bought with the budget — and
+0013's own honest limit is that neither signal closes the gap 0012 names. They make Chrome-shaped
+detection sharper. They do not make it wider.)*
 
 ---
 

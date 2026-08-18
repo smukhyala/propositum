@@ -108,6 +108,57 @@
  * A better stripper without those canaries would have fixed this bug and left
  * the class of bug live. The canaries are the part that generalises.
  *
+ * ── `tabGroups`, added 2026-08-17 (ADR-0013) ─────────────────────────────
+ *
+ * This block exists so that adding a permission is a deliberate act, and this
+ * is the first time anything has had to walk through it. Read it as the record
+ * of what was agreed to, because that is what the docblock is for.
+ *
+ * **What the permission GRANTS.** `chrome.tabGroups`: the metadata of a tab
+ * group — `id`, `title`, `color`, `collapsed`, `windowId`. Chrome shows one
+ * warning for it, *"View and manage your tab groups"*, and — unlike `tabs`,
+ * `webNavigation`, `topSites` and `favicon` — that warning is **not absorbed**
+ * by `host_permissions: ["https://*\/*"]`. So this one is shown at install, and
+ * adding it in an update disables the extension pending re-approval. ~~It is the
+ * only permission in the manifest that is not warning-free~~ — **corrected
+ * 2026-08-17 against Chrome's
+ * [permissions reference](https://developer.chrome.com/docs/extensions/reference/permissions-list):
+ * it is the THIRD.** `notifications` shows *"Display notifications."* and
+ * `debugger` shows *"Access the page debugger backend."* alongside the
+ * all-websites string. `alarms`, `idle`, `scripting`, `sidePanel` and `storage`
+ * are the warning-free five. What is true of `tabGroups`, and is what the
+ * decision rested on, is that it is the first string bought for a **capture
+ * signal** rather than for a mechanism, and that it is not absorbed. The
+ * manifest's opening sentence was struck the same day rather than quietly
+ * edited.
+ *
+ * **What it does NOT grant, which is the whole reason it was affordable.** The
+ * tabs inside a group. Chrome's reference is explicit: *"To group and ungroup
+ * tabs, or to query what tabs are in groups, use the `chrome.tabs` API."* Every
+ * assertion in this file forbidding `chrome.tabs.query`, `chrome.tabs.get`,
+ * `chrome.history.`, `chrome.webNavigation.` and `chrome.debugger.getTargets`
+ * is unchanged, and so is the block below refusing `tabs`, `webNavigation`,
+ * `history`, `bookmarks`, `topSites` and `sessions` in the manifest. Reading a
+ * group's title tells you nothing about a page you were not already watching.
+ *
+ * **The mechanism that keeps it narrow, which is code and not intent.** The
+ * only group id the extension ever looks up arrives on `sender.tab.groupId` —
+ * Chrome's own field, on a message sent by a content script the person granted
+ * an origin for. `groupId` is not among the four sensitive `tabs.Tab`
+ * properties the `tabs` permission gates, so no permission is needed to read
+ * it, and a page cannot forge it. That id goes to `chrome.tabGroups.get` and
+ * nothing else. The set of groups this extension can see is therefore the set
+ * containing a page it was already observing.
+ *
+ * `chrome.tabGroups.query` — which would enumerate every group in every window,
+ * including groups of tabs we have never seen — is granted by this permission
+ * and is refused by us, which is the same behavioural-rather-than-structural
+ * guarantee the `tabs.query` bullet at the top of this file is about. It is
+ * asserted below, along with the `sender`-provenance rule, in the grep style
+ * the rest of this file already uses and with the same honest limits: a
+ * computed member access walks past it, and it is a defence against somebody
+ * who does not know they should not.
+ *
  * **`tests/extension-cdp.test.ts` still uses the regex form, and is not
  * exposed today by luck rather than by design:** it searches `.js` only, and
  * no `.js` source in `extension/src` currently loses a line to it (checked, the
@@ -451,6 +502,99 @@ describe('no call that would return a tab Propositum did not open', () => {
   }
 })
 
+/**
+ * The narrowing that made `tabGroups` affordable, asserted rather than trusted.
+ *
+ * The permission grants the whole namespace. What keeps it to "the group of a
+ * tab we were already watching" is two properties of our own code, and both are
+ * one edit away from being lost:
+ *
+ *   1. `chrome.tabGroups.query` is never called. That call enumerates every
+ *      group in every window — groups of tabs the extension has no host
+ *      permission for and has never observed — and it is the single line that
+ *      would turn this permission into the tab-adjacent enumeration
+ *      `docs/SECURITY_AND_PRIVACY.md` says does not happen.
+ *   2. The only id handed to `chrome.tabGroups.get` comes from `sender.tab`.
+ *      A number from anywhere else — a loop, a stored value, a message body —
+ *      is a group we were not led to by a page we are already watching.
+ *
+ * The second is checked structurally rather than by taste: the extension may
+ * contain exactly one `chrome.tabGroups.` call site, it must be `.get(`, and
+ * the function containing it must read the id off `sender`. That is a coarse
+ * check and it is coarse on purpose — the same trade the rest of this file
+ * makes, and with the same stated hole: computed member access walks past it.
+ */
+describe('tabGroups is only ever reached through a tab that messaged us', () => {
+  const worker = SOURCES.find(({ name }) => name === 'service-worker.js')?.code ?? ''
+
+  it('never enumerates tab groups', () => {
+    // Not on the FORBIDDEN list above, deliberately: that list is about calls
+    // Chrome would refuse or that read other people's tabs. This one Chrome
+    // WOULD allow, now that the permission is held, which is precisely why it
+    // needs its own assertion and its own sentence.
+    // `\??\.` so that `chrome.tabGroups?.query(…)` — the shape the availability
+    // check in `groupTitleOf` already uses for `get` — cannot walk past it.
+    const offenders = SOURCES.filter(({ code }) =>
+      /chrome\.tabGroups\??\.query\s*\(/.test(code),
+    ).map(({ name }) => name)
+
+    expect(
+      offenders,
+      'chrome.tabGroups.query appears in ' +
+        offenders.join(', ') +
+        ' — that returns every group in every window, including groups of tabs this extension has never observed. The permission allows it; ADR-0013 does not.',
+    ).toEqual([])
+  })
+
+  it('touches exactly one member of chrome.tabGroups, and it is get()', () => {
+    // Members, not call sites: `groupTitleOf` names `get` twice — once to check
+    // the API exists on an older Chrome, once to call it — and counting sites
+    // would make this assertion a fact about that style rather than about the
+    // capability. Optional chaining is tolerated for the same reason it is in
+    // the query check above.
+    const members = [...ALL_CODE.matchAll(/chrome\.tabGroups\??\.(\w+)/g)].map((m) => m[1])
+
+    // Non-vacuous. If the lookup is deleted this goes red rather than green,
+    // which is the failure mode the canaries at the top of this file exist for.
+    expect(
+      members,
+      'nothing reads a tab group any more — either ADR-0013 was reverted, or this guard is now searching for nothing',
+    ).not.toEqual([])
+    expect(
+      [...new Set(members)],
+      'chrome.tabGroups is used for something other than get() — every other member either enumerates every group in every window, or mutates one',
+    ).toEqual(['get'])
+  })
+
+  it('reads the group id off sender, and off nothing else', () => {
+    /**
+     * The provenance rule, checked over the function that makes the call.
+     *
+     * `groupTitleOf` is sliced out of the worker source and required to (a)
+     * contain the call and (b) derive its id from `sender`. Slicing rather than
+     * searching the whole file matters: `sender.tab` appears elsewhere in this
+     * worker for the indicator check, so a whole-file grep would stay green for
+     * a lookup that took its id from a message body.
+     */
+    const from = worker.indexOf('function groupTitleOf')
+    expect(from, 'groupTitleOf is gone — the sender-provenance rule has nothing to be about').toBeGreaterThan(-1)
+
+    // To the next top-level declaration, which is enough of a function body for
+    // a grep and does not need a parser to be honest about.
+    const rest = worker.slice(from + 1)
+    const next = rest.search(/\n(async function|function|const|chrome\.)/)
+    const body = next === -1 ? rest : rest.slice(0, next)
+
+    expect(body, 'groupTitleOf no longer looks a group up — this guard is vacuous').toContain(
+      'chrome.tabGroups.get(',
+    )
+    expect(
+      body,
+      'groupTitleOf takes its group id from something other than sender.tab — that is a group Propositum was not led to by a page it was already watching',
+    ).toMatch(/sender[?.]+tab[?.]+groupId/)
+  })
+})
+
 describe('the manifest asks for exactly what it asks for', () => {
   /**
    * Pinned as a SET rather than as a list of absences, and that is the point of
@@ -478,6 +622,7 @@ describe('the manifest asks for exactly what it asks for', () => {
     'scripting',
     'sidePanel',
     'storage',
+    'tabGroups',
   ]
 
   it('holds exactly the expected permission set, so adding one is a deliberate act', () => {

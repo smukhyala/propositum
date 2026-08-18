@@ -65,6 +65,48 @@ import { ambientStore, captureStore, expectedOrigin } from '@/server/capture-sto
  * schema says is impossible, and a drop would make one malformed row invisible.
  * The service worker's 4xx handling drops a refused batch instead of retrying
  * it, which is the behaviour that keeps a bad field from becoming a wedge.
+ *
+ * ── `exitType` and `groupTitle`, added 2026-08-17 (ADR-0013) ─────────────
+ *
+ * **`exitType` — how the page was left.** `docs/research/intent-suggestion-quality.md`
+ * §2.1 quotes Fox et al. (TOIS 2005): dwell and exit type together recover 66%
+ * against 70% for all nineteen implicit signals they measured. Propositum has
+ * had one of the two since the beginning. This is the other.
+ *
+ * A `z.enum` and not a `z.string()`, and that is the load-bearing part. The set
+ * is closed in `extension/src/content.js`'s `EXIT_TYPES` and closed again here,
+ * and the two must not drift — the same arrangement `looksLikeSearch` and
+ * `searchQueryOf` are held in by `tests/search-url.test.ts`, for the same
+ * reason: a capture-layer vocabulary with one author cannot be widened from the
+ * browser. A fourth value invented in the extension is refused at this door
+ * rather than arriving as a string nothing downstream has a case for.
+ *
+ * What each value means, and what it does NOT mean, is argued at length beside
+ * `EXIT_TYPES`. The short version, because it bounds what may ever be built on
+ * this: **`left-unloaded` is four events** — navigated onward, closed the tab,
+ * quit the browser, reloaded — and a content script cannot tell them apart
+ * without `tabs`, `webNavigation` or `history`, all three of which this product
+ * refuses. Nothing reads the field yet; `tests/reachability.test.ts` holds that
+ * as a deferred assertion, and the reason is written there.
+ *
+ * **`groupTitle` — the label a person typed for their own group of tabs.** It
+ * is the one field on this route that is neither derived from a URL nor written
+ * by a page: a human wrote it, about their own work. `docs/research/intent-signals.md`
+ * §4.3 is the argument for wanting it, and the reason it is bounded here at 120
+ * rather than 300 is that it is a label rather than a document — see
+ * `AMBIENT_GROUP_TITLE_MAX` in the service worker, which bounds it again on the
+ * way out so the sender stays the stricter of the two.
+ *
+ * **It is untrusted text and it is treated as such.** A tab group title is
+ * page-adjacent in exactly the way a page title is — anybody can be induced to
+ * type anything — so it may never reach a prompt unmarked, may never reach
+ * `compilePolicy` or any gate, and may never widen an offer. Today it is
+ * structurally incapable of doing any of those: the only thing that reads it is
+ * `describeWork`'s sentence in `src/server/ambient-store.ts`, the model
+ * boundaries name their inputs field by field and do not name this one, and
+ * `tests/reachability.test.ts` pins that containment rather than trusting it.
+ * The day something wants to put it in a prompt, `datamark` is the door, on the
+ * same terms as `detected.titles`.
  */
 const ambientSchema = z.object({
   observations: z
@@ -76,6 +118,8 @@ const ambientSchema = z.object({
         kind: z.enum(['navigation', 'query', 'engagement', 'away']),
         engagedMs: z.number().int().nonnegative().optional(),
         scrollFraction: z.number().min(0).max(1).optional(),
+        exitType: z.enum(['hidden', 'left-cached', 'left-unloaded']).optional(),
+        groupTitle: z.string().max(120).optional(),
       }),
     )
     .max(100),
@@ -133,6 +177,14 @@ export async function POST(request: Request) {
         // `exactOptionalPropertyTypes` an explicit `undefined` is not the same
         // as an absent key, and `AmbientObservation` means absent.
         ...(raw.scrollFraction === undefined ? {} : { scrollFraction: raw.scrollFraction }),
+        ...(raw.exitType === undefined ? {} : { exitType: raw.exitType }),
+        // Trimmed here as well as at the sender. A title of spaces is not a
+        // label somebody authored, and `describeWork` would render it as one —
+        // "You have been looking into  ." — which is worse than the term list
+        // it would have displaced.
+        ...(raw.groupTitle === undefined || raw.groupTitle.trim() === ''
+          ? {}
+          : { groupTitle: raw.groupTitle.trim() }),
       },
       now,
     )

@@ -539,6 +539,123 @@ describe('what the offer says', () => {
     expect(describeWork(detected, signatureOf(detected.terms)).because.length).toBeGreaterThan(0)
   })
 
+  /**
+   * The one thing that consumes a tab group title. ADR-0013.
+   *
+   * `describeWork` is where a thread gets its deterministic sentence, and where
+   * the person's own label displaces a bag of stemmed words. Everything about
+   * that consumption is here because this is its only site: no ground reads it,
+   * no model boundary is given it, and `signatureOf` is computed from `terms`.
+   */
+  describe('and what it calls the work when the person named it themselves', () => {
+    const grouped = working.map((o) => ({ ...o, groupTitle: 'Q3 partner review' }))
+
+    it('uses the label the person typed, in place of the recurring words', () => {
+      const detected = detectWork(grouped, T0 + 5)
+      if (!detected) throw new Error('expected a detection')
+
+      const suggestion = describeWork(detected, signatureOf(detected.terms))
+
+      expect(suggestion.sentence).toBe('You have been looking into Q3 partner review.')
+    })
+
+    it('keeps the same frame as the term list, rather than claiming a reading', () => {
+      // "You have been looking into X" is a statement about what was observed;
+      // "Looks like you're working on X" is a conclusion, and it is reserved for
+      // a model that said it was confident. A group title is observed.
+      const detected = detectWork(grouped, T0 + 5)!
+
+      expect(describeWork(detected, signatureOf(detected.terms)).sentence).toMatch(
+        /^You have been looking into /,
+      )
+    })
+
+    it('does not displace a confident model name, which is the arguable half', () => {
+      /**
+       * `docs/research/intent-signals.md` §4.3 argues the other way — an
+       * authored label has no confidence flag and cannot be confidently wrong —
+       * and `describeWork`'s docblock records why the ordering went this way
+       * anyway. Pinned here so that reversing the ordering is a decision
+       * somebody makes rather than an edit nobody notices.
+       */
+      const detected = detectWork(grouped, T0 + 5)!
+
+      const suggestion = describeWork(detected, signatureOf(detected.terms), {
+        signature: signatureOf(detected.terms),
+        subject: 'the Q3 partner review deck',
+        confident: true,
+      })
+
+      expect(suggestion.sentence).toBe("Looks like you're working on the Q3 partner review deck.")
+    })
+
+    it('does displace an UNconfident model name, exactly as the term list would', () => {
+      // An unconfident name is not shown at all — that branch is about the
+      // model, not about this field — so the label competes with the words and
+      // wins, which is the whole change.
+      const detected = detectWork(grouped, T0 + 5)!
+
+      const suggestion = describeWork(detected, signatureOf(detected.terms), {
+        signature: signatureOf(detected.terms),
+        subject: 'something the model was unsure about',
+        confident: false,
+      })
+
+      expect(suggestion.sentence).toBe('You have been looking into Q3 partner review.')
+    })
+
+    it('changes the sentence and nothing else in the suggestion', () => {
+      /**
+       * The containment claim, in the form a reader cares about: the offer's
+       * identity, the sites it would approve, the terms, and the evidence line
+       * are all identical. Only the sentence moves.
+       *
+       * `thread` is the sharpest of those. It is `signatureOf(detected.terms)`,
+       * it keys the offer cache and it becomes a durable column on acceptance —
+       * so a group title that could move it would mean renaming a tab group
+       * silently changed the identity of work in progress.
+       */
+      const plain = detectWork(working, T0 + 5)!
+      const labelled = detectWork(grouped, T0 + 5)!
+
+      const before = describeWork(plain, signatureOf(plain.terms))
+      const after = describeWork(labelled, signatureOf(labelled.terms))
+
+      expect(after.sentence).not.toBe(before.sentence)
+
+      const { sentence: _a, detected: afterDetected, ...afterRest } = after as Extract<
+        typeof after,
+        { kind: 'start-session' }
+      >
+      const { sentence: _b, detected: beforeDetected, ...beforeRest } = before as Extract<
+        typeof before,
+        { kind: 'start-session' }
+      >
+      void _a
+      void _b
+
+      expect(afterRest).toEqual(beforeRest)
+      // ...and inside `detected`, only the label itself differs.
+      const { authoredLabel, ...afterWork } = afterDetected
+      const { authoredLabel: none, ...beforeWork } = beforeDetected
+      expect(authoredLabel).toBe('Q3 partner review')
+      expect(none).toBeUndefined()
+      expect(afterWork).toEqual(beforeWork)
+    })
+
+    it('falls back to the words when the label is nothing but space', () => {
+      // The door already strips this, and the store's own guard is the second
+      // bound. A label of spaces rendered as a name reads as the product losing
+      // its place mid-sentence.
+      const detected = detectWork(working, T0 + 5)!
+      const blank = { ...detected, authoredLabel: '   ' }
+
+      expect(describeWork(blank, signatureOf(blank.terms)).sentence).toBe(
+        describeWork(detected, signatureOf(detected.terms)).sentence,
+      )
+    })
+  })
+
   it('describes a pause in the person’s terms, not the clock’s', () => {
     const suggestion = describePause({ idleForMs: 5 * 60_000, workedMs: 12 * 60_000, since: T0 })
 
