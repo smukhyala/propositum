@@ -17,14 +17,36 @@ there; this directory is the thin Chrome-facing shell.
 
 ## What it can see
 
-Only origins the person approved, granted through `optional_host_permissions`
-at approval time and revocable in Chrome's own UI.
+~~Only origins the person approved, granted through `optional_host_permissions`
+at approval time and revocable in Chrome's own UI.~~
 
-It does **not** request `tabs`, `webNavigation` or `history`. Without `tabs`,
+~~It does **not** request `tabs`, `webNavigation` or `history`. Without `tabs`,
 the extension is *structurally incapable* of learning that the person visited
 anything else — Chrome will not hand over the URL, the title, or the tab. The
-constraint is enforced by the browser, not by our code being correct. See
-[ADR-0002](../docs/adr/0002-observation-capture.md).
+constraint is enforced by the browser, not by our code being correct.~~
+
+**Both paragraphs were false and are corrected here, 2026-08-18.** They are the
+last place in the repository still saying it; the same claim was struck in
+`docs/SECURITY_AND_PRIVACY.md`, `docs/VISION.md`, `docs/adr/0010-acting-in-the-browser.md`
+and `extension/manifest.json` on 2026-08-17.
+
+**What it actually sees.** Every `https` page, as metadata — a cleaned URL, the
+title, dwell, scroll, how the page was left, and a tab group title if the person
+named one. `optional_host_permissions` is gone: since
+[ADR-0008](../docs/adr/0008-ambient-detection.md) the manifest holds
+`host_permissions: ["https://*/*"]`, granted at install rather than requested at
+approval. Approving a source is what starts a *session* and unlocks page text;
+it is not what lets the extension see the page exists.
+
+**And the structural claim is not true either.** `chrome.tabs.query()` needs no
+permission — the `tabs` permission gates four properties (`url`, `pendingUrl`,
+`title`, `favIconUrl`), and *host* permissions restore them, which the manifest
+now holds for every `https` site. So the extension **could** enumerate every open
+tab. It does not, and `tests/extension-permissions.test.ts` fails if any source
+starts to. That is a test rather than a refusal, which is weaker, and the
+weakness is the point of saying so. See
+[ADR-0002](../docs/adr/0002-observation-capture.md) for the original argument and
+ADR-0008 for the commit that ended it without noticing.
 
 ## What it can do — and this reverses the sentence above it
 
@@ -40,9 +62,13 @@ Three things carry the weight now:
   id, and without `tabs` the only id available is the one
   `chrome.tabs.create` returned. `chrome.debugger.getTargets` is never called —
   it would hand back the URL and title of every open tab, which is exactly what
-  refusing `tabs` was for. **The agent can never learn that any other tab
-  exists**, and the cost is that it cannot continue in a tab you were already
-  reading: it opens its own and navigates there itself.
+  refusing `tabs` was for. ~~**The agent can never learn that any other tab
+  exists**~~ **— narrowed 2026-08-18.** The *acting agent* still cannot: it
+  attaches only to an id `chrome.tabs.create` returned, and `getTargets` is
+  never called. What is no longer true is the stronger reading, that no part of
+  the extension could find out — see *What it can see* above. The cost is
+  unchanged: it cannot continue in a tab you were already reading, so it opens
+  its own and navigates there itself.
 - **No `Runtime` domain, ever.** Propositum never runs a line of its own
   JavaScript inside a page you are signed into. Clicks are synthesised at
   coordinates, which costs robustness on purpose — an occluded element fails
@@ -60,9 +86,19 @@ real guard rather than a proxy for one.
 
 `transitionType` — "typed it" versus "followed a link" versus "submitted a
 form" — is the most semantically loaded signal available, and it lives behind
-`webNavigation`, which costs the *"Read your browsing history"* install
-warning. We take `document.referrer` and Navigation Timing as partial
-substitutes. Revisit only if H1 scores badly and ablation points here.
+`webNavigation`. ~~which costs the *"Read your browsing history"* install
+warning.~~ **That reason expired on 2026-08-11 and this sentence outlived it by
+a week.** Chrome's permission-message rules let a broad host permission *absorb*
+the warnings for `tabs`, `webNavigation`, `topSites` and `favicon`, so once
+ADR-0008 took `https://*/*` the extra warning stopped being the cost — and
+because Chrome compares rendered messages to decide whether an update needs
+re-approval, adding it would not even re-prompt.
+
+So the reason not to take it is now a capability decision and has to stand as
+one: it returns navigation for every tab, not only the ones being observed, and
+nothing in the detector needs that. `document.referrer` and Navigation Timing
+stay the partial substitutes. Revisit only if H1 scores badly and ablation
+points here.
 
 ## The service worker dies constantly
 

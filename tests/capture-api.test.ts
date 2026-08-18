@@ -7,11 +7,14 @@
  * because a dead service worker cannot report its own death.
  */
 
-import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest'
 import { execFileSync } from 'node:child_process'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { POST as ambientRoute } from '../src/app/api/capture/ambient/route'
+import { CUSTOM_HEADER } from '../src/capture/transport'
+import { ambientStore } from '../src/server/capture-store'
 import { createDatabase } from '../src/persistence/client'
 import type { Database } from '../src/persistence/client'
 import { createRepositories } from '../src/persistence/repositories/index'
@@ -143,5 +146,381 @@ describe('the sweeper writes the gap to the ledger', () => {
     store.heartbeat(1_000)
 
     expect(await sweepForGap({ store, ledger, now: () => 2_000 })).toBe(false)
+  })
+})
+
+/**
+ * How far down the page they got, from the wire into the buffer.
+ *
+ * `content.js` has computed a scroll fraction on every engagement report for as
+ * long as the report has existed, and `ambientSchema` had no field for it — so
+ * it was dropped on arrival while ADR-0008's decision table and two comments in
+ * `detect.ts` all said ambient capture carried "dwell and scroll". Three
+ * true-sounding sentences over a discarded field.
+ *
+ * The route handler is exercised directly rather than through `fetch`, the same
+ * way `tests/act-channel.test.ts` drives the control channel: the thing worth
+ * pinning is the SCHEMA and the projection into `AmbientObservation`, and a
+ * running server would add nothing but flakiness.
+ *
+ * ── Where this stops, said rather than implied ───────────────────────────
+ *
+ * `store.since()` is exactly the array `/api/capture/ambient/debug` renders
+ * from, so this covers the round trip up to that endpoint's own projection —
+ * which aggregates per origin and does not yet emit scroll. That route was out
+ * of scope for this change and its one-line addition is owed. Nothing here
+ * pretends otherwise.
+ */
+describe('the ambient path carries how far down the page they got', () => {
+  const ambientPost = (observations: readonly unknown[]) =>
+    new Request('http://127.0.0.1:3117/api/capture/ambient', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        [CUSTOM_HEADER]: '1',
+        // A forbidden header name, so no page can forge it, and free to a
+        // non-browser caller. See src/capture/transport.ts.
+        'sec-fetch-site': 'none',
+      },
+      body: JSON.stringify({ observations }),
+    })
+
+  const engagement = (at: number, scrollFraction?: unknown) => ({
+    at,
+    url: 'https://a.example/1',
+    title: 'World Models Survey',
+    kind: 'engagement',
+    engagedMs: 45_000,
+    ...(scrollFraction === undefined ? {} : { scrollFraction }),
+  })
+
+  beforeEach(() => {
+    // The store is a process-wide singleton hung off globalThis. `clear()` is
+    // not enough — a snooze deliberately outlives one — so the honest reset is
+    // to drop the instance, as tests/multiple-threads.test.ts does.
+    globalThis.__propositumAmbient = undefined
+  })
+
+  it('lands a scroll fraction in the buffer the detector reads', async () => {
+    const now = Date.now()
+
+    const response = await ambientRoute(ambientPost([engagement(now, 0.62)]))
+    expect(response.status).toBe(200)
+
+    const held = ambientStore().since(now)
+    expect(held).toHaveLength(1)
+    expect(held[0]?.scrollFraction).toBe(0.62)
+    // And the field it sits beside is untouched, so this is an addition rather
+    // than a reshuffle.
+    expect(held[0]?.engagedMs).toBe(45_000)
+  })
+
+  it('keeps both ends of the range, because 0 and 1 are real readings', async () => {
+    const now = Date.now()
+
+    await ambientRoute(ambientPost([engagement(now, 0), { ...engagement(now, 1), url: 'https://a.example/2' }]))
+
+    expect(ambientStore().since(now).map((o) => o.scrollFraction)).toEqual([0, 1])
+  })
+
+  it('leaves the field absent when the sender says nothing, rather than calling it zero', async () => {
+    // Absent and zero are different facts — "nobody measured" against "they did
+    // not scroll" — and a default would put a navigation and an unscrolled page
+    // in the same bucket.
+    const now = Date.now()
+
+    await ambientRoute(ambientPost([engagement(now)]))
+
+    const held = ambientStore().since(now)
+    expect(held).toHaveLength(1)
+    expect(held[0]?.scrollFraction).toBeUndefined()
+    expect(Object.keys(held[0] ?? {})).not.toContain('scrollFraction')
+  })
+
+  /**
+   * A fraction that is not a fraction refuses the batch.
+   *
+   * The route has no session token — that is the whole reason it accepts
+   * metadata only — so the schema is doing more work here than it does on the
+   * ledger path. An unbounded "fraction" is the field a hostile or buggy sender
+   * puts `1e9` in, and the buffer holds it for the life of the window.
+   */
+  for (const [name, value] of [
+    ['a negative fraction', -0.1],
+    ['a fraction above one', 1.5],
+    ['a wildly out-of-range number', 1e9],
+    ['a number sent as a string', '0.5'],
+    ['a null', null],
+    ['a boolean', true],
+  ] as const) {
+    it(`refuses ${name}, and holds nothing`, async () => {
+      const now = Date.now()
+
+      const response = await ambientRoute(ambientPost([engagement(now, value)]))
+
+      expect(response.status).toBe(400)
+      expect(await response.json()).toEqual({ ok: false, reason: 'malformed' })
+      // Refusing the batch means refusing all of it. A partial write here would
+      // be a row nobody can account for.
+      expect(ambientStore().size()).toBe(0)
+    })
+  }
+
+  it('refuses the whole batch, so one bad row cannot smuggle the rest past', async () => {
+    const now = Date.now()
+
+    const response = await ambientRoute(
+      ambientPost([engagement(now, 0.5), { ...engagement(now, 42), url: 'https://a.example/2' }]),
+    )
+
+    expect(response.status).toBe(400)
+    expect(ambientStore().size()).toBe(0)
+  })
+
+  /**
+   * How the page was left, and what the person called their own tabs. ADR-0013.
+   *
+   * Same door, same shape of guard, and the same reason it is worth having: the
+   * route holds no session token, so the schema is the whole of what stands
+   * between a `curl` and the buffer detection is computed from.
+   *
+   * The two fields are tested together because they arrive together and fail
+   * differently. `exitType` is a CLOSED SET written in three places —
+   * `EXIT_TYPES` in `content.js`, the `z.enum` here, and `ExitType` in
+   * `detect.ts` — and the failure worth catching is a fourth value drifting in
+   * from the browser. `groupTitle` is free text a person typed, and the failure
+   * worth catching is that it is unbounded.
+   */
+  describe('and how the page was left, and what the person called it', () => {
+    const withExit = (at: number, exitType?: unknown) => ({
+      ...engagement(at, 0.4),
+      ...(exitType === undefined ? {} : { exitType }),
+    })
+
+    for (const value of ['hidden', 'left-cached', 'left-unloaded'] as const) {
+      it(`carries the exit type "${value}" into the buffer`, async () => {
+        const now = Date.now()
+
+        const response = await ambientRoute(ambientPost([withExit(now, value)]))
+        expect(response.status).toBe(200)
+
+        const held = ambientStore().since(now)
+        expect(held[0]?.exitType).toBe(value)
+        // Beside the two figures it travels with, not instead of them.
+        expect(held[0]?.engagedMs).toBe(45_000)
+        expect(held[0]?.scrollFraction).toBe(0.4)
+      })
+    }
+
+    it('refuses a fourth exit type rather than letting the vocabulary widen from the browser', async () => {
+      // The whole point of a `z.enum` over a `z.string()`. `content.js` owns the
+      // set; if it ever invents a value, it is refused here rather than arriving
+      // as a string nothing downstream has a case for. Three authors, one set.
+      const now = Date.now()
+
+      const response = await ambientRoute(ambientPost([withExit(now, 'closed')]))
+
+      expect(response.status).toBe(400)
+      expect(ambientStore().size()).toBe(0)
+    })
+
+    it('leaves the exit absent when none was sent — an interval report is not an exit', async () => {
+      const now = Date.now()
+
+      await ambientRoute(ambientPost([withExit(now)]))
+
+      const held = ambientStore().since(now)
+      expect(held[0]?.exitType).toBeUndefined()
+      expect(Object.keys(held[0] ?? {})).not.toContain('exitType')
+    })
+
+    it('carries a tab group title, which is the one thing here the person wrote', async () => {
+      const now = Date.now()
+
+      await ambientRoute(
+        ambientPost([{ ...engagement(now, 0.4), groupTitle: 'world models' }]),
+      )
+
+      expect(ambientStore().since(now)[0]?.groupTitle).toBe('world models')
+    })
+
+    it('refuses a group title past the bound rather than truncating it', async () => {
+      /**
+       * The sender bounds it at 120 too (`AMBIENT_GROUP_TITLE_MAX`), so this can
+       * only be hit by a non-browser caller — which is exactly who this route
+       * has no token from. Refusing rather than truncating is the same rule the
+       * scroll fraction follows: a repair here would let a sender establish a
+       * value the schema says is impossible, and the extension's 4xx handling
+       * drops a refused batch rather than looping on it.
+       */
+      const now = Date.now()
+
+      const response = await ambientRoute(
+        ambientPost([{ ...engagement(now, 0.4), groupTitle: 'x'.repeat(121) }]),
+      )
+
+      expect(response.status).toBe(400)
+      expect(ambientStore().size()).toBe(0)
+    })
+
+    it('treats a whitespace-only group title as no group title at all', async () => {
+      // A label of spaces is not a name somebody authored, and `describeWork`
+      // would render it as one — "You have been looking into  ." — which reads
+      // as the product losing its place mid-sentence.
+      const now = Date.now()
+
+      await ambientRoute(ambientPost([{ ...engagement(now, 0.4), groupTitle: '   ' }]))
+
+      const held = ambientStore().since(now)
+      expect(held).toHaveLength(1)
+      expect(Object.keys(held[0] ?? {})).not.toContain('groupTitle')
+    })
+
+    it('trims a group title, so "  world models " and "world models" are one label', async () => {
+      // They have to be, or `authoredLabelOf`'s count splits across two spellings
+      // of the same thing and the tie-break picks whichever sorts first.
+      const now = Date.now()
+
+      await ambientRoute(
+        ambientPost([{ ...engagement(now, 0.4), groupTitle: '  world models ' }]),
+      )
+
+      expect(ambientStore().since(now)[0]?.groupTitle).toBe('world models')
+    })
+  })
+
+  /**
+   * How the page was arrived at — and, more to the point, what does NOT arrive.
+   *
+   * ── The half of this that is a privacy assertion ─────────────────────────
+   *
+   * `content.js` has sent `referrer` and `navigationType` on every navigation
+   * since the signal existed, and `src/capture/semantics.ts` cleans and stores
+   * both — on the SESSION path. This path deliberately takes neither. It takes
+   * one of five words computed from them inside the content script.
+   *
+   * ~~so the URL of the page somebody came from never leaves the page it was
+   * read on.~~ **Corrected 2026-08-18, the same day, after review.** It does
+   * leave the page: `content.js` cannot know whether a session is running — a
+   * page that could time what its own script may do would learn something about
+   * the person — so it sends the referrer every time, and the extension's
+   * service worker decides. On the no-session branch the worker now deletes it
+   * beside page text, and `flushAmbient` never copied it in any case. What this
+   * file can assert is the door: **no referrer reaches this endpoint, and if one
+   * were sent it would be dropped here.**
+   *
+   * The last test in this block is therefore not a schema test. It is the one
+   * that says a referrer sent to this door is dropped, which is what makes the
+   * paragraph above a property rather than an intention.
+   *
+   * ── And the ordinary half ────────────────────────────────────────────────
+   *
+   * A `z.enum` over a closed set written in three places — `ARRIVALS` in
+   * `content.js`, this schema, and `Arrival` in `detect.ts` — so the failure
+   * worth catching is a sixth value drifting in from the browser.
+   */
+  describe('and how the page was arrived at, without the page they came from', () => {
+    const navigation = (at: number, arrival?: unknown) => ({
+      at,
+      url: 'https://a.example/1',
+      title: 'World Models Survey',
+      kind: 'navigation',
+      ...(arrival === undefined ? {} : { arrival }),
+    })
+
+    for (const value of [
+      'no-referrer',
+      'same-origin',
+      'cross-origin',
+      'reloaded',
+      'back-or-forward',
+    ] as const) {
+      it(`carries the arrival "${value}" into the buffer`, async () => {
+        const now = Date.now()
+
+        const response = await ambientRoute(ambientPost([navigation(now, value)]))
+        expect(response.status).toBe(200)
+
+        const held = ambientStore().since(now)
+        expect(held).toHaveLength(1)
+        expect(held[0]?.arrival).toBe(value)
+        // Beside the page it is about, not instead of it.
+        expect(held[0]?.url).toBe('https://a.example/1')
+      })
+    }
+
+    it('refuses a sixth arrival rather than letting the vocabulary widen from the browser', async () => {
+      // The whole point of a `z.enum` over a `z.string()`, and the same
+      // assertion the exit type gets one block up. `content.js` owns the set at
+      // the one place a value leaves it; if it ever invents a member, it is
+      // refused here rather than arriving as a string nothing has a case for.
+      const now = Date.now()
+
+      const response = await ambientRoute(ambientPost([navigation(now, 'typed')]))
+
+      expect(response.status).toBe(400)
+      expect(ambientStore().size()).toBe(0)
+    })
+
+    it('refuses a referrer URL smuggled in as an arrival', async () => {
+      // The value that must never be on this path, offered in the field built
+      // to keep it off. A `z.string()` would have taken it.
+      const now = Date.now()
+
+      const response = await ambientRoute(
+        ambientPost([navigation(now, 'https://mail.example/inbox/9')]),
+      )
+
+      expect(response.status).toBe(400)
+      expect(ambientStore().size()).toBe(0)
+    })
+
+    it('leaves the arrival absent when none was sent — an unclassified navigation is not a value', async () => {
+      // `arrivalOf` returns nothing for a `prerender` entry, for a missing
+      // navigation entry, and for a referrer that will not parse. Absent must
+      // stay absent rather than defaulting to the member that reads as intent.
+      const now = Date.now()
+
+      await ambientRoute(ambientPost([navigation(now)]))
+
+      const held = ambientStore().since(now)
+      expect(held).toHaveLength(1)
+      expect(held[0]?.arrival).toBeUndefined()
+      expect(Object.keys(held[0] ?? {})).not.toContain('arrival')
+    })
+
+    it('has nowhere to put a referrer, so one sent anyway is dropped', async () => {
+      /**
+       * The assertion this whole block exists for.
+       *
+       * The session path stores a cleaned referrer URL, and that is defensible
+       * there: a session is consented, scoped to approved sources, and every
+       * row is auditable. This buffer is what Propositum saw while nobody
+       * asked, and a referrer names a page the person came FROM — possibly a
+       * site nothing else here observes. `ambientSchema` has no field for it,
+       * so Zod strips it, and a future hand that adds one has to turn this red
+       * first.
+       */
+      const now = Date.now()
+
+      const response = await ambientRoute(
+        ambientPost([
+          {
+            ...navigation(now, 'cross-origin'),
+            referrer: 'https://mail.example/inbox/9',
+            navigationType: 'navigate',
+          },
+        ]),
+      )
+
+      expect(response.status).toBe(200)
+
+      const held = ambientStore().since(now)
+      expect(held[0]?.arrival).toBe('cross-origin')
+      expect(Object.keys(held[0] ?? {})).not.toContain('referrer')
+      expect(Object.keys(held[0] ?? {})).not.toContain('navigationType')
+      // And not hiding anywhere else in the row either.
+      expect(JSON.stringify(held[0])).not.toContain('mail.example')
+    })
   })
 })

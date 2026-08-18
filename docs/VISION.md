@@ -150,6 +150,22 @@ Propositum *thinks* you are doing is rebuilt from nothing every sitting.)*
 evaluates: Initiative, Progress, Output, Budget. A control that only changes prompt wording is not
 shipped, on principle.
 
+*(Amended 2026-08-18 — [ADR-0014](./adr/0014-reading-free-busy.md). **Budget may now come with an
+offer beside it**, from a Google calendar you connected, when your calendar happens to say when you
+are next busy. It compiles to exactly what it compiled to before — a deadline derived from
+`acceptedAt + timeLimitMinutes` — and the calendar contributes no term to that derivation and reaches
+neither `compilePolicy` nor the gate.
+
+**Nothing arrives pre-filled, and that is the stronger claim.** The dial holds the number it would
+have held if you had no calendar at all; beside it is one sentence — *"Your calendar has you busy
+from 3:00 pm"* — and a button offering the largest limit that stops before then. Pressing it is the
+same act as pressing one of the five radios, and until you press something the calendar has changed
+nothing. That matters because **a pre-filled default is not neutral**: a suggested 90 becomes 90 for
+most people most of the time, which is a UI affordance doing the work of a decision. An offer that
+must be pressed cannot do that. The sentence stays on screen after you press it, so the number never
+sheds where it came from. This is principle 15's shape, in the one place it can be checked cheaply:
+**a calendar may recommend; it may never grant.**)*
+
 **Later.** Autonomy that earns itself. Propositum notices which decisions you always approve and
 proposes widening its own scope — with the widening itself requiring ratification. Preferences
 accruing on the `Project`, never on the agent.
@@ -191,17 +207,59 @@ source.
 that guarantee from structural to behavioural and said plainly that behavioural is weaker; this
 document had not caught up, which is exactly the drift the Now/Later split exists to prevent.)*
 
-What Chrome still refuses to hand over is the existence of any **other tab** — no `tabs` permission,
-and the acting agent never enumerates targets. Rewind's exclusion controls were sincere, documented,
+~~What Chrome still refuses to hand over is the existence of any **other tab** — no `tabs` permission,
+and the acting agent never enumerates targets.~~ **Struck 2026-08-17
+([`docs/research/intent-signals.md`](./research/intent-signals.md) §2.1). Chrome refuses no such
+thing.** `chrome.tabs.query()` needs no permission, and under the `https://*/*` host grant ADR-0008
+took it returns the URL and title of every open `https` tab. No line in the extension calls it, and
+what keeps that true is [`tests/extension-permissions.test.ts`](../tests/extension-permissions.test.ts)
+— our code declining, not the browser refusing. The same sentence is amended in
+[`docs/SECURITY_AND_PRIVACY.md`](./SECURITY_AND_PRIVACY.md), which states the trade at length.
+Rewind's exclusion controls were sincere, documented,
 and leaked anyway, because exclusions built on a see-everything vehicle leak. That warning now
-applies to us in the part that is behavioural, and it is quoted here against ourselves rather than
-against them.
+applies to us in the part that is behavioural — which, after this amendment, is more of it than this
+document used to say — and it is quoted here against ourselves rather than against them.
+
+*(Amended 2026-08-17 — [ADR-0013](./adr/0013-authored-labels-and-exit-type.md). The **Now** above
+gains two items, and the second one changes what this section costs. **Exit type** — how a page was
+left — joins the metadata list; it needs no permission, and Fox et al. rank it co-equal with dwell
+as the best-evidenced signal this product did not have. **A tab group label** — the name you typed
+on a group of tabs — is read for pages Propositum is already watching, and it costs a Chrome
+permission with an install string of its own: *"View and manage your tab groups."* It grants the
+label and not the group's contents; the ADR quotes Chrome's own sentence saying that answering
+*which tabs are in this group* requires the `tabs` permission, which is still absent. The struck
+paragraph above is unaffected — no tab is enumerated, and the guarantee that no tab is enumerated
+is still behavioural rather than structural — and so is the **Later** split. ~~And `scroll` in the
+metadata list above is a **specification rather than a description** — ADR-0008's capture row,
+amended twice on 2026-08-17, records that the extension does not send one; that row is the
+authority and this sentence is a pointer to it, not a second claim.~~
+
+**Struck the same day, because it pointed at an authority this change had already overtaken.**
+`scroll` is a description now: ADR-0013 landed the producer line in `flushAmbient`, which copies a
+scroll fraction onto the wire whenever the value is already inside `[0, 1]`, so a real browser sends
+one. ADR-0008's capture row said the opposite and has been amended to match — the sentence above
+was written from the row rather than from the diff it was part of.)*
 
 **Later.** Structured integrations with the tools people actually work in. Editors, note apps,
-calendars — each with the same posture: least privilege, enforced by the platform where possible.
+~~calendars~~ — each with the same posture: least privilege, enforced by the platform where possible.
 
-**Observation is one sensor, and today it is the only one.** An intention ought to move when the
-world moves — a reply arrives, a build goes red, a deadline passes. None of that can reach this
+*(Amended 2026-08-18 — [ADR-0014](./adr/0014-reading-free-busy.md). One calendar arrived early, and
+it arrived as the narrowest possible version of itself, so the word is struck from **Later** rather
+than left to imply the whole of it is still ahead. Propositum can tell that somebody left; it could
+not tell **how long they would be gone**, which is the one thing Budget is denominated in. Google's
+free/busy answers exactly that and nothing else: two timestamps per busy interval, no titles, no
+attendees, no descriptions. The wider scope — the one carrying `focusTime` and `outOfOffice`, a
+person declaring their own intent in a structured field, which the signal research rates the
+strongest thing it found — was refused, because it comes bundled with the title of every appointment
+on every calendar. **The posture in the sentence above held and the price was an account**, which the
+honest limits below record as struck rather than softened. This is a **sensor in no sense that
+matters**: nothing it returns becomes an observation, nothing is persisted, nothing reaches a model,
+and it suggests a number a person then sets.)*
+
+**Observation is one sensor, and today it is the only one.** *(Still true on 2026-08-18, and the
+calendar read above does not change it: free/busy produces no event, is not persisted, and cannot
+move an intention. It answers a question at a moment somebody is looking at a screen.)* An intention
+ought to move when the world moves — a reply arrives, a build goes red, a deadline passes. None of that can reach this
 system, and the reason is structural rather than unfinished: an `ObservationEvent` requires a
 `sessionId` and there is a single ledger writer, so **nothing that happens outside a sitting can be
 recorded at all.** That absence is why `IntentionState` ships with five members instead of six, and
@@ -210,6 +268,23 @@ it is the whole content of the repository's **Stage 2 — Event-Driven Understan
 
 **Not planned, at any horizon.** Full-screen recording. Keystroke logging. Automatic access to
 every application. These are not sequencing decisions.
+
+*(Argued rather than amended, 2026-08-17
+([ADR-0012](./adr/0012-screen-capture-refused.md)). A rolling screenshot cache of the person's own
+screen, roughly an hour deep, was proposed and refused. **The bullet above is unchanged, word for
+word** — what is new is the argument it had been carrying without: screen capture
+is row 15 of 16 on the ranked signal list *(corrected 2026-08-17; this said "row 13 of 14", and so
+did the ADR)* and costs the strictest permission gate macOS has; the
+returns on additional behavioural signal flatten after two, and the two cost almost nothing; the
+comparison that would settle it has never been published in either direction. The ADR also states
+what would have to be true to revisit, and names its own strongest counter-argument — that
+Propositum cannot see work which does not happen in Chrome, and for the people it is aimed at that
+is a real fraction of the work.
+**What was taken instead is [ADR-0013](./adr/0013-authored-labels-and-exit-type.md)**, accepted the
+same day and amended into the **Now** above: exit type, and a label the person typed. The two ADRs
+are one decision — 0012 says what was refused, 0013 says what was bought with the budget — and
+0013's own honest limit is that neither signal closes the gap 0012 names. They make Chrome-shaped
+detection sharper. They do not make it wider.)*
 
 ---
 
@@ -313,8 +388,19 @@ it pretends to undo.
 - **That depth is now spread roughly a hundred times thinner.** An acting agent reads a whole
   accessibility tree every turn, and every label in it is written by the page. The boundary is
   unchanged; the surface behind it is not.
-- Everything is local. There is no cloud, no telemetry, and no account. That is a privacy property
-  today and a limitation tomorrow — it is also why a run stops when your Mac sleeps.
+- ~~Everything is local. There is no cloud, no telemetry, and no account.~~ **Struck 2026-08-18
+  ([ADR-0014](./adr/0014-reading-free-busy.md)), and left here rather than deleted so the promise is
+  visible beside what replaced it.** There is still no cloud, no telemetry and no server of ours, and
+  nothing about what you read or wrote leaves this machine except the prompts a boundary needs. **But
+  there is now an account**, optionally: a Google calendar, connected by you, for one question —
+  `calendar.freebusy`, *"View your availability in your calendars"*, which returns busy intervals as
+  bare start and end times and cannot return a title, an attendee or a description. It is off unless
+  you connect it, it is revocable from Google in one click, nothing it returns is stored, and it can
+  only offer a time limit you then set yourself. **The withdrawal is still a withdrawal**, and
+  ADR-0014 opens by saying so: a narrow scope makes the exposure small and does not make the promise
+  less broken.
+  That limit is a privacy property today and a limitation tomorrow — it is also why a run stops when
+  your Mac sleeps, and it is the sentence the calendar read exists to answer the other half of.
 - **An `Intention` is human-*ratified*, which is not the same as human-*written*.** It is born on
   the working-agreement screen, out of the `StatedIntent` fields a person ratifies there — and those
   fields arrive pre-filled, drafted by a model boundary from the sitting's `SessionReading`. The

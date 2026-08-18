@@ -1,8 +1,19 @@
 // Propositum — local-first SQLite schema.
 //
-// Vocabulary is CONTEXT.md. Every model here is a term defined there; nothing
-// here invents a name. Terms marked "computed view" in CONTEXT.md deliberately
+// Vocabulary is CONTEXT.md. ~~Every model here is a term defined there; nothing
+// here invents a name.~~ Terms marked "computed view" in CONTEXT.md deliberately
 // have NO table — EnforcedPolicy, Shift, ExecutionPlan, ActionStatus.
+//
+// **Amended 2026-08-18, and the exception is now two models rather than one, so
+// it is worth naming rather than leaving to be discovered.** `CalendarConnection`
+// (ADR-0014) and `OfferTally` are both absent from CONTEXT.md. Neither is a term
+// about a person's work: one holds a credential and one holds how loud this
+// product has been. CONTEXT.md is the vocabulary of the WORK — Intention,
+// Session, Shift, Outcome — and filing "a counter about our own offer rate"
+// among them would widen what that document claims to be. The debt this leaves
+// is real and is stated plainly: two tables exist whose names nothing outside
+// this file defines, and the next reader looking a name up in CONTEXT.md will
+// not find them there.
 //
 // ── Two things Prisma's SQLite provider cannot express ────────────────────
 //
@@ -1105,4 +1116,211 @@ model ShiftReport {
   decisions DecisionNeeded[]
 
   @@map("shift_report")
+}
+
+// ═══════════════════════════════════════════════════ 7. Outside credentials
+
+/// One person's authorisation to read their own free/busy, and nothing else.
+/// ADR-0014.
+///
+/// ── This row is a REVERSAL, and the schema is where it becomes real ──────
+///
+/// `docs/SECURITY_AND_PRIVACY.md` says *"Everything is local. SQLite on your
+/// machine. No account, no cloud, no sync, no server"*, with one named
+/// exception: prompts to the Anthropic API. `docs/VISION.md` says *"Everything
+/// is local. There is no cloud, no telemetry, and no account."*
+///
+/// A refresh token IS an account. This table doubles the secret set — until it
+/// existed the only secret was `ANTHROPIC_API_KEY`, which is the app's own
+/// credential and lives in `.env` — and it doubles the egress: a second host
+/// Propositum talks to, on a schedule a person did not ask about. Neither
+/// sentence above is true any more for somebody who connects a calendar.
+/// ADR-0014 opens on that rather than on the feature.
+///
+/// ── Why the token is HERE and the client id is in `.env` ─────────────────
+///
+/// They are different kinds of thing and the split is the argument, not a
+/// convenience. `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET`
+/// identify *the application* — they are the same for every copy of Propositum
+/// built from this source, they are configuration, and they belong beside
+/// `ANTHROPIC_API_KEY` where the app's own credentials already live. A refresh
+/// token identifies *the person*. It is theirs, it arrived because they clicked
+/// something, it is revocable by them, and it must disappear when they say so.
+/// Data about a person belongs in their database, not in a file they edit by
+/// hand and might paste into an issue.
+///
+/// **It is stored in the clear, and that is stated rather than dressed up.**
+/// SQLite on a local disk with no application-level encryption, because a key
+/// to decrypt it would have to live in `.env` beside the file it protects,
+/// which is theatre. What actually protects it is the operating system's file
+/// permissions and whatever full-disk encryption the machine has — the same
+/// things protecting `.env` itself. The honest summary: anyone who can read
+/// this file can read the token, and the mitigation is that `freebusy` grants
+/// them the ability to learn when the person is busy and nothing else.
+///
+/// ── MUTABLE, and it gets NO append-only triggers ─────────────────────────
+///
+/// Project's and Intention's reasoning, unchanged: it holds no inference and
+/// carries no provenance, so nothing about it is append-only. No
+/// REQUIRED_GUARDS entry, no triggers.sql change, no row in
+/// tests/append-only.test.ts's hand-maintained checklist. It must be DELETABLE
+/// — disconnecting is the whole revocation story — and a no-DELETE trigger and
+/// a revocation cannot both be true, which is `action_evidence`'s finding
+/// arriving a second time.
+model CalendarConnection {
+  id String @id @default(cuid())
+
+  /// Which service. UNIQUE, so at most one connection exists — the same
+  /// deferral-held-as-a-shape that `Intention.projectId` uses. There is one
+  /// member today, `google`, and a second one is a schema change rather than a
+  /// row somebody inserts.
+  provider String @unique
+
+  /// The exact OAuth scope string that was granted, as Google returned it.
+  ///
+  /// Stored rather than assumed, and checked on every read. The grep in
+  /// tests/calendar-scope.test.ts proves this SOURCE never asks for anything
+  /// but `calendar.freebusy`; it cannot prove what a row created by an older
+  /// build, or by a hand-edited authorisation URL, actually holds. A connection
+  /// whose scope is not exactly the constant is refused at the read path — the
+  /// feature goes quiet rather than quietly using a wider grant.
+  scope String
+
+  /// The secret. Never logged, never rendered, never in a model prompt.
+  ///
+  /// The repository deliberately has no method that returns a whole row: the
+  /// public read returns a status object with NO token field, and the token has
+  /// exactly one door named after what it is for. That is a shape rather than a
+  /// rule, and it is the only reason `console.log(connection)` is not one
+  /// keystroke from a leak.
+  refreshToken String
+
+  connectedAt DateTime @default(now())
+
+  /// When Google last refused this token, or null.
+  ///
+  /// The ONE failure a person is eventually told about, because it is the one
+  /// they can fix. Set only on an `invalid_grant` — a refusal of the credential
+  /// itself — and never on a timeout, a 5xx or an unparseable body, because a
+  /// flaky network that looked like a revoked grant would send somebody to
+  /// re-authorise something that was working.
+  refreshRejectedAt DateTime?
+
+  updatedAt DateTime @updatedAt
+
+  @@map("calendar_connection")
+}
+
+// ═══════════════════════════════════════ 8. What Propositum measures about itself
+
+/// How often Propositum spoke, and how much watching produced it. One row per
+/// local day, and NOTHING about what any of it was concerned with.
+///
+/// ── The row ADR-0008 refuses, and why this is not it ─────────────────────
+///
+/// [ADR-0008](../docs/adr/0008-ambient-detection.md) makes the ambient buffer
+/// non-durable on purpose, and `src/server/ambient-store.ts` states the reason
+/// in one sentence: *"a durable row saying 'Propositum thought you were
+/// job-hunting' about an offer NOBODY ACCEPTED is exactly the profile this
+/// buffer refuses to become."*
+///
+/// Every word of that sentence is about a SUBJECT. The refused row is refused
+/// because it names what an offer was about — and this table has no column one
+/// could be written in. There is no term, no signature, no origin, no title, no
+/// URL, no id of anything. Four integers and a date: *four offers were shown in
+/// forty observed minutes on the 18th.* Somebody reading this table learns how
+/// loud the product was and cannot learn one thing about the person's work.
+/// `tests/eval.test.ts` holds that as a column-by-column assertion against this
+/// file rather than as an intention, because "we did not add a subject column"
+/// is exactly the promise that erodes one convenient field at a time.
+///
+/// ── Why a day, which is the one genuinely new durable fact ───────────────
+///
+/// A lifetime total would be strictly less to hold, and it was rejected:
+/// `docs/PRODUCT_PRINCIPLES.md` §13's hole is an offer rate *"creeping
+/// upward"*, a total cannot show a change over time, and a metric that cannot
+/// answer the question it was built for is decoration. A trend needs buckets,
+/// so the bucket is the coarsest one that can show a trend at all.
+///
+/// What that does newly record, stated rather than waved past: **which days
+/// this person browsed with the extension running, and roughly how much.** That
+/// is real, and it is the price. It is bounded by being exactly that — an hour
+/// bucket would begin to sketch a daily rhythm, which is a fact about a person
+/// rather than about the product, and there is no version of the creep question
+/// that needs one.
+///
+/// ── MUTABLE, and it gets NO append-only triggers ─────────────────────────
+///
+/// `Project`'s and `Intention`'s reasoning, with one addition. It holds no
+/// inference and carries no provenance, so nothing about it is append-only: no
+/// REQUIRED_GUARDS entry, no triggers.sql change, no row in
+/// tests/append-only.test.ts's hand-maintained checklist.
+///
+/// The addition is that a tally is an aggregate, and an aggregate is a
+/// mutation by construction — every count is an UPDATE to the same row.
+/// Append-only exists so that the record of *what the product did to somebody's
+/// work* cannot be quietly rewritten afterwards. Nothing is audited from this
+/// table, no action is justified by it and no ledger cites it; it is the
+/// product measuring its own loudness. Guarding it would also make it
+/// undeletable, and a counter about a person's browsing that can never be
+/// cleared is more durable than the buffer it counts — which is the wrong way
+/// round.
+model OfferTally {
+  /// The local calendar day, `YYYY-MM-DD`. Local rather than UTC because the
+  /// question is about a person's day of browsing, and UTC splits a Californian
+  /// evening across two rows. See `dayBucket` in `src/server/offer-tally.ts`,
+  /// which is the only writer of this value.
+  day String @id
+
+  /// Distinct minutes in which the extension had something to report while no
+  /// session was running. The DENOMINATOR, and the half of an offer rate that
+  /// is easy to leave out — see `src/eval/offer-rate.ts` for what it is not.
+  observedMinutes Int @default(0)
+
+  /// Strands put in front of the person: rendered on Home, or returned to the
+  /// poll as the one the badge and notification name. Counted once per strand
+  /// per buffer, never once per poll.
+  offersShown Int @default(0)
+
+  /// "Not now", from either decline path — the front door's per-strand one and
+  /// the extension's per-origin one.
+  offersDeclined Int @default(0)
+
+  /// Strands that cleared the detector's bar, survived both snoozes, and were
+  /// cut by `MAX_THREADS_SHOWN` anyway. ADR-0008: a strand found and discarded
+  /// in silence is the failure the multi-strand change existed to remove, and
+  /// the display bound currently does exactly that.
+  strandsSuppressed Int @default(0)
+
+  /// ── There was an `updatedAt DateTime @updatedAt` here, and it is gone ──
+  ///
+  /// *(Removed 2026-08-18, the day it landed, after review.)* It was copied in
+  /// from the model above out of habit — every other table in this schema has
+  /// one — and habit is exactly how the argument three paragraphs up gets
+  /// spent. What it actually held, read back off a real row:
+  /// `2026-08-18|1|6|4|0|1787090190867`, a millisecond instant, which is
+  /// *Tuesday 18 August 2026 at 14:56:30 local*.
+  ///
+  /// `countQuietly` fires on every newly observed minute, every offer shown and
+  /// every decline, so the column held the instant of the day's LAST such
+  /// event — a durable, per-day record of roughly when this person stopped
+  /// browsing. The docblock above refuses an hour bucket because *"an hour
+  /// bucket would begin to sketch a daily rhythm, which is a fact about a
+  /// person rather than about the product"*, and this field was 3,600,000
+  /// times finer than the bucket that argument had already refused.
+  ///
+  /// It was also unread: `all()` selects the five counts and never selected
+  /// this, so deleting it costs no caller. Nothing replaces it. If a
+  /// bookkeeping column is ever genuinely wanted here, the thing to store is
+  /// the day's own bucket string — a value already in the row — and never an
+  /// instant.
+  ///
+  /// The four enumerations that say *"four integers and a date"*
+  /// (`src/persistence/repositories/index.ts`, `src/eval/offer-rate.ts`,
+  /// `src/server/ambient-store.ts`, and the paragraph above) were describing
+  /// the table this now is. `src/server/actions.ts`'s *"no time of day beyond
+  /// the calendar date"* was flatly false while this field existed, and is true
+  /// again. `tests/eval.test.ts`'s column assertion was titled *"the five
+  /// columns"* and listed six; it now lists five and means it.
+  @@map("offer_tally")
 }

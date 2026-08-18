@@ -18,6 +18,7 @@ import {
 } from '../src/server/ambient-store'
 import { WINDOW_MS, detectWork } from '../src/domain/detection/detect'
 import type { AmbientObservation } from '../src/domain/detection/detect'
+import { ambientObservationFields } from './support/ambient-fields'
 
 const T0 = 1_000_000
 const MINUTE = 60_000
@@ -55,6 +56,216 @@ describe('it is bounded, twice', () => {
     const urls = store.since(T0 + MAX_OBSERVATIONS + 5).map((o) => o.url)
     expect(urls).toContain(`/p${MAX_OBSERVATIONS + 4}`)
     expect(urls).not.toContain('/p0')
+  })
+})
+
+/**
+ * Scroll survives the buffer, including the one place a row is rewritten.
+ *
+ * `withCarriedTitle` is the only function that returns a DIFFERENT observation
+ * from the one it was handed, and it does it by spreading. An engagement is both
+ * the only kind that can receive a carried title and the only kind that carries a
+ * scroll fraction, so those two meet on exactly the same rows — and a future
+ * rewrite of that spread into an explicit field list would drop scroll from
+ * every page that was being read hardest, silently, because nothing consults the
+ * field yet and no other test would go red.
+ */
+describe('it carries how far down the page they got', () => {
+  const engaged = (at: number, url: string, scrollFraction: number, title = url): AmbientObservation => ({
+    at,
+    origin: ORIGIN,
+    url,
+    title,
+    kind: 'engagement',
+    engagedMs: 45_000,
+    scrollFraction,
+  })
+
+  it('holds it unchanged through record and since', () => {
+    const store = createAmbientStore()
+    store.record(engaged(T0, '/a', 0.62), T0)
+
+    expect(store.since(T0).map((o) => o.scrollFraction)).toEqual([0.62])
+  })
+
+  it('keeps it when a titleless engagement inherits a title', () => {
+    // The rewrite path. The engagement arrives with no title, takes the
+    // navigation's, and must still be the row it was in every other respect.
+    const store = createAmbientStore()
+    store.record(obs(T0, '/a'), T0)
+    store.record(engaged(T0 + 1_000, '/a', 0.81, ''), T0 + 1_000)
+
+    const carried = store.since(T0 + 1_000).find((o) => o.kind === 'engagement')
+
+    expect(carried?.title).toBe('/a')
+    expect(carried?.scrollFraction).toBe(0.81)
+    expect(carried?.engagedMs).toBe(45_000)
+  })
+
+  it('leaves it absent on the kinds that have none', () => {
+    // A navigation has nothing to say about scrolling, and absent must not
+    // become zero — zero is a real reading.
+    const store = createAmbientStore()
+    store.record(obs(T0, '/a'), T0)
+
+    expect(store.since(T0)[0]?.scrollFraction).toBeUndefined()
+  })
+
+  it('is forgotten with everything else', () => {
+    // It is metadata about somebody's reading, so it lives under the same rules
+    // as the rest of the buffer and gets no exemption from clear().
+    const store = createAmbientStore()
+    store.record(engaged(T0, '/a', 0.62), T0)
+    store.clear()
+
+    expect(store.since(T0)).toEqual([])
+  })
+
+  it('goes out of the window with the row it sits on', () => {
+    const store = createAmbientStore()
+    store.record(engaged(T0, '/a', 0.62), T0)
+
+    expect(store.since(T0 + WINDOW_MS + 1)).toEqual([])
+  })
+
+  it('is carried into a session by the paths that fold the buffer in', () => {
+    // `forOrigin` and `forUrls` are what the accept path reads, so a field the
+    // buffer holds and those drop would be a signal that exists only until
+    // somebody says yes.
+    const store = createAmbientStore()
+    store.record(engaged(T0, '/a', 0.62), T0)
+
+    expect(store.forOrigin(ORIGIN, T0).map((o) => o.scrollFraction)).toEqual([0.62])
+    expect(store.forUrls(['/a'], T0).map((o) => o.scrollFraction)).toEqual([0.62])
+  })
+})
+
+/**
+ * How the page was arrived at survives the buffer, and the referrer never enters it.
+ *
+ * `arrival` sits on the opposite kind from scroll: it is a fact about a
+ * NAVIGATION, not about an engagement report, so it never meets
+ * `withCarriedTitle`'s rewrite — that function returns early for anything that
+ * is not an engagement. The block above is about a field the rewrite could drop;
+ * this one is about a field it cannot reach, and the assertion that the row is
+ * returned identically is what says so.
+ *
+ * The last test is the one that matters most and it is not about this file's
+ * behaviour: it is about the shape of `AmbientObservation`. There is no field
+ * for a referrer, so the buffer that watches while nobody asked cannot hold the
+ * URL of a page somebody came from even by mistake.
+ */
+describe('it carries how the page was arrived at', () => {
+  const arrivedAt = (at: number, url: string, arrival: AmbientObservation['arrival']): AmbientObservation => ({
+    at,
+    origin: ORIGIN,
+    url,
+    title: url,
+    kind: 'navigation',
+    arrival,
+  })
+
+  it('holds it unchanged through record and since', () => {
+    const store = createAmbientStore()
+    store.record(arrivedAt(T0, '/a', 'cross-origin'), T0)
+
+    expect(store.since(T0).map((o) => o.arrival)).toEqual(['cross-origin'])
+  })
+
+  it('is untouched by the title carry-forward, which only rewrites engagements', () => {
+    const store = createAmbientStore()
+    const navigation = arrivedAt(T0, '/a', 'no-referrer')
+    store.record(navigation, T0)
+
+    // The same object back, not a reconstruction of it.
+    expect(store.since(T0)[0]).toEqual(navigation)
+  })
+
+  it('leaves it absent on the kinds that have none', () => {
+    // An engagement report is not an arrival, and neither is `away`. Absent must
+    // stay absent rather than defaulting to the member that reads as intent.
+    const store = createAmbientStore()
+    store.record(obs(T0, '/a'), T0)
+
+    expect(store.since(T0)[0]?.arrival).toBeUndefined()
+  })
+
+  it('is forgotten with everything else', () => {
+    const store = createAmbientStore()
+    store.record(arrivedAt(T0, '/a', 'same-origin'), T0)
+    store.clear()
+
+    expect(store.since(T0)).toEqual([])
+  })
+
+  it('is carried into a session by the paths that fold the buffer in', () => {
+    const store = createAmbientStore()
+    store.record(arrivedAt(T0, '/a', 'reloaded'), T0)
+
+    expect(store.forOrigin(ORIGIN, T0).map((o) => o.arrival)).toEqual(['reloaded'])
+    expect(store.forUrls(['/a'], T0).map((o) => o.arrival)).toEqual(['reloaded'])
+  })
+
+  it('has no field for the referrer the classification was computed from', () => {
+    /**
+     * Structural, like `the detector cannot see page text` — and REWRITTEN
+     * 2026-08-18, because both of them asserted nothing.
+     *
+     * ~~The old body built an `AmbientObservation` literal and then checked
+     * `Object.keys` of the literal it had just built.~~ That can only fail if
+     * somebody edits this test. Proved by adding `readonly referrer?: string |
+     * undefined` to `AmbientObservation`: 51 files and 1,496 tests green, `tsc
+     * --noEmit` clean. An optional field is precisely the case a literal cannot
+     * see, and an optional field is what would actually be added.
+     *
+     * So this now reads the DECLARATION, and asserts the complete field list
+     * rather than a subset — a subset check passes on a field it does not know
+     * to look for, which is the same hole in a smaller form.
+     *
+     * The promise: the session path stores a cleaned referrer URL because a
+     * session is consented and its rows are auditable; this buffer is what was
+     * seen while nobody asked, so it gets the word and never the URL. Adding a
+     * field here is a change to that promise, and it has to turn this red
+     * first.
+     */
+    expect(ambientObservationFields()).toEqual([
+      'arrival',
+      'at',
+      'engagedMs',
+      'exitType',
+      'groupTitle',
+      'kind',
+      'origin',
+      'scrollFraction',
+      'title',
+      'url',
+    ])
+  })
+
+  it('cannot be given a referrer field without failing to compile', () => {
+    /**
+     * The second half, and the sharper one. `npm test` does not typecheck, so
+     * the assertion above goes red under `vitest` and this one goes red under
+     * `npm run typecheck` — two commands, one promise, and neither of them
+     * alone.
+     *
+     * `[Extract<…>] extends [never]` rather than a bare conditional: a
+     * conditional over `never` distributes and collapses to `never`, so the
+     * naive spelling would be trivially satisfied. The tuple stops the
+     * distribution.
+     *
+     * `navigationType` is in the list beside `referrer` because it rides the
+     * same message from `content.js`, is stripped in the same destructure in
+     * the extension's service worker, and is the other half of what the ambient
+     * path deliberately does not receive.
+     */
+    const noUrlOfWhereTheyCameFrom: [
+      Extract<keyof AmbientObservation, 'referrer' | 'navigationType'>,
+    ] extends [never]
+      ? true
+      : never = true
+
+    expect(noUrlOfWhereTheyCameFrom).toBe(true)
   })
 })
 
@@ -458,6 +669,123 @@ describe('what the offer says', () => {
     expect(describeWork(detected, signatureOf(detected.terms)).because.length).toBeGreaterThan(0)
   })
 
+  /**
+   * The one thing that consumes a tab group title. ADR-0013.
+   *
+   * `describeWork` is where a thread gets its deterministic sentence, and where
+   * the person's own label displaces a bag of stemmed words. Everything about
+   * that consumption is here because this is its only site: no ground reads it,
+   * no model boundary is given it, and `signatureOf` is computed from `terms`.
+   */
+  describe('and what it calls the work when the person named it themselves', () => {
+    const grouped = working.map((o) => ({ ...o, groupTitle: 'Q3 partner review' }))
+
+    it('uses the label the person typed, in place of the recurring words', () => {
+      const detected = detectWork(grouped, T0 + 5)
+      if (!detected) throw new Error('expected a detection')
+
+      const suggestion = describeWork(detected, signatureOf(detected.terms))
+
+      expect(suggestion.sentence).toBe('You have been looking into Q3 partner review.')
+    })
+
+    it('keeps the same frame as the term list, rather than claiming a reading', () => {
+      // "You have been looking into X" is a statement about what was observed;
+      // "Looks like you're working on X" is a conclusion, and it is reserved for
+      // a model that said it was confident. A group title is observed.
+      const detected = detectWork(grouped, T0 + 5)!
+
+      expect(describeWork(detected, signatureOf(detected.terms)).sentence).toMatch(
+        /^You have been looking into /,
+      )
+    })
+
+    it('does not displace a confident model name, which is the arguable half', () => {
+      /**
+       * `docs/research/intent-signals.md` §4.3 argues the other way — an
+       * authored label has no confidence flag and cannot be confidently wrong —
+       * and `describeWork`'s docblock records why the ordering went this way
+       * anyway. Pinned here so that reversing the ordering is a decision
+       * somebody makes rather than an edit nobody notices.
+       */
+      const detected = detectWork(grouped, T0 + 5)!
+
+      const suggestion = describeWork(detected, signatureOf(detected.terms), {
+        signature: signatureOf(detected.terms),
+        subject: 'the Q3 partner review deck',
+        confident: true,
+      })
+
+      expect(suggestion.sentence).toBe("Looks like you're working on the Q3 partner review deck.")
+    })
+
+    it('does displace an UNconfident model name, exactly as the term list would', () => {
+      // An unconfident name is not shown at all — that branch is about the
+      // model, not about this field — so the label competes with the words and
+      // wins, which is the whole change.
+      const detected = detectWork(grouped, T0 + 5)!
+
+      const suggestion = describeWork(detected, signatureOf(detected.terms), {
+        signature: signatureOf(detected.terms),
+        subject: 'something the model was unsure about',
+        confident: false,
+      })
+
+      expect(suggestion.sentence).toBe('You have been looking into Q3 partner review.')
+    })
+
+    it('changes the sentence and nothing else in the suggestion', () => {
+      /**
+       * The containment claim, in the form a reader cares about: the offer's
+       * identity, the sites it would approve, the terms, and the evidence line
+       * are all identical. Only the sentence moves.
+       *
+       * `thread` is the sharpest of those. It is `signatureOf(detected.terms)`,
+       * it keys the offer cache and it becomes a durable column on acceptance —
+       * so a group title that could move it would mean renaming a tab group
+       * silently changed the identity of work in progress.
+       */
+      const plain = detectWork(working, T0 + 5)!
+      const labelled = detectWork(grouped, T0 + 5)!
+
+      const before = describeWork(plain, signatureOf(plain.terms))
+      const after = describeWork(labelled, signatureOf(labelled.terms))
+
+      expect(after.sentence).not.toBe(before.sentence)
+
+      const { sentence: _a, detected: afterDetected, ...afterRest } = after as Extract<
+        typeof after,
+        { kind: 'start-session' }
+      >
+      const { sentence: _b, detected: beforeDetected, ...beforeRest } = before as Extract<
+        typeof before,
+        { kind: 'start-session' }
+      >
+      void _a
+      void _b
+
+      expect(afterRest).toEqual(beforeRest)
+      // ...and inside `detected`, only the label itself differs.
+      const { authoredLabel, ...afterWork } = afterDetected
+      const { authoredLabel: none, ...beforeWork } = beforeDetected
+      expect(authoredLabel).toBe('Q3 partner review')
+      expect(none).toBeUndefined()
+      expect(afterWork).toEqual(beforeWork)
+    })
+
+    it('falls back to the words when the label is nothing but space', () => {
+      // The door already strips this, and the store's own guard is the second
+      // bound. A label of spaces rendered as a name reads as the product losing
+      // its place mid-sentence.
+      const detected = detectWork(working, T0 + 5)!
+      const blank = { ...detected, authoredLabel: '   ' }
+
+      expect(describeWork(blank, signatureOf(blank.terms)).sentence).toBe(
+        describeWork(detected, signatureOf(detected.terms)).sentence,
+      )
+    })
+  })
+
   it('describes a pause in the person’s terms, not the clock’s', () => {
     const suggestion = describePause({ idleForMs: 5 * 60_000, workedMs: 12 * 60_000, since: T0 })
 
@@ -527,5 +855,114 @@ describe('a call landing after the buffer was cleared', () => {
 
     expect(store.attemptedNaming('parcel+rates')).toBe(true)
     expect(store.isNaming('parcel+rates')).toBe(false)
+  })
+})
+
+/**
+ * The three markers that let a count be taken once.
+ *
+ * ── What is being defended ───────────────────────────────────────────────
+ *
+ * `docs/PRODUCT_PRINCIPLES.md` §13's honest limit was that *"there is no metric
+ * anywhere that would catch an offer rate creeping upward"*. The counts live in
+ * `offer_tally`; what lives here is the only reason those counts mean anything
+ * — a strand is counted ONCE however many times it is re-detected, and a minute
+ * of watching is counted once however many batches arrive in it.
+ *
+ * Get either wrong and the metric is not slightly off, it is a different
+ * number: the poll re-detects the same afternoon every thirty seconds, so an
+ * undeduplicated showing would report one offer as a hundred and twenty.
+ *
+ * The other half is which markers `clear()` takes. A signature IS a subject, so
+ * both signature sets go with the names and the offers; the minute is a number
+ * about a clock and stays, because losing it would let one minute be counted
+ * twice and a doubled denominator LOWERS a reported offer rate. Every rounding
+ * in this measurement has to point the same way — toward reporting that
+ * Propositum spoke more than you thought, never less.
+ */
+describe('counting an offer without recording what it was about', () => {
+  it('reports a strand as new exactly once', () => {
+    const store = createAmbientStore()
+
+    expect(store.newlyShown('kalman+filter')).toBe(true)
+    expect(store.newlyShown('kalman+filter')).toBe(false)
+    expect(store.newlyShown('kalman+filter')).toBe(false)
+  })
+
+  it('keeps showing and suppressing apart, because one strand can be both', () => {
+    const store = createAmbientStore()
+
+    // Cut by the display bound on one render; promoted onto the screen when the
+    // strand ahead of it is declined. That is one suppression and one showing,
+    // and a shared marker would hide the second.
+    expect(store.newlySuppressed('rust+async')).toBe(true)
+    expect(store.newlyShown('rust+async')).toBe(true)
+
+    expect(store.newlySuppressed('rust+async')).toBe(false)
+    expect(store.newlyShown('rust+async')).toBe(false)
+  })
+
+  it('forgets both signature markers on clear, with everything else keyed by signature', () => {
+    const store = createAmbientStore()
+    store.newlyShown('kalman+filter')
+    store.newlySuppressed('rust+async')
+
+    // A person accepted an offer, or declined one.
+    store.clear()
+
+    // The over-count this buys, named in `newlyShown`'s own doc: a strand
+    // detected again after a clear is counted again, because this object cannot
+    // know it is the same strand and must not be able to.
+    expect(store.newlyShown('kalman+filter')).toBe(true)
+    expect(store.newlySuppressed('rust+async')).toBe(true)
+  })
+
+  it('counts a minute of observed browsing once, however many batches arrive in it', () => {
+    const store = createAmbientStore()
+    // Aligned to a minute boundary, because the unit is `floor(ms / 60000)` and
+    // an unaligned base would put "59 seconds later" in the next minute — which
+    // is correct behaviour and a fixture that tested the wrong thing.
+    const onTheMinute = Math.floor(T0 / MINUTE) * MINUTE
+
+    expect(store.newlyObservedMinute(onTheMinute)).toBe(true)
+    expect(store.newlyObservedMinute(onTheMinute + 1_000)).toBe(false)
+    expect(store.newlyObservedMinute(onTheMinute + 59_000)).toBe(false)
+    expect(store.newlyObservedMinute(onTheMinute + MINUTE)).toBe(true)
+  })
+
+  it('keeps the minute across a clear, because a doubled denominator quiets the metric', () => {
+    const store = createAmbientStore()
+    store.newlyObservedMinute(T0)
+
+    store.clear()
+
+    // The one marker `clear()` does not take. It names no page, no site and no
+    // subject — it is a minute number, and `generation` is the precedent for
+    // something surviving a clear because something has to.
+    expect(store.newlyObservedMinute(T0)).toBe(false)
+    expect(store.newlyObservedMinute(T0 + MINUTE)).toBe(true)
+  })
+
+  it('refuses a minute at or before the last one, so a backwards clock loses rather than doubles', () => {
+    const store = createAmbientStore()
+    expect(store.newlyObservedMinute(T0 + 10 * MINUTE)).toBe(true)
+
+    // An NTP correction, or a laptop waking up.
+    expect(store.newlyObservedMinute(T0)).toBe(false)
+    expect(store.newlyObservedMinute(T0 + 10 * MINUTE)).toBe(false)
+  })
+
+  it('holds no counts of its own, because a tally that dies with the process answers nothing', () => {
+    const store = createAmbientStore()
+    store.newlyShown('kalman+filter')
+    store.newlySuppressed('rust+async')
+    store.newlyObservedMinute(T0)
+
+    // Nothing here totals anything. `size()` is the buffer's row count and is
+    // the only number this object has ever reported. The counts live in
+    // `offer_tally`, one row per day, because an offer rate creeping upward is
+    // only visible across days and this object does not survive one.
+    const numbers = Object.entries(store).filter(([, value]) => typeof value === 'number')
+    expect(numbers).toEqual([])
   })
 })

@@ -18,10 +18,13 @@ import {
   WINDOW_MS,
   WORKED_MS_FOR_HANDOFF,
   detectPause,
+  detectThreads,
   detectWork,
   threadPagesOf,
 } from '../src/domain/detection/detect'
-import type { AmbientObservation } from '../src/domain/detection/detect'
+import type { AmbientObservation, Arrival, ExitType } from '../src/domain/detection/detect'
+import { DEEP_READ_MS, READ_AROUND_MS, groundsFor } from '../src/domain/detection/grounds'
+import { ambientObservationFields } from './support/ambient-fields'
 
 const T0 = 1_000_000
 
@@ -339,18 +342,469 @@ describe('a natural stopping point', () => {
   })
 })
 
-describe('the detector cannot see page text', () => {
-  it('has no field that could carry it', () => {
-    // Structural, not a convention. If someone adds one, this fails and they
-    // have to argue for it — ambient capture is metadata only.
-    const observation: AmbientObservation = {
-      at: T0,
-      origin: 'https://northwind.example.com',
-      url: '/a',
-      title: 'Partners',
-      kind: 'navigation',
-    }
+/**
+ * An afternoon that clears the offer bar, so a comparison is between two real
+ * answers rather than two nulls.
+ *
+ * ── Hoisted to module scope 2026-08-17 (ADR-0013), deliberately ──────────
+ *
+ * Three blocks now measure a signal against it — scroll and exit type, both
+ * carried and not consulted, and the tab group title, whose one permitted
+ * consumption is the sentence. The alternative was three copies of eleven
+ * observations drifting apart. One fixture is one thing to keep honest, and
+ * every block below re-asserts that it still qualifies rather than assuming it.
+ *
+ * ── Widened 2026-08-17, twice over, after review ─────────────────────────
+ *
+ * The first version was three origins with one page each and about four
+ * minutes of reading, and it was too small in two ways that both made
+ * assertions quietly weaker than they read:
+ *
+ *  - **`read-around` never fired.** It wants `PAGES_ON_ONE_ORIGIN` pages on a
+ *    single origin, each held past `READ_AROUND_MS`, and one page per origin
+ *    can never satisfy it. That is the ground the deferral is *about*: a
+ *    scroll fraction would be consulted there first, so an equality that
+ *    cannot see `read-around` cannot see the change it is guarding against.
+ *    `a.example` now has three pages.
+ *  - **`detectPause` returned `null` on both sides**, so the stopping-point
+ *    test asserted `null === null`. `WORKED_MS_FOR_HANDOFF` is ten minutes and
+ *    the fixture held four. The engagement figures below total eleven, which
+ *    clears it with room and leaves every other bar in the same place.
+ */
+const afternoon: AmbientObservation[] = [
+  { at: T0, origin: 'https://www.google.com', url: 'https://www.google.com/search?q=world+models', title: 'world models - Google Search', kind: 'query' },
+  { at: T0 + 1_000, origin: 'https://a.example', url: 'https://a.example/1', title: 'World Models Survey', kind: 'navigation' },
+  { at: T0 + 2_000, origin: 'https://a.example', url: 'https://a.example/1', title: 'World Models Survey', kind: 'engagement', engagedMs: DEEP_READ_MS * 3 },
+  { at: T0 + 3_000, origin: 'https://a.example', url: 'https://a.example/2', title: 'World Models Benchmarks', kind: 'navigation' },
+  { at: T0 + 4_000, origin: 'https://a.example', url: 'https://a.example/2', title: 'World Models Benchmarks', kind: 'engagement', engagedMs: READ_AROUND_MS * 3 },
+  { at: T0 + 5_000, origin: 'https://a.example', url: 'https://a.example/3', title: 'World Models Criticism', kind: 'navigation' },
+  { at: T0 + 6_000, origin: 'https://a.example', url: 'https://a.example/3', title: 'World Models Criticism', kind: 'engagement', engagedMs: READ_AROUND_MS * 3 },
+  { at: T0 + 7_000, origin: 'https://b.example', url: 'https://b.example/1', title: 'World Models Explained', kind: 'navigation' },
+  { at: T0 + 8_000, origin: 'https://b.example', url: 'https://b.example/1', title: 'World Models Explained', kind: 'engagement', engagedMs: DEEP_READ_MS * 3 },
+  { at: T0 + 9_000, origin: 'https://c.example', url: 'https://c.example/1', title: 'Training World Models', kind: 'navigation' },
+  { at: T0 + 10_000, origin: 'https://c.example', url: 'https://c.example/1', title: 'Training World Models', kind: 'engagement', engagedMs: DEEP_READ_MS * 3 },
+]
 
-    expect(Object.keys(observation).sort()).toEqual(['at', 'kind', 'origin', 'title', 'url'])
+/**
+ * Scroll arrives, and nothing about the answer moves.
+ *
+ * `scrollFraction` landed on `AmbientObservation` on 2026-08-17 after being
+ * computed by `content.js` and dropped on arrival for the whole build. Carrying
+ * a signal and consulting it are two decisions, and only the first was taken —
+ * the research that motivated it (`docs/research/intent-suggestion-quality.md`)
+ * was recorded as honest limits WITHOUT retuning any constant. ADR-0013 then
+ * added the missing producer line, so the field now arrives from a browser
+ * rather than only from a `curl`; nothing about this block changes, because
+ * what it guards is the consumption and not the transport.
+ *
+ * So this is the guard on that promise, and it is deliberately not a grep.
+ * `tests/reachability.test.ts` asserts that no file under `src/domain/detection`
+ * mentions the field; this asserts the thing anybody actually cares about, which
+ * is that the same afternoon produces the same detection and the same grounds
+ * whether or not the scroll is there. The two catch different mistakes: a grep
+ * would miss a consumer that reached the value through a spread, and this would
+ * miss a consumer whose effect happens to be nil on one fixture.
+ *
+ * ADR-0008 names the false positive as the expensive failure, so what must be
+ * pinned is that a plumbing change moved no bar in either direction.
+ */
+describe('landing scroll changes no detection outcome', () => {
+  const NOW = T0 + 10 * 60_000
+
+  /**
+   * The same afternoon, with scroll on every engagement.
+   *
+   * Deliberately a value a consumer would be tempted to threshold on: 0.05 is
+   * "they read the first screenful and stopped", which is the case
+   * `READ_AROUND_MS`'s own docstring admits it cannot refuse. If anything starts
+   * reading this field, this is the buffer whose answer changes first.
+   */
+  const scrolled: AmbientObservation[] = afternoon.map((o) =>
+    o.kind === 'engagement' ? { ...o, scrollFraction: 0.05 } : o,
+  )
+
+  const groundsOf = (observations: readonly AmbientObservation[]) => {
+    const detected = detectWork(observations, NOW)
+    expect(detected, 'the fixture stopped qualifying — this test is comparing two nulls').not.toBeNull()
+    return groundsFor(detected!, threadPagesOf(observations, detected!, NOW))
+  }
+
+  it('detects the same thread', () => {
+    expect(detectWork(scrolled, NOW)).toEqual(detectWork(afternoon, NOW))
+  })
+
+  it('detects the same strands, in the same order', () => {
+    expect(detectThreads(scrolled, NOW)).toEqual(detectThreads(afternoon, NOW))
+  })
+
+  it('builds the same pages, so ThreadPage gained nothing to threshold on', () => {
+    const detected = detectWork(afternoon, NOW)!
+    expect(threadPagesOf(scrolled, detected, NOW)).toEqual(threadPagesOf(afternoon, detected, NOW))
+  })
+
+  it('computes the same grounds, kinds sentences and sufficiency alike', () => {
+    const without = groundsOf(afternoon)
+
+    // Non-vacuous: a fixture that fires nothing would make the equality below
+    // true for the wrong reason. `read-around` is named explicitly because it is
+    // the ground a scroll fraction would be consulted by first — an equality
+    // over a grounds set that does not contain it is not guarding the thing this
+    // block is about.
+    expect(without.kinds).toContain('read-around')
+    expect(without.kinds.length).toBeGreaterThan(0)
+    expect(groundsOf(scrolled)).toEqual(without)
+  })
+
+  it('finds the same stopping point', () => {
+    const paused = [...afternoon, { at: T0 + 10_000, origin: 'https://c.example', url: 'https://c.example/1', title: '', kind: 'away' } as const]
+    const scrolledPause = paused.map((o) =>
+      o.kind === 'engagement' ? { ...o, scrollFraction: 0.05 } : o,
+    )
+
+    const without = detectPause(paused, NOW)
+
+    // The guard the other two assertions in this block already had and this one
+    // did not: `detectPause` returned `null` on both sides of the original
+    // fixture, so this read `expect(null).toEqual(null)` and would have stayed
+    // green through any change to `detectPause` whatsoever.
+    expect(without, 'the fixture stopped pausing — this test is comparing two nulls').not.toBeNull()
+    expect(detectPause(scrolledPause, NOW)).toEqual(without)
+  })
+})
+
+/**
+ * A tab group title arrives, and only the NAME moves. ADR-0013.
+ *
+ * ── What is being guarded, and why it is the load-bearing claim ──────────
+ *
+ * `docs/research/intent-signals.md` §4.3 argues that a group title is the best
+ * signal available to this product, and it argues just as hard for the limit:
+ * *"It should raise confidence and never gate detection."* The manifest pays a
+ * real install warning — *"View and manage your tab groups"* — on the strength
+ * of that limit, so the limit has to be a fact rather than an intention.
+ *
+ * The specific hazard is not subtle. A group title is on EVERY page in the
+ * group by construction. If it reached `ThreadPage.terms` it would supply a
+ * seed term, the `ORIGINS_FOR_THREAD` origin count and the `PAGES_FOR_THREAD`
+ * page count in one move — manufacturing a thread out of the fact that
+ * somebody tidied their tabs, which is the same failure `vocabularyOf`'s rule 2
+ * spends its length preventing for a one-edit typo, arriving through a wider
+ * door.
+ *
+ * So this asserts byte-equality of everything the offer bar is computed from,
+ * against a buffer that differs only by a label somebody typed — and then
+ * asserts, separately, that the label did reach the one place it is allowed to
+ * (`WorkDetected.authoredLabel`), so the equalities above are not green because
+ * the field went nowhere at all.
+ */
+describe('a tab group title changes the name and nothing else', () => {
+  const NOW = T0 + 10 * 60_000
+
+  /** The same qualifying afternoon the scroll block uses, and deliberately so:
+   *  two deferrals and one consumption measured against one fixture is one
+   *  fixture to keep honest. */
+  const grouped: AmbientObservation[] = afternoon.map((o) => ({
+    ...o,
+    groupTitle: 'Q3 world-model review',
+  }))
+
+  const groundsOf = (observations: readonly AmbientObservation[]) => {
+    const detected = detectWork(observations, NOW)
+    expect(detected, 'the fixture stopped qualifying — this test is comparing two nulls').not.toBeNull()
+    return groundsFor(detected!, threadPagesOf(observations, detected!, NOW))
+  }
+
+  it('computes byte-identical grounds, kinds sentences and sufficiency alike', () => {
+    const without = groundsOf(afternoon)
+
+    // Non-vacuous, the same way the scroll block is: an equality over a grounds
+    // set that fires nothing would be true for the wrong reason.
+    expect(without.kinds.length).toBeGreaterThan(0)
+    expect(without.sufficient, 'the fixture stopped clearing the offer bar').toBe(true)
+    expect(groundsOf(grouped)).toEqual(without)
+  })
+
+  it('forms the same threads, in the same order, out of the same pages', () => {
+    // `authoredLabel` is the one field expected to differ, so it is stripped
+    // before comparing. Everything else — terms, labels, origins, page counts,
+    // searches, dwell, urls, `because` — must be identical, because every one
+    // of them feeds either the bar or the signature.
+    const strip = (found: ReturnType<typeof detectThreads>) =>
+      found.map(({ authoredLabel, ...rest }) => {
+        void authoredLabel
+        return rest
+      })
+
+    expect(strip(detectThreads(grouped, NOW))).toEqual(strip(detectThreads(afternoon, NOW)))
+  })
+
+  it('never lets the label into the terms that seed a thread or key a signature', () => {
+    // The specific hazard, checked directly rather than inferred from the
+    // equality above. "review" is a word in the group title and in no page
+    // title, so its presence in `terms` would be proof the label leaked.
+    const detected = detectWork(grouped, NOW)!
+
+    expect(detected.terms).not.toContain('review')
+    expect(detected.terms.join(' ')).not.toContain('q3')
+
+    for (const page of threadPagesOf(grouped, detected, NOW)) {
+      expect([...page.terms]).not.toContain('review')
+    }
+  })
+
+  it('does reach the name, so the equalities above are not green for nothing', () => {
+    expect(detectWork(grouped, NOW)?.authoredLabel).toBe('Q3 world-model review')
+    expect(detectWork(afternoon, NOW)?.authoredLabel).toBeUndefined()
+  })
+
+  it('cannot make an afternoon qualify that would not have qualified', () => {
+    /**
+     * The claim in the form somebody actually cares about.
+     *
+     * Three pages across three origins sharing NO subject word — the election,
+     * a lasagne recipe and the weather, which is the fixture `topics.test.ts`
+     * uses for "unrelated browsing produces nothing". Dropped into one tab group
+     * called "world models" they suddenly share a human-authored phrase, and if
+     * that phrase reached `terms` it would supply the seed term, the
+     * `ORIGINS_FOR_THREAD` origin count and the `PAGES_FOR_THREAD` page count in
+     * one move. Every threshold in the detector would be cleared by the fact
+     * that somebody tidied their tabs.
+     *
+     * The dwell is deliberately far past `ENGAGED_MS_FOR_WORK`, so the ONLY
+     * thing standing between this buffer and an offer is that the label is not
+     * a term.
+     */
+    const tidiedTabs: AmbientObservation[] = [
+      { at: T0, origin: 'https://news.example', url: 'https://news.example/1', title: 'Election Results', kind: 'navigation', groupTitle: 'world models' },
+      { at: T0 + 1_000, origin: 'https://news.example', url: 'https://news.example/1', title: 'Election Results', kind: 'engagement', engagedMs: DEEP_READ_MS * 9, groupTitle: 'world models' },
+      { at: T0 + 2_000, origin: 'https://recipes.example', url: 'https://recipes.example/1', title: 'Lasagne', kind: 'navigation', groupTitle: 'world models' },
+      { at: T0 + 3_000, origin: 'https://recipes.example', url: 'https://recipes.example/1', title: 'Lasagne', kind: 'engagement', engagedMs: DEEP_READ_MS * 9, groupTitle: 'world models' },
+      { at: T0 + 4_000, origin: 'https://weather.example', url: 'https://weather.example/1', title: 'Forecast', kind: 'navigation', groupTitle: 'world models' },
+      { at: T0 + 5_000, origin: 'https://weather.example', url: 'https://weather.example/1', title: 'Forecast', kind: 'engagement', engagedMs: DEEP_READ_MS * 9, groupTitle: 'world models' },
+    ]
+
+    expect(detectWork(tidiedTabs, NOW)).toBeNull()
+    expect(detectThreads(tidiedTabs, NOW)).toEqual([])
+  })
+
+  it('picks the label most of the thread carries, and the same one every time', () => {
+    /**
+     * Determinism, because the sentence is re-rendered on every thirty-second
+     * poll and a name that flaps reads as a system making things up. This is the
+     * same failure `findThreads` was caught by when it took the first spelling
+     * it met and rendered a thread as "robotcs".
+     */
+    const split = afternoon.map((o, index) =>
+      index < 4 ? { ...o, groupTitle: 'reading' } : { ...o, groupTitle: 'world models' },
+    )
+
+    expect(detectWork(split, NOW)?.authoredLabel).toBe('world models')
+    // And again, from the same buffer, unchanged.
+    expect(detectWork(split, NOW)?.authoredLabel).toBe('world models')
+  })
+})
+
+/**
+ * The exit type arrives, and nothing at all moves. ADR-0013.
+ *
+ * The same guard as the scroll block above and for the same reason: it is
+ * carried and deliberately not consulted. `AmbientObservation.exitType` argues
+ * the deferral at length — the short version is that Fox et al.'s evidence
+ * turns on separating a return from an onward navigation, and that distinction
+ * lives INSIDE our `'left-unloaded'`, which a content script cannot split
+ * without `tabs` or `webNavigation`.
+ *
+ * `tests/reachability.test.ts` greps for a reader. This asserts the thing
+ * anybody cares about, which is that the same afternoon produces the same
+ * answer either way. The two catch different mistakes.
+ */
+/**
+ * Every member of the enum, and exhaustive by construction.
+ *
+ * WAS one fixture setting `'left-unloaded'` on every engagement, and CORRECTED
+ * 2026-08-17: an equality that only ever sees one of three values cannot report
+ * itself as covering the enum. A consumer keyed on `'hidden'` — the value the
+ * new `visibilitychange` reporter emits most, and the commonest exit there is —
+ * never appeared on either side of the old comparison, and one added to
+ * `pagesOf` passed the whole suite green.
+ *
+ * The `Record<ExitType, …>` is what keeps this honest as the type changes: a
+ * fourth member added to `ExitType` fails `npm run typecheck` here rather than
+ * quietly going unexercised, which is the same failure in a slower disguise.
+ */
+const EVERY_EXIT_TYPE: Record<ExitType, true> = {
+  hidden: true,
+  'left-cached': true,
+  'left-unloaded': true,
+}
+
+describe.each(Object.keys(EVERY_EXIT_TYPE) as ExitType[])(
+  'landing the exit type changes no detection outcome (%s)',
+  (exitType) => {
+    const NOW = T0 + 10 * 60_000
+
+    /** The same afternoon, differing only by how each page was left. If anything
+     *  starts reading this field, one of these three runs is the buffer whose
+     *  answer changes first — `'left-unloaded'` is Fox's dissatisfaction node
+     *  and `'hidden'` is the value a tab switch produces. */
+    const exited: AmbientObservation[] = afternoon.map((o) =>
+      o.kind === 'engagement' ? { ...o, exitType } : o,
+    )
+
+    it('detects the same strands, in the same order', () => {
+      expect(detectThreads(exited, NOW)).toEqual(detectThreads(afternoon, NOW))
+    })
+
+    it('builds the same pages, so ThreadPage gained nothing to threshold on', () => {
+      const detected = detectWork(afternoon, NOW)!
+      expect(threadPagesOf(exited, detected, NOW)).toEqual(threadPagesOf(afternoon, detected, NOW))
+    })
+
+    it('computes the same grounds, kinds sentences and sufficiency alike', () => {
+      const detected = detectWork(afternoon, NOW)!
+      const without = groundsFor(detected, threadPagesOf(afternoon, detected, NOW))
+
+      expect(without.kinds.length).toBeGreaterThan(0)
+
+      // Non-vacuous, and it is the assertion that catches a consumer which
+      // zeroes the afternoon rather than merely re-scoring it: two nulls compare
+      // equal, and a thrown non-null assertion is a worse error message than
+      // this one.
+      const withExit = detectWork(exited, NOW)
+      expect(
+        withExit,
+        `the fixture stopped qualifying once every page was left '${exitType}' — something reads exitType`,
+      ).not.toBeNull()
+
+      expect(groundsFor(withExit!, threadPagesOf(exited, withExit!, NOW))).toEqual(without)
+    })
+  },
+)
+
+/**
+ * The arrival classification lands, and nothing at all moves.
+ *
+ * The third signal carried and not consulted, after scroll and exit type, and
+ * the third block of this shape. `AmbientObservation.arrival` argues the
+ * deferral; the short version is the one that would actually bite. A
+ * `'no-referrer'` arrival reads as *the person chose this*, and it is produced
+ * both by somebody typing an address AND by a followed link whose page stripped
+ * its referrer — which newsletters and mail clients do. So the value that looks
+ * most like intent is produced by the exact afternoon `grounds.ts` exists to
+ * refuse, and by every omnibox search besides.
+ *
+ * The pairing with `tests/reachability.test.ts` is the same as for the other
+ * two. That file greps for a reader; this one asserts the thing anybody cares
+ * about, which is that the same afternoon produces the same answer either way.
+ * A grep cannot see a consumer that reaches the field through a helper, and an
+ * equality cannot see a reader that happens not to change this fixture.
+ */
+/**
+ * Every member of the enum, exhaustive by construction.
+ *
+ * The `Record<Arrival, …>` is what keeps this honest: a sixth member added to
+ * `Arrival` fails `npm run typecheck` here rather than quietly going
+ * unexercised. That is the correction `EVERY_EXIT_TYPE` above had to be given
+ * after shipping with one value.
+ */
+const EVERY_ARRIVAL: Record<Arrival, true> = {
+  'no-referrer': true,
+  'same-origin': true,
+  'cross-origin': true,
+  reloaded: true,
+  'back-or-forward': true,
+}
+
+describe.each(Object.keys(EVERY_ARRIVAL) as Arrival[])(
+  'landing the arrival changes no detection outcome (%s)',
+  (arrival) => {
+    const NOW = T0 + 10 * 60_000
+
+    /**
+     * The same afternoon, differing only by how each page was reached.
+     *
+     * Applied to navigations and queries rather than engagements, because that
+     * is where the field actually occurs — a navigation is an arrival and an
+     * engagement report is not. Getting that wrong would make this block pass
+     * over observations that never carry the value, which is the vacuous shape
+     * the exit-type block had to be corrected out of.
+     */
+    const arrived: AmbientObservation[] = afternoon.map((o) =>
+      o.kind === 'navigation' || o.kind === 'query' ? { ...o, arrival } : o,
+    )
+
+    it('detects the same strands, in the same order', () => {
+      expect(detectThreads(arrived, NOW)).toEqual(detectThreads(afternoon, NOW))
+    })
+
+    it('builds the same pages, so ThreadPage gained nothing to threshold on', () => {
+      const detected = detectWork(afternoon, NOW)!
+      expect(threadPagesOf(arrived, detected, NOW)).toEqual(threadPagesOf(afternoon, detected, NOW))
+    })
+
+    it('computes the same grounds, kinds sentences and sufficiency alike', () => {
+      const detected = detectWork(afternoon, NOW)!
+      const without = groundsFor(detected, threadPagesOf(afternoon, detected, NOW))
+
+      expect(without.kinds.length).toBeGreaterThan(0)
+
+      // Non-vacuous in the same way the exit-type block is: two nulls compare
+      // equal, so a consumer that zeroes the afternoon rather than re-scoring it
+      // would slip past a bare equality.
+      const withArrival = detectWork(arrived, NOW)
+      expect(
+        withArrival,
+        `the fixture stopped qualifying once every arrival was '${arrival}' — something reads arrival`,
+      ).not.toBeNull()
+
+      expect(groundsFor(withArrival!, threadPagesOf(arrived, withArrival!, NOW))).toEqual(without)
+    })
+  },
+)
+
+describe('the detector cannot see page text', () => {
+  /**
+   * REWRITTEN 2026-08-18. This was the precedent two other structural tests
+   * were built on, and it did not hold.
+   *
+   * ~~The body built an `AmbientObservation` literal and asserted `Object.keys`
+   * of the literal it had just built.~~ That fails only if somebody edits this
+   * test. `tests/ambient-store.test.ts` copied the shape, and the copy was
+   * caught in review; this is the original. Proved inert the same way: an
+   * optional field added to `AmbientObservation` left the whole suite green.
+   *
+   * Both halves now, for the reason `tests/support/ambient-fields.ts` gives —
+   * the source read fires under `vitest`, the type-level one under
+   * `npm run typecheck`, and neither command alone holds the promise.
+   */
+  it('declares exactly the fields it is supposed to, and no more', () => {
+    // The complete list, not a subset: a subset check passes on the field it
+    // was not told to look for, which is how a metadata-only record grows one.
+    expect(ambientObservationFields()).toEqual([
+      'arrival',
+      'at',
+      'engagedMs',
+      'exitType',
+      'groupTitle',
+      'kind',
+      'origin',
+      'scrollFraction',
+      'title',
+      'url',
+    ])
+  })
+
+  it('cannot be given a field that could carry page text without failing to compile', () => {
+    // The names a future field would plausibly have. Not exhaustive and cannot
+    // be — the list above is what makes this closed, and this is what makes the
+    // likely mistake loud. Ambient capture is metadata only; the 2,000-character
+    // excerpt begins only after a session starts.
+    const noPageText: [
+      Extract<keyof AmbientObservation, 'text' | 'excerpt' | 'selection' | 'body' | 'html'>,
+    ] extends [never]
+      ? true
+      : never = true
+
+    expect(noPageText).toBe(true)
   })
 })

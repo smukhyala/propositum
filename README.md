@@ -85,13 +85,28 @@ Requires **Node ≥ 22** and npm. macOS.
 ```bash
 npm install
 cp .env.example .env          # add ANTHROPIC_API_KEY from console.anthropic.com
+                              # the Google calendar variables are optional — see below
 npx prisma db push            # creates the file and installs the append-only guards
 npm run dev                   # serves on 3117 — the port the extension is pinned to
 npm run worker                # a second terminal; runs are drained here, not in the app
 ```
 
-`ANTHROPIC_API_KEY` is the only credential needed. SQLite is a local file; there is no cloud, no
-account, and no telemetry.
+~~`ANTHROPIC_API_KEY` is the only credential needed. SQLite is a local file; there is no cloud, no
+account, and no telemetry.~~
+
+**Struck 2026-08-18 — [ADR-0014](./docs/adr/0014-reading-free-busy.md), and left visible because a
+reader has to be able to see what was promised.** The same sentence is struck and dated in
+[`docs/VISION.md`](./docs/VISION.md) and [`docs/SECURITY_AND_PRIVACY.md`](./docs/SECURITY_AND_PRIVACY.md),
+which is why it could not stand here.
+
+`ANTHROPIC_API_KEY` is still the only credential **needed** — everything in the block above runs on
+it alone, and that is the state of a fresh clone. There is still no cloud, no telemetry and no
+server of ours. **But "no account" is gone**: connecting a Google calendar is optional, off unless
+you do it, and it adds `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET` to `.env` plus one
+OAuth refresh token in the local database. The scope is `calendar.freebusy` and nothing else —
+*"View your availability in your calendars"*, which returns busy start/end times and cannot return a
+title, an attendee or a description. Leave the two variables blank and the feature is **absent**:
+nothing is read and no request leaves the machine. ADR-0014 opens on what it costs.
 
 **For real capture** you also need the extension loaded and its id in `.env`, and you have to grant
 each source from the side panel — a host grant needs a user gesture, so nothing else can do it.

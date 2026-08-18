@@ -117,8 +117,9 @@ import { Done, Refused } from './sprites'
 import { Quotation } from './reading'
 import { acceptContract } from '../server/actions'
 import type { ContractDrafted } from '../server/actions'
-import { ACTION_KINDS, compilePolicy } from '../domain/handoff/policy'
+import { ACTION_KINDS, compilePolicy, TIME_LIMIT_CHOICES } from '../domain/handoff/policy'
 import type { ActionKind, AutonomyControls } from '../domain/handoff/policy'
+import type { CalendarTimeSuggestion } from '../server/calendar'
 
 export interface AgreementProps {
   readonly draft: ContractDrafted
@@ -146,6 +147,16 @@ const CSS = `
 .ag-label { display: block; font-family: var(--mono); font-size: 0.6875rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); margin: 0 0 0.4rem; }
 .ag-hint { margin: 0.45rem 0 0; font-size: 0.875rem; color: var(--muted); max-width: 40rem; }
 .ag-hint-tight { margin: 0 0 0.9rem; font-size: 0.875rem; color: var(--muted); max-width: 40rem; }
+
+/* The calendar line, ADR-0014. Set as a hint rather than as a control, because
+   it is one: the sentence is the reading and the button is an offer beside it.
+   An inline text button, never a chip — a chip would sit in the same visual row
+   as the five radios above and read as a sixth choice that the group's own
+   checked-state logic could never select. */
+.ag-cal { margin-top: 0.35rem; }
+.ag-cal-use { font: inherit; font-size: inherit; color: var(--ink); background: none; border: 0; padding: 0; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; text-decoration-thickness: 1px; }
+.ag-cal-use:hover { text-decoration-thickness: 2px; }
+.ag-cal-use:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
 
 .ag-dial { border: 0; margin: 0 0 1.9rem; padding: 0; }
 .ag-dial:last-of-type { margin-bottom: 0; }
@@ -248,7 +259,19 @@ const ABSENT: readonly string[] = [
   'Delete a file',
 ]
 
-const TIME_CHOICES: readonly number[] = [15, 30, 60, 120, 240]
+/**
+ * The dial's closed set, which no longer lives here.
+ *
+ * It was a literal in this file until 2026-08-18, and that was right while this
+ * component was the only thing that could name a budget. ADR-0014 lets a
+ * calendar free/busy read propose one, and the whole of what makes that
+ * proposal safe is that it can only ever name a member of this array — so a
+ * second copy beside the suggester would be two ranges that must agree, and the
+ * drift would show up as a control whose value no radio can display as chosen.
+ * `src/domain/handoff/policy.ts` holds it now, beside the field it is the legal
+ * range of.
+ */
+const TIME_CHOICES = TIME_LIMIT_CHOICES
 
 function minutesLabel(minutes: number): string {
   if (minutes < 60) return `${minutes} min`
@@ -521,7 +544,20 @@ export function Agreement({ draft, defaults, sourceLabels, onBack, onHandedOver 
           ]}
         />
 
-        <TimeLimit minutes={timeLimitMinutes} onChange={setTimeLimitMinutes} />
+        {/* The calendar suggestion is passed to the CONTROL, never to the
+            state. `timeLimitMinutes` above is initialised from the model's
+            proposal and from nothing else, exactly as it was before ADR-0014;
+            the only path from a calendar to that number runs through the button
+            `TimeLimit` renders, which calls the same `onChange` a radio calls.
+            Read `draft.calendarSuggestion` anywhere near a `useState` initial
+            value and the guarantee is gone. */}
+        <TimeLimit
+          minutes={timeLimitMinutes}
+          onChange={setTimeLimitMinutes}
+          {...(draft.calendarSuggestion === undefined
+            ? {}
+            : { suggestion: draft.calendarSuggestion })}
+        />
       </Section>
 
       <Section title="Guidance — not a hard limit" index={5}>
@@ -731,9 +767,38 @@ function Dial<T extends string>({
 function TimeLimit({
   minutes,
   onChange,
+  suggestion,
 }: {
   readonly minutes: number
   readonly onChange: (next: number) => void
+  /**
+   * What the person's calendar says, or nothing — ADR-0014.
+   *
+   * ── This prop cannot change the limit, and here is why ───────────────
+   *
+   * It is rendered and it is not applied. There is no `useEffect` that calls
+   * `onChange` from it, no default parameter derived from it, and the radios
+   * below are `checked={minutes === choice}` against the state its parent owns.
+   * The single path from this value to the budget is the button at the bottom
+   * of this component, which a person presses, and which calls the same
+   * `onChange` the radios call with a number that is already one of the choices
+   * they offer. Pressing it is byte-for-byte the same state change as pressing
+   * a radio.
+   *
+   * That is the shape every pre-filled field on this screen has. The objective
+   * and the definition of done arrive as text in an editable box that a person
+   * reads and corrects; the dials arrive at their product defaults and a person
+   * moves them. Nothing on this screen commits until Hand over, and this is not
+   * the exception.
+   *
+   * **What it is not.** It is not evidence, it carries no provenance, and it is
+   * not a `guidance` line. It never reaches `StatedIntent`, and there is
+   * deliberately no control that writes it into one — the same refusal the
+   * quoted constraints live under, for a milder reason: this is a number rather
+   * than page prose, but a screen that let one derived value be inserted teaches
+   * that derived values are insertable.
+   */
+  readonly suggestion?: CalendarTimeSuggestion
 }) {
   // Rendered only once the client knows the time, so the server and the client
   // never disagree about "now" during hydration.
@@ -768,6 +833,58 @@ function TimeLimit({
             <strong>{clockOf(new Date(now.getTime() + minutes * 60_000))}</strong>.
           </p>
         ) : null}
+
+        {/* Said once the suggestion exists, and stated as what it is: a reading
+            of the person's own calendar, offered, not applied.
+
+            The sentence names the clock time rather than the gap, because the
+            clock time is the fact — Google returned a start instant — and the
+            gap is arithmetic over it that the button already carries. It names
+            no event, no title and no organiser, because the scope this was
+            bought under returns none of those and there is no field here that
+            could hold one.
+
+            ── The sentence outlives the button, and that is the point ──────
+
+            Until 2026-08-18 the whole paragraph was hidden when the limit
+            already equalled the suggestion — which is precisely the state
+            PRESSING THE BUTTON produces. So the one press that made a budget
+            calendar-derived also removed the only sentence saying so, and a
+            person then ratified a number whose provenance had just been taken
+            off the screen. That inverted the requirement four documents state
+            as *a number and a sentence saying where it came from*, and it broke
+            the rule this repo already holds itself to for pre-filled words:
+            *a handoff screen that pre-fills a StatedIntent from an Intention
+            without saying where would reproduce the exact failure the ruling
+            described*.
+
+            So the sentence renders whenever there is a suggestion at all, and
+            only the BUTTON is hidden when it would change nothing — which was
+            the real argument the old guard was reaching for. Note that the two
+            branches are not the same claim: the second says the limit stops
+            before the busy interval, which is true by `suggestTimeLimit`'s
+            range and would be a lie if anything ever let the equality arise
+            some other way. */}
+        {suggestion === undefined ? null : (
+          <p className="ag-hint ag-cal">
+            Your calendar has you busy from{' '}
+            <strong>{clockOf(new Date(suggestion.busyFromMs))}</strong>
+            {suggestion.minutes === minutes ? (
+              <>, and this time limit stops before then.</>
+            ) : (
+              <>
+                .{' '}
+                <button
+                  className="ag-cal-use"
+                  type="button"
+                  onClick={() => onChange(suggestion.minutes)}
+                >
+                  Stop by then &mdash; {minutesLabel(suggestion.minutes)}
+                </button>
+              </>
+            )}
+          </p>
+        )}
       </fieldset>
     </>
   )

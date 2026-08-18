@@ -30,7 +30,7 @@ back and the cost stated.
 | | |
 |---|---|
 | **What it may see** | Every `https` origin. `host_permissions: ["https://*/*"]` at install. |
-| **What it records while watching** | Metadata only — cleaned URL, title, dwell, scroll. Never page text. |
+| **What it records while watching** | Metadata only — cleaned URL, title, dwell, ~~scroll~~ ~~**and, on the ambient path, still not scroll**~~ **scroll, how the page was left, and the title of the tab group the page sits in where the person made one**. Never page text. *(Amended ~~twice~~ **three times** on 2026-08-17; the second amendment corrects the first, and the third records that the change the first two argued about was made. **What is true:** the app's ambient schema accepts a scroll fraction as of 2026-08-17 and `AmbientStore` carries it; ~~**the extension does not send one**, so nothing is recorded and this row may not claim it~~ *(true until 2026-08-17; see the third amendment at the end of this row)*. The first amendment said "scroll — true since 2026-08-17" and named the app's schema as the place the value was dropped. Both halves were wrong. The value is dropped **earlier and in the extension**: `flushAmbient` in `extension/src/service-worker.js` projects each buffered signal onto the wire shape by hand and copies `dwellMs` across as `engagedMs` without copying `scrollFraction`, so no request the extension builds has ever carried the field — the app's missing schema field was the second gate, not the first. ~~Landing the one-line producer change is deliberately **not** done here: `content.js` does not clamp, `ambientSchema` refuses anything outside `[0, 1]`, and a refused batch is dropped rather than retried, so sending the field today would let one overscrolled page discard up to a hundred observations. That changes which afternoons qualify, which is the one thing this correction is not allowed to do.~~ *(Done on 2026-08-17 by ADR-0013, which answers this objection by omitting an out-of-range reading rather than clamping it — see the third amendment below.)* See `content.js`'s own note above `reportEngagement`, which had this right and was the only place in the corpus that did. ~~The row claimed scroll from the day it was written, 2026-08-11, and it is a specification still.~~ **AMENDED A THIRD TIME 2026-08-17 — [ADR-0013](0013-authored-labels-and-exit-type.md), which lists this ADR under its *Amends* header and should have landed this edit in the same diff. The producer line was written: `flushAmbient` now copies `scrollFraction` onto the wire, guarded on the value already being inside `[0, 1]` — so an out-of-range reading is OMITTED rather than clamped, which is exactly what happened to every reading before today, and no batch the app accepts today starts being refused. That answers the objection the struck text raises, and it is the reason the change was affordable after all. So **the extension does send one**, the row is a description at last, and ADR-0013 adds two more fields beside it: an exit type and a tab group title. `tests/reachability.test.ts` asserts the projection carries all three, sliced to `flushAmbient` so that a field mentioned elsewhere in the worker cannot keep the assertion green. **Nothing in the detector reads scroll or exit type even now** — landing a signal and consulting it stay two decisions, and the same file holds both deferrals.** Found by [`docs/research/intent-suggestion-quality.md`](../research/intent-suggestion-quality.md) §9, which ranks scroll second among the behavioural signals that carry anything at all — behind exit type, and ahead of the other seventeen measures Fox et al. logged.)* *(**AMENDED A FOURTH TIME 2026-08-18.** One more field, and the row's list is now: cleaned URL, title, dwell, scroll, how the page was left, **how it was arrived at**, and the tab group title. `arrival` is one of five closed values — `no-referrer`, `same-origin`, `cross-origin`, `reloaded`, `back-or-forward` — and it is the same shape of defect as `scrollFraction`, found one day later: `extension/src/content.js` has sent `referrer` and `navigationType` on every navigation since the signal existed, `src/capture/semantics.ts` consumes both and calls the referrer *"our partial substitute for transitionType, which lives behind `webNavigation`"* — and that is the SESSION path. Detection runs on this one, which dropped both. **What this row must not be read as saying:** the ambient buffer does NOT hold the referrer. It holds a classification computed inside the content script, and ~~the URL it was computed from never leaves the page~~ **no referrer reaches this app on this path.** *(Corrected 2026-08-18, same day, after review. The struck claim was wrong and it was the load-bearing one: `content.js` sends `referrer` on every navigation because the session path needs it and the script must not be able to learn whether a session is running, so the URL crossed into the extension's service worker and — until the correction — was written into `chrome.storage.session` by `bufferAmbient` and left there until the next flush. `flushAmbient` never put it on the wire, so the APP half was always true. The fix deletes `referrer` and `navigationType` on the worker's no-session branch, in the same destructure that deletes page text, so the extension's own buffer no longer holds one either.)* The asymmetry is the decision: a session is consented, scoped and auditable, and may hold the address somebody came from; the always-on buffer may not, because that address can name a site nothing else here observes. No permission was taken and no manifest entry changed. **Nothing in the detector reads it**, which makes three signals landed and unread — `tests/reachability.test.ts` holds all three deferrals and, for this one, an expiry: build the offer-rate measurement §10.5 says does not exist and judge all three against it, or take the fields out.)* |
 | **Where that goes** | An in-memory buffer, bounded by a 30-minute window **and** a 500-row cap. Never the ledger. *(One exception, added 2026-08-16: a TITLE may be copied onto a later report for the same URL, because the extension sends one on a navigation and not on an engagement, so a page still being read under an expired navigation would otherwise report minutes of dwell under an empty name. A copy may never itself be copied, so a title can be just under two windows old and no more. The row it lives on is an ordinary row and the cap, the decline filter and `clear()` all apply to it unchanged. See `withCarriedTitle` in `src/server/ambient-store.ts`.)* |
 | **How work is recognised** | Arithmetic. No model call. |
 | **What detection produces** | A suggestion. Never a session, never an action. |
@@ -58,6 +58,99 @@ Weaker does not mean unenforced. It is enforced in three places rather than asse
    otherwise learn the answer by timing what its own script is permitted to do.
 3. **The ambient endpoint's schema has no field that could carry text**, and a test greps it for
    `text`, `excerpt`, `content`, `untrusted` and `body`.
+
+### The reason `tabs` and `webNavigation` are absent expired the day this ADR was accepted
+
+*(Added 2026-08-17, from [`docs/research/intent-signals.md`](../research/intent-signals.md) §2.2
+and §4.1. Nothing in the manifest changes here; what changes is which argument is load-bearing.)*
+
+`extension/manifest.json`'s permission comment gives the reason those two are not requested, and the
+reason is a **price**:
+
+> `webNavigation costs the 'Read your browsing history' warning, and carries transitionType — the`
+> `most semantically loaded signal there is […]. We give it up and take document.referrer plus`
+> `Navigation Timing as partial substitutes.`
+
+**That price stopped existing on 2026-08-11, and this ADR is the decision that removed it.** Chrome's
+install prompt is a list of rendered *messages*, not of permission ids, generated by an ordered rule
+engine in which each rule consumes the permissions it covers. The first host rule fires on
+`kHostsAll` — which `https://*/*` produces — and its second list, the absorb list, contains
+`kTab`, `kWebNavigation`, `kTopSites` and `kFavicon` by name. Chrome's own docs say it in one
+sentence: *"the `"tabs"` warning won't show if the extension also requests `"<all_urls>"`."* And
+because Chrome decides *"is this a privilege increase?"* by comparing the rendered message sets
+rather than the ids, adding either one in an update would not even disable the extension pending
+re-approval.
+
+So there is no warning left to give up, and no re-consent to be stopped by. **The exclusion may
+still be right. It is no longer right for the reason written down** — and a reason that has quietly
+stopped applying is the kind the first person to check overturns. What it stands on now is
+capability, and capability has to be argued rather than inherited:
+
+- **`tabs` returns every open tab's URL and title.** That is a different fact about a person from
+  *every page they visit while a content script runs on it*: it is what they have **kept open**, all
+  of it, at once, including the windows they are not looking at. Broad host permission bought us the
+  pages they walk through; `tabs` would buy the shape of their whole desk.
+- **`webNavigation` carries `transitionType`**, which is the single most useful signal on the list
+  and therefore the one most worth being careful about. `src/domain/detection/grounds.ts` spends its
+  length approximating exactly this distinction — *"intent separates pursuing from receiving"* —
+  and `typed` versus `link` would answer it outright. Taking it is a real detection decision with a
+  real argument for it, which is precisely why it should be taken deliberately in its own ADR rather
+  than absorbed into this one because it turned out to be free.
+- **Web Store policy forbids taking either speculatively**, and says so in the terms that apply:
+  *"Don't attempt to 'future proof' your Product by requesting a permission that might benefit
+  services or features that have not yet been implemented."*
+
+**Neither permission is taken here and no threshold moves because of this section.** It records that
+the stated reason expired, six days after this ADR expired it, and what would have to be argued in
+its place. ~~The manifest comment still cites the warning; correcting it is owed and is not this
+file.~~
+
+#### Everywhere the expired reason was written down
+
+*(Added 2026-08-17, after review. The paragraph above owed one correction — the manifest comment —
+and `docs/SECURITY_AND_PRIVACY.md` was amended the same day. A search then found the same two claims
+in **six other places**: that `webNavigation` costs a warning, and that Chrome refuses to hand over
+other tabs. One of the six is a numbered safety property inside the argument for granting `debugger`.
+Listing them is the point. A false sentence corrected in one document and left standing in six is a
+corpus that contradicts itself, and whoever lands on one of the six gets the strong version with no
+pointer to the amendment.)*
+
+**Corrected 2026-08-17, struck and dated in the house form:**
+
+| Where | What it claimed |
+|---|---|
+| [ADR-0010](0010-acting-in-the-browser.md) §1 | *"there is no call the extension can make that returns a tab it did not create … the constraint is enforced by Chrome refusing, not by our code remembering"* — as a numbered safety property of the `debugger` grant |
+| [`docs/VISION.md`](../VISION.md), *Observation* | *"What Chrome still refuses to hand over is the existence of any **other tab**"* |
+| `extension/manifest.json`, `_comment_permissions` | *"Chrome enforces the constraint, not our code"*, and `webNavigation`'s warning price |
+| `extension/manifest.json`, `_comment_debugger` | *"That constraint is still enforced by Chrome refusing rather than by our code remembering"* |
+
+*(For the record, and corrected before this list existed:
+[`docs/SECURITY_AND_PRIVACY.md`](../SECURITY_AND_PRIVACY.md), *Data explicitly not collected* — the
+bullet that started all of this.)*
+
+**Still owed, and named here so the debt is visible rather than forgotten:**
+
+- **`extension/README.md`**, *What it can see* — *"Without `tabs`, the extension is structurally
+  incapable of learning that the person visited anything else — Chrome will not hand over the URL,
+  the title, or the tab. The constraint is enforced by the browser, not by our code being correct."*
+  This file is doubly stale: it also still describes `optional_host_permissions`, which this ADR
+  replaced on 2026-08-11. It wants rewriting rather than striking, which is why it is not done in
+  this pass.
+- **`src/policy/tools.ts`**, the `listTabs` / `attachToTab` bullet — *"there is no call that returns
+  a tab we did not create."* What survives there is the narrower true claim: `chrome.tabs.create` is
+  the only source of a tab id in the extension, and the greps are what keep it so.
+- **`docs/research/intent-suggestion-quality.md`** §3.1 and §10.4 pair Jones & Klinkner's Table 8
+  accuracies with Table 3's trained optima. Unrelated to permissions, found in the same review, and
+  corrected in `src/domain/detection/detect.ts`'s `WINDOW_MS` note but not yet in the note itself.
+
+**And the same finding falsified a promise elsewhere in the corpus**, because `chrome.tabs.query()`
+needs no permission at all and is therefore reachable from the shipped extension today. See
+[`docs/SECURITY_AND_PRIVACY.md`](../SECURITY_AND_PRIVACY.md), *Data explicitly not collected*, where
+the tab-list bullet is amended and its guarantee handed to
+[`tests/extension-permissions.test.ts`](../../tests/extension-permissions.test.ts). That is the
+third enforcement point above acquiring a fourth sibling, and it is worth naming here: this ADR
+traded a structural guarantee for a behavioural one and then found, six days later, that it had
+traded one more than it counted.
 
 ## Why no model runs on a timer
 
@@ -215,5 +308,12 @@ erase — only to forget. The stronger guarantee is the one above it: none of it
   cannot guarantee.
 - **A false positive is observed in real use.** The thresholds are guesses, set before any real
   browsing existed. They are constants in one file for that reason.
-- **Anyone proposes writing ambient observations to disk.** That is not a tuning change; it is a
-  different decision and needs its own ADR.
+- ~~**Anyone proposes writing ambient observations to disk.** That is not a tuning change; it is a
+  different decision and needs its own ADR.~~ **Fired 2026-08-18 —
+  [ADR-0015](0015-measuring-loudness-and-saving-an-afternoon.md).** Two things now write off this
+  path: `npm run capture:afternoon`, a hand-run command that saves the buffer to a JSON fixture, and
+  `offer_tally`, a durable per-day count of how often Propositum spoke. ADR-0015 argues them
+  separately, because only one of them is a profile and the product cannot make that one. The trigger
+  is left struck rather than deleted, and it is worth reading twice: **the code landed before the
+  ADR did**, with the argument living in a docblock, which is the location this bullet exists to move
+  it out of.

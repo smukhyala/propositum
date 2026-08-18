@@ -213,19 +213,76 @@ export interface NoticedStrand {
  * rather than written twice; what moved is where it bites. `MAX_THREADS_SHOWN`
  * carries the amendment and the poll does the same thing in the same order, so
  * the screen and the pass that names for it still agree about which three exist.
+ *
+ * ── And the cut is now visible, added 2026-08-18 ─────────────────────────
+ *
+ * The loop moved into `noticedAfternoon` below, which returns what was cut as
+ * well as what survived. This function is its `shown` half, unchanged in what it
+ * returns and in what order — the amendment above still describes it exactly.
+ * What was missing was that the amendment closed the snooze half of the silence
+ * and left the other half open: a strand cut by the bound is still found and
+ * discarded with nothing recording it. Now something counts it.
  */
 export function noticedStrands(
   store: AmbientStore,
   observations: readonly AmbientObservation[],
   nowMs: number,
 ): NoticedStrand[] {
-  const strands: NoticedStrand[] = []
+  return noticedAfternoon(store, observations, nowMs).shown
+}
+
+/** What the screen shows, and what it found and did not. */
+export interface NoticedAfternoon {
+  /** In order, bounded by `MAX_THREADS_SHOWN`. What `noticedStrands` returns. */
+  readonly shown: NoticedStrand[]
+  /**
+   * Strands that cleared the detector's bar, were not snoozed, were not
+   * duplicates — and were cut by the display bound anyway.
+   *
+   * ── Why the snoozed ones are not in here ─────────────────────────────
+   *
+   * A strand the person answered is not a strand discarded in silence. "Not
+   * now" is the product doing exactly what it was told, and that suppression is
+   * already counted where it belongs — as a decline. Putting it here as well
+   * would report obedience as a failure and would double-count one act.
+   *
+   * A duplicate signature is not in here either, for a different reason: it is
+   * a defensive drop of something that should not be constructible, and if it
+   * ever fires the thing to do is fix it rather than count it.
+   *
+   * What IS in here is the one thing ADR-0008 names as the failure the
+   * multi-strand change existed to remove — *"found and discarded, which is
+   * worse than not finding them, because nothing anywhere recorded that they
+   * had been"* — and which `MAX_THREADS_SHOWN` still does. Now something
+   * records it: a number, per day, with no subject attached. See
+   * `src/server/offer-tally.ts`.
+   */
+  readonly suppressed: NoticedStrand[]
+}
+
+/**
+ * Both halves, from one pass.
+ *
+ * A second function walking the same strands with the same three filters is how
+ * the screen and the count would come to disagree about which strands existed —
+ * the same argument this file already makes about the screen and the poll. So
+ * the bound partitions rather than terminating, and `noticedStrands` is this
+ * function's `shown` half and nothing else.
+ *
+ * The loop no longer stops at `MAX_THREADS_SHOWN`, which costs one map lookup
+ * per extra strand and no detection work at all: `detectThreads` was already
+ * asked for `EVERY_STRAND` and had already built them.
+ */
+export function noticedAfternoon(
+  store: AmbientStore,
+  observations: readonly AmbientObservation[],
+  nowMs: number,
+): NoticedAfternoon {
+  const shown: NoticedStrand[] = []
+  const suppressed: NoticedStrand[] = []
   const seen = new Set<string>()
 
   for (const detected of detectThreads(observations, nowMs, EVERY_STRAND)) {
-    // The bound, spent only on strands that survived everything below it.
-    if (strands.length >= MAX_THREADS_SHOWN) break
-
     const signature = signatureOf(detected.terms)
     if (seen.has(signature)) continue
     // This screen's own "Not now", against the subject the person answered.
@@ -237,10 +294,12 @@ export function noticedStrands(
     if (store.isSnoozed(detected.origins[0] ?? '', nowMs)) continue
 
     seen.add(signature)
-    strands.push({ detected, signature })
+    // The bound, spent only on strands that survived everything above it.
+    if (shown.length >= MAX_THREADS_SHOWN) suppressed.push({ detected, signature })
+    else shown.push({ detected, signature })
   }
 
-  return strands
+  return { shown, suppressed }
 }
 
 /**

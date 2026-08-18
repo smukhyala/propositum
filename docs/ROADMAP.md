@@ -48,6 +48,14 @@ makes `waiting` a reachable `IntentionState`; until then the union has five memb
 Direction §8 puts automatic Gmail/Slack/Calendar/GitHub ingestion on the do-not-build list, and this
 stage does not start by ignoring that.
 
+*What "more than one sensor" does not mean (added 2026-08-17,
+[ADR-0012](./adr/0012-screen-capture-refused.md)).* A second sensor here is a **structured source
+that states something** — a calendar entry, an issue, a message header — not a wider view of the
+person's machine. A rolling screenshot cache was proposed on 2026-08-17 and refused;
+[`VISION.md`](./VISION.md)'s *"Not planned, at any horizon"* holds unchanged across every stage in
+this file, and this stage does not reach it by increments. The direction is **more of what the
+person has already stated**, not more of what can be watched.
+
 ---
 
 ## Stage 3 — Adaptive Delegation
@@ -60,6 +68,12 @@ permissions, trust that can *recommend* autonomy, executor selection, and better
 stage. The constraint that survives from here into that one: **learned trust never overrides
 permissions.** History can recommend a setting; it can never silently create one.
 
+*"Richer permissions" is about what Propositum may **do**, not about what it may **watch** (added
+2026-08-17).* Widening delegation is this stage's subject. Widening observation is a separate
+decision taken separately, and the only one taken so far is a refusal —
+[ADR-0012](./adr/0012-screen-capture-refused.md). The sentence above applies to sensors with no
+softening: history may recommend a setting, and it may never grant a view.
+
 ---
 
 ## Stage 4 — Multi-Intention Everyday AI
@@ -67,6 +81,14 @@ permissions.** History can recommend a setting; it can never silently create one
 **Later, and furthest out. Direction, not commitment.** Several persistent intentions at once,
 background scheduling of where the next hour is best spent, state that crosses tools and devices, and
 progress that is proactive but permissioned.
+
+*"State that crosses tools and devices" is about carrying an `Intention`, not about watching a second
+machine (added 2026-08-17).* An Intention that survives being picked up on another device is a
+persistence question. **Observing** that other device is a different one, already ruled on in two
+places: its screen by [ADR-0012](./adr/0012-screen-capture-refused.md), and its tab list by the
+`tabs` refusal [ADR-0002](./adr/0002-observation-capture.md) made and
+[ADR-0008](./adr/0008-ambient-detection.md) left standing. Nothing in this stage is a route around
+either.
 
 *What would have to exist first:* more than one Intention per `Project` — today the limit is one — and
 concurrency the schema does not have. One live session at a time is enforced in the app layer rather

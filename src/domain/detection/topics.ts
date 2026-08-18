@@ -755,6 +755,34 @@ export interface ThreadPage {
    *  followed a visit somewhere else. One on the way through; two or more means
    *  they left and chose to come back, which is a different fact entirely. */
   readonly visits: number
+  /**
+   * The title of the tab group this page sits in, if the person named one.
+   *
+   * ── Beside `terms`, never inside it ──────────────────────────────────────
+   *
+   * The tempting thing is to tokenise it into `terms` so a group called "world
+   * models" binds its pages into a thread. That is refused, and the refusal is
+   * the whole safety argument for the field:
+   *
+   *   - `findThreads` seeds on terms recurring across `ORIGINS_FOR_THREAD`
+   *     origins. A group title is on every page in the group by construction,
+   *     so it would supply a seed term, the origin count AND the page count at
+   *     once — manufacturing a thread out of the fact that somebody tidied
+   *     their tabs. That is the same failure `vocabularyOf`'s rule 2 spends its
+   *     length preventing for a one-edit typo, arriving by a wider door.
+   *   - `signatureOf` is built from thread terms and keys the offer cache and a
+   *     durable column. Renaming a tab group would silently change the identity
+   *     of work in progress.
+   *   - `grounds.ts` intersects `page.terms` with `detected.terms` in
+   *     `pursuitOf`. A term the person typed into a group name is not evidence
+   *     that they searched for it.
+   *
+   * So it rides alongside, is read by exactly one thing —
+   * `authoredLabelOf` → `Thread.authoredLabel` → the sentence — and changes no
+   * arithmetic anywhere. `tests/detection.test.ts` asserts that grounds and
+   * sufficiency are byte-identical with and without it.
+   */
+  readonly groupTitle?: string | undefined
 }
 
 export interface Thread {
@@ -768,6 +796,49 @@ export interface Thread {
   readonly engagedMs: number
   readonly since: number
   readonly searches: number
+  /** What the person called this themselves, if they called it anything. See
+   *  `authoredLabelOf`. Absent for every thread whose pages are in no titled
+   *  tab group, which is most of them. */
+  readonly authoredLabel?: string | undefined
+}
+
+/**
+ * The name the person gave this work, out of the tab groups its pages sit in.
+ *
+ * ── Why this is a count and not "the first one" ──────────────────────────
+ *
+ * A thread can span two groups — somebody splits their reading, or drags half
+ * of it somewhere — and it can span a group and no group at all, which is the
+ * common case the moment a search result opens in a fresh tab. First-seen would
+ * therefore hand the label to whichever page happened to be scanned first, and
+ * `topics.ts` has already been caught by exactly that: `findThreads` used to
+ * take the first spelling it met and rendered a whole thread as *"robotcs"*,
+ * because the mistyped search is the page that STARTED the sitting and is first
+ * in the buffer.
+ *
+ * So it is the label carried by the most pages, ties broken lexicographically —
+ * `commonest`, the same function and the same determinism argument the surface
+ * labels use. The same window must produce the same sentence every time it is
+ * polled, or a person watching Home reads a system making things up.
+ *
+ * ── What it does not do ──────────────────────────────────────────────────
+ *
+ * There is no minimum. One page of a five-page thread in a group called "world
+ * models" is enough to label it, and that is deliberate: a label is a NAME,
+ * the alternative name is a bag of stemmed words, and a person's own word about
+ * one of these pages beats an algorithm's word about all five. It is also the
+ * cheap direction — the worst case is a vaguer sentence, and `describeWork`
+ * still refuses to let it displace a confident model name.
+ */
+function authoredLabelOf(pages: readonly ThreadPage[]): string | undefined {
+  const counted = new Map<string, number>()
+  for (const page of pages) {
+    const label = page.groupTitle
+    if (label === undefined || label === '') continue
+    counted.set(label, (counted.get(label) ?? 0) + 1)
+  }
+
+  return commonest(counted) ?? undefined
 }
 
 /**
@@ -827,6 +898,8 @@ export function findThreads(input: readonly ThreadPage[]): Thread[] {
       .map(([term]) => term)
       .slice(0, 8)
 
+    const authored = authoredLabelOf(members)
+
     threads.push({
       terms,
       // Taken from the window's vocabulary rather than rebuilt from the members'
@@ -843,6 +916,11 @@ export function findThreads(input: readonly ThreadPage[]): Thread[] {
       engagedMs: members.reduce((total, p) => total + p.engagedMs, 0),
       since: Math.min(...members.map((p) => p.at)),
       searches: members.filter((p) => p.searched).length,
+      // The one thing in this object the PERSON wrote. Computed from the
+      // members and read only by the sentence; nothing above it — the seeds,
+      // the term ranking, the sort — has seen it, which is what makes the
+      // byte-equality test in `tests/detection.test.ts` possible to write.
+      ...(authored === undefined ? {} : { authoredLabel: authored }),
     })
   }
 

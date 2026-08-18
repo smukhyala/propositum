@@ -61,6 +61,7 @@ import {
   startSession,
 } from '@/server/actions'
 import { captureStore } from '@/server/capture-store'
+import { frontDoorRow, statusWordFor } from '@/server/front-door'
 import { appContext } from '@/server/db'
 
 // In-memory capture state and a local database file. Nothing here is cacheable,
@@ -303,6 +304,31 @@ export default async function ProjectPage({
   const away = openSession?.phase === 'away'
   const stranded = openSession !== null && openSession.phase === 'observing' && !watching
 
+  /**
+   * Where this work is, in the words CONTEXT.md gives it.
+   *
+   * The same derivation Home uses, from the same function, because a second one
+   * is how two screens come to disagree about a single Intention — the argument
+   * `front-door.ts` opens with. Home filters its rows to `needs-you` and prints
+   * one word; this screen prints whichever of the five is true, which is why
+   * `statusWordFor` had no caller between the bare-Home rewrite and now.
+   *
+   * `frontDoorRow` takes the live session id, and `phasesWeCanVouchFor` counts
+   * only a sitting the capture store is actually feeding. So the `stranded`
+   * case above — an open row nothing is reaching — contributes no phase and
+   * lands on *Sleeping* rather than claiming *Working*. The honesty rule this
+   * screen already holds is not restated here; it is inherited.
+   *
+   * `sleeping` will be the common answer, and CONTEXT.md says it will read like
+   * a bug. It is not dressed up.
+   */
+  const lifecycle = frontDoorRow({
+    facts: await repos.intentions.factsForProject(projectId),
+    sittings: sessions,
+    liveSessionId: liveCapture?.sessionId ?? null,
+    nowEpochMs: Date.now(),
+  })
+
   const bandTitle = openSession === null
     ? 'Start a session'
     : away
@@ -320,7 +346,7 @@ export default async function ProjectPage({
       <BackLink href="/">&larr; All projects</BackLink>
 
       <Masthead
-        kicker="Project"
+        kicker={`Project · ${statusWordFor(lifecycle.state)}`}
         title={project.name}
         mark={watching ? <Watching size={20} delay={0.3} /> : <Away size={20} delay={0.3} />}
         subtitle={

@@ -22,9 +22,10 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { PrismaClient } from '@prisma/client'
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import {
   ensureAppendOnlyGuards,
   findMissingGuards,
@@ -124,6 +125,82 @@ describe('guard installation', () => {
     const tables = new Set(REQUIRED_GUARDS.map(([, table]) => table))
     expect(tables).not.toContain('agent_run')
     expect(tables).not.toContain('action_dispatch')
+  })
+
+  it('does not guard the credential store either, and DELETE is the reason', () => {
+    /**
+     * `calendar_connection`, added 2026-08-18 by ADR-0014, on `Project`'s and
+     * `Intention`'s reasoning: it holds no inference and carries no provenance,
+     * so nothing about it is append-only.
+     *
+     * The stronger half of the argument is `action_evidence`'s, arriving a
+     * second time: **a no-DELETE trigger and a revocation cannot both be true.**
+     * Disconnecting has to remove the credential, and an append-only credential
+     * store is a table that accumulates every token a person ever held and can
+     * never delete one — which is the opposite of what a secret needs.
+     */
+    const tables = new Set(REQUIRED_GUARDS.map(([, table]) => table))
+    expect(tables).not.toContain('calendar_connection')
+  })
+})
+
+describe('nothing from a calendar is persisted but the credential', () => {
+  /**
+   * ADR-0014's requirement, held against the schema rather than against
+   * intent: *"Busy intervals are never persisted. They are read, used to
+   * compose one suggested number, and dropped. Nothing from a calendar reaches
+   * SQLite, so there is no calendar data to leak, subpoena, or forget to
+   * delete. The one thing written to disk is the token row."*
+   *
+   * This lives beside the append-only checklist because it is the same kind of
+   * claim — what the storage layer is allowed to hold — and because the
+   * checklist is where somebody adding a table looks.
+   */
+  const schema = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), '..', 'prisma/schema.prisma'),
+    'utf8',
+  )
+
+  /**
+   * Comments out before searching, for `tests/architecture.test.ts`'s reason
+   * rather than `tests/reachability.test.ts`'s: here a comment MENTIONING the
+   * forbidden word fails a check it should pass. The `CalendarConnection`
+   * docblock says the word `freebusy` twice while explaining what the table
+   * deliberately does not hold, and an unstripped grep would leave the only way
+   * to keep this green being to stop explaining the rule.
+   */
+  const columns = schema.replace(/^\s*\/\/.*$/gm, '')
+
+  it('has exactly one calendar model, with exactly the columns ADR-0014 authorises', () => {
+    const models = [...schema.matchAll(/^model\s+(\w*Calendar\w*)\s*\{/gm)].map(([, name]) => name)
+    expect(models).toEqual(['CalendarConnection'])
+
+    const start = schema.indexOf('model CalendarConnection {')
+    const body = schema.slice(start, schema.indexOf('\n}', start))
+
+    // Canary: an empty slice would make every assertion below vacuous.
+    expect(body.length).toBeGreaterThan(200)
+
+    const fields = [...body.matchAll(/^\s{2}(\w+)\s+\w/gm)].map(([, name]) => name)
+    expect(fields).toEqual([
+      'id',
+      'provider',
+      'scope',
+      'refreshToken',
+      'connectedAt',
+      'refreshRejectedAt',
+      'updatedAt',
+    ])
+  })
+
+  it('has no column anywhere that could hold a busy interval or an event', () => {
+    // Canary: the strip must not have eaten the schema it is searching.
+    expect(columns).toContain('model CalendarConnection {')
+    expect(columns).toContain('model ObservationEvent {')
+
+    expect(columns).not.toMatch(/^\s+busy/im)
+    expect(columns).not.toMatch(/busyStart|busyEnd|freeBusy|freebusy/i)
+    expect(columns).not.toMatch(/calendarEvent|eventType|attendee/i)
   })
 })
 

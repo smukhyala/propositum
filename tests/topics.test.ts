@@ -43,7 +43,35 @@ function page(
   }
 }
 
-/** Verbatim from `/api/capture/ambient/debug` on 2026-08-11. */
+/**
+ * ~~Verbatim from `/api/capture/ambient/debug` on 2026-08-11.~~
+ *
+ * **"Verbatim" was as true as it could be and that was not very, 2026-08-18.**
+ * Nothing below is wrong and nothing below changes: this is still the recorded
+ * afternoon that per-origin detection could not see, and it still pins the
+ * defect it was written for. What the word could not mean is the point.
+ *
+ * It was made by reading that endpoint's response on a terminal and retyping it
+ * as `ThreadPage` literals, so it holds what the SUMMARY chose to show —
+ * origins, page counts, engaged minutes and titles — and it holds it at
+ * whatever granularity a person's hand produced. `scrollFraction`, `exitType`
+ * and `arrival` are all absent from these six pages, and no amount of care
+ * could have put them here: the endpoint did not emit them, so a fixture built
+ * this way STRUCTURALLY could not carry them. `docs/PRODUCT_PRINCIPLES.md` §13
+ * records what the same practice cost elsewhere — a pinned fixture written at
+ * three pages standing in for a session its own docstring recorded as twelve.
+ *
+ * **The next one is not made this way.** `/api/capture/ambient/debug` now emits
+ * the buffer's rows whole beside its summary, `src/fixtures/afternoon.ts` loads
+ * one back, and `npm run capture:afternoon` is the deliberate act that writes
+ * the file. `tests/afternoon-capture.test.ts` proves a capture replays to the
+ * same answers the live buffer gave, which is the property a hand-copy never
+ * had and could not be tested for.
+ *
+ * This fixture stays as it is. Re-typing it from a fuller capture would be
+ * inventing detail for an afternoon nobody can browse again, and a fixture that
+ * claims more than it recorded is precisely the failure above.
+ */
 const REAL_SESSION: ThreadPage[] = [
   page('https://meet.google.com', 'https://meet.google.com/abc-defg', 'Google Meet', 27),
   page('https://chatgpt.com', 'https://chatgpt.com/c/1', '', 2),
@@ -315,5 +343,123 @@ describe('what must not become a thread', () => {
     const threads = findThreads(pages)
     const seen = threads.flatMap((t) => t.pages.map((p) => p.url))
     expect(new Set(seen).size).toBe(seen.length)
+  })
+})
+
+/**
+ * The name the person gave it themselves. ADR-0013.
+ *
+ * `findThreads` is where a thread's label is decided, and this is the one input
+ * to that decision that a human wrote: the title of the tab group the pages sit
+ * in. `docs/research/intent-signals.md` §4.3 is the case for wanting it —
+ * everything else in this file is string arithmetic reconstructing a phrase, and
+ * a group titled *"world models"* is that phrase, typed.
+ *
+ * What is pinned here is the half that lives in this file: the tie-break is
+ * deterministic, the label never touches the terms, and a thread with no titled
+ * group carries no label rather than an empty one. The half that lives in
+ * `detect.ts` — that grounds and sufficiency are byte-identical either way — is
+ * pinned in `tests/detection.test.ts`, because that is where the offer bar is.
+ */
+describe('a thread carries the name the person gave its tab group', () => {
+  const grouped = (p: ThreadPage, groupTitle: string): ThreadPage => ({ ...p, groupTitle })
+
+  const world = [
+    page('https://a.example', 'https://a.example/1', 'World Models Survey', 5),
+    page('https://b.example', 'https://b.example/1', 'World Models Explained', 5),
+    page('https://c.example', 'https://c.example/1', 'World Models In Practice', 5),
+  ]
+
+  it('takes the label from the pages that carry one', () => {
+    const threads = findThreads(world.map((p) => grouped(p, 'Q3 world-model review')))
+
+    expect(threads).toHaveLength(1)
+    expect(threads[0]?.authoredLabel).toBe('Q3 world-model review')
+  })
+
+  it('carries none at all when nobody named a group, rather than an empty string', () => {
+    // Absent and empty are different facts, and `describeWork` branches on
+    // truthiness — an empty label would render as "You have been looking into ."
+    const threads = findThreads(world)
+
+    expect(threads[0]?.authoredLabel).toBeUndefined()
+    expect(Object.keys(threads[0] ?? {})).not.toContain('authoredLabel')
+  })
+
+  it('takes the label most of the thread carries when a thread spans two groups', () => {
+    const threads = findThreads([
+      grouped(world[0]!, 'reading'),
+      grouped(world[1]!, 'world models'),
+      grouped(world[2]!, 'world models'),
+    ])
+
+    expect(threads[0]?.authoredLabel).toBe('world models')
+  })
+
+  it('breaks a tie the same way every time, because the sentence is re-rendered every poll', () => {
+    /**
+     * Lexicographic, via `commonest` — the same function and the same argument
+     * the surface labels use. A name that flapped between two polls of an
+     * unchanged buffer reads as a system making things up, which is the failure
+     * `signatureOf` and `vocabularyOf` both spend paragraphs avoiding.
+     */
+    const tied = [
+      grouped(world[0]!, 'zebra'),
+      grouped(world[1]!, 'apples'),
+      grouped(world[2]!, 'World Models Survey'),
+    ]
+
+    expect(findThreads(tied)[0]?.authoredLabel).toBe('World Models Survey')
+    // Same input, same answer. The property, not the value.
+    expect(findThreads(tied)[0]?.authoredLabel).toBe(findThreads([...tied])[0]?.authoredLabel)
+  })
+
+  it('one labelled page in an unlabelled thread is enough, and that is the decision', () => {
+    // There is deliberately no minimum. The alternative name is a bag of stemmed
+    // words, and a person's own word about one of these pages beats an
+    // algorithm's word about all three. The cost of being wrong is a vaguer
+    // sentence, which is the cheap direction.
+    const threads = findThreads([world[0]!, world[1]!, grouped(world[2]!, 'reading list')])
+
+    expect(threads[0]?.authoredLabel).toBe('reading list')
+  })
+
+  it('never lets the group title into the terms that seed a thread', () => {
+    /**
+     * The hazard, checked directly.
+     *
+     * A group title is on every page in the group by construction, so if it were
+     * tokenised into `terms` it would supply a seed term, the origin count and
+     * the page count at once — a thread manufactured out of somebody tidying
+     * their tabs. Two unrelated pages in one group must still be two unrelated
+     * pages.
+     */
+    const unrelated = [
+      grouped(page('https://news.example', 'https://news.example/1', 'Election Results', 5), 'monday'),
+      grouped(page('https://recipes.example', 'https://recipes.example/1', 'Lasagne', 5), 'monday'),
+      grouped(page('https://weather.example', 'https://weather.example/1', 'Forecast', 5), 'monday'),
+    ]
+
+    expect(findThreads(unrelated)).toHaveLength(0)
+
+    // And where a thread does exist, the label's words are absent from its terms.
+    const threads = findThreads(world.map((p) => grouped(p, 'Q3 partner review')))
+    expect(threads[0]?.terms).not.toContain('partner')
+    expect(threads[0]?.terms).not.toContain('review')
+  })
+
+  it('forms exactly the same thread, term for term, with and without a label', () => {
+    // The equality `PAGES_FOR_THREAD` and `ORIGINS_FOR_THREAD` are about: the
+    // label rides alongside and changes no arithmetic at all.
+    const strip = (found: ReturnType<typeof findThreads>) =>
+      found.map(({ authoredLabel, pages, ...rest }) => {
+        void authoredLabel
+        return { ...rest, pages: pages.map((p) => p.url) }
+      })
+
+    expect(strip(findThreads(world.map((p) => grouped(p, 'anything at all'))))).toEqual(
+      strip(findThreads(world)),
+    )
+    expect(PAGES_FOR_THREAD).toBe(3)
   })
 })

@@ -398,6 +398,12 @@ export const PAGES_AFTER_QUERY_FOR_OFFER = 2
  * Every member is an act of navigation a person had to choose. None of them can
  * be produced by sitting still, which is the property that makes the group
  * worth requiring.
+ *
+ * **One member is weaker than that sentence makes it sound, as of 2026-08-17.**
+ * `came-back` is chosen navigation that may be about nothing — 612,000 users'
+ * worth of evidence that a sub-hour return is usually a click home from a
+ * spoke. The finding is written out at `returnedTo`, with what acting on it
+ * would cost. It is recorded and not acted on: no constant moved.
  */
 export const INTENT_GROUNDS = ['searched-then-read', 'refined-the-search', 'came-back'] as const
 
@@ -645,8 +651,56 @@ function pursuitOf(
   return { queries, readAfterQuery }
 }
 
-/** The page they came back to, if any — the most-returned-to one, so the
- *  sentence names the page that best supports it. */
+/**
+ * The page they came back to, if any — the most-returned-to one, so the
+ * sentence names the page that best supports it.
+ *
+ * ── An honest limit on `came-back`, recorded 2026-08-17, NOT acted on ─────
+ *
+ * `came-back` may be measuring hub-and-spoke navigation rather than intent,
+ * and the measurement that says so is much larger than anything this repo has.
+ * Adar, Teevan & Dumais analysed five weeks of browsing from **612,000 users**
+ * (see `docs/research/intent-suggestion-quality.md` §9.3 and §10.3 — §4 is
+ * about how much history helps and carries none of these figures). In the
+ * sub-hour revisit band — the ONLY band a thirty-minute `WINDOW_MS` can see:
+ *
+ *   - **77.0%** of revisits came from the same domain;
+ *   - the fast group had the highest proportion of same-site links, **87%**;
+ *   - only **2.9%** of those pages were reached via a search;
+ *   - and the self-reported intent behind that band is *"buy something,
+ *     monitor live content"* — not research.
+ *
+ * Read against `INTENT_GROUNDS`'s own claim, that is uncomfortable in the exact
+ * place the claim is strongest. The group's argument is that *"every member is
+ * an act of navigation a person had to choose"* and that *"nobody navigates
+ * back to a page they left for something they were idly served"*. At 77%
+ * same-domain and 2.9% search-reached, the commonest thing a sub-hour return
+ * IS, in the largest sample anybody has published, is clicking home from a
+ * spoke — an act of navigation, chosen, and about nothing. `visits >= 2` below
+ * cannot tell that from a return to a paper somebody is working through: it
+ * already excludes reloads, and it does NOT exclude same-domain returns, which
+ * is precisely the 77%.
+ *
+ * **Nothing here changes, deliberately.** The product owner's decision on
+ * 2026-08-17 was to record the research as an honest limit and retune nothing,
+ * so no constant moved, no predicate narrowed, and the same sessions qualify
+ * today as qualified yesterday. This block is the finding, sitting where the
+ * next person to touch this ground will read it.
+ *
+ * **What acting on it would look like, so it is a decision rather than a
+ * rediscovery.** The narrowing the research points at is one predicate — count
+ * a return only when the person went to a DIFFERENT origin in between — and it
+ * is a behaviour change with an ADR-shaped cost on both sides. It would refuse
+ * the shopping and rent-portal shapes `INVESTMENT_REQUIRED`'s block already
+ * names as this design's residual false positives; it would also refuse the
+ * real one it names beside them, somebody reading three abstracts on arXiv and
+ * clicking back to the first. And `came-back` is one of only three intent
+ * grounds, one of which is required before Propositum may offer to do work at
+ * all, so narrowing it is a bar change wearing a predicate's clothes — the same
+ * thing `SUSTAINED_MS`'s comment says about lowering a span. Two of the three
+ * grounds already require a search; making the third require one too would
+ * leave the group measuring one thing under three names.
+ */
 function returnedTo(pages: readonly ThreadPage[]): ThreadPage | null {
   const returns = [...pages].filter((page) => page.visits >= 2).sort((a, b) => b.visits - a.visits)
   return returns[0] ?? null

@@ -12,7 +12,7 @@ npm run eval                 # run against the real model
 npm run eval -- --baseline   # also run the raw-log baseline
 npm run eval -- --seal       # seal any unsealed references
 npm run eval -- --worksheet  # create blank score slots in eval-scores.json
-npm run eval -- --report     # apply the H1 gates to what you have scored
+npm run eval -- --report     # apply the H1 gates, compute H2, print the offer rate
 ```
 
 ---
@@ -143,12 +143,82 @@ everything downstream inherits the error.
 what the worker did. **Pass: every required stop caught, at most one false stop across the corpus.**
 One tolerated and zero not required, because the bias toward stopping is deliberate.
 
+## The offer rate — measured, and deliberately not scored
+
+*(Added 2026-08-18.)* [`PRODUCT_PRINCIPLES.md`](./PRODUCT_PRINCIPLES.md) §13 carried this as its own
+honest limit: *"there is no metric anywhere that would catch an offer rate creeping upward."* The
+offer bar was lowered twice in two days — `DEEP_READ_MS` 90s → 60s, and a fourth investment ground —
+and nothing in the repository would have shown whether either was right.
+
+[`intent-suggestion-quality.md`](./research/intent-suggestion-quality.md) §10.5 names the fix as
+three numbers, *"all derivable from data the system already has, and none requiring a model"*.
+`--report` prints them:
+
+| Number | Counted where | Why this one |
+|---|---|---|
+| **Offers shown per hour of observed browsing** | a strand reaching Home or the poll's `suggestion`, over minutes in which the extension had anything to report | GitHub track **completion-shown rate** in production beside acceptance. The denominator is the half that gets dropped: four offers is restraint across a day and a pathology across ten minutes |
+| **Decline rate** | both "Not now" paths | JetBrains optimise the pair — acceptance up, explicit cancels down — and got **+~50% / −~40%** by *removing* suggestions with output held flat |
+| **Strands detected but not shown** | what `MAX_THREADS_SHOWN` cut, after the snooze filters | [ADR-0008](./adr/0008-ambient-detection.md): a strand found and discarded in silence is the failure the multi-strand change existed to remove, and the display bound was still doing it |
+
+A strand is counted **once per buffer**, not once per poll — the poll re-detects the same afternoon
+every thirty seconds. The totals come with a **per-day column**, because §13's hole is a rate
+*creeping upward* and a total cannot show a change over time.
+
+**No pass mark, and that is a decision rather than an omission.** The only published calibration —
+Donato et al.'s **10% of sessions** — is per *session*; this is per *hour*, and the conversion needs a
+mean session length nothing here measures. A gate on an invented threshold would exit non-zero on a
+number nobody could defend, and the first response to that is to raise the threshold. So `--report`'s
+exit code is unchanged: H1 and H2 still decide it.
+
+**What these cannot do**, printed beside them rather than filed here:
+
+- **They will be zero until somebody uses the product.** A count of nothing is reported as *nothing
+  counted yet*, never as `0.0/h` — the same distinction `scoreH2` makes between a rate and an absence.
+- **They say nothing about whether an offer was GOOD.** They measure loudness. A product that offered
+  four excellent things an hour and one that offered four wrong ones score identically.
+- **A decline rate is an acceptance rate turned around**, and acceptance is the metric the research
+  warns hardest against optimising — GitHub, on their own number: *"being hyper-focused on a metric
+  like acceptance rate can lead to experiences that look good on paper, but do not result in happy
+  developers."* An offer nobody declines may be an offer nobody read.
+
+**And they hold no subject.** `offer_tally` is four integers and a date, with no column a term, a
+signature, an origin, a title or a URL could be written in. That is what makes it a tally rather than
+the durable profile ADR-0008 refuses, and `tests/eval.test.ts` asserts the column list rather than
+the intention.
+
+*(One field had to be taken back out on 2026-08-18 to make the sentence above true. The table shipped
+with an `updatedAt` — a millisecond instant, rewritten on every count, so a durable per-day note of
+roughly when this person stopped browsing, in a table whose own docblock refuses an hour bucket for
+being too fine. It arrived by habit rather than by decision, nothing read it, and it is gone. The
+decision this table belongs to, with the price and the open questions, is
+[ADR-0015](./adr/0015-measuring-loudness-and-saving-an-afternoon.md).)*
+
+**One number is counted best-effort and can be short.** `countQuietly` writes to a database handle
+something else opened and never opens one itself, so on a freshly started app the first ambient POST
+can arrive before any handle exists and its minute of observed browsing is lost. Bounded by the
+extension's thirty-second poll, which opens one. It is the denominator, so the error makes the
+reported offer rate look *higher* than it was — the direction that raises the alarm rather than
+quieting it, which is the only direction this measurement may round.
+
 ## What this does not yet measure
 
-Three hypotheses, six rubric components, one stop label. That is the whole instrument, and it is
-narrower than what the product claims to do. The gaps are named here rather than left to be noticed.
+Three hypotheses, six rubric components, one stop label, and — since 2026-08-18 — three counted
+numbers that nothing scores. That is the whole instrument, and it is narrower than what the product
+claims to do. The gaps are named here rather than left to be noticed.
 **All of this is later** — closing any of it means *adding* scenarios and instrumentation, never
 editing a sealed reference.
+
+**One item left this list on 2026-08-18** and it is worth saying which, because a gap list that only
+grows is a list nobody reads: ~~how often Propositum offers at all~~ is now measured — see *The offer
+rate* above. It was never written here, which is itself the finding: this section was a list of
+things the harness did not measure about a SHIFT, and the product had grown a whole surface —
+detection, and the offer it produces — that nothing measured at all. **Nothing else here is closed by
+it**, and one thing is added:
+
+- **Whether an offer was any good.** The offer rate counts how often Propositum spoke; nothing scores
+  whether it was worth saying. That needs a person's judgment against a detection, which is an H1-
+  shaped instrument for a path H1 has no scenario for — and ADR-0008 keeps detection out of the
+  scored corpus on purpose, because a model on the ambient path is the thing it refuses.
 
 **Two of these are debts this repository already owed**, before any direction document asked for
 them. [`FOUNDING_BRIEF.md`](./FOUNDING_BRIEF.md) names six measures; the harness scores three.

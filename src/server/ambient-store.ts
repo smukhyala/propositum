@@ -10,14 +10,100 @@
  *     process, and there is no path by which it can outlive one. The ledger
  *     still means "the record of a session", which is what makes
  *     `ObservationEvent` interpretable at all.
- *   - **Metadata only.** A cleaned URL, a title, dwell and scroll. There is no
- *     field for page text, and the 2,000-character excerpt begins only after a
- *     session starts. A test asserts the shape so this cannot drift.
+ *   - **Metadata only.** A cleaned URL, a title, dwell, scroll, how the page was
+ *     left, how it was arrived at, and — where the person made one — the title
+ *     of the tab group the page sits in. There is no field for page text, and
+ *     the 2,000-character excerpt begins only after a session starts. A test
+ *     asserts the shape so this cannot drift.
+ *
+ *     **"how it was arrived at" added 2026-08-18, and it is one word, not a
+ *     URL.** `arrival` is one of five closed values — `no-referrer`,
+ *     `same-origin`, `cross-origin`, `reloaded`, `back-or-forward` — computed
+ *     inside the content script from `document.referrer` and Navigation Timing.
+ *     The referrer URL itself is **not** on this path and is not held here. It
+ *     is on the session path, where `src/capture/semantics.ts` stores it,
+ *     because a session is consented and scoped and its rows are auditable. The
+ *     asymmetry is the point: a referrer names a page the person came FROM,
+ *     which may be somewhere this buffer never otherwise observes, and this
+ *     buffer is the part of the product that watches without being asked.
+ *
+ *     *(One correction worth carrying here even though it is about the
+ *     extension, 2026-08-18. The sentence above is about THIS store and was
+ *     always true — `flushAmbient` builds the wire shape by hand and never
+ *     copied a referrer. Four other places said the stronger thing, that the
+ *     URL never left the page at all, and that was false: the content script
+ *     cannot know whether a session is running, so it sends the referrer every
+ *     time, and the extension's service worker was buffering it in
+ *     `chrome.storage.session` on the no-session branch. It now deletes it
+ *     there, beside page text. The claim this file makes did not have to
+ *     change; the ones that overstated it did.)*
+ *
+ *     *"and scroll" was corrected twice on 2026-08-17 and then overtaken by the
+ *     change it was describing.* ~~The field exists now and `record` carries it
+ *     unchanged, which `tests/ambient-store.test.ts` proves. **What does not
+ *     exist is a sender.** `flushAmbient` in `extension/src/service-worker.js`
+ *     builds the ambient wire shape field by field and does not copy
+ *     `scrollFraction`, so the only way a value reaches this store is a direct
+ *     POST — `curl`, or a test.~~
+ *
+ *     **ADR-0013 added the sender**, along with `exitType` and `groupTitle`. So
+ *     all four now arrive from a browser rather than from a `curl`, and the
+ *     sentence above is true of what is held for the first time.
+ *
+ *     **Nothing reads scroll, exit type or arrival to decide anything**, and
+ *     `tests/reachability.test.ts` holds all three as deferred assertions so
+ *     wiring one cannot happen quietly.
+ *
+ *     *(Widened 2026-08-18, after review, and the correction is worth reading
+ *     because the sentence above was ahead of what the guard did. Each deferral
+ *     scanned only files under `src/domain/detection`, and `AmbientObservation`
+ *     is consumed in four files outside it — including `src/server/front-door.ts`,
+ *     which is the offer bar. A planted line there suppressing every strand
+ *     whenever any observation was `'no-referrer'` passed all 1,496 tests and
+ *     the typecheck. The guards now cover every file under `src` and `scripts`,
+ *     with an explicit allowance naming each transport site and its exact
+ *     count.)*
+ *
+ *     The group title has exactly one reader
+ *     and it is in this file: `describeWork` puts it in a sentence. It reaches
+ *     no ground, no gate and no prompt, which is asserted rather than intended.
+ *
+ *     Three unread signals is a number worth writing down rather than letting
+ *     accumulate. The deferred block carries what would end it, and what should
+ *     happen if that never arrives.
+ *
+ *     One thing worth naming while the list is being rewritten: a group title
+ *     is the first thing this buffer holds that the PERSON wrote, rather than a
+ *     page. Same window, same row cap, same discard on decline — but it is a
+ *     different category from a URL and a page's own title, and filing it
+ *     silently under "metadata" would be the kind of rounding-up this header
+ *     exists to refuse.
  *   - **Bounded twice** — by a rolling time window and by a hard row cap, so a
  *     day of browsing cannot accumulate into a profile.
  *   - **Discarded by default.** Declining an offer clears it. Accepting one
  *     folds it into the new session, where it becomes a normal, auditable
  *     ObservationEvent with the ordinary rules applying.
+ *
+ * ── One durable thing sits beside this now, and it holds no subject ──────
+ *
+ * *(Added 2026-08-18.)* Three markers at the bottom of this interface —
+ * `newlyShown`, `newlySuppressed`, `newlyObservedMinute` — let a caller count
+ * an offer, a suppression or a minute of watching exactly once. The counts
+ * themselves are written to `offer_tally`, which IS durable, and the reason
+ * that does not contradict the four bullets above is worth stating here rather
+ * than only where the table is declared:
+ *
+ * **A bare tally is not a profile, and that distinction is the whole design.**
+ * *"Four offers were shown in the last hour of observed browsing"* says nothing
+ * about what they were about. *"Offer for 'perturbation robotics' declined at
+ * 14:32"* is exactly the row `WorkOffer`'s docblock below refuses. The table has
+ * four integer columns and a date, and no column a term, a signature, an origin,
+ * a title or a URL could be written in — so the refused row is refused
+ * structurally rather than by anybody remembering.
+ *
+ * What crosses out of this object is therefore a boolean, never a signature. The
+ * signatures the markers hold to deduplicate stay in here, bounded by the same
+ * buffer life and erased by the same `clear()`.
  *
  * ── Why "discarded" is the honest word ───────────────────────────────────
  *
@@ -221,6 +307,62 @@ export interface AmbientStore {
   /** Observations for one origin, for folding into a session on accept. */
   forOrigin(origin: string, nowMs: number): readonly AmbientObservation[]
   size(): number
+
+  /* ── three markers, so a count can be taken once ──────────────────────── */
+
+  /**
+   * True the FIRST time this strand is put in front of the person, and false
+   * afterwards. Marks it on the way through.
+   *
+   * ── Why this is here and the count is not ────────────────────────────
+   *
+   * These three answer *is this new?* and nothing else. They hold no totals,
+   * and a total in this object would answer nothing worth asking: the buffer
+   * dies with the process, so a tally inside it could never say what happened
+   * across a day, which is the only timescale on which an offer rate creeping
+   * upward is visible at all. The counts live in `offer_tally`, one row per
+   * day, four integers and no subject — see `src/server/offer-tally.ts` and the
+   * schema's docblock, which argues that table against ADR-0008's refused row
+   * directly.
+   *
+   * What is here is the deduplication, and it has to be here: the poll runs
+   * every 30 seconds and Home re-renders on every visit, so counting a
+   * detection each time it is *computed* would report an afternoon's one strand
+   * as a hundred offers. A strand is counted once per buffer.
+   *
+   * ── The two sets are signatures, so `clear()` takes them ─────────────
+   *
+   * A signature IS the subject — it is the thread's terms joined — so these
+   * cannot survive a decline or a session start when nothing else keyed that
+   * way does. They are erased with the names, the offers and the pinned pages,
+   * and they are no new category of held value: the same keys already sit in
+   * three maps above.
+   *
+   * The cost is an over-count. A strand shown, declined, and detected again an
+   * hour later is counted twice, because after `clear()` this object cannot
+   * know it is the same strand and must not be able to. That error is in the
+   * direction that raises an alarm rather than quiets one, which is the only
+   * direction a measurement of one's own loudness may round.
+   */
+  newlyShown(signature: string): boolean
+  /** True the first time this strand is found and NOT shown. Same marking, same
+   *  erasure, same over-count, same direction. */
+  newlySuppressed(signature: string): boolean
+  /**
+   * True the first time a report arrives in this minute of wall clock.
+   *
+   * The denominator's unit. One integer — the minute last counted — and never a
+   * set, so this holds no history of when anybody browsed; it can answer *have
+   * I already counted this minute* and no other question.
+   *
+   * **It deliberately survives `clear()`, and that is the one exception in this
+   * object.** `clear()` forgets what was SEEN; a minute number names no page,
+   * no site and no subject, and resetting it would let the same minute be
+   * counted twice — inflating the denominator, which lowers the offer rate.
+   * That is the direction this measurement may not round in. `generation` is
+   * the precedent: it survives a clear too, because something has to.
+   */
+  newlyObservedMinute(nowMs: number): boolean
 }
 
 export function createAmbientStore(): AmbientStore {
@@ -246,6 +388,23 @@ export function createAmbientStore(): AmbientStore {
    */
   const attemptedNames = new Set<string>()
   const attemptedOffers = new Set<string>()
+
+  /**
+   * Which strands have already been counted, so a poll cannot count one twice.
+   *
+   * Signatures, therefore erased by `clear()` with everything else keyed that
+   * way. See the interface docs on `newlyShown` for what that costs and why the
+   * cost is in the acceptable direction.
+   */
+  const countedShown = new Set<string>()
+  const countedSuppressed = new Set<string>()
+
+  /**
+   * The last minute of wall clock counted, as `floor(ms / 60000)`.
+   *
+   * A single number, never a list. Not erased by `clear()` — see `newlyObservedMinute`.
+   */
+  let countedMinute: number | null = null
 
   /**
    * How many buffers ago this is. Counts `clear()`s and nothing else.
@@ -367,6 +526,18 @@ export function createAmbientStore(): AmbientStore {
       if (earlier.url !== observation.url) continue
       if (earlier.kind !== 'navigation' && earlier.kind !== 'query') continue
       if (earlier.title === '') continue
+      // Spread, not a field list, and that is load-bearing rather than
+      // idiomatic: the ONLY thing being replaced here is the title, and an
+      // engagement is the one kind that carries `scrollFraction` and `exitType`.
+      // Rewriting this as an explicit `{ at, origin, url, title, kind,
+      // engagedMs }` would drop both from precisely the observations that have
+      // them, and would do it silently — nothing reads either field yet, so no
+      // test outside `tests/ambient-store.test.ts` would notice.
+      //
+      // `groupTitle` is on every kind rather than only engagements, and is the
+      // same argument one step stronger: it is the only person-authored value
+      // in the buffer, and losing it here would show up as a thread quietly
+      // reverting to its stemmed-word name with nothing saying why.
       return { ...observation, title: earlier.title }
     }
 
@@ -431,6 +602,10 @@ export function createAmbientStore(): AmbientStore {
       attemptedNames.clear()
       attemptedOffers.clear()
       threads.clear()
+      // Signatures, so they go with the rest of the signatures. `countedMinute`
+      // is not one and stays — the argument is on `newlyObservedMinute`.
+      countedShown.clear()
+      countedSuppressed.clear()
     },
 
     decline(origin, nowMs) {
@@ -553,6 +728,45 @@ export function createAmbientStore(): AmbientStore {
     },
 
     size: () => observations.length,
+
+    newlyShown(signature) {
+      if (countedShown.has(signature)) return false
+      countedShown.add(signature)
+      return true
+    },
+
+    /**
+     * Marked in its own set rather than sharing `countedShown`.
+     *
+     * A strand can be suppressed on one render and shown on the next — the
+     * bound is applied after the snooze filters, so declining the leader
+     * promotes the fourth strand onto the screen. One set would make that
+     * strand's promotion invisible, which is the specific silence ADR-0008
+     * says the multi-strand change existed to remove. Two sets count it as one
+     * suppression and one showing, which is what happened.
+     */
+    newlySuppressed(signature) {
+      if (countedSuppressed.has(signature)) return false
+      countedSuppressed.add(signature)
+      return true
+    },
+
+    /**
+     * `<=` rather than `!==`, which costs nothing and closes one direction.
+     *
+     * Equality would count minute 100 a second time if the clock ever went
+     * backwards over a minute boundary — an NTP correction, a laptop waking —
+     * and a double-counted minute inflates the denominator and lowers the
+     * reported offer rate. Refusing anything at or before the last counted
+     * minute means the worst a backwards clock can do is lose minutes, which
+     * is the direction that reports MORE offers per hour than really happened.
+     */
+    newlyObservedMinute(nowMs) {
+      const minute = Math.floor(nowMs / 60_000)
+      if (countedMinute !== null && minute <= countedMinute) return false
+      countedMinute = minute
+      return true
+    },
   }
 }
 
@@ -658,6 +872,42 @@ export function hostOf(origin: string): string {
  * sites", never "you are researching frontier world-model labs". Naming the
  * subject in a sentence a person would recognise needs a model, and that is a
  * separate decision — see ADR-0008.
+ *
+ * ── One exception, added 2026-08-17: a name the person typed themselves ──
+ *
+ * `detected.authoredLabel` is the title of the tab group the thread's pages sit
+ * in. It is not a reading and it is not a model's: `docs/research/intent-signals.md`
+ * §4.3 argues that a group titled *"world models"* IS the sentence this file
+ * otherwise approximates with a bag of stemmed words, *"typed by the person,
+ * for free"*. So where one exists, it replaces `words` in the middle branch.
+ *
+ * **This is the only thing that consumes the field, and it consumes it into a
+ * SENTENCE and nowhere else.** It cannot make an offer fire — `groundsFor`
+ * never sees it, and `tests/detection.test.ts` pins that grounds and
+ * sufficiency are byte-identical with and without a group title in the buffer.
+ * All it can do is change what a person reads about their own afternoon.
+ *
+ * ── Why it does not outrank a confident model name, which is arguable ────
+ *
+ * The research points the other way and it is worth saying so rather than
+ * pretending the ordering is obvious: §4.3's case is that an authored label has
+ * *"no confidence flag, and no possibility of a confidently-wrong name"*, which
+ * is an argument for putting it first. It is second anyway, for two reasons:
+ *
+ *   - The model's subject is composed from the thread's titles and searches —
+ *     more evidence than one label, and evidence about all of the pages. A tab
+ *     group title is a label somebody typed once, possibly before the work
+ *     turned into what it is now.
+ *   - People label groups "misc", "temp" and "Group 3". Nothing here can tell
+ *     those from a subject, and letting one displace *"Looks like you're
+ *     working on the Q3 partner review"* would be a downgrade at exactly the
+ *     moment the product had its best sentence available.
+ *
+ * What it DOES displace is the term list, and against that it wins on every
+ * reading: the term list is at best three stemmed words with no grammar. If the
+ * ordering is ever revisited, the thing to measure is how often a group title
+ * is a real subject rather than a filing word — which nothing measures today,
+ * and which is why this is a judgement rather than a finding.
  */
 export function describeWork(
   detected: WorkDetected,
@@ -669,22 +919,34 @@ export function describeWork(
   const sites = detected.origins.length
   const where = sites === 1 ? hostOf(detected.origins[0] ?? '') : `${sites} sites`
 
+  // Trimmed at both doors already; guarded here anyway, because this is the one
+  // line that puts it in front of a person and an empty label rendered as a
+  // name would read as the product losing its place mid-sentence.
+  const authored = detected.authoredLabel?.trim()
+
   const sentence =
     named && named.confident
       ? // Only when the model was sure. A confident wrong name is worse than an
         // honest vague one, and the vague one is still true.
         `Looks like you're working on ${named.subject}.`
-      : words
-        ? // No site count here, though it used to carry one. This sentence is
-          // never shown alone: Home sets `because` directly beneath it and the
-          // extension badge concatenates the two, so "— across 4 sites." landed
-          // one line above "read 4 pages across 4 sites." and said the same
-          // thing twice in a row. The naming half says what it is about; the
-          // grounds half says what was seen. One job each.
-          `You have been looking into ${words}.`
-        : // Nothing to name, so this one keeps the count — without it the
-          // sentence would say nothing at all.
-          `You have been reading across ${where}.`
+      : authored
+        ? // What they called it. Same frame as the term list below rather than
+          // the confident one above: "You have been looking into X" is a
+          // statement about what was observed, and a group title is observed
+          // rather than concluded. Promoting it to "Looks like you're working
+          // on X" would claim a reading nobody made.
+          `You have been looking into ${authored}.`
+        : words
+          ? // No site count here, though it used to carry one. This sentence is
+            // never shown alone: Home sets `because` directly beneath it and the
+            // extension badge concatenates the two, so "— across 4 sites." landed
+            // one line above "read 4 pages across 4 sites." and said the same
+            // thing twice in a row. The naming half says what it is about; the
+            // grounds half says what was seen. One job each.
+            `You have been looking into ${words}.`
+          : // Nothing to name, so this one keeps the count — without it the
+            // sentence would say nothing at all.
+            `You have been reading across ${where}.`
 
   return {
     kind: 'start-session',

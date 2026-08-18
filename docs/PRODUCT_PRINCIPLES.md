@@ -278,10 +278,49 @@ three put one — so the suite stayed green through exactly the regression it ex
 fixture is at twelve now. A fixture smaller than the session it records is not a smaller test, it is
 a different one, and this principle is only as enforced as its fixture is honest.
 
-**Honest limit:** the other half is enforced by nothing. The grounds threshold is a floor on *when*
+~~**Honest limit:** the other half is enforced by nothing. The grounds threshold is a floor on *when*
 Propositum may offer, not a ceiling on how often it may speak, and there is no metric anywhere that
-would catch an offer rate creeping upward. Notifications are the obvious place this erodes first,
+would catch an offer rate creeping upward.~~ Notifications are the obvious place this erodes first,
 because a notification is the cheapest thing to add and the hardest to attribute.
+
+**Amended 2026-08-18 — the second sentence is still true and the third is not.** There is a metric
+now, and it is three numbers rather than one, per
+[`docs/research/intent-suggestion-quality.md`](./research/intent-suggestion-quality.md) §10.5:
+
+| | |
+|---|---|
+| **Offers shown per hour of observed browsing** | GitHub's *completion-shown rate*, the thing they track beside acceptance. The denominator is counted at the ambient endpoint — minutes in which the extension had something to report while no session was running |
+| **Decline rate** | Both "Not now" paths, the front door's per-strand one and the extension's per-origin one |
+| **Strands detected but not shown** | What `MAX_THREADS_SHOWN` cut. [ADR-0008](./adr/0008-ambient-detection.md)'s own argument is that a strand found and discarded in silence is the failure the multi-strand change existed to remove, and the display bound was still doing exactly that |
+
+`npm run eval -- --report` prints all three, with a per-day column beneath the totals — because a
+creep is a change over time and a single total cannot show one. See [`EVALUATION.md`](./EVALUATION.md).
+
+**What this does NOT do, said here rather than in a footnote, because a metric oversold is worse
+than one missing.** It says how OFTEN Propositum spoke and nothing at all about whether it was right
+to. There is no pass mark and it cannot fail a build: the only published calibration is per *session*
+and this is per *hour*, and a threshold invented to bridge that would be a number nobody could
+defend. It is zero until somebody actually uses the product. And the decline rate is an acceptance
+rate turned around, which is the metric the research warns hardest against optimising — GitHub, in
+their own words: *"being hyper-focused on a metric like acceptance rate can lead to experiences that
+look good on paper, but do not result in happy developers."* Somebody reading the per-day column and
+asking whether it is going up is the whole enforcement mechanism. That is weaker than a test, and it
+is more than nothing, which is what the struck sentence describes.
+
+**And it holds no subject, which is the design rather than a detail.** `offer_tally` is four integers
+and a date. ADR-0008 refuses one specific durable row — *"a durable row saying 'Propositum thought
+you were job-hunting' about an offer NOBODY ACCEPTED is exactly the profile this buffer refuses to
+become"* — and every word of that refusal is about a subject. *"Four offers were shown in forty
+observed minutes"* names nothing. There is no column a term, a signature, an origin, a title or a URL
+could go in, and `tests/eval.test.ts` asserts the column list rather than trusting the intention.
+
+*(The column-list assertion had to earn that sentence, 2026-08-18. It was titled *"exactly the five
+columns"* and listed **six** — the sixth being an `updatedAt` instant that named when this person
+last browsed. A test whose name says five and whose body blesses six reads, in a diff, as the guard
+having been consulted. The field is gone, the assertion says five, and there is now a second one
+saying the model holds no `DateTime` at all. The decision this table belongs to is
+[ADR-0015](./adr/0015-measuring-loudness-and-saving-an-afternoon.md), which also records what has no
+answer yet: nothing in the product deletes this table.)*
 
 **It eroded there on 2026-08-17, exactly as predicted, and the path is worth naming.** Showing three
 strands on the front door was a screen change and interrupted nobody; composing an offer for all
@@ -291,7 +330,14 @@ strand that had never been advertised was arriving ready to interrupt. Nothing f
 red, no rate was measured, and the sentence estimating the cost said *usually no offer* while two of
 three strands cleared the bar. Composing is gated on leadership now
 ([ADR-0008](./adr/0008-ambient-detection.md)), and what caught it was somebody reading the estimate
-against the fixture — which is the whole of the enforcement on this half.
+against the fixture — ~~which is the whole of the enforcement on this half.~~
+
+*(That last clause is what the 2026-08-18 amendment above replaces. Would the offer rate have caught
+this one? **Partly, and slowly.** The extra notifications were about strands that had never been
+advertised, so each would have counted as an offer shown and the per-hour number would have gone up
+on the day it landed. What the number would not have said is WHY — it names no subject and points at
+no commit, so it is a smoke alarm rather than a diagnosis. Somebody reading the estimate against the
+fixture is still how the cause gets found; the difference is that now something notices the smoke.)*
 
 ---
 

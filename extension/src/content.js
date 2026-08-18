@@ -38,6 +38,267 @@
 
 const BUDGET = 2000 // published product constant, see SECURITY_AND_PRIVACY.md
 
+/**
+ * How a page was left. ADR-0013.
+ *
+ * ── Why this is worth a field at all ─────────────────────────────────────
+ *
+ * `docs/research/intent-suggestion-quality.md` §2.1 quotes the ablation inside
+ * Fox et al. (TOIS 2005), the study that founded implicit-feedback research:
+ * *"The two most important variables in the Bayesian model were Difference in
+ * Seconds and Exit Type… Using just these two variables… accuracy for
+ * predicting SAT was 66%… very close to the model using the full set of 19
+ * predictor variables."* Dwell is the one Propositum already has. Exit type is
+ * the other one, and §9's table calls it **the single best-evidenced addition**.
+ *
+ * ── The set is CLOSED, and it is closed here ─────────────────────────────
+ *
+ * Three values, listed once, in code, exactly as `ObservationKind` and
+ * `GroundKind` are. There is deliberately no `other` and no `unknown`: a
+ * catch-all is where a value nobody argued for goes to live, and the first
+ * consumer that treats it as "probably fine" has silently invented a fourth
+ * meaning. A lifecycle transition this file does not recognise sends nothing,
+ * and the absence is honest — `exitType` is optional at every layer below.
+ *
+ * ── What each one IS, and what a content script can actually see ──────────
+ *
+ *   'hidden'         `visibilitychange` fired and the document is still alive.
+ *                    The tab stopped being the one on screen. Two people
+ *                    watching agree: the page is still open and nobody is
+ *                    looking at it.
+ *   'left-cached'    `pagehide` with `event.persisted === true`. The person
+ *                    navigated away and Chrome KEPT this document, so coming
+ *                    straight back runs no script at all. Chrome attests the
+ *                    flag; we do not infer it.
+ *   'left-unloaded'  `pagehide` with `event.persisted === false`. The document
+ *                    is being destroyed.
+ *
+ * ── What is NOT distinguishable, said rather than papered over ───────────
+ *
+ * **`'left-unloaded'` genuinely means four things**: navigated onward in this
+ * tab, closed the tab, quit the browser, and reloaded. A content script sees
+ * one `pagehide` for all four, and the APIs that would separate them —
+ * `chrome.tabs` events, `webNavigation.transitionType`, `chrome.history` — are
+ * refused by `manifest.json` and by `tests/extension-permissions.test.ts`.
+ * Splitting it would mean shipping a value that means two things and hoping,
+ * which is the thing this comment exists to refuse.
+ *
+ * That matters for what may later be built on it. Fox's decision-tree nodes
+ * condition on *"did not go back to the results list"* — a distinction inside
+ * the branch we cannot split. So the evidence for exit type is stronger than
+ * the evidence for **our** exit type, and any consumer has to argue that gap
+ * rather than inherit the citation. See the deferral in
+ * `tests/reachability.test.ts`.
+ *
+ * ── One exit can produce two rows ────────────────────────────────────────
+ *
+ * On an ordinary same-tab navigation Chrome fires `visibilitychange` (hidden)
+ * and then `pagehide`, so this page reports `'hidden'` and then `'left-cached'`
+ * or `'left-unloaded'`. Both are true and neither is a duplicate. A consumer
+ * must therefore take the LAST exit recorded for a URL, not the first; that
+ * rule is stated here because the place it would be got wrong is a layer that
+ * does not exist yet.
+ */
+const EXIT_TYPES = ['hidden', 'left-cached', 'left-unloaded']
+
+/**
+ * How the person got TO this page, as a closed set.
+ *
+ * ── Why this exists when the referrer is already sent ────────────────────
+ *
+ * It is already sent on ONE path. The navigation signal below carries
+ * `referrer` and `navigationType`, `src/capture/semantics.ts` cleans and stores
+ * both, and its own comment calls the referrer *"our partial substitute for
+ * transitionType, which lives behind `webNavigation`"*. That is the SESSION
+ * path. Detection does not run there.
+ *
+ * The AMBIENT path — the one that runs when nobody has asked for anything, and
+ * the one `detect.ts` and `grounds.ts` are built on — dropped both:
+ * `flushAmbient` in `service-worker.js` hand-builds the wire shape and never
+ * copied them, and `ambientSchema` had no field to receive them. So the
+ * substitute existed, was computed, was transmitted, and the detector could not
+ * see it. Identical in shape to `scrollFraction`, which sat in exactly that
+ * state until 2026-08-17.
+ *
+ * ── Strictly LESS data than the session path already sends ───────────────
+ *
+ * **This is the load-bearing sentence of the whole change, and the first
+ * version of it was false. Corrected 2026-08-18, after review.**
+ *
+ * ~~The session path gets the referrer URL. The ambient path gets one of five
+ * words computed from it, and the URL never leaves this file — it is read here,
+ * compared to `location.origin` here, and discarded here.~~
+ *
+ * The first two sentences are true. The third was not, and it was falsified two
+ * hundred lines below by this file itself: the navigation signal carries
+ * `referrer` unconditionally, because **this script cannot know whether a
+ * session is running** — deliberately, since a page that could learn the answer
+ * would have learned something about the person from timing what its own script
+ * is allowed to do. So the URL leaves this file on every navigation, to
+ * Propositum's own service worker, and the session path needs it there.
+ *
+ * What is true, and is now the whole claim:
+ *
+ *   - It goes to the extension's service worker and nowhere else. Not to a
+ *     network, not to the app, not to another page.
+ *   - **On the ambient path it is deleted before anything holds it.** The
+ *     worker's no-session branch destructures `referrer` and `navigationType`
+ *     out alongside `text`, so what `bufferAmbient` writes into
+ *     `chrome.storage.session` has no referrer in it. That line was added on
+ *     2026-08-18 for this reason; before it, the referrer sat in that buffer
+ *     until the next flush, and longer whenever the app was unreachable.
+ *   - **`flushAmbient` would not have sent it anyway** — it hand-builds the
+ *     wire shape and copies `arrival` alone — so the app has never received one
+ *     on this path, and that half of the original claim always held.
+ *   - The **session** path is where the URL is genuinely kept, and it is kept
+ *     on purpose. See below.
+ *
+ * The classification is still computed HERE rather than in the worker, and that
+ * is still worth something even though the URL travels: `document.referrer`
+ * exists only in the document, this is the only place the comparison can be
+ * made without the worker holding the value, and the value the worker keeps is
+ * one word rather than an address.
+ *
+ * The asymmetry is deliberate and it is not caution for its own sake. A session
+ * is consented: a person started it, it is scoped to sources they approved, and
+ * every event it produces is an auditable row they can read back. The ambient
+ * buffer is what Propositum saw while nobody asked. A referrer is the URL of a
+ * page the person came FROM — which may be a page no other part of this system
+ * observes, on a site nobody approved, and possibly one they would not have
+ * named. Carrying it into the unconsented buffer would widen what that buffer
+ * holds from "pages we watched" to "pages we watched, plus the pages before
+ * them". Detection does not need that. It needs the classification.
+ *
+ * ── The set is CLOSED, and it is closed here ─────────────────────────────
+ *
+ * Same discipline as `EXIT_TYPES` above, for the same reason: a capture-layer
+ * vocabulary must have one author, and the browser must not be able to widen
+ * it. There is deliberately no `other` and no `unknown` — a catch-all is where
+ * a value nobody argued for goes to live. A navigation this function cannot
+ * classify sends nothing, and absence is honest, because `arrival` is optional
+ * at every layer below.
+ *
+ * ── What each one IS ─────────────────────────────────────────────────────
+ *
+ *   'no-referrer'      `navigationType` is `navigate` and Chrome named no
+ *                      referring page. Typed in the omnibox, opened from a
+ *                      bookmark, or opened in a fresh tab — the person choosing
+ *                      the address rather than following something. **And see
+ *                      the limit below, which is the serious one.**
+ *   'same-origin'      `navigate`, with a referrer whose origin equals this
+ *                      page's. They followed something WITHIN a site.
+ *   'cross-origin'     `navigate`, with a referrer from a different origin.
+ *                      They arrived from somewhere else.
+ *   'reloaded'         `navigationType` is `reload`.
+ *   'back-or-forward'  `navigationType` is `back_forward`.
+ *
+ * The navigation type is consulted FIRST and that ordering is load-bearing: a
+ * reload and a history traversal both keep the ORIGINAL navigation's referrer,
+ * so classifying them by referrer would report the arrival that happened
+ * minutes ago as if it had just happened again.
+ *
+ * ── What is NOT distinguishable, said rather than papered over ───────────
+ *
+ * **`'no-referrer'` is the one that can be wrong in the direction that matters,
+ * and it is wrong exactly where the product most wants it right.** A followed
+ * link is indistinguishable from a deliberate arrival whenever the linking page
+ * suppressed its referrer — `rel="noreferrer"`, or `Referrer-Policy:
+ * no-referrer`. Mail clients, readers and newsletters are among the places that
+ * do this. So the shape `grounds.ts` calls *"the newsletter afternoon"* — the
+ * false positive its entire two-group rule exists to refuse — is the shape most
+ * likely to arrive here looking like somebody typing an address.
+ *
+ * That is not a defect to fix in this file. It is the reason nothing downstream
+ * reads the field yet; see the deferral in `tests/reachability.test.ts`.
+ *
+ * One narrowing, because the honest limit should not be rounded UP either: the
+ * other common way a referrer disappears is an `https` page linking to an
+ * `http` one, and this script runs only on `https` (see `host_permissions`), so
+ * a page that could observe that stripping is a page we are not on.
+ *
+ * **`'back-or-forward'` means two things** — Back and Forward — and it is named
+ * that way rather than `'went-back'` for the reason `EXIT_TYPES` refuses to
+ * split `'left-unloaded'`: a value that means two things and reads as one is a
+ * lie the first consumer will believe. Separating them is what `webNavigation`
+ * would buy, and `tests/extension-permissions.test.ts` forbids it.
+ *
+ * **`'reloaded'` does not mean a person pressed reload.** A page can reload
+ * itself, and a meta refresh looks the same from in here.
+ *
+ * **`'cross-origin'` is an origin, not an intention.** A mail client that
+ * rewrites links through its own redirector produces a cross-origin arrival
+ * from the redirector, which is true and is not the site the person was reading.
+ *
+ * ── One debt, named rather than left to be found ─────────────────────────
+ *
+ * `manifest.json`'s `_comment_hosts` block enumerates what this file sends
+ * while no session is running — *"a cleaned URL, a title, dwell, scroll, how
+ * the page was left, and … the title of the tab group"* — and that list is
+ * ~~one item short~~ **one item short of what ARRIVES at the app, and was
+ * three short of what this file puts on the message.** Corrected 2026-08-18:
+ * the missing item is `arrival`; the other two are `referrer` and
+ * `navigationType`, which this file has sent since the navigation signal
+ * existed and which the enumeration never named either. They now stop at the
+ * service worker on the ambient path — see the destructure in
+ * `service-worker.js`'s no-session branch — so the list is one short rather
+ * than three, and the two it never named no longer travel past the worker while
+ * nobody has asked for anything.
+ *
+ * It was deliberately not edited in this change, which was scoped to touch no
+ * part of the manifest, and the enumeration is corrected in
+ * `docs/SECURITY_AND_PRIVACY.md` and in `src/domain/detection/detect.ts`'s
+ * header. It is a comment rather than a capability, so nothing behaves on it —
+ * but "three true-sounding sentences over a field nobody carried" is how the
+ * `scrollFraction` defect stayed invisible, and a list that is one short is the
+ * same shape pointing the other way. That the list omitted two fields for the
+ * whole build without anybody noticing is the sharper version of the same
+ * point, and is why the miscount is written down here rather than quietly
+ * fixed in the manifest by a change that promised not to touch it.
+ */
+const ARRIVALS = ['no-referrer', 'same-origin', 'cross-origin', 'reloaded', 'back-or-forward']
+
+/**
+ * The classification, computed from two values that never leave this page.
+ *
+ * Returns `undefined` for anything it cannot answer, and every branch that does
+ * so is deliberate:
+ *
+ *   - **no navigation entry at all.** Then there is nothing attesting that the
+ *     referrer belongs to THIS navigation, and a referrer read without it is a
+ *     guess about which arrival it describes.
+ *   - **a navigation type this set has no member for** — `'prerender'` is the
+ *     one that exists. No fall-through, exactly as `ambientKindOf` in the
+ *     service worker refuses one, and for the reason it gives: a guess always
+ *     runs toward the value that reads as more intentional.
+ *   - **a referrer that does not parse.** `new URL` throwing means we cannot
+ *     say whether it was this site or another, and "either" is not a member.
+ */
+function arrivalOf() {
+  const type = performance.getEntriesByType('navigation')[0]?.type
+
+  // Type first. A reload and a history traversal both carry the original
+  // navigation's referrer, so reading the referrer here would re-report an
+  // arrival that already happened.
+  if (type === 'reload') return 'reloaded'
+  if (type === 'back_forward') return 'back-or-forward'
+  if (type !== 'navigate') return undefined
+
+  const referrer = document.referrer
+  if (!referrer) return 'no-referrer'
+
+  try {
+    // ONLY the origin is compared, and the comparison happens here so that what
+    // this function RETURNS is a word rather than an address. ~~Nothing below
+    // this line holds it.~~ Corrected 2026-08-18: nothing below this line in
+    // THIS function holds it, which is all a function can promise. The
+    // navigation signal sends `document.referrer` separately for the session
+    // path, and the worker drops it when no session is running. See `ARRIVALS`.
+    return new URL(referrer).origin === location.origin ? 'same-origin' : 'cross-origin'
+  } catch {
+    return undefined
+  }
+}
+
 // When this page became visible. Engagement is measured from here, and the app
 // discards anything under its dwell threshold — so a glance costs a message and
 // no row, rather than becoming a false "they read this".
@@ -131,6 +392,8 @@ whenSeen(() => {
   seenAt = Date.now()
   wasSeen = true
 
+  const arrival = arrivalOf()
+
   send({
     signal: 'navigation',
     at: new Date().toISOString(),
@@ -138,6 +401,41 @@ whenSeen(() => {
     title: document.title,
     referrer: document.referrer || undefined,
     navigationType: performance.getEntriesByType('navigation')[0]?.type,
+    /**
+     * The closed set, enforced at the one place a value leaves this file —
+     * exactly as `EXIT_TYPES` is on the engagement report below, and for the
+     * same reason. `arrivalOf` already returns only members or `undefined`, so
+     * this guard is not load-bearing today; it is here so that the list and the
+     * check cannot drift apart, which is the state a list nothing consults
+     * eventually reaches.
+     *
+     * **All three of these ride the same message, and where they stop depends
+     * on something this script is not allowed to know.**
+     *
+     * `referrer` and `navigationType` are two lines above and are sent
+     * unconditionally. They have to be: the session path consumes both, and
+     * this script must not branch on whether a session is running — see the
+     * service worker's no-session comment for why a page must not be able to
+     * learn that.
+     *
+     * So the worker is where they part company:
+     *
+     *   - **Session running.** The whole signal goes to the ledger.
+     *     `rawSignalSchema` has fields for `referrer` and `navigationType` and
+     *     none for `arrival` — an unknown key is stripped there, not refused,
+     *     so the session path is byte-identical to what it was and
+     *     `tests/capture-adapter.test.ts` pins that.
+     *   - **No session.** The worker deletes `referrer` and `navigationType`
+     *     alongside `text` before anything is buffered, and `flushAmbient`
+     *     copies `arrival` and neither of the other two onto the wire.
+     *
+     * That is the asymmetry argued at `ARRIVALS`: the consented path keeps the
+     * URL, the unconsented buffer gets one word derived from it. ~~And the URL
+     * never leaves this file.~~ It does — as far as our own worker, which drops
+     * it. Corrected 2026-08-18; the struck sentence is the one this docblock
+     * used to end on, and it was wrong in the direction that flatters us.
+     */
+    ...(ARRIVALS.includes(arrival) ? { arrival } : {}),
     text: readableExcerpt(),
   })
 })
@@ -221,6 +519,43 @@ let hiddenMs = 0
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'hidden') {
     hiddenSince = Date.now()
+    /**
+     * Report on the way out of view, which is a NEW send and the only one.
+     *
+     * ── Why it has to be a send, and not a flag on the next report ────────
+     *
+     * A tab switched away from and never returned to fires nothing else, ever.
+     * `setInterval` skips hidden tabs by design, and `pagehide` may not come
+     * for hours or at all. So an exit that is only ever attached to some later
+     * report is an exit that is never reported for the commonest way of
+     * leaving a page — which is the case `visitsByUrl` in `detect.ts` already
+     * names as invisible to it: *"switching to a tab that is already loaded
+     * produces nothing at all."*
+     *
+     * ── What this changes, stated rather than discovered ──────────────────
+     *
+     * It is a full engagement report, deliberately, because the shape is what
+     * both doors already accept — `rawSignalSchema` requires `dwellMs` and
+     * `scrollFraction` on an engagement, so a leaner "exit only" message would
+     * be recorded as a REJECTED signal on the session path, once per tab
+     * switch, forever.
+     *
+     * The consequence is real and is not nothing: dwell for a page that gets
+     * hidden is now measured to the moment it was hidden, rather than to the
+     * last `REPORT_EVERY_MS` tick before it. The app takes the largest report
+     * per URL, so every hidden page's dwell rises by **up to one interval —
+     * fifteen seconds**. That can carry a page over `READ_AROUND_MS` (20s) or
+     * `DEEP_READ_MS` (60s) that would previously have fallen just short.
+     *
+     * It is argued rather than apologised for: the old figure under-reported by
+     * an amount that depended on where the polling tick happened to land, not
+     * on anything the person did. `hiddenMs` above already says dwell stops
+     * accruing at this instant; this is the report that finally carries the
+     * value that rule produces. An accurate measurement is not a threshold
+     * move — but it does move which afternoons qualify, so it is written down
+     * here, in ADR-0013, and in the commit rather than left to be found.
+     */
+    reportEngagement('hidden')
   } else if (hiddenSince !== null) {
     hiddenMs += Date.now() - hiddenSince
     hiddenSince = null
@@ -247,7 +582,46 @@ function engagedMs() {
   return Math.max(0, Date.now() - seenAt - hidden)
 }
 
-function reportEngagement() {
+/**
+ * Where `scrollFraction` goes, and the one hop that still drops it.
+ *
+ * Worth writing down here because this is where the value is produced and it
+ * spent the whole build being computed for nobody.
+ *
+ * On the SESSION path it has always been consumed: the service worker forwards
+ * the raw signal, `rawSignalSchema` validates it at `min(0).max(1)`, and
+ * `classifyEngagement` reads it against `ENGAGEMENT_SCROLL_FRACTION`.
+ *
+ * On the AMBIENT path — the one that runs when nobody has started a session,
+ * and the one detection is built on — it was discarded, because
+ * `src/app/api/capture/ambient/route.ts` had no field to receive it. ~~**That
+ * field exists as of 2026-08-17.** One hop is still missing and it is not in
+ * this file: `flushAmbient` in `service-worker.js` projects each buffered signal
+ * onto the wire shape by hand and copies `dwellMs` across as `engagedMs` without
+ * copying `scrollFraction`. Until that line exists the app's new field is
+ * reachable by `curl` and by nothing the extension sends.~~
+ *
+ * **Closed 2026-08-17 (ADR-0013).** `flushAmbient` now copies it, so the field
+ * is reachable by a browser for the first time. It is copied only when it is
+ * already inside `[0, 1]` — see the clamp argument immediately below, and
+ * `flushAmbient`'s own note on why omitting an out-of-range reading is not the
+ * clamp that was refused. **Nothing in the detector reads it even now**;
+ * `tests/reachability.test.ts` holds that as a deferred assertion.
+ *
+ * ── Why the rounding here is not a bound, and no clamp was added ─────────
+ *
+ * `Math.round(deepest * 100) / 100` is a precision decision, not a range one:
+ * `deepest` is a ratio of live layout numbers, and a container that reports a
+ * `scrollTop` past its own maximum — overscroll, a transform, a resize mid-event
+ * — yields a value above 1. The bound lives at the app's two doors, where a
+ * non-browser caller is bounded by the same rule.
+ *
+ * A clamp here was considered and rejected: `rawSignalSchema` currently REFUSES
+ * an engagement whose scroll exceeds 1, so clamping would start admitting rows
+ * the session path drops today. That is a change to which events reach the
+ * ledger, which is not this change.
+ */
+function reportEngagement(exitType) {
   // Never seen, never read. See `wasSeen`: this is the guard that stops a
   // background tab's `pagehide` reporting hours of imaginary attention.
   if (!wasSeen) return
@@ -259,6 +633,17 @@ function reportEngagement() {
     dwellMs: engagedMs(),
     scrollFraction: Math.round(deepest * 100) / 100,
     interacted,
+    /**
+     * The closed set, enforced at the one place a value leaves this file.
+     *
+     * `EXIT_TYPES` would otherwise be a comment with a list next to it, and a
+     * list nothing consults is the shape `detect.ts` spent two constants
+     * learning to distrust. A caller passing something not on it sends no exit
+     * rather than a fourth meaning — the app's schema refuses it too, and two
+     * bounds that agree about which is tighter is the discipline `flushAmbient`
+     * already argues for at length.
+     */
+    ...(EXIT_TYPES.includes(exitType) ? { exitType } : {}),
   })
 }
 
@@ -272,6 +657,26 @@ setInterval(() => {
   reportEngagement()
 }, REPORT_EVERY_MS)
 
-// Still report on the way out, so the final few seconds are not lost and a page
-// read for less than one interval is still counted.
-addEventListener('pagehide', reportEngagement)
+/**
+ * Still report on the way out, so the final few seconds are not lost and a page
+ * read for less than one interval is still counted.
+ *
+ * ── The wrapper is not decoration ────────────────────────────────────────
+ *
+ * This was `addEventListener('pagehide', reportEngagement)`. The moment
+ * `reportEngagement` took a parameter, that line started handing it the
+ * PageTransitionEvent as its exit type — which the `EXIT_TYPES.includes` guard
+ * above rejects, so the field would simply have gone missing on the one path
+ * that can produce two of the three values. Silent, and green.
+ *
+ * `event.persisted` is Chrome's own answer to "did I keep this document", so
+ * `'left-cached'` is attested rather than inferred. It is the closest thing
+ * available to Fox et al.'s *"went back to the results list"*: a page Chrome
+ * kept is a page the person can return to instantly, and a return served from
+ * bfcache runs no script — which is the defect `visitsByUrl` documents about
+ * itself. This does not fix that defect. It records the condition under which
+ * it is about to happen.
+ */
+addEventListener('pagehide', (event) => {
+  reportEngagement(event.persisted ? 'left-cached' : 'left-unloaded')
+})

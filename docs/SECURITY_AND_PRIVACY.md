@@ -38,21 +38,115 @@ while doing so is deliberately thin:
 | Cleaned URL | credentials and tracking parameters stripped |
 | Page title | as the page reports it |
 | Interaction shape | dwell time and scroll depth |
+| Exit type | how the page was left, as one of three: **switched away from** (the tab stopped being on screen), **left with the page kept**, **left with the page destroyed**. The last one cannot tell moving on from closing the tab, from quitting, or from reloading — telling those apart needs permissions this product refuses. Nothing here records where you went next |
+| Tab group label | **only** the name you typed on a tab group that contains a page Propositum is already watching. Never the group's other tabs, and never a group you have not opened a watched page in |
+| How you arrived | one of five words, and **never the page you came from**: **no referring page** (typed, bookmarked, or opened in a fresh tab), **followed something inside this site**, **arrived from a different site**, **reloaded**, **went back or forward**. Chrome tells the page the address you came from; that address is compared to this page's own site *inside the page*, and the comparison — not the address — is what reaches Propositum. There is no field on the always-on path an address could sit in. See the correction below for what the extension does with the address in the meantime |
+
+*(Last two rows added 2026-08-17 — [ADR-0013](./adr/0013-authored-labels-and-exit-type.md). The
+second one costs a Chrome permission, `tabGroups`, whose install string is **"View and manage your
+tab groups."** — ~~the first permission this extension has asked for that shows a string of its
+own~~ **the first permission taken for a capture signal that shows a string of its own**. What it
+does and does not grant is spelled out under *Data explicitly not collected*, beside the tab-list
+bullet it sits next to, because a permission with "tab" in its name reads broader than it is.)*
+
+*(Two corrections the same day, both to sentences this section had no business making. **The exit
+type row** said the enum distinguishes *"moved on, closed it, went back, switched away"*. It does
+not and it cannot: there are three values, moving on and closing the tab are the SAME value, and
+*"went back"* is not a value at all. Separating them would need `tabs`, `webNavigation` or
+`history`, which is exactly the set this product refuses — so the row was claiming a discrimination
+that could only exist if the promise on this page were broken. **The containment sentence** said
+*"Both signals are untrusted content and are datamarked before they can reach a model."* No such
+control exists, and the truth is stronger rather than weaker: **neither field is an input to any
+model boundary, so neither reaches a prompt in any form, datamarked or not**, and
+`tests/reachability.test.ts`'s *"never reaches a model boundary"* is what holds it. `datamark()`
+stays named as the required door **if** a prompt ever wants one — a future condition, not a control
+standing today.)*
+
+*(Last row added 2026-08-18. It costs **no new permission and changes no manifest entry** — the
+values are derived from `document.referrer`, which every page on the web can already read about
+itself. Two things are worth reading twice. **First: the row above the classification is what a
+different product would collect.** While a session you started is running, Propositum *does* store
+the cleaned address you came from, because a session is something you asked for, scoped to sites you
+approved, and its rows are ones you can read back. The always-on buffer described in this section
+gets the five-word classification and never the address, and that asymmetry is deliberate — an
+address you came from can name a site nothing else here ever sees. **Second: one of the five is
+honestly weaker than it reads.** A site can tell your browser not to say where you came from, and
+mail clients and newsletters do. A link like that arrives here as *"no referring page"* — the same
+value as you typing an address — so the word that looks most like a deliberate choice is also what a
+suppressed link looks like. Nothing in the product reads this field to decide anything; that limit
+is one of the reasons why.)*
+
+*(**Corrected 2026-08-18, the same day, after review.** The row above originally ended *"It is not sent, not held, and there is no field it could sit in"*. The last clause was true. The first two were not, and this document is the worst place in the repository to be wrong in the flattering direction, so the correction is here rather than in a commit message.
+
+What actually happened: the part of the extension that runs inside a web page **cannot be allowed to know whether a session is running** — a page that could time what its own script is permitted to do would learn something about you — so it sends the address you came from every time, and the part of the extension that does know decides what to do with it. When a session is running that address is stored, which is the row two paragraphs up and is the deliberate half. When no session is running it was being kept in the extension's own temporary storage until the next time the extension talked to the app, and longer if the app was not running.
+
+It never reached the app, never reached the database, and never left your computer — the code that builds what gets sent to the app was written field by field and never included it. But *"not held"* was still false, and it is now true: the extension deletes the address on the no-session path in the same line that deletes page text, before anything stores it. **What you can rely on, stated as narrowly as it is actually enforced:** while nothing is running, the address you came from is used for one comparison inside the page, is deleted by the extension before it is stored anywhere, and never reaches Propositum in any form. While a session you started is running, it is stored, and that is the row you can read back.)*
 
 **No page text. No selections. No excerpt.** There is no field in the ambient schema that could
-carry any, and a test asserts it.
+carry any, and a test asserts it. None of the three rows added above changes that: an exit type is
+an enum, an arrival is an enum, and a tab group label is a name you typed rather than anything a
+page wrote.
 
 Where it goes matters as much as what it is:
 
-- **In memory only.** It never reaches the database. It dies when the app process does.
+- ~~**In memory only.** It never reaches the database. It dies when the app process does.~~
+  **In memory only — the observations. One count is not.** *(Corrected 2026-08-18. See the two
+  paragraphs below; the sentence above was written before anything durable sat beside this buffer,
+  and this document is the worst place in the repository to leave a promise that has quietly stopped
+  being exactly true.)*
 - **Bounded twice** — a rolling 30-minute window *and* a 500-row cap.
 - **Discarded by default.** Declining an offer drops it. Accepting one folds it into the session
   you just started, where it becomes an ordinary `ObservationEvent` marked `ambient: true`.
+
+**What is now durable, stated exactly.** *(2026-08-18 —
+[ADR-0015](./adr/0015-measuring-loudness-and-saving-an-afternoon.md).)* Nothing you looked at reaches
+the database: no URL, no title, no dwell, no scroll, no exit type, no arrival, no tab group label,
+and there is no column any of them could sit in. What reaches it is a **count**, in one table called
+`offer_tally`, one row per calendar day, holding five things — the date, how many distinct minutes
+the extension had something to report, how many suggestions Propositum put in front of you, how many
+you turned down, and how many it found and did not show. *"Four suggestions in forty observed
+minutes on the 18th"* is the whole of what that row can say. It cannot say what any of them was
+about, and no amount of reading the table will tell anybody what you were working on.
+
+It exists because the alternative was worse: the bar for speaking to you was lowered twice in two
+days and there was no number anywhere that would have shown whether that made Propositum noisier.
+**The cost, named rather than rounded past:** the table does record *which days you browsed with the
+extension running, and roughly how much*. That is a real fact about you. It is bounded by being
+exactly that — a finer bucket than a day would start to sketch when in the day you work, which is a
+fact about a person rather than about the product, and was refused for that reason. Nothing in the
+product deletes this table; see *Retention and deletion*.
+
+**One more thing changed the same day, and it widens what a caller can read back.** The debug
+endpoint — `/api/capture/ambient/debug`, the only window into the buffer — used to answer with a
+per-origin summary. It now returns the buffer's rows **whole**: every cleaned URL, every title, the
+dwell, the scroll, the exit type and the arrival, exactly as the detector holds them. That is more
+than it handed over before, on the most privacy-sensitive path in the product, and it is deliberate:
+three signals were being collected that nobody could see, so nobody could judge them. It is reachable
+only from something that is not a web page — two transport controls a browser will not let a page
+forge, spelled out in that route's own docblock — and it reads the same buffer this section
+describes, so it can never hand back anything the table above does not list.
 
 The extension holds `host_permissions: ["https://*/*"]`, so Chrome shows **"Read and change all your
 data on all websites"** at install. That warning is accurate. What limits the exposure is no longer
 the permission — it is the behaviour above, enforced in three places and tested. ADR-0008 states
 plainly that this is a weaker kind of guarantee than the one it replaced.
+
+*(Amended 2026-08-17 — [ADR-0013](./adr/0013-authored-labels-and-exit-type.md). There is now a
+~~**second**~~ **further** string at install: **"View and manage your tab groups."**, for
+`tabGroups`. Unlike `tabs`, `webNavigation`, `topSites` and `favicon` — whose warnings Chrome
+absorbs into the all-websites prompt, so any of them could be added in an update without you being
+asked again — this one is **not absorbed**. It is shown. That is a cost and it is also the reason it
+was the acceptable permission to take: a capability that cannot be added quietly is the one you get
+to refuse.*
+
+*"Second" was wrong and is corrected the same day, against Chrome's own
+[permissions reference](https://developer.chrome.com/docs/extensions/reference/permissions-list).
+Counting the strings honestly, this extension's permissions show **three**: `notifications` —
+*"Display notifications."*; `debugger` — *"Access the page debugger backend."* and *"Read and change
+all your data on all websites."*; and now `tabGroups`. `alarms`, `idle`, `scripting`, `sidePanel`
+and `storage` show none. What is true of `tabGroups`, and is the part that mattered to the decision,
+is that it is the first string bought for a **capture signal** rather than for a mechanism, and that
+it is not absorbed by the all-websites prompt.)*
 
 ### 2. Session — only when you started one, only on approved sources
 
@@ -146,6 +240,48 @@ This is `ActionEvidence`, and four things about it are the whole promise:
   weaker than a trigger — it is a check on our own code rather than a refusal by the database — and
   it is the strongest thing available once a sweep has to exist.
 
+### 4. Calendar — only if you connect one, only times, never stored
+
+*(Added 2026-08-18 — [ADR-0014](./adr/0014-reading-free-busy.md). This is the first thing Propositum
+reads that did not come from your browser, and the first that requires an account. If you have not
+connected a calendar, none of this happens and nothing below exists.)*
+
+Propositum can tell that you left. It cannot tell how long you will be gone, and *"How long should I
+work for?"* is the one dial measured in time. If you connect a Google calendar, it asks Google one
+question, at the moment you are handing work over.
+
+| Collected | Detail |
+|---|---|
+| Busy intervals | **two timestamps each** — when a busy stretch starts and when it ends. Nothing else exists in the answer |
+
+What that means precisely, because the whole decision rests on it: the scope Propositum asks for is
+`calendar.freebusy`, which Google describes as *"View your availability in your calendars."* The
+method it calls returns *"List of time ranges during which this calendar should be regarded as
+busy."* **No event titles. No descriptions. No attendees. No locations, no links, no attachments.**
+An hour blocked for something private is the same two numbers as an hour blocked for lunch.
+
+- **Only your main calendar.** Propositum asks about the one calendar Google calls `primary` and no
+  other. It never asks what calendars you have, so it cannot learn that a shared or subscribed one
+  exists.
+- **Only a few hours ahead**, from the moment you are looking at the screen. Not a week, not a month.
+- **None of it is stored.** The answer is used to offer you a number and then dropped. There is no
+  row in the database holding anything from your calendar, so there is nothing to delete later and
+  nothing to leak.
+- **It decides nothing, and it does not even fill anything in.** *"Time limit"* on the
+  working-agreement screen arrives holding the number it would have held if you had no calendar. Next
+  to it is one sentence — *"Your calendar has you busy from 3:00 pm"* — and a button offering the
+  longest limit that stops before then. Nothing changes until you press it, the sentence stays there
+  after you do, and you can ignore it entirely. Nothing from a calendar reaches the part of
+  Propositum that decides what a run is allowed to do — see *Action authorization*, below.
+- **What Google is told.** The request contains the two ends of the window being asked about, the
+  word `primary`, and your access token. **Nothing about your browsing goes with it** — no page, no
+  title, no subject, no session. Google cannot tell what you were reading, or why anybody wants to
+  know whether you are free.
+- **If anything goes wrong, nothing appears.** No calendar connected, an expired grant, no network, a
+  bad day at Google — every one of these leaves the screen exactly as it looks today, with no error
+  and no banner. The trade is deliberate: you find out by looking at the connection, not by being
+  interrupted at the moment you were handing work over.
+
 ## Data explicitly not collected
 
 Not "not yet" — these are design commitments, and several are structurally impossible rather than
@@ -154,20 +290,97 @@ merely unimplemented.
 - **Full page text.** Only the bounded excerpt above, and — while acting — the bounded accessibility
   tree of the tab Propositum opened.
 - **A list of your open tabs.** The extension is not granted `tabs`, `webNavigation` or `history`,
-  and the acting agent never calls `chrome.debugger.getTargets`. There is no call it can make that
-  returns a tab it did not create itself. **This one is still enforced by the browser rather than by
-  our code.** *(Amended 2026-08-11: this bullet used to say "anything from a source you have not
-  approved". Since [ADR-0008](./adr/0008-ambient-detection.md) the extension holds broad host
-  permission and does see every `https` page you visit — as metadata, in memory. What Chrome still
-  refuses to hand over is the existence of any other tab, which is a narrower promise than the one
-  this bullet used to make, and it is the true one.)*
+  and the acting agent never calls `chrome.debugger.getTargets`. ~~There is no call it can make that
+  returns a tab it did not create itself.~~ ~~**This one is still enforced by the browser rather than
+  by our code.**~~
+
+  **Amended 2026-08-17 ([`docs/research/intent-signals.md`](./research/intent-signals.md) §2.1):
+  both struck sentences were false, and the second one was false in the way that costs the most.**
+  `chrome.tabs.query()` needs no permission to call. Chrome's own reference says the `tabs`
+  permission *"does not give access to the `chrome.tabs` namespace"* — it only *"grants an extension
+  the ability to call `tabs.query()` against four sensitive properties on `tabs.Tab` instances:
+  `url`, `pendingUrl`, `title`, and `favIconUrl`"* — and that *"host permissions allow an extension
+  to read and query a matching tab's four sensitive `tabs.Tab` properties"*. Since
+  [ADR-0008](./adr/0008-ambient-detection.md) the manifest holds
+  `host_permissions: ["https://*/*"]`. So one line in the service worker would return the URL and
+  the title of **every open `https` tab, in every window**, today. No line in the extension is that
+  line. That is discipline, not Chrome.
+
+  **The promise is now held by a test rather than by the browser, and a test is weaker than a
+  refusal.** This is the register [ADR-0010](./adr/0010-acting-in-the-browser.md) used about its own
+  replacement — *"a pause is strictly weaker than an absence"* — and it applies here unchanged. A
+  refusal cannot be forgotten in a hurry, cannot be deleted by somebody who is sure it is redundant,
+  and cannot pass because the file it searched got renamed. A test can be all three. The mechanism
+  is [`tests/extension-permissions.test.ts`](../tests/extension-permissions.test.ts): it greps the
+  extension for `chrome.tabs.query`, `chrome.tabs.get`, `chrome.history.*` and
+  `chrome.webNavigation.*`, and it pins the manifest's permission list to an explicit set, so adding
+  one has to be a deliberate act rather than an edit nobody reviews.
+
+  **And that mechanism shipped with a hole in it, found and closed the same day.** The grep strips
+  comments before searching, and the first version did it with a regular expression that read the
+  two characters `/*` **inside a string literal** in `extension/src/panel.html` as the start of a
+  comment — deleting thirty-three lines of live side-panel code, in the one file the search was
+  extended to cover. A `chrome.tabs.query()` written in that span passed the whole suite. It is
+  fixed, and the fix is a scanner plus a per-file check that no code line goes missing. It is
+  recorded here rather than quietly repaired because it is the point the paragraph above was
+  making: a test can be forgotten, deleted, or **wrong**, and a refusal cannot.
+
+  **The date this stopped being structural is 2026-08-11**, the day ADR-0008 widened
+  `optional_host_permissions` into `https://*/*`. It was noticed on 2026-08-17, by research
+  commissioned about something else. Six days is the honest measure of how long a written guarantee
+  can go on being read as true after the decision underneath it has moved.
+
+  **And the surviving half is thinner than it reads.** `chrome.debugger.getTargets` is genuinely
+  never called and [`tests/extension-cdp.test.ts`](../tests/extension-cdp.test.ts) has greped for it
+  since ADR-0010 — but ADR-0010 also *granted* `debugger`, so that refusal is our code declining
+  too, not Chrome refusing. The research note calls this half "still structurally true"; it is not,
+  quite, and this document is not going to round it up. What is left is two greps over a component
+  with no build step, which is a real guard and a weaker one than the sentence it replaced.
+
+  **And as of 2026-08-17 this bullet sits next to a permission whose name suggests otherwise, so it
+  has to say what that permission does.** [ADR-0013](./adr/0013-authored-labels-and-exit-type.md)
+  grants `tabGroups`, which Chrome describes at install as *"View and manage your tab groups."*
+  **The bullet above is unchanged and stays true: no tab is enumerated.** What `tabGroups` grants,
+  precisely:
+
+  | | |
+  |---|---|
+  | **Grants** | the label on a tab group — its `title`, plus `color`, `collapsed` and `shared`, which are of no use here and are not read |
+  | **Does not grant** | which tabs are in that group. Chrome's own reference says so in as many words: *"To group and ungroup tabs, or to query what tabs are in groups, use the `chrome.tabs` API."* `chrome.tabs` is the permission this extension does not hold and the namespace the guard forbids calling |
+  | **Does not grant** | any URL, title, favicon or tab id, for any tab, including the tabs in the very group whose name is read |
+  | **How the group is reached** | a page Propositum is **already watching** sends its ordinary report; the group id rides along on that message as `sender.tab.groupId`; the label is looked up for that one id. The chain starts at a page already in the buffer, so it cannot produce a tab that was not |
+  | **What would widen it** | `chrome.tabGroups.query()`, which returns every group in every window — including groups whose tabs Propositum has never seen. That is a different capability wearing the same permission, and ADR-0013 says it must stay on the forbidden list beside `chrome.tabs.query` |
+
+  **This is the same kind of guarantee as the one above it, and no stronger.** Chrome is not
+  refusing to tell us which tabs are in the group we asked about — it is refusing to tell us
+  *through this API*, while `chrome.tabs.query()` sits one line away needing no permission at all.
+  So what keeps the narrow path narrow is the same grep in the same test file, which is our code
+  declining. The honest word for it is still **behavioural**, and it was corrected to that word
+  earlier the same day. Nothing about adding a permission makes it structural again.
+
+  *(Amended 2026-08-11: this bullet used to say "anything from a source you have not approved".
+  Since [ADR-0008](./adr/0008-ambient-detection.md) the extension holds broad host permission and
+  does see every `https` page you visit — as metadata, in memory. ~~What Chrome still refuses to
+  hand over is the existence of any other tab, which is a narrower promise than the one this bullet
+  used to make, and it is the true one.~~ **Struck 2026-08-17: Chrome refuses no such thing, and had
+  already stopped refusing it on the day that amendment was written.**)*
 - **Keystrokes.** No key logging anywhere.
 - **Your screen.** No screen recording, no video, and no screenshot of anything you are doing. The
   only images Propositum ever takes are of the tab it opened itself, while acting under an agreement
   you ratified, when the accessibility tree was not enough to act on — and those are swept.
   *(Amended 2026-08-11. This bullet said "no screenshots" flatly, and that stopped being true with
   [ADR-0010](./adr/0010-acting-in-the-browser.md).)*
-- **Other applications.** Chrome only.
+- **Anything on your calendar except when you are busy.** No event titles, descriptions,
+  attendees, organisers, locations, meeting links or attachments — the scope Propositum asks for
+  cannot return any of them, which is why it is the scope it asks for. The wider scope that *would*
+  return them, `calendar.events.readonly`, was considered and refused: it carries a field where
+  people declare their own intent (*out of office*, *focus time*), which is the best signal in the
+  research, and it carries it bundled with the title of every appointment on every calendar. That
+  trade is argued in full in [ADR-0014](./adr/0014-reading-free-busy.md).
+  **No list of your calendars.** No calendar but your main one. No calendar belonging to anybody
+  else. *(Added 2026-08-18.)*
+- **Other applications.** Chrome only. *(A connected calendar is read over the network from Google,
+  not from an application on your machine. Propositum still reads nothing on this Mac but Chrome.)*
 - **Passwords, form contents, or clipboard contents** not deliberately selected in an approved
   source.
 - **Telemetry, analytics, or crash reports.** There is no server to send them to.
@@ -186,9 +399,20 @@ a vehicle that is never handed the data. ([ADR-0002](./adr/0002-observation-capt
 
 ## Event ingestion beyond the browser
 
-**One sensor exists, and it is the Chrome extension above.** Email, calendar, Slack, GitHub, Notion,
-local files, and agent output from anywhere else are **unbuilt, and this work does not build them** —
-they sit on the *do not build yet* list in [`MVP.md`](./MVP.md)'s Out of scope table. This section
+**One sensor exists, and it is the Chrome extension above.** Email, ~~calendar,~~ Slack, GitHub,
+Notion, local files, and agent output from anywhere else are **unbuilt, and this work does not build
+them** — they sit on the *do not build yet* list in [`MVP.md`](./MVP.md)'s Out of scope table.
+
+*(Amended 2026-08-18 — [ADR-0014](./adr/0014-reading-free-busy.md). A calendar is now read, and the
+word is struck from the list above so nobody reads this section as saying otherwise. **The argument
+below is unaffected, and it is worth being exact about why rather than letting the strike look like a
+crack in it.** Free/busy is not a sensor and produces no event: nothing it returns becomes an
+`ObservationEvent`, nothing it returns passes `ledger-writer.ts`, nothing it returns is persisted at
+all, and it is read once, on demand, at a moment a human is looking at the screen. Both structural
+facts below therefore still hold exactly as written — there is still no row an external event could
+become, still one writer, and still no model call on a timer. What ADR-0014 spent is the *account*,
+argued at length there and struck below under **Local versus remote**. What it did not spend is
+this.)* This section
 exists so the constraint is on record before a later reader takes the absence for an oversight and
 closes it with a connector.
 
@@ -221,13 +445,30 @@ product cannot keep.
 
 ## Local versus remote
 
-**Everything is local.** SQLite on your machine. No account, no cloud, no sync, no server.
+~~**Everything is local.** SQLite on your machine. No account, no cloud, no sync, no server.~~
 
-The single exception: **prompts sent to the Anthropic API**, which contain the observation events
-and document text a boundary needs. Nothing else leaves the machine.
+~~The single exception: **prompts sent to the Anthropic API**, which contain the observation events
+and document text a boundary needs. Nothing else leaves the machine.~~
 
-This is a privacy property today and a limitation tomorrow — it is also why a run stops when your
-Mac sleeps.
+**Struck 2026-08-18 — [ADR-0014](./adr/0014-reading-free-busy.md). The struck sentences are left
+here rather than deleted, because a reader has to be able to see what was promised.** *"No account"*
+was true in the strongest available sense: there was nothing to sign in to and nothing to sign in
+with. Connecting a Google calendar is signing in. It puts Propositum in your Google security
+settings under your connections to third-party apps, and it leaves a long-lived credential on your
+disk. That is an account, and calling it something else would be the kind of wording this document
+exists not to use.
+
+**What is true instead, as of 2026-08-18:**
+
+| | |
+|---|---|
+| **Your work stays local** | SQLite on your machine. No cloud, no sync, no server of ours, no telemetry, no analytics, no crash reports. Nothing about what you read, wrote or handed over is stored anywhere but here. **This half is unchanged** |
+| **One account, optional, off unless you connect it** | a Google calendar, for one question: how long you will be away. Nothing is created if you never connect one |
+| **Two things leave the machine** | **prompts to the Anthropic API**, which carry the observation events and document text a boundary needs — and, if you connected a calendar, **one request to Google** asking whether you are busy between two moments. That request carries no page, no title, no subject and nothing off your session |
+
+This is still a privacy property today and a limitation tomorrow — it is also why a run stops when
+your Mac sleeps, and answering the question that limit implies is the whole reason the calendar read
+exists.
 
 ### Send a worker the minimum it needs
 
@@ -264,13 +505,66 @@ document that still said it would be false in the place it can least afford to b
 | Everything else | persists until you delete it |
 | `ActionEvidence` | deleted once you have decided what the Shift produced, and in any case after **seven days** — see *Acting*, above |
 | `ActionEvidence` attached to a confirmation question | **kept indefinitely.** The one exception, argued in full above |
+| `offer_tally` | **persists, and nothing in the product deletes it** — see below |
+
+**`offer_tally` is the one table no button reaches** *(added 2026-08-18 —
+[ADR-0015](./adr/0015-measuring-loudness-and-saving-an-afternoon.md))*. It holds one row per calendar
+day: the date, minutes of observed browsing, suggestions shown, suggestions declined, suggestions
+found and not shown. It belongs to no `Project`, so deleting a Project does not reach it, and there
+is no other delete path — the code that writes it can add to a day and read the series back, and
+that is all it can do. The catch-all row above says *"persists until you delete it"*, and for this
+table the honest reading of "you delete it" is **you, in SQLite**:
+
+```
+sqlite3 propositum.db 'DELETE FROM offer_tally'
+```
+
+That is not a good answer and it is written down rather than smoothed over. It is survivable because
+of what the row holds: four numbers and a date, no subject, nothing that says what any suggestion was
+about. The reason it has no delete button is that nothing has been built that would offer one, not
+that anybody decided it should be permanent — ADR-0015 records that as open.
+
+**Nothing from a calendar is retained at all** *(2026-08-18 —
+[ADR-0014](./adr/0014-reading-free-busy.md))*. Busy intervals are read, used to offer one number,
+and dropped; no table holds them. The only thing a calendar connection writes to disk is the
+credential below, and disconnecting deletes it.
 
 Export is not implemented. The database is a single SQLite file you own and can copy.
 
 ## Secrets
 
-One credential: `ANTHROPIC_API_KEY`, in `.env`, gitignored. Never logged, never rendered, never sent
-anywhere but Anthropic.
+~~One credential: `ANTHROPIC_API_KEY`, in `.env`, gitignored. Never logged, never rendered, never
+sent anywhere but Anthropic.~~
+
+**Two, since 2026-08-18 — [ADR-0014](./adr/0014-reading-free-busy.md)**, and they are different kinds
+of thing, which is why they live in different places:
+
+| Credential | Where | What it is |
+|---|---|---|
+| `ANTHROPIC_API_KEY` | `.env`, gitignored | **the application's own.** The same string for every copy of Propositum; it says nothing about you |
+| The Google refresh token, **only if you connected a calendar** | a row in your local database | **yours.** It names you, it is issued to you, and it is revocable by you |
+
+The token is not in `.env`, deliberately: configuration is where the software's own credentials go,
+and a per-person credential in there is the sort of file people paste into an issue without thinking.
+It is not in the macOS Keychain either, which is where it ought to live — reaching the Keychain needs
+a signed native helper this product does not have and is not building
+([ADR-0012](./adr/0012-screen-capture-refused.md)).
+
+Both are **never logged, never rendered, never put in a prompt, and never in an error message.**
+Neither is ever sent anywhere but to the service it belongs to.
+
+**Two honest points about the token, stated rather than softened.** The database file is not
+encrypted, so anything running as you on this Mac can read it — the same trust model everything else
+here lives in. And it is long-lived, which is a different risk from an API key: it renews itself. What
+bounds that is the one property the alternatives did not have — **you can revoke it from Google at any
+time, without Propositum's cooperation, and disconnecting here deletes the row.** That is a
+mitigation and not an excuse; it does nothing for someone who never goes to look.
+
+*(Amended 2026-08-18.)* **Disconnecting deletes the row whatever else is true.** It does not depend
+on Google being reachable, and it does not depend on the two `GOOGLE_OAUTH_*` variables still being
+set — blanking those switches the feature off and does not delete anything, so the front door keeps
+showing a stored connection, with its Disconnect, until you remove it. A credential on this machine
+is never hidden from you by a setting.
 
 ## The permission model
 
@@ -282,6 +576,13 @@ anywhere but Anthropic.
 4. The contract names what may be read and what may be changed. The gate enforces it
    deterministically.
 5. You accept or reject every proposed change.
+
+*(Added 2026-08-18 — [ADR-0014](./adr/0014-reading-free-busy.md).)* **Connecting a calendar is
+outside that list on purpose.** It grants Propositum nothing: it is optional, off until you do it,
+revocable both here and from Google, and it can only offer a number you were going to set
+yourself — the dial arrives unchanged and the offer is a button beside it. Nothing about it can widen
+what a run may read or change. If it is disconnected, expired or
+broken, every screen behaves exactly as it did before it existed.
 
 **Approval scopes where Propositum may look. It confers no trust on what is found there.**
 
@@ -396,6 +697,13 @@ decision.
 - The gate is pure — set membership, comparison, boolean. **No model is consulted.**
 - Deny by default, no denylist.
 - Every refusal is recorded as an `ActionIntent` with a deterministic rule id.
+- **Nothing from your calendar is anywhere near this.** *(2026-08-18 —
+  [ADR-0014](./adr/0014-reading-free-busy.md).)* The function that compiles your settings into the
+  rule set the gate evaluates takes what a run may read and the four dials you set, and it has no
+  parameter a busy interval could arrive through. A calendar is neither deterministic code nor a
+  person in front of you, so it authorizes nothing, sets nothing, and cannot raise a limit you set.
+  It offers a number on a screen you were already reading, beside the dial, for you to press or
+  ignore. That is the whole of it.
 
 ### Capabilities that do not exist
 

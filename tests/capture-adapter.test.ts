@@ -52,6 +52,51 @@ describe('the extension may not name a kind', () => {
   it('rejects an unknown signal name rather than guessing', () => {
     expect(rawSignalSchema.safeParse({ signal: 'keylog', at: AT, elapsedMs: 0 }).success).toBe(false)
   })
+
+  /**
+   * The ambient-only field rides this path and changes nothing on it.
+   *
+   * `arrival` was added to `content.js` on 2026-08-18 for the AMBIENT path,
+   * which had no way to tell a followed link from a chosen one. The same
+   * navigation signal is what the service worker forwards to the ledger while a
+   * session IS running, so the field arrives here too — and here it is
+   * redundant, because this path already receives `referrer` and
+   * `navigationType`, which are strictly more.
+   *
+   * Two things worth pinning rather than assuming, because the hard constraint
+   * on that change was that **no batch accepted today may start being refused**:
+   *
+   *   - `rawSignalSchema` STRIPS an unknown key rather than rejecting it, so a
+   *     signal carrying `arrival` is still accepted. Were it `.strict()`, every
+   *     navigation during every session would be recorded as a REJECTED signal
+   *     from the day the content script shipped.
+   *   - the event it produces is byte-identical to the one built without it, so
+   *     nothing about the ledger changed either.
+   */
+  it('accepts a navigation carrying the ambient-only arrival, and is unchanged by it', () => {
+    const signal = {
+      signal: 'navigation',
+      at: AT,
+      elapsedMs: 0,
+      url: 'https://northwind.example.com/partners',
+      title: 'Partners',
+      referrer: 'https://mail.example/inbox/9',
+      navigationType: 'navigate',
+    } as const
+
+    const withArrival = rawSignalSchema.safeParse({ ...signal, arrival: 'cross-origin' })
+    expect(withArrival.success, 'a navigation carrying `arrival` is refused now').toBe(true)
+    // Stripped, not carried: this schema is the ledger path's vocabulary and
+    // nobody has argued for a member here.
+    expect(withArrival.data).not.toHaveProperty('arrival')
+
+    const plain = rawSignalSchema.safeParse(signal)
+    expect(plain.success).toBe(true)
+
+    expect(toSemanticEvent(withArrival.data!, SOURCE, fresh())).toEqual(
+      toSemanticEvent(plain.data!, SOURCE, fresh()),
+    )
+  })
 })
 
 describe('navigation becomes visited, queried or returnedTo', () => {

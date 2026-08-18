@@ -75,10 +75,36 @@ is at least *visible*, revocable in one click, and bounded by mechanisms below.
 ### 1. It cannot learn that any other tab exists
 
 The agent works only in a tab Propositum opened itself. `chrome.debugger.getTargets` is **never
-called**, and the `tabs` permission is **never requested**, so there is no call the extension can
+called**, and the `tabs` permission is **never requested**, so ~~there is no call the extension can
 make that returns a tab it did not create. This is the one place in this design where ADR-0002's
 original argument survives intact: the constraint is enforced by Chrome refusing, not by our code
-remembering.
+remembering.~~
+
+**Amended 2026-08-17 ([ADR-0008](0008-ambient-detection.md), from
+[`docs/research/intent-signals.md`](../research/intent-signals.md) §2.1): the struck sentences were
+false when this ADR was written, and this section is where the false version has been doing the most
+work.** It is a numbered safety claim in the argument for granting `debugger`, so a reader who
+stopped here got the strong version with no pointer to the correction.
+
+`chrome.tabs.query()` requires **no permission at all**. Chrome's reference is explicit that the
+`tabs` permission *"does not give access to the `chrome.tabs` namespace"* — it only unscrubs `url`,
+`pendingUrl`, `title` and `favIconUrl` on the returned objects — and that *"host permissions allow an
+extension to read and query a matching tab's four sensitive `tabs.Tab` properties."* Since
+[ADR-0008](0008-ambient-detection.md) took `host_permissions: ["https://*/*"]`, one line in
+`service-worker.js` would return the URL and title of every open `https` tab, in every window,
+today. **No line is that line, and that is the whole of it: discipline, held by
+[`tests/extension-permissions.test.ts`](../../tests/extension-permissions.test.ts), not by Chrome.**
+
+What survives of the original claim is narrower, and it is worth stating without borrowing the
+strength the struck version had: **the agent still attaches only to a tab id `chrome.tabs.create`
+returned.** That is true of the shipped extension and it is held the same way — `create` is the only
+source of a tab id in it, `query`, `get` and `getTargets` are each grepped for and absent — so the
+bound on where Propositum may *act* is as strong as the bound on what it may *learn*, and neither
+is Chrome's any more. The register is this ADR's own, from its replacement of an absence with a
+pause: *"a pause is strictly weaker than an absence."* Here a test is strictly weaker than a
+refusal, and the honest reading of this section is that the `debugger` grant was argued partly on a
+guarantee that had stopped holding the same day, in the ADR next to this one, and that nobody
+noticed for six days.
 
 **The product cost is real and is not a bug to fix later.** The agent cannot continue in a tab you
 were already reading. If you have a half-filled form open, Propositum opens its own tab and starts

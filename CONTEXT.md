@@ -35,6 +35,13 @@ this document is provisional; where a term's shape depends on a later ticket, it
 - Agents are ephemeral. Sessions, contracts, documents and ledgers persist.
 - **Bare `action` and bare `Objective` are banned.** Write `ActionKind` or `ActionIntent`;
   write "the reading's objective claim" or "the contract's stated objective".
+- **A calendar recommends; it never grants** *(added 2026-08-18,
+  [ADR-0014](docs/adr/0014-reading-free-busy.md))*. A `BusyInterval` may be OFFERED beside a dial a
+  person then sets — it does not pre-fill it, and the dial reads the same as it would with no
+  calendar until somebody presses the offer. It may not reach `compilePolicy`, `EnforcedPolicy` or the gate, may not raise or widen
+  anything, and is never persisted. This is the first thing in the vocabulary that comes from neither
+  our code nor the person, so the rule the first line of this list states about models is restated
+  here about a third party rather than assumed to generalise.
 
 ### Why the reversibility rule was weakened, and what holds it up now
 
@@ -370,6 +377,33 @@ a genuine constraint enforced by deterministic code, not a prose hint.
 `bounced` and `refinedQuery` are **not** kinds — `bounced` requires knowledge of the future and
 an append-only event cannot depend on something that has not happened. Both are re-computable
 projections over the stored stream, if anything ever needs them.
+
+**Amended 2026-08-17 ([ADR-0013](docs/adr/0013-authored-labels-and-exit-type.md)): exit type is not
+a kind either, and the reason is the `bounced` reason applied honestly rather than waved through.**
+ADR-0013 carries *how a page was left* on the ambient path — a small closed enum, ~~roughly
+*moved on · closed · went back · switched away · unknown*~~ **exactly `hidden · left-cached ·
+left-unloaded`, and there is deliberately no `unknown`** *(corrected 2026-08-17, the day the line
+was written: the struck list named five members for a three-member set, split `left-unloaded` into
+two values the code says it cannot separate, and invented the catch-all `EXIT_TYPES` exists to
+refuse)*. It is tempting to read that as the
+member this list has always been missing, sitting between `switchedAway` and `returnedTo`. It is
+not, for two reasons and the second is the load-bearing one:
+
+- **It is a value on a leaving, not a leaving.** The event is that a page was left; the exit type
+  says *how*. Making it a kind would put a modifier where a noun goes, and `switchedAway` would
+  then be both a kind and a value of the kind beside it.
+- **One of its members has `bounced`'s defect exactly.** ~~*Went back*~~ **`left-cached`** is a fact
+  about the **next** navigation, attributed backwards to the page that was left: it says only that
+  Chrome kept the document, which is the precondition for an instant return and not the return
+  itself — `content.js` says so about itself in as many words. On the ambient path that is fine —
+  the buffer is in-memory, not append-only, and a later observation may refine an earlier one. In
+  this table it is not: an `ObservationEvent` is immutable and gapless, and a row that has to be
+  corrected by something that happens afterwards is the thing `bounced` was refused for. **The
+  refusal stands and now has a second instance rather than an exception.**
+
+So `ObservationKind` gains no member here. Whether an exit type survives the fold into the ledger
+when a person accepts an offer is a schema question, and the answer this entry binds is only that
+it cannot arrive as a kind.
 *Displaces:* eventType · signal type · semantic label · other · custom · misc.
 
 ### CaptureGap — *value object (payload of a `captureGap` event)*
@@ -395,6 +429,25 @@ key, or is quoted with attribution inside StatedIntent.
 One rule, mechanically checkable:
 > Nothing under `untrusted` may influence a policy decision, be treated as an instruction, or
 > enter a prompt without datamarking.
+
+**Amended 2026-08-17 ([ADR-0013](docs/adr/0013-authored-labels-and-exit-type.md)): the opening
+sentence says *"any value a page could have authored"*, and that is now a description of the common
+case rather than the boundary.** An `AuthoredLabel` — the name a person typed on their own tab
+group — is not page-authored by any reading, and it lives under `untrusted` anyway. The rule in the
+block quote is unchanged and is what makes that coherent: it is a statement about the **channel**,
+not about the author. A value that arrives without a human reading it at the moment it arrives goes
+under the key, whoever wrote it. Three specifics, because "typed by the person, therefore fine" is
+the argument this will be attacked with:
+
+- **A person can paste.** A label copied out of a page is a page's words wearing a person's
+  authorship, and nothing downstream can tell them apart.
+- **`guidance` is the precedent, and it points the strict way.** `guidance` is human-typed only and
+  is still guarded harder than anything else here — its safety comes from being retyped and
+  re-ratified per contract, not from having been typed once. A tab group label is a sentence
+  somebody wrote weeks ago about something else and has not re-read.
+- **Authorship is not consent to be followed.** The person named a group of tabs. They did not
+  write an instruction to a worker, and the datamarking is what keeps a model from reading it as
+  one.
 
 There is no ordered trust enum: browser-attested and user-asserted are incomparable, so a "floor"
 over them has no meaning, and the work `user-asserted` was doing belongs to `SessionClaim.origin`.
@@ -434,6 +487,65 @@ stored value) · provenance (in the trust sense) · full-text capture · page sc
 **Consumer:** **none — this concept has no good consumer word, and that is a finding, not a gap
 to paper over.** The UI shows the source link and the attributed quote instead of a trust label.
 
+### AuthoredLabel — *value object, not persisted until accepted*
+*(Added 2026-08-17 — [ADR-0013](docs/adr/0013-authored-labels-and-exit-type.md).)*
+
+A short name **a person typed for their own work**, read rather than inferred. One source in slice
+0: the title on a Chrome tab group containing a page ambient capture is already watching. It rides
+the ambient path beside the cleaned URL and the title, ~~under `untrusted`, and it is datamarked
+before it can reach a model~~ **as a plain field on an `AmbientObservation`, and it reaches no model
+at all**.
+
+*(Struck and corrected 2026-08-17, the day it was written. There is no `untrusted` key on
+`AmbientObservation` and no `datamark()` call on this value — the shipped containment is stronger
+than the one described: the label is not an input to any model boundary, so there is no prompt for
+it to reach marked or unmarked, and `tests/reachability.test.ts` forbids the identifiers appearing
+in `name-thread.ts` or `compose-offer.ts` at all. It is **treated as** untrusted in the sense the
+rule below means — it decides nothing, gates nothing, and instructs nothing — and `datamark()` is
+the required door on the day a prompt wants it. Stating a control that does not exist is how a
+reader wires the label into a prompt believing something already stands behind it.)*
+
+**It earns an entry by holding two refusals**, which is the standard `IntentionState` was admitted
+under and is the only standard that should admit anything else:
+
+1. **It is untrusted although a person wrote it.** See `UntrustedContent`, amended the same day.
+   Nothing about it may influence a policy decision, be treated as an instruction, or enter a
+   prompt undatamarked. It reaches no `ContractScope`, no `AuthorizedAction`, and nothing
+   `compilePolicy` can receive.
+2. **It is not a SessionSubject and it is not an Intention, and the collision is the dangerous
+   part.** All three are a short sentence naming what somebody is working on, and two of the three
+   were typed by the person. The difference is what was agreed to. A SessionSubject is
+   model-composed and nobody has agreed to it. An `Intention` is a durable row a person ratified,
+   can see, and can edit. An AuthoredLabel is neither: **nobody agreed to anything by naming a
+   group of tabs**, and the promotion this vocabulary already forbids most sharply — a
+   SessionSubject becoming an Intention with no person accepting it — is forbidden here on the same
+   terms and is more tempting, because the words are the person's own. A label may **replace** the
+   words a SessionSubject shows ~~and may **raise** OfferGrounds confidence~~ **and may touch
+   nothing else**. It may never become an Intention, and it may never gate detection: most people
+   do not group their tabs, so a rule that needed one would fire for a minority and be silent for
+   everyone else.
+
+   *(The struck clause was wrong on the day it was written and is corrected the same day —
+   2026-08-17. `OfferGrounds` is `{ kinds, sufficient, sentences }`; there is no confidence on it to
+   raise, and "confidence" is a word this document bans from UI copy and displaces from the
+   vocabulary further down. What shipped is stricter, and is asserted rather than described: a label
+   may not touch `OfferGrounds.kinds`, `OfferGrounds.sentences` or `OfferGrounds.sufficient`, and
+   `tests/detection.test.ts` compares grounds byte-for-byte with and without one over the same
+   afternoon. Sanctioning the opposite here sanctioned the single thing the `tabGroups` permission
+   was bought on the promise of never doing — `extension/manifest.json` says so in the same diff:
+   "it cannot make an offer fire that would not have".)*
+
+**Scope, stated in the vocabulary because it is easy to widen in code.** A label is read for a
+group that already contains a watched page. It carries no information about the group's other tabs,
+which the browser will not hand over through this API at all, and it is not read for groups no
+watched page is in.
+*Checked against the banned words:* not `Intention`, not `SessionSubject`, not `topic` (displaced),
+not `Task`, not bare `Objective`, not `signal` (displaced by ObservationEvent).
+*Displaces:* tabGroupTitle · groupTitle · groupName · tab group (as a stored thing) · label ·
+userLabel · humanLabel · folder · folder name · workspace name · user-authored topic · self-reported
+intent.
+**Consumer:** the name you gave these tabs.
+
 ---
 
 ## 2. Inference
@@ -447,7 +559,17 @@ non-reproducible so the harness could not re-score a fixture.
 [ADR-0008](docs/adr/0008-ambient-detection.md))*. Propositum now watches continuously and can
 notice that work is underway without being told — but that detector is **arithmetic over metadata**
 and calls no model. No page text reaches it; the ambient observations it reads carry a cleaned URL,
-a title, dwell and scroll, and nothing else.
+a title, dwell and scroll, ~~and nothing else~~ **— and, since 2026-08-17, an exit type and an
+`AuthoredLabel`** *([ADR-0013](docs/adr/0013-authored-labels-and-exit-type.md))*. Both reasons above
+survive that addition unchanged: an exit type is an enum produced by arithmetic over page lifecycle
+events, and a label is a string read from the browser. **Neither is a model call and neither is page
+text**, so the ban this paragraph exists to state is untouched. ~~The label is nonetheless
+`untrusted` and datamarked before `boundaries/subject.ts` may see it, on the terms
+`UntrustedContent` sets.~~ **`boundaries/subject.ts` never sees it at all** — `SubjectInput` takes
+`titles` and `searches`, both `Datamarked`, and has no field for a label — which is a stronger
+containment than the struck sentence claimed and the one that actually shipped. If a boundary ever
+gains a field for it, `datamark()` is the door, on the terms `UntrustedContent` sets. *(Corrected
+2026-08-17, the day the sentence was written.)*
 
 The cost of keeping this rule is precise and worth naming: the offer can say **what was seen** and
 not **what it means**. *"You have been reading northwind.example.com — mostly Tiers"*, never *"you
@@ -861,6 +983,51 @@ TrustLevel · ConfidenceThreshold · TokenLimit · StopConditions (as a contract
 "Edit a copy" · "Suggestions only" (as a display mode).
 **Consumer:** "How far should I go?" · "What can I change?" · "Stop and ask me when…" · "Time limit".
 Output renders as **"Research only — don't write"** / **"Draft the changes"**.
+
+### BusyInterval — *value object, not persisted*
+`{ start, end }` — one stretch of a person's own calendar during which they are busy, as two moments
+and nothing else. Read from Google's `freebusy.query` under the single scope
+`calendar.freebusy`, which returns *"List of time ranges during which this calendar should be
+regarded as busy."* **There is no title on it, no attendee, no description, and no field that could
+carry one** — the same shape of promise `WorkOffer` makes about URLs, and for the same reason: the
+strongest form of *cannot* is *has nowhere to put it*.
+
+Specified 2026-08-18 by [ADR-0014](docs/adr/0014-reading-free-busy.md). It exists because
+`detectPause` can tell that somebody left and cannot tell **how long they will be gone**, which is the
+one thing `AutonomyControls.timeLimitMinutes` is denominated in.
+
+**What it is not, and this is the whole reason it has an entry.** Three refusals that would otherwise
+live only in an ADR:
+
+- **It is not an `ObservationEvent`.** It carries no `sessionId`, passes no ledger writer, and is
+  never persisted in any form. Nothing about a calendar is stored on this machine.
+- **It is not a `SessionClaim` and reaches no model.** No `ModelBoundary` has a field for one, and
+  there is no model anywhere in the path that reads it.
+- **It grants nothing.** A BusyInterval may be used to compute a **suggested** `timeLimitMinutes`
+  which a person then sets on the working-agreement screen. It may never reach `compilePolicy`,
+  `EnforcedPolicy` or the gate, and it may never raise, lower or widen a dial. **A calendar
+  recommends; it may never grant** — principle 15's asymmetry, applied to a third party instead of to
+  a model or to history.
+
+**The suggestion gets no term of its own, deliberately.** It is a candidate value of
+`timeLimitMinutes` — offered beside the dial, applied only by a press, and *not* pre-filled into it;
+weaker than `StatedIntent`'s fields, which do arrive pre-filled from a model. Giving the offered
+number a noun would make it a thing, and a thing acquires a column, and a column beside
+`timeLimitMinutes` is two stores for one truth, which is the mistake `EnforcedPolicy` below has a
+whole paragraph about.
+
+**Arithmetic over these takes `now` as a parameter.** Anything in `src/domain/**` that turns intervals
+into a number of minutes is given the moment; it does not read a clock, and it does not fetch.
+*Checked against the banned words:* not `signal` (displaced by ObservationEvent), not
+`ObservationEvent` (it is not one and cannot become one), not `Task`, not bare `action`, not bare
+`Objective`, not `telemetry`.
+*Displaces:* FreeBusy · FreeBusySlot · Availability · AvailabilityWindow · CalendarEvent · Event (in
+the calendar sense) · Meeting · AwayWindow · awayUntil · backAt · Busy (bare) · calendar block ·
+focus block.
+**Consumer:** when your calendar says you're busy. *(The interface never shows an interval. It shows
+the time limit it would have shown anyway, one sentence saying what the calendar said, and a button
+offering the number that fits. The sentence stays after the button is pressed, so a ratified limit
+never sheds where the number came from.)*
 
 ### EnforcedPolicy — *computed view*
 The deterministic rule set the gate evaluates, produced by the pure total function
@@ -1789,9 +1956,11 @@ Recorded so they are found deliberately rather than discovered.
 - **The injection surface grew by roughly two orders of magnitude**, from a 2,000-character excerpt
   read once to an accessibility tree read every turn, every accessible name of it page-authored.
   ADR-0006 says datamarking is depth, not a boundary, and depth scaled a hundredfold is still depth.
-- **~~This is 38 terms.~~ ~~This is 52.~~ This is 54.** Fourteen were added on 2026-08-11 for
-  composed offers and browser action, and two on 2026-08-16 for persistent intentions: `Intention`
-  and `IntentionState`. Small against nine brief objects, seven model boundaries, an append-only
+- **~~This is 38 terms.~~ ~~This is 52.~~ ~~This is 54.~~ ~~This is 55.~~ This is 56.** Fourteen
+  were added on 2026-08-11 for composed offers and browser action, two on 2026-08-16 for persistent
+  intentions — `Intention` and `IntentionState` — one on 2026-08-17 for authored labels:
+  `AuthoredLabel` — and one on 2026-08-18 for reading a calendar: `BusyInterval`.
+  Small against nine brief objects, seven model boundaries, an append-only
   ledger, a diff model, a policy gate and an acting agent. **Not small in absolute terms, and no
   longer arguably small at all.** The earlier note said roughly six earn their place only
   marginally; that is now closer to ten, and the first cut should start with the terms that exist to
@@ -1803,3 +1972,22 @@ Recorded so they are found deliberately rather than discovered.
   lifecycle word the interface says out loud, with no entry here, is exactly how `waiting` gets
   declared by someone who never learned it was refused. That is a thinner claim than the other 53
   make, and it is stated as the thinner claim it is.
+  **`AuthoredLabel`, added 2026-08-17, is held to that standard too, and it fails the first half of
+  it.** It names one field on one row on a path that is not even persisted — precisely what the
+  sentence above says the first cut should start with. It is added anyway on the second half, for
+  the same reason `IntentionState` was: it holds refusals that would otherwise be nowhere. Without
+  an entry, the words `tabGroupTitle`, `groupName` and `userLabel` all arrive uncontested, and —
+  worse — the label is a short human-typed sentence naming what somebody is working on, which is a
+  `SessionSubject` and an `Intention` in shape and neither in provenance. The promotion this
+  vocabulary forbids most sharply is exactly the one a person's own words invite. **If the cut ever
+  comes, this is a candidate; what must survive it is the refusal, not the noun.**
+  **`BusyInterval`, added 2026-08-18, fails the first half by the same test and passes the second by
+  a wider margin than either.** It names two fields on a value object that is never persisted and
+  never leaves the moment it was read in, which is exactly the shape the sentence above says to cut
+  first. It is added because it is the first term in this vocabulary naming something that **came
+  from outside the machine and from neither our code nor the person**, and because three prohibitions
+  have to be somewhere a reader will hit them: it is not an observation, it reaches no model, and it
+  authorises nothing. Left unnamed, the words `Availability`, `AwayWindow` and `CalendarEvent` all
+  arrive uncontested, and the last of those would be a promise the scope cannot keep — Propositum
+  never sees an event. **What must survive a cut is that a calendar recommends and never grants**;
+  the noun is expendable, and the entry says so in its own body rather than only here.

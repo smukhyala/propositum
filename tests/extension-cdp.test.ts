@@ -48,20 +48,41 @@ import {
   sanitiseName,
 } from '../extension/src/cdp.js'
 import { patternCovers } from '../extension/src/match-pattern.js'
+import { losesNoCode, stripComments } from './support/strip-comments'
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), '..')
 const extensionDir = join(repo, 'extension', 'src')
 
 /** Same strip as `tests/reachability.test.ts`, for the same reason. */
-function stripComments(source: string): string {
-  return source.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/[^\n]*/g, '$1')
-}
 
 const EXTENSION_JS = readdirSync(extensionDir)
   .filter((name) => name.endsWith('.js'))
   .map((name) => ({ name, source: readFileSync(join(extensionDir, name), 'utf8') }))
 
 const CODE = EXTENSION_JS.map(({ name, source }) => ({ name, code: stripComments(source) }))
+
+/**
+ * The stripper this file's greps stand on has to actually strip.
+ *
+ * Every assertion below searches `CODE`, so a span the stripper swallows is a
+ * span in which any of the forbidden calls could be written and none of these
+ * tests would see it. That is not hypothetical: the sibling guard shipped with
+ * exactly that hole on 2026-08-17, and this file kept the same regex until
+ * 2026-08-18. It is shared now, and this is the canary for both.
+ */
+describe('the greps below can see the code they are about', () => {
+  it('does not lose a line of code to the stripper, in any file', () => {
+    for (const { name, source } of EXTENSION_JS) {
+      expect(losesNoCode(source), `${name}: the stripper swallowed code`).toEqual([])
+    }
+  })
+
+  it('is looking at more than an empty string', () => {
+    for (const { name, code } of CODE) {
+      expect(code.length, `${name} stripped to nothing`).toBeGreaterThan(200)
+    }
+  })
+})
 
 /** Every extension `.js` as one blob, comments removed. */
 const ALL_CODE = CODE.map(({ code }) => code).join('\n')

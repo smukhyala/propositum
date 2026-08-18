@@ -62,6 +62,25 @@ export interface Repositories {
   readonly confirmations: ConfirmationRepository
   readonly evidence: ActionEvidenceRepository
   readonly dispatches: ActionDispatchRepository
+  /**
+   * The one row in this database that is not about the person's work.
+   *
+   * It holds a credential rather than a fact, it is the reversal ADR-0014
+   * argues for, and it is last in this list for the same reason it is last in
+   * the schema: nothing else here depends on it, and the day it is removed
+   * nothing else here changes.
+   */
+  readonly calendar: CalendarConnectionRepository
+  /**
+   * The other row here that is not about the person's work — and the only one
+   * that is about Propositum itself.
+   *
+   * It holds four integers per day and no subject of any kind. Beside
+   * `calendar` because both are outside the ledger's story: that one holds a
+   * credential, this one holds how loud the product has been. See the schema's
+   * docblock for the argument against ADR-0008's refused row.
+   */
+  readonly offerTally: OfferTallyRepository
 }
 
 export function createRepositories(prisma: PrismaClient): Repositories {
@@ -83,6 +102,8 @@ export function createRepositories(prisma: PrismaClient): Repositories {
     confirmations: confirmationRepository(prisma),
     evidence: actionEvidenceRepository(prisma),
     dispatches: actionDispatchRepository(prisma),
+    calendar: calendarConnectionRepository(prisma),
+    offerTally: offerTallyRepository(prisma),
   }
 }
 
@@ -304,6 +325,18 @@ export interface IntentionRepository {
    * Which sittings are actually being captured. See `openSessions`.
    */
   factsForEveryProject(): Promise<IntentionStateFacts[]>
+  /**
+   * The same facts, for one Project.
+   *
+   * Deliberately not a second query: both entry points call one builder with a
+   * different `where`. Two readings of "where is this work" agree until the day
+   * somebody edits one of them — the shape `topics.ts` refuses for tokenisers
+   * and `front-door.ts` refuses for the derivation sitting on top of this.
+   *
+   * Null when the Project has no Intention. That is not a sixth state; the
+   * screen renders it as *nothing stated yet*, which `statusWordFor` owns.
+   */
+  factsForProject(projectId: string): Promise<IntentionStateFacts | null>
 }
 
 function intentionRepository(prisma: PrismaClient): IntentionRepository {
@@ -323,106 +356,118 @@ function intentionRepository(prisma: PrismaClient): IntentionRepository {
       }),
     forProject: (projectId) => prisma.intention.findUnique({ where: { projectId }, select: SELECT }),
 
-    factsForEveryProject: async () => {
-      /**
-       * `UNSETTLED` is declared beside the evidence sweep, a thousand lines
-       * further down this file, and is read here rather than re-derived.
-       *
-       * Its own docblock says why that matters: *"this is the one place that
-       * has to learn about it, and getting it wrong is silent"*. The predicate
-       * is not the obvious one — four of the five outcome kinds are settled by
-       * an `OutcomeVerdict` and `document-changes` never receives one at all,
-       * so the naive *"held with no verdict"* counts every document Shift as
-       * waiting forever. A second copy of that would put *Needs you* on the
-       * front door, permanently, for work the person finished weeks ago.
-       *
-       * Declaration order is not a hazard: this closure runs when a caller
-       * invokes the method, long after the module has finished evaluating.
-       */
-      const rows = await prisma.intention.findMany({
-        // A Project is what the front door lists. An Intention with no Project
-        // is legal in the schema and has no row on any screen to sit beside.
-        where: { projectId: { not: null } },
-        select: {
-          id: true,
-          projectId: true,
-          completedAt: true,
-          sessions: { where: { endedAt: null }, select: { id: true, phase: true } },
-          contracts: {
-            where: { status: 'accepted', acceptedAt: { not: null } },
-            // Newest first, so the first contract carrying a question is the
-            // one `waitingContractId` should open.
-            orderBy: { acceptedAt: 'desc' },
-            select: {
-              id: true,
-              runs: {
-                select: {
-                  status: true,
-                  confirmations: { where: { verdict: { is: null } }, select: { createdAt: true } },
-                  outcomes: { where: UNSETTLED, select: { id: true } },
-                },
+    factsForEveryProject: () => factsWhere({ projectId: { not: null } }),
+
+    factsForProject: async (projectId) => (await factsWhere({ projectId }))[0] ?? null,
+  }
+
+  /**
+   * One builder, two entry points. See `factsForProject` on the interface for
+   * why this is not two queries.
+   *
+   * The all-projects caller passes `{ projectId: { not: null } }` and the
+   * single-project caller passes an id — both exclude an Intention with no
+   * Project, which is legal in the schema and has no row on any screen.
+   */
+  async function factsWhere(where: Prisma.IntentionWhereInput): Promise<IntentionStateFacts[]> {
+    /**
+     * `UNSETTLED` is declared beside the evidence sweep, a thousand lines
+     * further down this file, and is read here rather than re-derived.
+     *
+     * Its own docblock says why that matters: *"this is the one place that
+     * has to learn about it, and getting it wrong is silent"*. The predicate
+     * is not the obvious one — four of the five outcome kinds are settled by
+     * an `OutcomeVerdict` and `document-changes` never receives one at all,
+     * so the naive *"held with no verdict"* counts every document Shift as
+     * waiting forever. A second copy of that would put *Needs you* on the
+     * front door, permanently, for work the person finished weeks ago.
+     *
+     * Declaration order is not a hazard: this closure runs when a caller
+     * invokes the method, long after the module has finished evaluating.
+     */
+    const rows = await prisma.intention.findMany({
+      // A Project is what the front door lists. An Intention with no Project
+      // is legal in the schema and has no row on any screen to sit beside.
+      where,
+      select: {
+        id: true,
+        projectId: true,
+        completedAt: true,
+        sessions: { where: { endedAt: null }, select: { id: true, phase: true } },
+        contracts: {
+          where: { status: 'accepted', acceptedAt: { not: null } },
+          // Newest first, so the first contract carrying a question is the
+          // one `waitingContractId` should open.
+          orderBy: { acceptedAt: 'desc' },
+          select: {
+            id: true,
+            runs: {
+              select: {
+                status: true,
+                confirmations: { where: { verdict: { is: null } }, select: { createdAt: true } },
+                outcomes: { where: UNSETTLED, select: { id: true } },
               },
-              report: { select: { decisions: { select: { id: true } } } },
             },
+            report: { select: { decisions: { select: { id: true } } } },
           },
         },
-      })
+      },
+    })
 
-      const facts: IntentionStateFacts[] = []
+    const facts: IntentionStateFacts[] = []
 
-      for (const row of rows) {
-        // Non-null by the WHERE above; the generated type does not know that,
-        // so it is narrowed rather than asserted — `acceptedForSession` makes
-        // the same move for the same reason.
-        if (row.projectId === null) continue
+    for (const row of rows) {
+      // Non-null by the WHERE above; the generated type does not know that,
+      // so it is narrowed rather than asserted — `acceptedForSession` makes
+      // the same move for the same reason.
+      if (row.projectId === null) continue
 
-        let liveAcceptedContracts = 0
-        let undecidedHeldOutcomes = 0
-        const unansweredConfirmationsAskedAt: Date[] = []
-        let waitingContractId: string | null = null
+      let liveAcceptedContracts = 0
+      let undecidedHeldOutcomes = 0
+      const unansweredConfirmationsAskedAt: Date[] = []
+      let waitingContractId: string | null = null
 
-        for (const contract of row.contracts) {
-          let live = false
-          // Toward WHICH note, never toward whether one is waiting. Nothing can
-          // clear a `DecisionNeeded`, so counting it into `openDecisions` pins
-          // *Needs you* on this Project for good — the argument is at
-          // `IntentionStateFacts.openDecisions` and it is longer than this line
-          // because it ends in a cost rather than in a fix.
-          let waitingHere = contract.report === null ? 0 : contract.report.decisions.length
+      for (const contract of row.contracts) {
+        let live = false
+        // Toward WHICH note, never toward whether one is waiting. Nothing can
+        // clear a `DecisionNeeded`, so counting it into `openDecisions` pins
+        // *Needs you* on this Project for good — the argument is at
+        // `IntentionStateFacts.openDecisions` and it is longer than this line
+        // because it ends in a cost rather than in a fix.
+        let waitingHere = contract.report === null ? 0 : contract.report.decisions.length
 
-          for (const run of contract.runs) {
-            if (LIVE_RUN_STATUSES.has(run.status)) live = true
+        for (const run of contract.runs) {
+          if (LIVE_RUN_STATUSES.has(run.status)) live = true
 
-            for (const request of run.confirmations) {
-              unansweredConfirmationsAskedAt.push(request.createdAt)
-            }
-            waitingHere += run.confirmations.length
-
-            undecidedHeldOutcomes += run.outcomes.length
-            waitingHere += run.outcomes.length
+          for (const request of run.confirmations) {
+            unansweredConfirmationsAskedAt.push(request.createdAt)
           }
+          waitingHere += run.confirmations.length
 
-          if (live) liveAcceptedContracts += 1
-          if (waitingContractId === null && waitingHere > 0) waitingContractId = contract.id
+          undecidedHeldOutcomes += run.outcomes.length
+          waitingHere += run.outcomes.length
         }
 
-        facts.push({
-          intentionId: row.id,
-          projectId: row.projectId,
-          completedAt: row.completedAt,
-          openSessions: row.sessions.map((sitting) => ({ id: sitting.id, phase: sitting.phase })),
-          liveAcceptedContracts,
-          unansweredConfirmationsAskedAt,
-          // Zero, always, and the field is kept rather than removed so the
-          // reasoning has somewhere to live. See its docblock.
-          openDecisions: 0,
-          undecidedHeldOutcomes,
-          waitingContractId: waitingContractId ?? row.contracts[0]?.id ?? null,
-        })
+        if (live) liveAcceptedContracts += 1
+        if (waitingContractId === null && waitingHere > 0) waitingContractId = contract.id
       }
 
-      return facts
-    },
+      facts.push({
+        intentionId: row.id,
+        projectId: row.projectId,
+        completedAt: row.completedAt,
+        openSessions: row.sessions.map((sitting) => ({ id: sitting.id, phase: sitting.phase })),
+        liveAcceptedContracts,
+        unansweredConfirmationsAskedAt,
+        // Zero, always, and the field is kept rather than removed so the
+        // reasoning has somewhere to live. See its docblock.
+        openDecisions: 0,
+        undecidedHeldOutcomes,
+        waitingContractId: waitingContractId ?? row.contracts[0]?.id ?? null,
+      })
+    }
+
+    return facts
   }
 }
 
@@ -2565,5 +2610,208 @@ function actionDispatchRepository(prisma: PrismaClient): ActionDispatchRepositor
       })
       return count === 1
     },
+  }
+}
+
+/* ── CalendarConnection ────────────────────────────────────────────────── */
+
+/**
+ * Everything about a connection EXCEPT the secret.
+ *
+ * ── The absent field is the whole design ─────────────────────────────────
+ *
+ * There is no `refreshToken` here and there must never be one. This is the type
+ * every screen, every server action and every log statement sees, so the token
+ * cannot be leaked by carelessness — only by somebody calling the one method
+ * named for handing it over. `console.log(status)` is safe. `JSON.stringify` of
+ * anything a route returns is safe. A React prop drilled three components deep
+ * is safe.
+ *
+ * That is a shape rather than a rule, and it is the only kind of containment
+ * worth having for a secret: `tests/calendar-scope.test.ts` greps for the
+ * identifier and `tests/calendar-freebusy.test.ts` runs the whole path with a
+ * distinctive token and asserts it appears in nothing, but both of those are
+ * checks on discipline. A type with no field for the value is not.
+ */
+export interface CalendarConnectionStatus {
+  readonly provider: string
+  /** What was actually granted. The read path refuses anything that is not
+   *  exactly the free/busy scope — see `src/server/calendar.ts`. */
+  readonly scope: string
+  readonly connectedAt: Date
+  /** Non-null iff Google refused the refresh token itself. The one failure a
+   *  person is told about, and never set by a network error. */
+  readonly refreshRejectedAt: Date | null
+}
+
+/**
+ * The person's authorisation to read their own free/busy.
+ *
+ * Mutable, like `Project` and `Intention` — no triggers, no `REQUIRED_GUARDS`
+ * entry. `forget` is a real DELETE, deliberately: disconnecting has to actually
+ * remove the credential, and a soft-deleted secret is a secret.
+ */
+export interface CalendarConnectionRepository {
+  /** What a screen may know. Never the token — see `CalendarConnectionStatus`. */
+  status(provider: string): Promise<CalendarConnectionStatus | null>
+  /**
+   * The ONE door to the secret, named after the fact that it hands one over.
+   *
+   * Deliberately not `byId` returning a row, and deliberately not a field on
+   * `status()`. A caller has to type the word `refreshToken` to get a refresh
+   * token, which means a reviewer reading a diff can find every place one is
+   * reachable by searching for a single identifier. Two call sites exist and
+   * both are in `src/server/calendar.ts`.
+   */
+  refreshTokenFor(provider: string): Promise<string | null>
+  /**
+   * Store or replace the connection. Upsert on `provider`, because re-running
+   * the flow is how a person fixes a rejected token and a second row is
+   * impossible anyway — `provider` is unique.
+   *
+   * Writing a token always clears `refreshRejectedAt`: a fresh grant is by
+   * definition not a rejected one, and leaving the timestamp would leave the
+   * front door telling somebody to reconnect a calendar they just reconnected.
+   */
+  save(input: { provider: string; scope: string; refreshToken: string }): Promise<void>
+  /** Google refused the credential itself. Called only on `invalid_grant`. */
+  markRefreshRejected(provider: string, at: Date): Promise<void>
+  /** Disconnect. A real DELETE — the credential goes, not a flag. */
+  forget(provider: string): Promise<void>
+}
+
+function calendarConnectionRepository(prisma: PrismaClient): CalendarConnectionRepository {
+  const STATUS = {
+    provider: true,
+    scope: true,
+    connectedAt: true,
+    refreshRejectedAt: true,
+  } as const
+
+  return {
+    status: (provider) =>
+      prisma.calendarConnection.findUnique({ where: { provider }, select: STATUS }),
+
+    // The only `select` in this file that names the token, and the only method
+    // that returns it. Narrowed to the scalar rather than the row so that even
+    // here nothing else comes along with it.
+    refreshTokenFor: async (provider) => {
+      const row = await prisma.calendarConnection.findUnique({
+        where: { provider },
+        select: { refreshToken: true },
+      })
+      return row?.refreshToken ?? null
+    },
+
+    save: async ({ provider, scope, refreshToken }) => {
+      await prisma.calendarConnection.upsert({
+        where: { provider },
+        create: { provider, scope, refreshToken },
+        update: { scope, refreshToken, refreshRejectedAt: null },
+        select: { id: true },
+      })
+    },
+
+    markRefreshRejected: async (provider, at) => {
+      // `updateMany` rather than `update`: a connection the person deleted in
+      // another tab while a refresh was in flight is not an error worth
+      // throwing out of a path whose whole contract is that it degrades.
+      await prisma.calendarConnection.updateMany({
+        where: { provider },
+        data: { refreshRejectedAt: at },
+      })
+    },
+
+    forget: async (provider) => {
+      await prisma.calendarConnection.deleteMany({ where: { provider } })
+    },
+  }
+}
+
+/* ── OfferTally ────────────────────────────────────────────────────────── */
+
+/** One day's counts, as the harness reads them. Four integers and a date, and
+ *  the absence of a fifth field is the design — see the model's docblock. */
+export interface OfferTallyDay {
+  readonly day: string
+  readonly observedMinutes: number
+  readonly offersShown: number
+  readonly offersDeclined: number
+  readonly strandsSuppressed: number
+}
+
+/** What to add to a day. Every field optional and every absent one means zero,
+ *  because each call site knows about exactly one of the four. */
+export interface OfferTallyDelta {
+  readonly observedMinutes?: number
+  readonly offersShown?: number
+  readonly offersDeclined?: number
+  readonly strandsSuppressed?: number
+}
+
+/**
+ * How loud Propositum has been, day by day.
+ *
+ * Mutable, like `Project` and `Intention` — no triggers, no `REQUIRED_GUARDS`
+ * entry, and the schema's docblock carries the argument for why a tally needs
+ * no append-only guarantee.
+ *
+ * There is deliberately no `byDay`, no `since` and no delete. `add` is the only
+ * writer and `all` is the only reader, because the one consumer is
+ * `npm run eval -- --report`, which wants the whole series to look at the
+ * trend. A narrower read would be invented for a caller that does not exist.
+ */
+export interface OfferTallyRepository {
+  /** Add to a day, creating it if this is the day's first count. */
+  add(day: string, delta: OfferTallyDelta): Promise<void>
+  /** Every day recorded, oldest first. */
+  all(): Promise<readonly OfferTallyDay[]>
+}
+
+function offerTallyRepository(prisma: PrismaClient): OfferTallyRepository {
+  const COUNTS = {
+    day: true,
+    observedMinutes: true,
+    offersShown: true,
+    offersDeclined: true,
+    strandsSuppressed: true,
+  } as const
+
+  return {
+    /**
+     * An upsert whose update half is four `increment`s.
+     *
+     * Increments rather than a read-modify-write, so two counts arriving in the
+     * same instant cannot lose one to a stale read — the poll and a Home render
+     * genuinely can land together. What this does NOT survive is two creates of
+     * the same day racing, which SQLite answers with a unique-constraint error;
+     * the caller swallows it and loses that one count. Named rather than
+     * rounded up: it is the only error in this measurement that can go in
+     * either direction, and it needs the day's first two writes to collide.
+     */
+    add: async (day, delta) => {
+      const zeroed = {
+        observedMinutes: delta.observedMinutes ?? 0,
+        offersShown: delta.offersShown ?? 0,
+        offersDeclined: delta.offersDeclined ?? 0,
+        strandsSuppressed: delta.strandsSuppressed ?? 0,
+      }
+
+      await prisma.offerTally.upsert({
+        where: { day },
+        create: { day, ...zeroed },
+        update: {
+          observedMinutes: { increment: zeroed.observedMinutes },
+          offersShown: { increment: zeroed.offersShown },
+          offersDeclined: { increment: zeroed.offersDeclined },
+          strandsSuppressed: { increment: zeroed.strandsSuppressed },
+        },
+        select: { day: true },
+      })
+    },
+
+    // Lexicographic order on `YYYY-MM-DD` is chronological order, which is the
+    // one thing that format is for.
+    all: () => prisma.offerTally.findMany({ select: COUNTS, orderBy: { day: 'asc' } }),
   }
 }

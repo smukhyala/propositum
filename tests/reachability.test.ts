@@ -84,6 +84,59 @@ function stripImports(source: string): string {
     .replace(/^\s*import\s+['"][^'"]+['"]\s*;?\s*$/gm, ' ')
 }
 
+/**
+ * Every mention of an ambient field that the allowance table does not account for.
+ *
+ * ── Why this exists, and what it replaces ────────────────────────────────
+ *
+ * The three "landed and deliberately not consulted" deferrals below each ran
+ * their own loop, and each began `if (!name.startsWith(join('src', 'domain',
+ * 'detection'))) continue`. So all three guarded ONE directory while
+ * `AmbientObservation` is consumed in four files outside it —
+ * `src/app/api/capture/ambient/route.ts`, `src/server/ambient-store.ts`,
+ * `src/server/compose-offer.ts` and `src/server/front-door.ts`, the last of
+ * which decides what appears on the offer bar.
+ *
+ * That was not theoretical. Measured on 2026-08-18: adding
+ *
+ *     const handedTo = observations.some((o) => o.arrival === 'no-referrer')
+ *
+ * to `noticedStrands` and skipping every strand when it held — which suppresses
+ * the whole front door on any afternoon containing an omnibox search, since a
+ * search reaches its results page unreferred — passed `tsc --noEmit` clean and
+ * the entire suite, 51 files and 1,496 tests, byte-identical to the baseline.
+ * Three files then claimed in prose that wiring one of these "cannot happen
+ * quietly". It could, everywhere except one directory.
+ *
+ * ── Why the budget is EXACT and not a ceiling ────────────────────────────
+ *
+ * `exitType`'s allowance was 2 for a directory-scoped guard, on a reason that
+ * turned out to be wrong, and the spare slot let a real consumer through when
+ * somebody went looking — that story is in the block below. A ceiling always
+ * has a spare slot the day the reason for it stops being true. An exact count
+ * has none: a mention appearing anywhere goes red, and a mention DISAPPEARING
+ * from the transport goes red too, which is the vacuity check the deferrals
+ * used to make separately.
+ *
+ * The price is a tripwire on ordinary work in the named files — renaming a
+ * local in the ambient route trips this. That is the intended cost. Every entry
+ * in a table below was read before it was written down, and re-reading one is
+ * exactly what should happen when the count moves.
+ */
+function unallowedMentions(field: string, allowed: Record<string, number>): string[] {
+  const out: string[] = []
+  for (const file of PRODUCTION) {
+    const name = relative(repo, file)
+    const mentions =
+      stripImports(stripComments(readFileSync(file, 'utf8'))).match(
+        new RegExp(`\\b${field}\\b`, 'g'),
+      ) ?? []
+    const budget = allowed[name] ?? 0
+    if (mentions.length !== budget) out.push(`${name} (${mentions.length}, allowed ${budget})`)
+  }
+  return out
+}
+
 /** Files that CALL `needle` — in code, not in prose or an import — excluding
  *  its definition. */
 function callersOf(needle: string, definedIn: string): string[] {
@@ -771,7 +824,20 @@ describe('the safety machinery is reachable from the product', () => {
      * The second hop is asserted below, because a helper Home stopped calling
      * would leave both lines above green and the screen blind.
      *
-     * ── Why the second needle is no longer `statusWordFor` ─────────────────
+     * ── `statusWordFor` has a caller again, on the project screen ──────────
+     *
+     * *Added 2026-08-18.* Between the bare-Home rewrite and that date it had
+     * none, and this file did not say so — the one shape it exists to catch,
+     * missed. Four of the five lifecycle words rendered nowhere, and the fifth
+     * only because Home had constant-folded it.
+     *
+     * `src/app/projects/[projectId]/page.tsx` now derives the word from the
+     * same `frontDoorRow` and prints it. The assertion below greps for the call
+     * AND for the interpolation that puts its result in the kicker, because a
+     * grep for the call alone is satisfied by a result nobody renders — which
+     * is precisely how this went unnoticed the first time.
+     *
+     * ── Why the second needle on HOME is no longer `statusWordFor` ─────────
      *
      * Because that call had stopped meaning anything, in a way this file could
      * not see. Home renders re-entry rows off a list it has ALREADY filtered to
@@ -869,6 +935,35 @@ describe('the safety machinery is reachable from the product', () => {
  *
  * Each is a real gap with a real consequence, named in the map's fog.
  */
+describe('the lifecycle word is on a screen', () => {
+  const projectScreen = stripImports(
+    stripComments(readFileSync(join(repo, 'src/app/projects/[projectId]/page.tsx'), 'utf8')),
+  )
+
+  it('the project screen derives the word and renders it', () => {
+    const screen = projectScreen
+
+    expect(
+      screen,
+      'the project screen stopped calling statusWordFor — four of the five lifecycle words render nowhere again',
+    ).toMatch(/statusWordFor\(/)
+
+    // The call is not the point; the rendered result is. A call whose value is
+    // discarded is what made the previous version of this assertion vacuous.
+    expect(
+      screen,
+      'statusWordFor is called but its result is not interpolated into the kicker — that is the vacuous shape this file exists to refuse',
+    ).toMatch(/kicker=\{[^}]*statusWordFor\(/)
+  })
+
+  it('it comes from frontDoorRow, so there is one derivation and not two', () => {
+    expect(
+      projectScreen,
+      'the project screen computes a lifecycle state without frontDoorRow — that is the second derivation front-door.ts opens by refusing',
+    ).toMatch(/frontDoorRow\(/)
+  })
+})
+
 describe('deferred, and asserted as deferred', () => {
   it('boundary 6 is still unwired, so the narrative is a stop-rule label', () => {
     // `execute-run` stores `narrative: stopLabel` — a consumer label rendered
@@ -1003,6 +1098,405 @@ describe('deferred, and asserted as deferred', () => {
       'a run drives the browser now — move this into the section above',
     ).toEqual([])
   })
+
+  it('scroll lands on the ambient path and no ground consults it', () => {
+    /**
+     * Correct, tested, carried end to end — and deliberately called by nothing.
+     *
+     * This is the shape at the top of this file, created on purpose, so it is
+     * asserted here rather than left to be discovered. `scrollFraction` has been
+     * computed by `content.js` since the engagement report existed and dropped
+     * on arrival because `ambientSchema` had no field for it; on 2026-08-17 the
+     * field landed. Nothing in the detector reads it.
+     *
+     * ── What would consume it ────────────────────────────────────────────
+     *
+     * `readAround` in `src/domain/detection/grounds.ts`, and `READ_AROUND_MS`
+     * says so about itself: *"Twenty seconds is a floor on a glance, not a bar
+     * on skimming. Twelve newsletter links at forty-five seconds each clear it
+     * comfortably."* Scroll is the signal that separates a page read from a page
+     * held open — Claypool et al. (IUI 2001) measured time, scroll and their
+     * combination as the three things that correlated with stated interest, and
+     * `docs/research/intent-suggestion-quality.md` §10.2 names `read-around` as
+     * where it would go. `deepestRead` and `read-deeply` are the second
+     * candidate, and the same research's §10.1 argues exit type would be worth
+     * more than either.
+     *
+     * ── Why it is not consumed yet ───────────────────────────────────────
+     *
+     * Because consuming it is a different decision from carrying it, and only
+     * the first has been taken. Every one of those uses moves which afternoons
+     * clear the offer bar — ADR-0008 names the false positive as the expensive
+     * failure, and a threshold that moves as a side effect of a plumbing change
+     * is exactly the silent widening `detect.ts`'s own header refuses. The
+     * research this lands was recorded WITHOUT retuning; see the honest-limit
+     * note beside `WINDOW_MS`.
+     *
+     * ── The producer half, which is also not done ────────────────────────
+     *
+     * ~~`flushAmbient` in `extension/src/service-worker.js` projects each
+     * buffered signal onto the wire shape by hand and does not copy
+     * `scrollFraction` across, so today the field is reachable by `curl` and by
+     * nothing the extension sends. That file was out of scope for this change.
+     * It is named here rather than asserted because a red test in a file this
+     * change may not touch would be a tripwire nobody owning it agreed to.~~
+     *
+     * **Done 2026-08-17, ADR-0013.** `flushAmbient` copies it, guarded on the
+     * value already being inside `[0, 1]` so that no batch which is accepted
+     * today starts being refused. It is now ASSERTED rather than named — see
+     * *"the extension actually sends the fields the app has fields for"* at the
+     * bottom of this file — because a producer that exists is a producer that
+     * can be deleted, and this file's whole subject is code nothing reaches.
+     *
+     * The consumption half below is unchanged, which is the point of them being
+     * two decisions.
+     *
+     * If you are here because this went red: that is the system working. Move it
+     * up, and say in the commit which afternoons started qualifying.
+     */
+    const detectTs = join('src', 'domain', 'detection', 'detect.ts')
+
+    // Not vacuous. With the field deleted every count below is zero and this
+    // would pass green while deferring something that no longer exists.
+    expect(
+      stripComments(readFileSync(join(repo, detectTs), 'utf8')),
+      'AmbientObservation no longer declares scrollFraction — this deferral is about a field that is gone',
+    ).toMatch(/readonly scrollFraction\?/)
+
+    /**
+     * WIDENED 2026-08-18 from `src/domain/detection` to all of `PRODUCTION`.
+     *
+     * The old loop skipped every file outside the detector, which is where the
+     * offer bar lives. See `unallowedMentions` for the mutation that proved it.
+     *
+     * The allowance table is read as: this is the complete list of places the
+     * NAME may appear in production code, and none of them is a decision.
+     *
+     *   - `detect.ts` — one, the interface field's own declaration.
+     *   - the ambient route — four, all transport: the `z.number()` bound and
+     *     the three occurrences of the projection line that copies it into the
+     *     store. Validating a value is not consulting it.
+     *   - **`src/capture/semantics.ts` and `src/server/capture-adapter.ts` are
+     *     the SESSION path and are a different field with the same name.**
+     *     `RawSignal.scrollFraction` comes off a `content.js` engagement report
+     *     and feeds `classifyEngagement`'s `ENGAGEMENT_SCROLL_FRACTION`
+     *     threshold, which really does decide something — about session events,
+     *     which this deferral is not about. `\bscrollFraction\b` cannot tell
+     *     the two apart, so they are listed rather than filtered, because a
+     *     filter is where the next hole goes. Both were read on 2026-08-18 and
+     *     neither touches `AmbientObservation`.
+     */
+    const consumers = unallowedMentions('scrollFraction', {
+      [detectTs]: 1,
+      [join('src', 'app', 'api', 'capture', 'ambient', 'route.ts')]: 4,
+      [join('src', 'capture', 'semantics.ts')]: 4,
+      [join('src', 'server', 'capture-adapter.ts')]: 3,
+    })
+
+    expect(
+      consumers,
+      'scrollFraction is mentioned somewhere the allowance does not cover — if something now READS it, move this deferral into the section above and say which afternoons started or stopped qualifying; if the transport merely changed shape, update the count and say why it is still not a reader',
+    ).toEqual([])
+  })
+
+  it('the exit type lands on the ambient path and no ground consults it', () => {
+    /**
+     * The second signal carried and deliberately not consulted. ADR-0013.
+     *
+     * ── Why this one is deferred, which is a decision and not a backlog ──
+     *
+     * `exitType` is the best-evidenced thing this product was not collecting:
+     * `docs/research/intent-suggestion-quality.md` §2.1 quotes Fox et al. (TOIS
+     * 2005) measuring dwell **plus exit type** at 66% against 70% for all
+     * nineteen implicit signals, and §9's table calls it *"the single
+     * best-evidenced addition"*. Collecting it was the easy half.
+     *
+     * Three reasons it is not read, in the order they bind:
+     *
+     *  1. **The distinction the evidence rests on is inside a value we cannot
+     *     split.** Fox's satisfaction node is *"spent more than 58 s… and did
+     *     not go back to the results list"*; the dissatisfaction node is the
+     *     mirror of it. Both turn on separating a return from an onward
+     *     navigation — and our `'left-unloaded'` contains navigated-onward,
+     *     tab-closed, browser-quit and reloaded together, because a content
+     *     script sees one `pagehide` for all four. Splitting it needs `tabs` or
+     *     `webNavigation`, which the manifest and
+     *     `tests/extension-permissions.test.ts` both refuse. Consuming it today
+     *     would be borrowing the citation rather than applying it.
+     *  2. **Consuming it moves the offer bar**, and ADR-0008 names the false
+     *     positive as the expensive failure. The standing decision recorded
+     *     beside `WINDOW_MS` and on `scrollFraction` is to land research
+     *     without retuning.
+     *  3. **Nothing measures the offer rate** (§10.5), so there is no
+     *     before-and-after to judge a threshold move by.
+     *
+     * ── What it would feed, so the next person meets a choice ─────────────
+     *
+     * `readAround` in `src/domain/detection/grounds.ts`, as a CONJUNCTION
+     * rather than a threshold: `READ_AROUND_MS`'s own docstring concedes
+     * *"Twenty seconds is a floor on a glance, not a bar on skimming"*, and
+     * twenty seconds followed by `'left-unloaded'` is a different event from
+     * twenty seconds followed by the tab still sitting there. `deepestRead` and
+     * `read-deeply` are the second candidate. §10.1 names both.
+     *
+     * ── What would justify wiring it ─────────────────────────────────────
+     *
+     * An offer-rate measurement, plus EITHER a way to tell an onward navigation
+     * from a close — which would have to be argued as an observation rather
+     * than an inference, and today the only honest route to it is a permission
+     * this product refuses — OR a use that needs only the `'hidden'` versus
+     * `'left-*'` split, which IS honestly available now and is the cheaper
+     * thing to try first.
+     *
+     * If you are here because this went red: that is the system working. Move
+     * it up, and say in the commit which afternoons started qualifying.
+     */
+    const detectTs = join('src', 'domain', 'detection', 'detect.ts')
+
+    // Not vacuous, the same way the scroll deferral above is not.
+    expect(
+      stripComments(readFileSync(join(repo, detectTs), 'utf8')),
+      'AmbientObservation no longer declares exitType — this deferral is about a field that is gone',
+    ).toMatch(/readonly exitType\?/)
+
+    /**
+     * WAS a ceiling of 2 inside `src/domain/detection`, with the reason: 'Two in
+     * `detect.ts` — the `ExitType` declaration is matched by `\bExitType\b`
+     * rather than this pattern, so what is counted here is the interface field
+     * and the type reference on it.'
+     *
+     * CORRECTED 2026-08-17. That reason was wrong and the number it justified
+     * left a free slot. `\bexitType\b` is CASE-SENSITIVE, so neither the
+     * `export type ExitType` declaration nor the `ExitType` on the right of
+     * `readonly exitType?: ExitType | undefined` is counted — the file has
+     * exactly ONE match. Two allowed one real consumer through, and one was
+     * added and measured: projecting `engagedMs` as `(dwell.get(o.url) ?? 0) *
+     * (o.exitType === 'hidden' ? 0 : 1)` in `pagesOf` — which zeroes engagement
+     * for every page left by a tab switch — passed the whole suite, 1357/1357
+     * green.
+     *
+     * WIDENED AGAIN 2026-08-18, for the reason on `scrollFraction` above: the
+     * directory filter meant `src/server/front-door.ts` was never scanned at
+     * all, and no ceiling inside the detector says anything about a consumer on
+     * the offer bar. Four in the ambient route, all transport — the `z.enum` and
+     * the three occurrences of the projection line.
+     */
+    const consumers = unallowedMentions('exitType', {
+      [detectTs]: 1,
+      [join('src', 'app', 'api', 'capture', 'ambient', 'route.ts')]: 4,
+    })
+
+    expect(
+      consumers,
+      'exitType is mentioned somewhere the allowance does not cover — if something now READS it, move this deferral into the section above and say which afternoons started or stopped qualifying; if the transport merely changed shape, update the count and say why it is still not a reader',
+    ).toEqual([])
+  })
+
+  it('the arrival lands on the ambient path and no ground consults it', () => {
+    /**
+     * The THIRD signal carried and deliberately not consulted, 2026-08-18.
+     *
+     * ── The count is the first thing worth saying ────────────────────────
+     *
+     * `scrollFraction`, `exitType`, and now `arrival`. One deferral is the lag
+     * between landing a signal and deciding what it means. Three is a habit,
+     * and it is a habit with a cost that lands on the person rather than on us:
+     * this product's argument is that it watches narrowly, and "we collect it,
+     * nothing reads it" is the sentence every product says on the way to
+     * reading it.
+     *
+     * **So this deferral is given an expiry, which the other two were not.**
+     * All three are waiting on the same missing thing —
+     * `docs/research/intent-suggestion-quality.md` §10.5 says nothing measures
+     * the offer rate, so there is no before-and-after to judge a bar move by.
+     * Either that measurement gets built and all three get judged against it,
+     * or the honest move is to DELETE the three fields rather than keep filling
+     * them indefinitely. A fourth deferral landing here without the measurement
+     * existing is the signal that the second branch is the real answer.
+     *
+     * ── Why this one is deferred on its own merits ───────────────────────
+     *
+     * It would be the strongest available evidence for the distinction
+     * `grounds.ts` is built on — *did they pursue this, or receive it?* Its
+     * header argues that *"somebody who read four pages of a site they arrived
+     * at from a newsletter chose nothing — the subject was handed to them"*,
+     * and the only evidence of pursuit in that file today is a search.
+     *
+     * And it is weakest exactly there:
+     *
+     *  1. **The newsletter afternoon defeats it directly.** A link whose page
+     *     suppressed its referrer — `rel="noreferrer"`, `Referrer-Policy:
+     *     no-referrer`, both common in mail clients and readers — arrives as
+     *     `'no-referrer'`, the member that reads as *the person chose this*. So
+     *     the false positive `grounds.ts` spends its length refusing is the
+     *     shape most likely to present as intent.
+     *  2. **`'no-referrer'` is not rare.** An omnibox search reaches its
+     *     results page unreferred, so nearly every session containing a search
+     *     also contains one. An intent ground keyed on it would fire on
+     *     ordinary browsing, which is what `INTENT_GROUNDS` exists to exclude.
+     *  3. **Consuming it moves the offer bar**, and ADR-0008 names the false
+     *     positive as the expensive failure. The standing decision recorded
+     *     beside `WINDOW_MS`, on `scrollFraction` and on `exitType` is to land
+     *     research without retuning.
+     *
+     * ── What it would feed, so the next person meets a choice ────────────
+     *
+     * `returnedTo` in `src/domain/detection/grounds.ts`, and this is the one
+     * candidate the corpus has already argued in writing. Its docblock records
+     * Adar, Teevan & Dumais over 612,000 users: in the sub-hour band a
+     * thirty-minute `WINDOW_MS` can see, **77%** of revisits are same-domain,
+     * so `came-back` may be measuring a click home from a spoke rather than
+     * intent. The narrowing that block names — *"count a return only when the
+     * person went to a DIFFERENT origin in between"* — is exactly a
+     * `'cross-origin'` arrival on a page already seen, observed rather than
+     * inferred. That block also records that the product owner chose to write
+     * the finding down and retune nothing, which is the decision this deferral
+     * is downstream of rather than a gap in it.
+     *
+     * Wiring it needs `arrival` carried onto `ThreadPage`, which nothing does,
+     * and `came-back` is one of only three intent grounds — so narrowing it is
+     * a bar change wearing a predicate's clothes, the same thing `SUSTAINED_MS`
+     * says about lowering a span.
+     *
+     * ── What would justify wiring it ─────────────────────────────────────
+     *
+     * The offer-rate measurement, plus a use that survives point 1 — which
+     * `'cross-origin'` does and `'no-referrer'` does not, because a stripped
+     * referrer degrades toward the value that looks like intent rather than
+     * away from it.
+     *
+     * If you are here because this went red: that is the system working. Move
+     * it up, and say in the commit which afternoons started qualifying.
+     */
+    const detectTs = join('src', 'domain', 'detection', 'detect.ts')
+
+    // Not vacuous, the same way the two deferrals above are not.
+    expect(
+      stripComments(readFileSync(join(repo, detectTs), 'utf8')),
+      'AmbientObservation no longer declares arrival — this deferral is about a field that is gone',
+    ).toMatch(/readonly arrival\?/)
+
+    /**
+     * Exactly one in `detect.ts`, the interface field's own name. `\barrival\b`
+     * is case-sensitive, so neither the `export type Arrival` declaration nor
+     * the `Arrival` on the right of `readonly arrival?: Arrival | undefined` is
+     * counted — which is the correction `exitType`'s allowance above had to be
+     * given after a real consumer slipped through a spare slot. Four in the
+     * ambient route, all transport: the `z.enum` and the three occurrences of
+     * the line that copies a validated value into the store.
+     *
+     * WIDENED 2026-08-18, the day after this deferral was written, and the
+     * widening is the more useful half of the two. The guard as first written
+     * scanned only `src/domain/detection`, so the exact consumer this block
+     * argues against — a `'no-referrer'` reading intent on the offer path —
+     * could be added to `src/server/front-door.ts` with the whole suite green.
+     * It was, measured, and reverted; see `unallowedMentions`. A deferral that
+     * only holds where nobody would put the consumer is a comment with a test
+     * around it.
+     */
+    const consumers = unallowedMentions('arrival', {
+      [detectTs]: 1,
+      [join('src', 'app', 'api', 'capture', 'ambient', 'route.ts')]: 4,
+    })
+
+    expect(
+      consumers,
+      'arrival is mentioned somewhere the allowance does not cover — if something now READS it, move this deferral into the section above and say which afternoons started or stopped qualifying; if the transport merely changed shape, update the count and say why it is still not a reader',
+    ).toEqual([])
+  })
+})
+
+/**
+ * The tab group title reaches the NAME, and nothing else. ADR-0013.
+ *
+ * ── Why containment is asserted rather than described ────────────────────
+ *
+ * The manifest pays a real install warning for `tabGroups` — *"View and manage
+ * your tab groups"* — on the strength of one promise: the label may improve a
+ * name and may never make an offer fire. `tests/detection.test.ts` pins the
+ * behavioural half (grounds and sufficiency byte-identical either way). This
+ * pins the structural half, which is that the value has one reader.
+ *
+ * Two separate hazards, and they fail differently:
+ *
+ *   - **A prompt.** A tab group title is untrusted text: it is typed by a
+ *     person, but a person can be induced to type anything, and it is exactly
+ *     as page-adjacent as a page title. `name-thread.ts` and `compose-offer.ts`
+ *     name their model inputs field by field and `datamark` every page-authored
+ *     one. Adding this to either without `datamark` would be raw untrusted text
+ *     in a prompt, which is the single thing ADR-0006 exists to prevent.
+ *   - **A gate.** `compilePolicy` is the function the gate evaluates. Nothing
+ *     derived from ambient observation may reach it; scope and controls come
+ *     from a ratified contract. A grep is a coarse instrument for that and it
+ *     is the right one here, because the failure it catches is somebody
+ *     plumbing a convenient string through by hand.
+ */
+describe('the group title reaches the name and no prompt and no gate', () => {
+  const named = (needle: string) =>
+    PRODUCTION.filter((f) =>
+      stripImports(stripComments(readFileSync(f, 'utf8'))).includes(needle),
+    ).map((f) => relative(repo, f))
+
+  it('is read by exactly the files that carry it and the one that renders it', () => {
+    // Producer, carrier, and the sentence. Anything else is a new reader and a
+    // new decision. `route.ts` is the door; `detect.ts` and `topics.ts` carry
+    // it; `ambient-store.ts` is `describeWork`.
+    expect(named('groupTitle').sort()).toEqual(
+      [
+        join('src', 'app', 'api', 'capture', 'ambient', 'route.ts'),
+        join('src', 'domain', 'detection', 'detect.ts'),
+        join('src', 'domain', 'detection', 'topics.ts'),
+      ].sort(),
+    )
+  })
+
+  it('reaches the sentence and stops there', () => {
+    // `authoredLabel` is the name the thread carries. `topics.ts` computes it,
+    // `detect.ts` copies it onto `WorkDetected`, `ambient-store.ts` renders it.
+    // A fourth file is a fourth thing that can do something with a label
+    // somebody typed.
+    expect(named('authoredLabel').sort()).toEqual(
+      [
+        join('src', 'domain', 'detection', 'detect.ts'),
+        join('src', 'domain', 'detection', 'topics.ts'),
+        join('src', 'server', 'ambient-store.ts'),
+      ].sort(),
+    )
+  })
+
+  it('never reaches a model boundary', () => {
+    // The two files that build prompts out of a detection. Both list their
+    // inputs by name; neither may list this one without `datamark`, and the
+    // honest way to add it is to turn this red first.
+    for (const builder of [
+      join('src', 'server', 'name-thread.ts'),
+      join('src', 'server', 'compose-offer.ts'),
+    ]) {
+      const source = stripImports(stripComments(readFileSync(join(repo, builder), 'utf8')))
+
+      expect(source, `${builder} builds a prompt and no longer names its inputs`).toContain(
+        'datamark(',
+      )
+      expect(
+        source,
+        `${builder} now puts a tab group title in a prompt — it is untrusted person-typed text and must cross datamark first, on the same terms as detected.titles`,
+      ).not.toMatch(/\b(groupTitle|authoredLabel)\b/)
+    }
+  })
+
+  it('never reaches the gate', () => {
+    // `compilePolicy` reads a ratified scope and the person's controls. A label
+    // out of the ambient buffer has no business anywhere near it.
+    for (const file of PRODUCTION) {
+      const source = stripImports(stripComments(readFileSync(file, 'utf8')))
+      if (!source.includes('compilePolicy(')) continue
+
+      expect(
+        source,
+        `${relative(repo, file)} evaluates the policy and mentions a tab group title in the same file — nothing ambient may reach a gate`,
+      ).not.toMatch(/\b(groupTitle|authoredLabel)\b/)
+    }
+  })
 })
 
 describe('the extension can actually capture', () => {
@@ -1057,6 +1551,268 @@ describe('the extension can actually capture', () => {
 
     expect(worker).toContain('permissions.onRemoved')
     expect(callersOf('revokeSource', 'src/persistence/repositories/index.ts')).not.toEqual([])
+  })
+
+  /**
+   * The extension actually sends the fields the app has fields for. ADR-0013.
+   *
+   * ── The defect this is written about, which shipped and lasted ───────────
+   *
+   * `flushAmbient` hand-builds the ambient wire shape field by field. So a field
+   * added to `content.js` AND to the app's schema is still carried by nobody
+   * until a line appears in that projection — and `scrollFraction` spent the
+   * whole build in exactly that state. It was computed on every engagement
+   * report, given a field at the door on 2026-08-17, and reachable by `curl` and
+   * by nothing a browser does, while ADR-0008's decision table and two comments
+   * in `detect.ts` all said ambient capture carried "dwell and scroll".
+   *
+   * That is this file's own subject — correct, tested code nothing reaches —
+   * with the twist that the unreachable half was in a component no unit test
+   * runs. A grep is what is available, and the property that makes it real is
+   * the extension's: no build step (ADR-0002), so the text searched is the text
+   * Chrome executes. `tests/extension-permissions.test.ts` rests on the same
+   * property and argues it at greater length.
+   *
+   * What this does NOT prove: that the value is correct, that Chrome fires the
+   * event, or that a real batch is accepted. It proves the line exists. That is
+   * exactly the class of bug that occurred.
+   */
+  it('flushAmbient carries every field the ambient schema accepts', () => {
+    const worker = extensionSource('service-worker.js')
+    const schema = stripComments(
+      readFileSync(join(repo, 'src/app/api/capture/ambient/route.ts'), 'utf8'),
+    )
+
+    /**
+     * Sliced to the projection, not searched over the whole worker.
+     *
+     * WAS a `expect(worker).toContain(field)` over the entire file, and
+     * CORRECTED 2026-08-17 because for one of the three fields it asserted
+     * nothing. `scrollFraction` and `exitType` occur only inside this
+     * projection, so a whole-file `toContain` was a real guard for them —
+     * deleting `exitType`'s line does go red. `groupTitle` occurs four times:
+     * `groupTitleOf`'s declaration, its call site, the `bufferAmbient` spread,
+     * AND the projection. Any one of the first three kept the assertion green,
+     * and deleting only the projection line — leaving the permission paid for,
+     * the lookup performed and the label buffered, with nothing ever leaving
+     * the browser — passed the whole suite, 1357/1357. That is precisely the
+     * `scrollFraction` defect this test was written about, reproduced by the
+     * test that was written about it.
+     *
+     * The slice is the technique `tests/extension-permissions.test.ts` already
+     * uses on `groupTitleOf`, and with the same honest limit: it is text, to
+     * the next top-level declaration, and a parser would be better.
+     */
+    const from = worker.indexOf('async function flushAmbient')
+    expect(from, 'flushAmbient is gone — this guard has no projection to be about').toBeGreaterThan(
+      -1,
+    )
+    const rest = worker.slice(from + 1)
+    const next = rest.search(/\n(async function|function|const|let|chrome\.)/)
+    const projection = next === -1 ? rest : rest.slice(0, next)
+
+    // Non-vacuous: the slice has to contain the projection's oldest field, or
+    // the slicing is wrong and every assertion below is about an empty string.
+    expect(
+      projection,
+      'the flushAmbient slice does not even contain engagedMs — the slice is wrong, not the code',
+    ).toContain('engagedMs')
+
+    for (const field of ['scrollFraction', 'exitType', 'groupTitle', 'arrival']) {
+      // Both ends, so this cannot go green by the field quietly leaving the
+      // schema — which would be the same silence in the other direction.
+      expect(schema, `ambientSchema no longer accepts ${field}`).toContain(field)
+      expect(
+        projection,
+        `flushAmbient does not send ${field} — the app has a field for it and nothing a browser does fills it, which is exactly how scrollFraction spent the whole build`,
+      ).toContain(field)
+    }
+
+    /**
+     * And the two fields that must NOT make the trip. Added 2026-08-18.
+     *
+     * `content.js` puts `referrer` and `navigationType` on every navigation
+     * signal, and the session path consumes both — `src/capture/semantics.ts`
+     * cleans the referrer and stores it, because a session is consented, scoped
+     * to approved sources and auditable row by row. The ambient buffer is what
+     * Propositum saw while nobody asked, and a referrer is the URL of a page
+     * somebody came FROM, which may be somewhere nothing else here observes.
+     *
+     * So the ambient path takes the CLASSIFICATION — `arrival`, one of five
+     * words computed inside the content script — and never the URL it was
+     * computed from. That is a property of this projection and of nothing else:
+     * the signal arrives at the service worker whole, the buffer holds it
+     * whole, and this hand-built object is the one place that decides what
+     * travels. `ambientSchema` would strip a referrer anyway, but a value that
+     * leaves the browser and is discarded at the far end has still left the
+     * browser.
+     *
+     * Non-vacuous: `flushAmbient` is the projection, so a line adding either
+     * field is a line inside this slice. The assertion is deliberately on the
+     * SLICE and not on the whole worker, for the reason the comment above gives
+     * about `groupTitle`.
+     */
+    for (const field of ['referrer', 'navigationType']) {
+      expect(
+        projection,
+        `flushAmbient now sends ${field} — the ambient path is supposed to carry the arrival classification and never the URL it was computed from`,
+      ).not.toContain(field)
+    }
+  })
+
+  it('the content script classifies the arrival itself, so the referrer stays on the page', () => {
+    /**
+     * The producer half. Without it the app's `z.enum` has nothing to receive,
+     * which is precisely the state `scrollFraction` was in for the whole build.
+     *
+     * The comparison is what makes this a privacy assertion rather than a
+     * plumbing one: the classification has to happen HERE, in the document,
+     * because that is the only place `document.referrer` exists.
+     *
+     * ~~so a design that sent the URL to the service worker and classified it
+     * there would have moved a URL across a process boundary for no gain.~~
+     * **Struck 2026-08-18, the same day, because the shipped design sends the
+     * URL to the service worker anyway** — `content.js` cannot know whether a
+     * session is running, and the session path needs the referrer, so it rides
+     * every navigation message. What classifying in the page actually buys is
+     * narrower and still real: the worker's ambient branch can DELETE the
+     * referrer, which it now does, and still have something to say about how the
+     * page was reached. Classifying in the worker would have made the deletion
+     * impossible — you cannot drop the input and keep the derivation. The
+     * assertion below is unchanged; only the reason for it was overstated.
+     */
+    const content = extensionSource('content.js')
+
+    expect(content, 'nothing declares the closed set — a fourth value could be invented').toContain(
+      'ARRIVALS',
+    )
+    expect(
+      content,
+      'nothing classifies the arrival, so the ambient field is dead on arrival',
+    ).toContain('function arrivalOf')
+    // The comparison that keeps the URL local: an origin against this page's.
+    expect(
+      content,
+      'the referrer is no longer reduced to an origin comparison — something else is being sent',
+    ).toMatch(/new URL\(referrer\)\.origin === location\.origin/)
+  })
+
+  it('the ambient branch drops the referrer before anything buffers it', () => {
+    /**
+     * The gate the arrival change was described as having and did not. Added
+     * 2026-08-18, after review.
+     *
+     * ── What was actually true, and what five sentences claimed ──────────
+     *
+     * `flushAmbient` never put a referrer on the wire, so the APP never saw
+     * one — the assertion above this one holds that end and always did. Five
+     * places said something stronger: that the URL never left the page.
+     * `content.js` sends `referrer` and `navigationType` on EVERY navigation,
+     * because it must not be able to tell whether a session is running and the
+     * session path consumes both. The worker's no-session branch destructured
+     * only `text` out, and `bufferAmbient` wrote the rest — referrer included —
+     * into `chrome.storage.session`, where it stayed until the next flush and,
+     * whenever the app was unreachable, was put back by `returnAmbient` for the
+     * life of the browser session.
+     *
+     * The fix is one destructure and it costs nothing on the wire, which is why
+     * it was taken rather than the sentences merely reworded: an always-on
+     * buffer holding the address of a page nothing else here observes is the
+     * thing the whole asymmetry exists to refuse.
+     *
+     * ── Why this is asserted here and not left to the projection guard ───
+     *
+     * Two gates. `flushAmbient` decides what leaves the browser; this decides
+     * what the browser holds. The projection guard cannot see the second, and a
+     * value deleted at the far end has still been kept at this one. Both are
+     * pinned because both have to hold.
+     *
+     * Honest limit, the same one every slice in this file carries: it is text to
+     * a marker, not a parse. A destructure that named the fields and then a line
+     * that put them back would satisfy this.
+     */
+    const worker = extensionSource('service-worker.js')
+
+    /**
+     * Backwards from the response, not forwards from the first `if (!session)`.
+     *
+     * Written forwards first, and it was wrong in the way this file keeps
+     * finding: `if (!session) {` occurs earlier in the worker, so the slice ran
+     * from line 89 to line 1900 and every assertion below would have been
+     * satisfied by a destructure anywhere in eighteen hundred lines. It passed,
+     * which is the point — a slice that is too WIDE fails silently in the green
+     * direction. Hence the length bound as well as the containment check.
+     */
+    const end = worker.indexOf('ambient: true')
+    expect(end, 'the ambient branch no longer answers with `ambient: true`').toBeGreaterThan(-1)
+    const from = worker.lastIndexOf('if (!session) {', end)
+    expect(from, 'the no-session branch is gone — this guard has no branch to be about').toBeGreaterThan(-1)
+    const branch = worker.slice(from, end)
+
+    // Non-vacuous, both ways. It has to contain the call whose argument is the
+    // thing being constrained, and it has to be a BRANCH rather than a third of
+    // the file that happens to contain one.
+    expect(
+      branch,
+      'the no-session slice does not contain bufferAmbient — the slice is wrong, not the code',
+    ).toContain('bufferAmbient(')
+    expect(
+      branch.length,
+      'the no-session slice ran away — it is now long enough to contain code from elsewhere, so re-anchor it rather than trusting what it matched',
+    ).toBeLessThan(1200)
+
+    const destructure = /const \{([^}]*)\}\s*=\s*message\.signal/.exec(branch)
+    expect(
+      destructure,
+      'the ambient branch no longer destructures message.signal — whatever replaced it has to be checked by hand',
+    ).not.toBeNull()
+
+    // Named on the left is dropped; `...metadataOnly` carries the rest. So this
+    // is the list of things the buffer may not hold.
+    for (const field of ['text', 'referrer', 'navigationType']) {
+      expect(
+        destructure?.[1],
+        `the ambient branch no longer strips ${field} — it reaches chrome.storage.session, and for referrer that is the URL of a page nobody here otherwise observes`,
+      ).toContain(field)
+    }
+    expect(
+      destructure?.[1],
+      'the rest element is gone, so naming a field on the left no longer removes it from what is buffered',
+    ).toContain('...metadataOnly')
+  })
+
+  it('the content script reports how a page was left, on both ways of leaving', () => {
+    // Two senders, because they answer different questions and only one of them
+    // existed before. `pagehide` was already reported and gained the flag;
+    // `visibilitychange` is a NEW report, and without it the commonest exit of
+    // all — switching to another tab and never coming back — is unobservable,
+    // which is the gap `visitsByUrl` in `detect.ts` documents about itself.
+    const content = extensionSource('content.js')
+
+    expect(content, 'nothing reports an exit type — the field is dead on arrival').toContain(
+      'exitType',
+    )
+    expect(content, 'the pagehide report no longer distinguishes a kept document').toMatch(
+      /persisted\s*\?/,
+    )
+    expect(
+      content,
+      'nothing reports the hidden exit, so a tab switched away from and never closed records no exit at all',
+    ).toContain("reportEngagement('hidden')")
+  })
+
+  it('the group title is looked up from a tab that messaged us, and reaches the buffer', () => {
+    // The producer half of the containment block above. Without this line the
+    // permission is paid for and nothing fills the field.
+    const worker = extensionSource('service-worker.js')
+
+    expect(worker, 'nothing looks a tab group up — the tabGroups permission buys nothing').toContain(
+      'chrome.tabGroups.get(',
+    )
+    expect(
+      worker,
+      'the group title never reaches the ambient buffer, so the app can only ever be told by a curl',
+    ).toMatch(/bufferAmbient\([\s\S]{0,400}groupTitle/)
   })
 })
 

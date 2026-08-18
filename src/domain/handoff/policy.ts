@@ -291,6 +291,36 @@ export interface AutonomyControls {
 }
 
 /**
+ * Every time limit the product offers, in minutes.
+ *
+ * ── Why this moved here from `src/ui/agreement.tsx` (2026-08-18) ─────────
+ *
+ * It was `TIME_CHOICES`, a module constant in the component that renders the
+ * radios, and that was the right home for as long as the component was the only
+ * thing that could name a budget. It is not any more: ADR-0014 lets a calendar
+ * free/busy read PROPOSE one, and the whole of what makes that proposal safe is
+ * that it can only ever name a member of this array.
+ *
+ * A range is a stronger guarantee than a rule, and it is only a guarantee if
+ * both ends read the same array. Two copies — one in the component, one beside
+ * the suggester — is the shape `topics.ts` refuses for tokenisers, and here the
+ * drift would be silent in the expensive direction: a suggester with a stale
+ * copy could name a value the radios do not offer, and the screen would render
+ * a control whose result no radio can show as selected.
+ *
+ * So it lives beside `AutonomyControls.timeLimitMinutes`, which is the field it
+ * is the legal range of. `src/ui/agreement.tsx` imports it; so does
+ * `src/server/calendar.ts`. Nothing else may declare a second one.
+ *
+ * **It is not a policy input.** `compilePolicy` does not read it, the gate does
+ * not read it, and a number outside it is not refused anywhere — `draftContract`
+ * clamps the model's proposal to `[5, 480]` and `nearestChoice` snaps it, both
+ * of which predate this and are unchanged. This is the set of things a person
+ * can CLICK, which is exactly the authority a calendar is allowed to borrow.
+ */
+export const TIME_LIMIT_CHOICES: readonly number[] = [15, 30, 60, 120, 240]
+
+/**
  * The compiled rule set. A COMPUTED VIEW with no table — two stores for one
  * truth is exactly how a UI comes to display something the gate cannot enforce.
  *

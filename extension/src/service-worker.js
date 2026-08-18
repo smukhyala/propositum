@@ -236,6 +236,111 @@ const AMBIENT_BATCH_MAX = 100
 const AMBIENT_TITLE_MAX = 300
 
 /**
+ * The longest tab group title that leaves the browser. ADR-0013.
+ *
+ * ── Why there is a bound at all ──────────────────────────────────────────
+ *
+ * The same reason `AMBIENT_TITLE_MAX` exists, and it is not hypothetical here:
+ * an untruncated title was sent against `title: z.string().max(300)` and every
+ * flush failed Zod with a 400 forever. `chrome.tabGroups` publishes **no
+ * documented limit** on `title` — it is whatever a person typed into the
+ * rename box, and nothing stops a paste. So the sender bounds it, at or below
+ * what the receiver accepts, which is the discipline the comment above spends
+ * its length on: two bounds that disagree about which is tighter is a lock.
+ *
+ * ── Why 120 and not 300 ──────────────────────────────────────────────────
+ *
+ * A page title is a document's name and is routinely long; a group title is a
+ * LABEL a person typed for a handful of tabs, and it is rendered into a
+ * sentence about their own afternoon. Something past a line and a half is not
+ * a label any more, and truncating a label mid-word is better than putting a
+ * paragraph into "You have been looking into …". The number is a judgement, not
+ * a measurement, and it is written down as one.
+ */
+const AMBIENT_GROUP_TITLE_MAX = 120
+
+/**
+ * The label a person typed for their own group of tabs. ADR-0013.
+ *
+ * ── The one sanctioned path, and why it is the only one ──────────────────
+ *
+ * A page **we are already observing** sends us a message; Chrome fills in
+ * `sender.tab`, which a page cannot forge and which needs no permission to
+ * read — this file already relies on exactly that for the working-here marker,
+ * and says so there. `groupId` is not one of the four sensitive properties the
+ * `tabs` permission gates (`url`, `pendingUrl`, `title`, `favIconUrl`), so it
+ * arrives unscrubbed. That id, and only that id, is then handed to
+ * `chrome.tabGroups.get`.
+ *
+ * **What that reveals is bounded by construction:** the group of a tab we were
+ * already watching, and nothing else. `chrome.tabGroups.get` returns group
+ * METADATA — `{id, title?, color, collapsed, windowId}` — and never the tabs
+ * inside it. Chrome's own reference is explicit: *"To group and ungroup tabs,
+ * or to query what tabs are in groups, use the `chrome.tabs` API."* We do not,
+ * and `tests/extension-permissions.test.ts` keeps it that way, including a new
+ * assertion that this namespace is only ever reached with an id from
+ * `sender.tab`. There is deliberately no `chrome.tabGroups.query`: that would
+ * enumerate every group in every window, which is a different capability with a
+ * different argument, and nobody has made it.
+ *
+ * ── Why it is worth a permission ─────────────────────────────────────────
+ *
+ * `docs/research/intent-signals.md` §4.3 puts it plainly: `topics.ts` is a
+ * stopword list, a branding regex, a Damerau-Levenshtein neighbour test and a
+ * canonicalisation pass, and the output of all of it is a ranked list of words
+ * that a model then spends a call turning into a sentence. **A tab group titled
+ * "world models" is that sentence, typed by the person.** The same research
+ * found the pattern four separate times: the best intent signals are the ones
+ * somebody authored.
+ *
+ * ── What it costs, honestly ──────────────────────────────────────────────
+ *
+ * One install warning: *"View and manage your tab groups."* That is a real
+ * price and it is not absorbed by the broad host permission the way `tabs` and
+ * `webNavigation` are. It buys a signal that is **excellent when present and
+ * absent most of the time** — most people do not use tab groups — which is why
+ * it may only ever improve a NAME and may never gate a detection or an offer.
+ *
+ * ── Every way this returns nothing, and it must return nothing quietly ───
+ *
+ *   - the message did not come from a tab (the side panel asks things too);
+ *   - `chrome.tabGroups` is missing, on a Chrome older than 89;
+ *   - `groupId` is `TAB_GROUP_ID_NONE` — the tab is in no group, which is the
+ *     common case and is why the lookup is skipped before it is attempted;
+ *   - the group was deleted between the message and the lookup, so `get`
+ *     rejects. A person collapsing and closing a group while a page in it is
+ *     reporting is ordinary, not exotic;
+ *   - the group exists and has no title. `title` is optional in the API and
+ *     Chrome shows an unnamed group as a coloured stub. An unnamed group is
+ *     not an authored label, so it is the same answer as no group at all.
+ */
+const TAB_GROUP_ID_NONE = -1
+
+async function groupTitleOf(sender) {
+  const groupId = sender?.tab?.groupId
+  if (typeof groupId !== 'number' || groupId === TAB_GROUP_ID_NONE) return undefined
+  if (typeof chrome.tabGroups?.get !== 'function') return undefined
+
+  try {
+    // `get(groupId)`, never `query({})`. A query returns every group in the
+    // browser, including groups made entirely of tabs Propositum has never
+    // seen — which is the one thing this whole mechanism exists not to do.
+    // A `query({})` sat here, its result discarded into `void`, and it cost
+    // nothing to remove and everything to keep.
+    const group = await chrome.tabGroups.get(groupId)
+    const title = (group?.title ?? '').trim()
+    // An empty title is absent, not empty-string: the app's schema would take
+    // `''` happily and the naming path would then have to know that one
+    // particular label means "there is no label".
+    return title === '' ? undefined : title.slice(0, AMBIENT_GROUP_TITLE_MAX)
+  } catch {
+    // Gone between the message and the lookup. Nothing to say, and saying
+    // nothing is the correct answer rather than a degraded one.
+    return undefined
+  }
+}
+
+/**
  * Ambient observations, held separately from session events.
  *
  * A separate buffer and a separate endpoint, because they have different
@@ -382,6 +487,105 @@ async function flushAmbient() {
            */
           kind: ambientKindOf(o.signal, o.url ?? ''),
           ...(typeof o.dwellMs === 'number' ? { engagedMs: o.dwellMs } : {}),
+          /**
+           * The three fields this projection used to drop on the floor.
+           *
+           * ── The shape of the bug, kept because it is the general one ─────
+           *
+           * This object is hand-built field by field, so a field added to the
+           * app's schema and to `content.js` is carried by NOBODY until a line
+           * appears here. `scrollFraction` spent the whole build in exactly
+           * that state: computed on every engagement report, given a field at
+           * the app's door on 2026-08-17, and reachable by `curl` and by
+           * nothing a browser does. Three places in the corpus said ambient
+           * capture carried "dwell and scroll" while this function quietly did
+           * not. A projection is where a wire format goes to disagree with
+           * itself, and the fix is a line, not a rewrite: a spread of `o` would
+           * carry `signal` and `interacted` and any future field straight past
+           * the one door that decides what may travel.
+           *
+           * ── Why scroll is guarded and dwell is not ───────────────────────
+           *
+           * `ambientSchema` bounds it `min(0).max(1)`, and a batch containing
+           * one out-of-range value is refused whole and then DROPPED — a 4xx is
+           * not retried here, deliberately. `content.js` does not clamp, and
+           * argues at length for not clamping: `deepest` is a ratio of live
+           * layout numbers and overscroll can put it above 1. Copying it
+           * unguarded would therefore start throwing away entire batches over
+           * one rubbery number on one page.
+           *
+           * So an out-of-range reading is OMITTED, which is exactly what
+           * happened to every reading until today. This is not the clamp
+           * `content.js` refused: a clamp asserts 1.02 was 1, and would let a
+           * sender establish a value the session path drops. Omitting says
+           * nothing at all, which is what an absent field already means. Which
+           * batches the app accepts is therefore unchanged; what changed is
+           * that the ones it accepts now carry a scroll fraction.
+           *
+           * `exitType` needs no such guard — the app's `z.enum` and
+           * `content.js`'s `EXIT_TYPES` are the same closed set, and the value
+           * is one of three literals rather than arithmetic over layout.
+           *
+           * `groupTitle` is bounded on the way IN, by `groupTitleOf`, at or
+           * below what the schema takes. Bounding at both ends is the same
+           * discipline `AMBIENT_TITLE_MAX` exists for.
+           */
+          ...(typeof o.scrollFraction === 'number' &&
+          o.scrollFraction >= 0 &&
+          o.scrollFraction <= 1
+            ? { scrollFraction: o.scrollFraction }
+            : {}),
+          ...(typeof o.exitType === 'string' ? { exitType: o.exitType } : {}),
+          /**
+           * How they got to the page — and NOT the page they got there from.
+           *
+           * ── What is copied, and what is deliberately left behind ─────────
+           *
+           * `content.js` sends three things about an arrival: `referrer`,
+           * `navigationType`, and `arrival`, which is one of five words
+           * computed from the first two. This line copies the third and only
+           * the third. The referrer URL is a page the person came FROM, which
+           * may be somewhere nothing else in this product observes, and the
+           * ambient buffer is what was seen while nobody asked. The session
+           * path may have it and does; this path gets strictly less. The whole
+           * argument is at `ARRIVALS` in `content.js`.
+           *
+           * **This is now the SECOND gate rather than the only one.** As of
+           * 2026-08-18 the message handler's no-session branch deletes
+           * `referrer` and `navigationType` alongside `text`, so neither is in
+           * the buffered observation for this projection to leave behind. That
+           * is deliberate belt and braces and neither half is redundant: the
+           * destructure keeps the extension's own session storage clean, and
+           * this projection is what decides the wire. A future edit that
+           * spreads `o` — the failure the header of this function is about —
+           * would defeat only the second.
+           *
+           * ── Why there is no guard here, unlike scroll ────────────────────
+           *
+           * The scroll guard above exists because `content.js` deliberately
+           * does NOT clamp — `deepest` is a ratio of live layout numbers, so an
+           * out-of-range value is producible by an ordinary page, and copying
+           * it unguarded would 4xx a batch of up to a hundred observations that
+           * is accepted today. Neither is true here. `arrival` is one of five
+           * literals, checked against `ARRIVALS` at the one place it leaves
+           * `content.js`, so this build cannot produce a sixth. That is the
+           * same standing `exitType` has one line up, and this is the same
+           * `typeof` check for the same reason.
+           *
+           * **The residual risk, named rather than absorbed:** a NEWER
+           * `content.js` that invents a sixth value, running against an app
+           * whose `z.enum` has five, would have its batches refused and
+           * dropped. That hole is `exitType`'s hole too and it was accepted
+           * with it; what closes it is that all three copies of the set live in
+           * one repository and `tests/capture-api.test.ts` proves the app
+           * refuses a value the set does not name. A fourth copy of the
+           * vocabulary here would buy protection against a skew this product
+           * does not ship into, at the price of a fourth place for it to drift.
+           */
+          ...(typeof o.arrival === 'string' ? { arrival: o.arrival } : {}),
+          ...(typeof o.groupTitle === 'string'
+            ? { groupTitle: o.groupTitle.slice(0, AMBIENT_GROUP_TITLE_MAX) }
+            : {}),
         })),
       }),
     })
@@ -1661,12 +1865,69 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
      * `text` is deleted rather than omitted at the source, so there is exactly
      * one line in this extension that decides page text may travel, and it is
      * this one.
+     *
+     * ── The referrer goes with it. Added 2026-08-18, after review ────────
+     *
+     * ~~`content.js` computes the arrival classification in the page and the
+     * URL it was computed from never leaves that file.~~ **That was false and
+     * it was the load-bearing sentence of the arrival change.** The content
+     * script cannot know whether a session is running — that is the paragraph
+     * directly above — so it sends `referrer` and `navigationType` on EVERY
+     * navigation, because the session path needs them and `semantics.ts`
+     * consumes them. Both therefore crossed into this worker on the ambient
+     * path too, and the old destructure took only `text` out, so
+     * `bufferAmbient` wrote the referrer verbatim into `chrome.storage.session`
+     * — where it sat until the next flush, and, if the app was unreachable,
+     * where `returnAmbient` put it straight back for the life of the browser
+     * session.
+     *
+     * Nothing downstream ever used it: `flushAmbient` hand-builds the wire
+     * shape and copies neither field, so the app has never received one. The
+     * claim was true about the app and false about this process. Deleting them
+     * here costs nothing on the wire and makes the claim true about both, which
+     * is worth more than a footnote conceding it: an unconsented buffer holding
+     * the address of a page nobody here otherwise observes is exactly the thing
+     * the asymmetry at `ARRIVALS` exists to refuse.
+     *
+     * What is still true and is now the whole claim: the referrer is sent by
+     * the page to Propositum's own worker, is deleted on this line before
+     * anything holds it, and reaches the app only while a session the person
+     * started is running. `tests/reachability.test.ts` asserts this destructure
+     * as well as `flushAmbient`'s projection, because two gates that both have
+     * to hold are two gates that both have to be pinned.
      */
     if (!session) {
-      const { text, ...metadataOnly } = message.signal ?? {}
+      const { text, referrer, navigationType, ...metadataOnly } = message.signal ?? {}
       void text
+      void referrer
+      void navigationType
 
-      await bufferAmbient({ ...metadataOnly, at: Date.now() })
+      /**
+       * The group title is attached HERE, and only on this branch.
+       *
+       * Two reasons, and the second is the one that matters:
+       *
+       *  1. **The content script cannot ask.** `chrome.tabGroups` is not
+       *     available to it, and it must not be — a page that could learn its
+       *     own group has learned a word the person typed about a set of tabs,
+       *     which is not a page's business.
+       *  2. **Ambient only, on purpose.** The session path below goes to
+       *     `/api/capture/events` and through `rawSignalSchema`, which has no
+       *     field for this; a signal carrying one would be recorded as
+       *     REJECTED, once per report. Carrying it there is a separate
+       *     decision about a separate ledger, and nobody has taken it. ADR-0013
+       *     scopes this to the ambient path and says so.
+       *
+       * `sender` is Chrome's, not the page's. See `groupTitleOf` for the whole
+       * argument about what that does and does not reveal.
+       */
+      const groupTitle = await groupTitleOf(sender)
+
+      await bufferAmbient({
+        ...metadataOnly,
+        at: Date.now(),
+        ...(groupTitle === undefined ? {} : { groupTitle }),
+      })
       return sendResponse({ ok: true, ambient: true })
     }
 
