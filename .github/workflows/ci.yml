@@ -71,3 +71,7 @@ jobs:
       # The build catches what neither of the above can: a route that only
       # fails when Next compiles it.
       - run: npm run build
+
+      # TEMPORARY diagnostic — remove with this branch.
+      - run: npx tsx scripts/diagnose-guards.ts
+        if: always()
