@@ -26,6 +26,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import type { RawExecutor } from '../src/persistence/append-only'
 import {
   ensureAppendOnlyGuards,
   findMissingGuards,
@@ -82,6 +83,60 @@ describe('guard installation', () => {
     await installAppendOnlyGuards(prisma)
     await installAppendOnlyGuards(prisma)
     expect(await findMissingGuards(prisma)).toEqual([])
+  })
+
+  /**
+   * Every statement on ONE connection, because a pool scatters them.
+   *
+   * The test above — reinstalling is idempotent — failed on CI and passed on the
+   * author's machine, then failed on a different trigger each rerun. Reproduced
+   * on 2026-08-19 by running eight clients, each on its OWN database file,
+   * installing concurrently: `CREATE TRIGGER x` fails with *"trigger x already
+   * exists"* while `sqlite_master`, queried on the line before, says x is
+   * absent.
+   *
+   * Nothing is shared between those clients, so it is not contention over a
+   * file. Prisma pools connections, `$executeRawUnsafe` takes whichever one is
+   * free, and under load a `DROP` and the `CREATE` that follows it land on two
+   * connections whose views of the schema disagree. The install reads as
+   * sequential and is not.
+   *
+   * So the guarantee this pins is not "it worked once" — a race passes that test
+   * most of the time. It is that the statements are handed to a single pinned
+   * connection, which is what `$transaction` means here and the only reason the
+   * ordering in `triggers.sql` can be trusted at all.
+   */
+  it('runs every statement on one pinned connection, not on whichever is free', async () => {
+    const scattered: string[] = []
+    const pinned: string[] = []
+    let transactions = 0
+
+    const pool: RawExecutor & {
+      $transaction: <T>(fn: (tx: RawExecutor) => Promise<T>) => Promise<T>
+    } = {
+      $executeRawUnsafe: async (sql: string) => {
+        scattered.push(sql)
+        return 0
+      },
+      $queryRawUnsafe: async <T,>() => [] as T,
+      $transaction: async <T,>(fn: (tx: RawExecutor) => Promise<T>) => {
+        transactions++
+        return fn({
+          $executeRawUnsafe: async (sql: string) => {
+            pinned.push(sql)
+            return 0
+          },
+          $queryRawUnsafe: async <T,>() => [] as T,
+        })
+      },
+    }
+
+    await installAppendOnlyGuards(pool)
+
+    expect(transactions, 'the install opened no transaction, so the pool chose the connections').toBe(1)
+    expect(scattered, 'statements went to the client rather than to the pinned connection').toEqual([])
+    // A DROP and a CREATE for each guard, plus the one DROP that has no CREATE.
+    expect(pinned.length).toBeGreaterThan(REQUIRED_GUARDS.length)
   })
 
   it('detects a dropped guard, which is what a Prisma table rebuild causes', async () => {

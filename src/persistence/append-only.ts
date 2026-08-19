@@ -41,6 +41,23 @@ export interface RawExecutor {
 }
 
 /**
+ * A client that can pin a sequence of statements to ONE connection.
+ *
+ * Prisma pools connections and hands each `$executeRawUnsafe` whichever one is
+ * free. That is invisible until two statements depend on each other, which is
+ * exactly what `triggers.sql` is made of: every `CREATE TRIGGER` is preceded by
+ * the `DROP TRIGGER IF EXISTS` that makes room for it. Scatter the pair across
+ * two connections under load and the CREATE fails with *"already exists"* for a
+ * trigger `sqlite_master` reports as absent — see the test that pins this.
+ */
+export interface TransactionalExecutor extends RawExecutor {
+  $transaction<T>(
+    fn: (tx: RawExecutor) => Promise<T>,
+    options?: { timeout?: number },
+  ): Promise<T>
+}
+
+/**
  * Every guard that must exist, as `[trigger name, table]`.
  *
  * This list is the specification. `triggers.sql` is the implementation, and
@@ -165,12 +182,35 @@ function splitStatements(sql: string): string[] {
   return statements
 }
 
-/** Install the guards. Idempotent — every statement is DROP-then-CREATE. */
-export async function installAppendOnlyGuards(db: RawExecutor): Promise<void> {
-  const sql = await readFile(triggersSqlPath(), 'utf8')
-  for (const statement of splitStatements(sql)) {
-    await db.$executeRawUnsafe(statement)
+/**
+ * How long the install may hold its connection.
+ *
+ * Generous on purpose: the default interactive-transaction timeout is five
+ * seconds, and this runs ~75 DDL statements on a machine that may be running a
+ * test suite at the same time. A timeout here fails startup, and startup
+ * failing because a laptop was busy is a worse outcome than holding one SQLite
+ * connection for a few seconds at boot.
+ */
+const INSTALL_TIMEOUT_MS = 60_000
+
+/** Every statement, in file order, on the connection it was handed. */
+async function runStatements(tx: RawExecutor, statements: ReadonlyArray<string>): Promise<void> {
+  for (const statement of statements) {
+    await tx.$executeRawUnsafe(statement)
   }
+}
+
+/**
+ * Install the guards. Idempotent — every statement is DROP-then-CREATE.
+ *
+ * On ONE connection, and atomically. The pairing is the reason: a `CREATE` that
+ * runs on a different connection from its `DROP` fails under load, and a reader
+ * on a third connection can catch the table between the two with no guard on it
+ * at all. Both were possible for the whole build; see `TransactionalExecutor`.
+ */
+export async function installAppendOnlyGuards(db: TransactionalExecutor): Promise<void> {
+  const statements = splitStatements(await readFile(triggersSqlPath(), 'utf8'))
+  await db.$transaction((tx) => runStatements(tx, statements), { timeout: INSTALL_TIMEOUT_MS })
 }
 
 /** Which required guards are absent from the database right now. */
@@ -189,8 +229,20 @@ export async function findMissingGuards(db: RawExecutor): Promise<string[]> {
  * UPDATE on the ledger is a worse outcome than an application that will not
  * boot, because the first one is silent.
  */
-export async function ensureAppendOnlyGuards(db: RawExecutor): Promise<void> {
-  await installAppendOnlyGuards(db)
-  const missing = await findMissingGuards(db)
+export async function ensureAppendOnlyGuards(db: TransactionalExecutor): Promise<void> {
+  const statements = splitStatements(await readFile(triggersSqlPath(), 'utf8'))
+
+  // The check reads `sqlite_master` on the same pinned connection that just
+  // wrote it. On a pooled one it could read a connection that had not caught up
+  // and refuse to start a database that is in fact guarded — the same disagreement
+  // as the install, pointed the other way.
+  const missing = await db.$transaction(
+    async (tx) => {
+      await runStatements(tx, statements)
+      return findMissingGuards(tx)
+    },
+    { timeout: INSTALL_TIMEOUT_MS },
+  )
+
   if (missing.length > 0) throw new AppendOnlyGuardError(missing)
 }
