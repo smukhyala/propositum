@@ -62,6 +62,8 @@ scenarios expect a stop — so the false-stop half of H3 has nothing to score ag
 
 Work is tracked on the [wayfinder map](https://github.com/smukhyala/propositum/issues/1).
 
+[`CONTRIBUTING.md`](./CONTRIBUTING.md) is the working agreement for anyone else committing here — what the guard tests refuse, which invariants are ADRs rather than diffs, and the commit and branch conventions the history follows but never stated. Licensed [Apache-2.0](./LICENSE).
+
 ---
 
 ## The demo workflow
