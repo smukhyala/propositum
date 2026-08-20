@@ -23,6 +23,21 @@
  * them itself", and the difference between those two is the whole of what
  * ADR-0010 spent. So the words are pinned, and a rewrite that changes what is
  * promised has to come through here.
+ *
+ * ── The fourth sentence, found later and worse than the other three ──────
+ *
+ * Three sentences were corrected when the browser shift landed. A fourth was
+ * not: the panel explained a missing `draft-section` with *"You chose research
+ * only"*, which assumes the Output dial is the only thing that can remove it.
+ * `grantableActionKinds(false)` never grants it in the first place, so on a
+ * browser shift with the dials untouched the screen showed *"Draft the
+ * changes"* checked and told the person they had chosen research only, on the
+ * one screen where a claim about what they chose is the whole product.
+ *
+ * That one is worse than the other three because it is not an overstatement of
+ * a promise — it is a decision attributed to someone who did not make it. So
+ * the case below renders the default browser shift and reads BOTH: the checked
+ * radio out of the markup, and the explanation out of the prose.
  */
 
 import { describe, expect, it } from 'vitest'
@@ -45,6 +60,10 @@ const DEFAULTS: AutonomyControls = {
 function screen(
   allowedActionKinds: readonly ActionKind[],
   over: Partial<AutonomyControls> = {},
+  /** Null is the browser shift's value and the default here, because that is
+   *  the shape most of this file is about. A title is passed only where the
+   *  case under test is a shift that really does have a document under it. */
+  documentTitle: string | null = null,
 ): string {
   const draft: ContractDrafted = {
     contractId: 'contract-1',
@@ -59,7 +78,7 @@ function screen(
     suggestedTimeLimitMinutes: 30,
     approvedSourceIds: ['source-1'],
     allowedActionKinds: [...allowedActionKinds],
-    documentTitle: null,
+    documentTitle,
     quotedConstraints: [],
   }
 
@@ -87,6 +106,23 @@ function words(html: string): string {
     .replace(/&#x27;|&rsquo;|[‘’]/g, "'")
     .replace(/&amp;/g, '&')
     .replace(/\s+/g, ' ')
+}
+
+/**
+ * The value of the one checked radio in the Output group.
+ *
+ * Read out of the markup rather than out of `DEFAULTS`, because the point of
+ * the case it serves is that two things on ONE rendered screen disagree — and
+ * quoting the fixture back at itself would prove nothing about the screen.
+ * Same shape as `checkedTimeLimit` in `tests/calendar-agreement.test.ts`.
+ */
+function checkedOutput(html: string): string | null {
+  for (const [, value] of html.matchAll(
+    /<input type="radio" name="output" checked="" value="([a-z-]+)"\/>/g,
+  )) {
+    return value ?? null
+  }
+  return null
 }
 
 const BROWSER = grantableActionKinds(false)
@@ -183,5 +219,32 @@ describe('research only takes the pause back off the screen, because it is true 
     expect(said).toContain('Look at the page you are on')
     expect(said).toContain('It can open other pages on these sites')
     expect(said).not.toContain('Click something on the page under')
+  })
+})
+
+describe('the panel says why drafting is off, and never invents the reason', () => {
+  it('does not tell a browser shift they chose research only', () => {
+    // The dials are untouched, so this is what the default handover shows.
+    const html = screen(BROWSER)
+
+    expect(checkedOutput(html)).toBe('draft-changes')
+    expect(words(html)).not.toContain('You chose research only')
+  })
+
+  it('says the true reason, which is that there is no document to draft into', () => {
+    expect(words(screen(BROWSER))).toContain(
+      'This shift has no document under it, so there is nothing to draft',
+    )
+  })
+
+  it('keeps the dial sentence where the dial really is the reason', () => {
+    // A document shift: `draft-section` was granted, and research only took it
+    // away. Here the screen is describing a choice the person actually made.
+    const said = words(screen(DOCUMENT, { output: 'suggestions-only' }, 'The supplier proposal'))
+
+    expect(said).toContain(
+      'You chose research only, so Propositum will come back with findings, questions and next steps',
+    )
+    expect(said).not.toContain('This shift has no document under it, so there is nothing to draft')
   })
 })
