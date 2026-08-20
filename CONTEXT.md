@@ -214,9 +214,19 @@ the struck sentence's own tripwire asked for.** `src/app/page.tsx` renders the c
 every row on the front door and links to the re-entry note on `needs-you`; the derivation is
 `frontDoorRow` in `src/server/front-door.ts`, and the reachability claim moved out of *deferred, and
 asserted as deferred* into *the safety machinery is reachable from the product*, where it now names
-`front-door.ts` for both needles. **The softest claim is narrower rather than kept:** what is still
+`front-door.ts` for both needles. ~~**The softest claim is narrower rather than kept:** what is still
 owed is the Intention-sourced pre-fill branch on the agreement screen, which must say *when* those
-words were written and cannot until `ContractDrafted` can carry that. Note also what a grep cannot
+words were written and cannot until `ContractDrafted` can carry that.~~ **Amended 2026-08-20
+([ADR-0017](docs/adr/0017-continuing-an-intention.md)): that branch landed, and the softest claim is
+kept.** `ContractDrafted.words` is a two-armed `PrefilledWords` discriminant whose `'your-intention'`
+arm carries `Intention.updatedAt` as `writtenAtEpochMs`; `draftContract` fills that arm when
+`WorkSoFar` says this is not the first sitting under the Intention, and `WhereTheWordsCameFrom` in
+`src/ui/agreement.tsx` prints the month above the two fields it accounts for. **What made this
+worth striking rather than quietly updating** is that two documents were already pointing here:
+ADR-0017 and `docs/ARCHITECTURE.md` §1 each say the debt closed and each name *this entry* as the
+place it was recorded, so a reader following either cross-reference landed on the sentence
+contradicting the document that sent them. A glossary is where the corpus keeps its one copy of a
+claim, and nothing checks its prose. Note also what a grep cannot
 see — a mutation that computed a state and discarded it kept the whole suite green, which is why
 `tests/front-door.test.ts` asserts the consumer label rather than the presence of a call.
 *Checked against the banned words:* not `status` (displaced), not `SessionState` (that is

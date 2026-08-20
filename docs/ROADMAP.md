@@ -27,8 +27,15 @@ which half is still owed.
 **The half still owed is the one this stage is named after, and it took until 2026-08-20 to say so
 plainly.** *Guided Intention Continuation* is what this stage is called, and until slice 1 nothing
 continued: the row survived and **nothing resumed it**, which the last paragraph of
-[`MVP.md`](./MVP.md)'s user journey states in its own voice — *"Saying the row survives is a claim
-about storage, not about continuity."* Two documents therefore read as though the stage were one
+[`MVP.md`](./MVP.md)'s user journey states in its own voice — ~~*"Saying the row survives is a claim
+about storage, not about continuity."*~~ **Re-marked 2026-08-20, later the same day: that quotation
+was not a quotation.** MVP.md now reads *"Saying the row survives **was** a claim about storage.
+This is a claim about what is on screen, and it is still not a claim about continuity"* — amended by
+ADR-0017 on the same day, and the wording above was deleted from MVP.md by the very commit that
+added this paragraph quoting it. So this file paraphrased the MVP while asserting *in its own
+voice*, which is the one thing the structural note below forbids by name; a reader following the
+link to check the quotation would not have found it. The half that survives the correction is the
+continuity half, which MVP.md still says. Two documents therefore read as though the stage were one
 screen from complete while the word in its title was unimplemented. `WorkSoFar`
 ([ADR-0017](./adr/0017-continuing-an-intention.md)) is what closes that, and it closes it to a
 strictly smaller extent than the stage name suggests: a person still starts every sitting, and what

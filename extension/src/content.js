@@ -605,8 +605,17 @@ function engagedMs() {
  * is reachable by a browser for the first time. It is copied only when it is
  * already inside `[0, 1]` — see the clamp argument immediately below, and
  * `flushAmbient`'s own note on why omitting an out-of-range reading is not the
- * clamp that was refused. **Nothing in the detector reads it even now**;
- * `tests/reachability.test.ts` holds that as a deferred assertion.
+ * clamp that was refused. ~~**Nothing in the detector reads it even now**;
+ * `tests/reachability.test.ts` holds that as a deferred assertion.~~
+ *
+ * **Re-marked 2026-08-20 (ADR-0018): the detector reads it, and the deferred
+ * assertion is gone.** `scrollByUrl` in `src/domain/detection/detect.ts` folds
+ * the deepest fraction per URL onto `ThreadPage`, and `grounds.ts` decides on it
+ * twice — `heldOpenUnread` refuses a page nobody scrolled that was switched away
+ * from, and `comparedOptions` requires `COMPARISON_SCROLL_FRACTION`, half a
+ * page, on each of `COMPARED_ORIGINS` sites before it will call an afternoon
+ * comparison shopping. A value measured here now moves the offer bar, which is
+ * the sentence this file owed a reader and did not have.
  *
  * ── Why the rounding here is not a bound, and no clamp was added ─────────
  *
