@@ -87,6 +87,18 @@ npm run build
 All three pass on a clone with no `.env` and no `prisma db push`. If any of them
 needs setup on your machine, that is a bug in the repository, not in your machine.
 
+**CI runs in UTC and your machine probably does not.** Anything that reads the
+real clock and names a date behaves differently there — one test asserted the
+complete contents of a table that also holds a row stamped `Date.now()`, and it
+was green in an afternoon at UTC-7 and red an hour later on the runner. Reproduce
+the runner's day from here with `TZ=UTC npm test` before blaming the runner.
+
+**A test that passes on a quiet machine is not a passing test.** The other defect
+CI found on its first run needed a busy one: two statements that depend on each
+other were handed to different pooled connections, which never happens with
+nothing else running. If you are chasing something that only fails on CI, put the
+machine under load before concluding it is the platform.
+
 **`npm run test:live` and `npm run eval` are different.** They call the real API,
 cost money, and are never part of `npm test` or CI. Two further cautions:
 
