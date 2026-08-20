@@ -230,6 +230,16 @@ export const ACTION_LABEL: Readonly<Record<ActionKind, string>> = {
 }
 
 /**
+ * What a missing kind says when there is nothing more specific to say.
+ *
+ * It names no cause, and that is why it is safe as a default: a kind can be off
+ * the list because a dial removed it or because the shift was never granted it,
+ * and this sentence is true either way. Any wording that names ONE of those
+ * reasons has to be earned per kind — see `whyDraftingIsOff`.
+ */
+const NOT_IN_THIS_AGREEMENT = 'Not part of this agreement. Propositum is refused if it tries.'
+
+/**
  * Capabilities that are not in `ActionKind` at all.
  *
  * These are not switched off and no setting turns them on. Rendering them in
@@ -246,6 +256,13 @@ export const ACTION_LABEL: Readonly<Record<ActionKind, string>> = {
  * carried, and the corrections are conditional on what was actually granted,
  * because a document shift is still a document shift and its version of each
  * sentence was true and stays true.
+ *
+ * **There was a fourth, and it took an audit to find it** (2026-08-20). The
+ * explanation under a switched-off `draft-section` said *"You chose research
+ * only"* whether or not the dial had anything to do with it, and on a browser
+ * shift it never does. It is corrected at `whyDraftingIsOff`, on the same
+ * discriminant as these three. Three was the number of sentences the old
+ * comment happened to name — never the number that went false.
  *
  * What is still true unconditionally, and is the whole reason the list survives:
  * **there is no code here that composes a message, places an order, publishes
@@ -365,6 +382,35 @@ export function Agreement({ draft, defaults, sourceLabels, onBack, onHandedOver 
     (kind) => CONFIRMABLE_ACTION_KINDS.has(kind) && policy.actionKindAllowlist.has(kind),
   )
   const mayFollowLinks = policy.actionKindAllowlist.has('navigate')
+
+  /**
+   * Why `draft-section` is not on the list — which is no longer one question.
+   *
+   * This is the fourth sentence of the family above, and it was left behind
+   * when the other three were made conditional. It said *"You chose research
+   * only"* whenever `draft-section` was missing, which held while every
+   * contract this panel could receive was granted it and the dial was the only
+   * thing that could take it away. `grantableActionKinds(false)` grants the
+   * browser six and never `draft-section`, so on a shift with no document the
+   * kind is absent for a reason that has nothing to do with the dial — and the
+   * sentence told a person with *"Draft the changes"* still checked, two
+   * sections below, that they had chosen otherwise.
+   *
+   * The discriminant is the same one the other three use: what was actually
+   * GRANTED, against what compiled. A kind that the shift offered and the
+   * allowlist no longer has was removed by a dial, and `suggestions-only` is
+   * the only rule in `compilePolicy` that removes this one. A kind the shift
+   * never offered was never the person's to switch off, and saying so is the
+   * whole of the correction — a permission panel may not attribute a decision
+   * to someone who did not make it, least of all on the screen where they are
+   * about to make one.
+   */
+  const draftingWasOnOffer = draft.allowedActionKinds.includes('draft-section')
+  const whyDraftingIsOff = draftingWasOnOffer
+    ? 'You chose research only, so Propositum will come back with findings, questions and next steps — and no text for your document.'
+    : draft.documentTitle === null
+      ? 'This shift has no document under it, so there is nothing to draft — Propositum will come back with what it found rather than text for a document.'
+      : NOT_IN_THIS_AGREEMENT
 
   function handOver(): void {
     setProblem(null)
@@ -515,9 +561,7 @@ export function Agreement({ draft, defaults, sourceLabels, onBack, onHandedOver 
                   <span>
                     {ACTION_LABEL[kind]}
                     <span className="ag-perm-why">
-                      {kind === 'draft-section'
-                        ? 'You chose research only, so Propositum will come back with findings, questions and next steps — and no text for your document.'
-                        : 'Not part of this agreement. Propositum is refused if it tries.'}
+                      {kind === 'draft-section' ? whyDraftingIsOff : NOT_IN_THIS_AGREEMENT}
                     </span>
                   </span>
                 </li>
