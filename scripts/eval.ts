@@ -10,10 +10,20 @@
  *   npm run eval -- --report          apply the H1 gates to what you have scored,
  *                                     compute H2 from the database, and print the
  *                                     offer rate beside it
+ *   npm run eval -- --dry --report    the same, with H3 from a free run
  *
  * Produces a scoring worksheet per scenario. It does not produce H1 scores —
  * those are entered by a person, because a model judge shares the generator's
  * blind spots and at n=1 there is no second signal to catch that.
+ *
+ * ── `--report` runs nothing, and that is why the combination exists ──────
+ *
+ * `--report` scores what is on disk: `eval-scores.json` and the database. H3 is
+ * not on disk — it is a fact about a run — so a bare `--report` prints an H3
+ * section saying nothing was run rather than printing two zeros that would read
+ * as a corpus passing. `--dry --report` runs the fake corpus first and reports
+ * its H3, which costs nothing; a real run prints its own H3 under the
+ * worksheets.
  *
  * ── H1 and H2 are measured from different places, on purpose ─────────────
  *
@@ -44,10 +54,20 @@ import { FakeModelClient } from '../src/model/fake'
 import type { ModelClient } from '../src/model/client'
 import { SCENARIOS } from '../src/eval/index'
 import { checkSeal, readSeals, sealNew, writeSeals } from '../src/eval/seal'
-import { renderWorksheet, runScenario } from '../src/eval/run'
+import {
+  N_OF_ONE,
+  dryReplies,
+  h3ObservationFor,
+  renderH2FromRuns,
+  renderH3,
+  renderWorksheet,
+  runScenario,
+} from '../src/eval/run'
+import type { H2FromRun, ScenarioRun } from '../src/eval/run'
 import { blankEntry, isComplete, readScores, resultFor, writeScores } from '../src/eval/record'
 import { H1_COMPONENTS } from '../src/eval/scenario'
-import { H2_PASS_RATE, reportH2, tallyH2 } from '../src/eval/score'
+import { H2_PASS_RATE, reportH2, scoreH3, tallyH2 } from '../src/eval/score'
+import type { H3Outcome } from '../src/eval/score'
 import { OFFER_RATE_CAUTION, reportOfferRate } from '../src/eval/offer-rate'
 import { createDatabase } from '../src/persistence/client'
 import { createRepositories } from '../src/persistence/repositories/index'
@@ -212,7 +232,8 @@ async function printH2(repos: Repositories): Promise<'passed' | 'failed' | 'noth
     console.log(
       `       across ${shifts.size} shift(s), ${withIntention.size} of them advancing a stated Intention`,
     )
-    if (produced.length) console.log(`       produced ${produced[0]} → ${produced[produced.length - 1]}`)
+    if (produced.length)
+      console.log(`       produced ${produced[0]} → ${produced[produced.length - 1]}`)
     if (trajectory.outputMode !== null) {
       console.log(
         `       scored as ${trajectory.outputMode} — the corpus is forgiven a zero only if no contract in it could draft changes`,
@@ -269,7 +290,9 @@ async function printOfferRate(repos: Repositories): Promise<void> {
       .filter((line) => line !== '')
     console.log(`  · no counts to read — ${said[said.length - 1] ?? 'unknown error'}`)
     console.log('    A database older than 2026-08-18 has no offer_tally. `npx prisma db push`,')
-    console.log('    then restart the app and the worker so the append-only guards are reinstalled.')
+    console.log(
+      '    then restart the app and the worker so the append-only guards are reinstalled.',
+    )
     return
   }
 
@@ -340,7 +363,9 @@ async function printFromTheDatabase(): Promise<'passed' | 'failed' | 'nothing-to
     db = await createDatabase({})
   } catch (error) {
     console.log('\nH2 — acceptance over the durable trajectory')
-    console.log(`  · no database to read — ${error instanceof Error ? error.message : String(error)}`)
+    console.log(
+      `  · no database to read — ${error instanceof Error ? error.message : String(error)}`,
+    )
     console.log('    H1 above is unaffected: it is scored against sealed fixtures.')
     return 'nothing-to-score'
   }
@@ -357,10 +382,28 @@ async function printFromTheDatabase(): Promise<'passed' | 'failed' | 'nothing-to
 
 /* ── --report ───────────────────────────────────────────────────────────── */
 
-if (args.has('--report')) {
+/**
+ * All three hypotheses, each with its own caveat, and each saying so when it
+ * cannot be produced.
+ *
+ * ── The rule this follows, which used to be followed by one of the three ──
+ *
+ * `docs/EVALUATION.md` draws a line between a ZERO and an ABSENCE and applies it
+ * to H2 and to the offer rate. H3 had no printer at all, so a reader of
+ * `--report` saw two hypotheses and inferred the third was fine. It now prints,
+ * and when there is no run to read it says that in words — because
+ * `0 missed stops, 0 false stops` on a corpus nobody ran is a pass mark awarded
+ * for doing nothing.
+ */
+async function printReport(
+  h3Outcomes: ReadonlyArray<{ scenarioId: string; outcome: H3Outcome }> | null,
+  h2FromRuns: readonly H2FromRun[] | null,
+): Promise<number> {
   const scores = readScores()
   let anyIncomplete = false
   let anyFailed = false
+
+  console.log('\nH1 — the reading, against sealed references')
 
   for (const scenario of SCENARIOS) {
     const entry = scores[scenario.id]
@@ -381,23 +424,45 @@ if (args.has('--report')) {
 
     const mark = result.passed ? 'PASS' : 'FAIL'
     if (!result.passed) anyFailed = true
-    console.log(`  ${result.passed ? '✓' : '✗'}  ${scenario.id.padEnd(24)} ${mark}  ${result.total}/12`)
+    console.log(
+      `  ${result.passed ? '✓' : '✗'}  ${scenario.id.padEnd(24)} ${mark}  ${result.total}/12`,
+    )
     for (const reason of result.failureReasons) console.log(`       ${reason}`)
     if (entry.baselineAtLeastAsGood === true) {
-      console.log('       ⚠ baseline judged at least as good — SessionReading may not be earning its place')
+      console.log(
+        '       ⚠ baseline judged at least as good — SessionReading may not be earning its place',
+      )
     }
     if (entry.notes) console.log(`       note: ${entry.notes}`)
   }
+  console.log(`     ${N_OF_ONE}`)
 
   const h2 = await printFromTheDatabase()
+  console.log(`       ${N_OF_ONE}`)
+
+  // The other half of H2, and it is a denominator rather than a rate. Printed
+  // beside the database's answer so the two are not confused: one is what a
+  // person decided, the other is what a fixture corpus made to be decided on.
+  for (const line of renderH2FromRuns(h2FromRuns)) console.log(line)
+
+  for (const line of renderH3(h3Outcomes)) console.log(line)
 
   console.log(
     '\nEvery H1 number above is n=1, scored by the person who wrote the answer key,' +
       '\nagainst references sealed before the run. H2 is not scored by anyone: it is' +
       '\nread off verdicts a person recorded while using the product, over whatever' +
-      '\nwindow that database happens to cover. Report both with that attached.',
+      '\nwindow that database happens to cover. H3 is scored by the harness against' +
+      '\nlabels sealed before the run, and is absent entirely unless something ran.' +
+      '\nReport all three with that attached.',
   )
-  process.exit(anyIncomplete || anyFailed || h2 === 'failed' ? 1 : 0)
+
+  // H3 does NOT move the exit code, and that is a deliberate asymmetry rather
+  // than an oversight. H1 and H2 have pass marks docs/MVP.md set before anybody
+  // ran anything, and H3 has one too — but the corpus reaches it only when every
+  // scenario ran, and a `--dry --report` would otherwise exit 1 on the strength
+  // of a fake model's stopping behaviour. The verdict is printed; the gate stays
+  // where MVP.md put it.
+  return anyIncomplete || anyFailed || h2 === 'failed' ? 1 : 0
 }
 
 /* ── --seal ─────────────────────────────────────────────────────────────── */
@@ -430,33 +495,29 @@ if (args.has('--seal')) {
   process.exit(0)
 }
 
-/* ── run ────────────────────────────────────────────────────────────────── */
+/* ── report only, which runs nothing ────────────────────────────────────── */
 
 const dry = args.has('--dry')
+
+if (args.has('--report') && !dry) {
+  // Free, needs no key, and opens the database for H2. H3 gets nothing, and
+  // says so — see `renderH3`.
+  process.exit(await printReport(null, null))
+}
+
+/* ── run ────────────────────────────────────────────────────────────────── */
+
 let client: ModelClient
 
 if (dry) {
-  // Enough scripted replies for one reading (plus a baseline) per scenario.
-  // Deliberately thin: --dry proves the harness runs, nothing more.
-  const replies = SCENARIOS.flatMap((s) => {
-    const one = {
-      kind: 'ok' as const,
-      value: {
-        claims: [
-          {
-            kind: 'objective' as const,
-            text: `(fake reading for ${s.id})`,
-            confidence: 'low' as const,
-            evidence: [{ ref: s.events[0]?.handle ?? 'E1' }],
-          },
-        ],
-      },
-    }
-    return wantsBaseline
-      ? [one, { kind: 'ok' as const, value: { summary: '(fake baseline)', nextSteps: [] } }]
-      : [one]
-  })
-  client = new FakeModelClient(replies)
+  // Enough scripted replies for one WHOLE scenario each — reading, agreement,
+  // plan and the worker's turns. The script lives in `src/eval/run.ts` beside
+  // the thing it has to keep up with, and `tests/eval.test.ts` runs every
+  // scenario through it, because a dry script that falls behind the pipeline
+  // makes `--dry` pass while covering less.
+  client = new FakeModelClient(
+    SCENARIOS.flatMap((s) => dryReplies(s, { withBaseline: wantsBaseline })),
+  )
 } else {
   const apiKey = process.env['ANTHROPIC_API_KEY']
   if (!apiKey) {
@@ -478,10 +539,12 @@ if (dry) {
 }
 
 let exitCode = 0
+const runs: ScenarioRun[] = []
 
 for (const scenario of SCENARIOS) {
   try {
     const run = await runScenario(client, scenario, { withBaseline: wantsBaseline })
+    runs.push(run)
     console.log('\n' + renderWorksheet(run))
     if (run.failures.length) exitCode = 1
   } catch (error) {
@@ -490,11 +553,48 @@ for (const scenario of SCENARIOS) {
   }
 }
 
-if (!dry) {
+/**
+ * What the corpus produced, and what it stopped for.
+ *
+ * H3 is scored HERE and not in `--report`, because it is the only hypothesis
+ * that is a fact about a run rather than a file on disk. A scenario whose run
+ * never got past the reading contributes nothing rather than a
+ * `correct-continue` — `h3ObservationFor` returns null for it, and a corpus with
+ * a hole in it is a corpus that has not been measured.
+ */
+const h2FromRuns: H2FromRun[] = []
+const h3Outcomes: Array<{ scenarioId: string; outcome: H3Outcome }> = []
+
+for (const run of runs) {
+  if (run.work === null) continue
+  h2FromRuns.push({
+    scenarioId: run.scenario.id,
+    decidableUnits: run.work.changes.length,
+    outputMode: run.work.outputMode,
+  })
+
+  const observed = h3ObservationFor(run)
+  if (observed !== null) {
+    h3Outcomes.push({ scenarioId: run.scenario.id, outcome: scoreH3(run.scenario, observed) })
+  }
+}
+
+for (const line of renderH2FromRuns(h2FromRuns)) console.log(line)
+for (const line of renderH3(h3Outcomes)) console.log(line)
+
+if (dry) {
+  console.log(
+    '\nEvery number above came from a FAKE model reading a script. It proves the harness' +
+      '\ndrives the pipeline; it is evidence about nothing else, and no H3 outcome here is' +
+      '\nadmissible as a measurement.',
+  )
+} else {
   console.log(
     '\nEnter the H1 component scores against the worksheets above.\n' +
       'Every reported number carries its protocol: n=1, references sealed before the run.',
   )
 }
+
+if (args.has('--report')) exitCode = (await printReport(h3Outcomes, h2FromRuns)) || exitCode
 
 process.exit(exitCode)

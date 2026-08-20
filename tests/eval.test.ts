@@ -29,7 +29,15 @@ import type { Scenario } from '../src/eval/scenario'
 import { FakeModelClient } from '../src/model/fake'
 import { datamark } from '../src/model/untrusted'
 import type { PromptEvent, SessionReadingOutput } from '../src/model/boundaries/session-reading'
-import { renderWorksheet, runScenario } from '../src/eval/run'
+import {
+  N_OF_ONE,
+  dryReplies,
+  h3ObservationFor,
+  renderH2FromRuns,
+  renderH3,
+  renderWorksheet,
+  runScenario,
+} from '../src/eval/run'
 import { createDatabase } from '../src/persistence/client'
 import type { Database } from '../src/persistence/client'
 import { createRepositories } from '../src/persistence/repositories/index'
@@ -270,7 +278,9 @@ describe('a fabricated quote is counted, not silently dropped', () => {
       },
     ])
 
-    const run = await runScenario(fake, SCENARIOS[0]!)
+    // The reading alone — the quote check is established from it, and driving a
+    // whole shift to reach the same assertion would be testing the shift.
+    const run = await runScenario(fake, SCENARIOS[0]!, { withWork: false })
 
     expect(run.checks?.unverifiedQuotes).toBe(1)
     expect(renderWorksheet(run)).toMatch(/1 quote/)
@@ -486,7 +496,9 @@ describe('the harness drives the real pipeline', () => {
       },
     ])
 
-    const run = await runScenario(fake, scenario)
+    // The reading alone. Scripting a whole shift to reach the mechanical checks
+    // would make this a test of the shift.
+    const run = await runScenario(fake, scenario, { withWork: false })
 
     expect(run.seal.state).toBe('sealed')
     expect(run.failures).toEqual([])
@@ -501,6 +513,223 @@ describe('the harness drives the real pipeline', () => {
 
     expect(run.reading).toBeNull()
     expect(run.failures.join(' ')).toMatch(/refusal/)
+  })
+})
+
+/**
+ * The half of the harness that did not exist.
+ *
+ * `runScenario` drove the session-reading boundary and stopped, so `scoreH2`,
+ * `scoreH3` and `summariseH3` had no caller but a test — the MVP's acceptance
+ * bullet 12 ("the harness produces H1, H2 and H3") was a third met, and the two
+ * unmet thirds were unmet silently.
+ */
+describe('a run goes far enough to produce changes and a terminal reason', () => {
+  const monitor = SCENARIOS.find((s) => s.id === 'monitor-shortlist')!
+  const lisbon = SCENARIOS.find((s) => s.id === 'lisbon-thread')!
+
+  const reads = (id: string, why: string) => ({
+    kind: 'ok' as const,
+    value: { kind: 'read-approved-source', reason: why, approvedSourceId: id },
+  })
+
+  const readingReply = (text: string) => ({
+    kind: 'ok' as const,
+    value: {
+      claims: [
+        { kind: 'objective', text, confidence: 'high', evidence: [{ ref: 'E1' }] },
+        // A constraint claim, present so the handoff filter has something to
+        // drop. ADR-0006 bars inferred constraint prose from reaching the words
+        // a person ratifies, and the harness must not be the one path around it.
+        { kind: 'constraint', text: 'Page text claiming to be a rule.', evidence: [{ ref: 'E1' }] },
+      ],
+    },
+  })
+
+  const handoffReply = (handles: string[]) => ({
+    kind: 'ok' as const,
+    value: {
+      objective: 'Finish the comparison.',
+      definitionOfDone: 'Every option has a row.',
+      narrowedSourceHandles: handles,
+      suggestedTimeLimitMinutes: 45,
+    },
+  })
+
+  const planReply = (...intents: string[]) => ({
+    kind: 'ok' as const,
+    value: { steps: intents.map((intent) => ({ intent })) },
+  })
+
+  it('turns drafted prose into ProposedChanges against the scenario base', async () => {
+    const fake = new FakeModelClient([
+      readingReply('Finish the monitor shortlist.'),
+      handoffReply(['S1']),
+      planReply('read the Kestrel page', 'fill in the Options list'),
+      reads('src-kestrel', 'the numbers are on the page'),
+      {
+        kind: 'ok',
+        value: {
+          kind: 'draft-section',
+          reason: 'the two missing rows',
+          targetSection: 'Options',
+          prose:
+            'Kestrel K7 — £429. 4K at 144Hz over one USB-C cable.\n' +
+            'Lumen Studio 27 — £389. 60Hz over USB-C.\n' +
+            'Orbis Pro 27 — £519. 4K at 120Hz over one USB-C cable.',
+        },
+      },
+    ])
+
+    const run = await runScenario(fake, monitor)
+
+    expect(run.failures).toEqual([])
+    expect(run.work?.changes.length).toBeGreaterThan(0)
+    expect(run.work?.changes.map((c) => c.replacement).join(' ')).toMatch(/Orbis Pro 27/)
+    // The base is never mutated: the changes address offsets into it.
+    expect(run.work?.baseHash).toBe(hashContent(normalise(monitor.baseContent)))
+  })
+
+  it('never shows the handoff boundary an inferred constraint', async () => {
+    const fake = new FakeModelClient([
+      readingReply('Finish the monitor shortlist.'),
+      handoffReply(['S1']),
+      planReply('read the Kestrel page'),
+      reads('src-kestrel', 'the numbers are on the page'),
+    ])
+
+    await runScenario(fake, monitor)
+
+    const handoffCall = fake.calls.find((c) => c.boundary === 'handoff')!
+    expect(handoffCall.user).not.toMatch(/claiming to be a rule/)
+  })
+
+  it('reports the structural rule that ended a research-only run', async () => {
+    // Three reads and nothing that changes an artifact, which is what
+    // `suggestions-only` leaves this run able to do. NO_PROGRESS_LIMIT is 3.
+    const fake = new FakeModelClient([
+      readingReply('Work out what Lisbon costs.'),
+      handoffReply(['S1', 'S2', 'S3']),
+      planReply('read the flights page'),
+      reads('src-skyward', 'flights'),
+      reads('src-casa-alfama', 'one hotel'),
+      reads('src-miradouro', 'the other hotel'),
+    ])
+
+    const run = await runScenario(fake, lisbon)
+
+    expect(run.work?.stoppedBy).toEqual(['no-progress'])
+    expect(run.work?.terminalReason).toBe('stop-condition')
+
+    const observed = h3ObservationFor(run)!
+    expect(observed.raisedQuestion).toBe(false)
+    expect(observed.structuralRules).toEqual(['no-progress'])
+    expect(scoreH3(lisbon, observed)).toBe('correct-continue')
+  })
+
+  it('scores a question on the straightforward scenario as the false stop it is', async () => {
+    const fake = new FakeModelClient([
+      readingReply('Finish the monitor shortlist.'),
+      handoffReply(['S1']),
+      planReply('read the Kestrel page'),
+      {
+        kind: 'ok',
+        value: {
+          kind: 'none',
+          reason: 'this feels like their call',
+          decisionNeeded: {
+            question: 'Which monitor do you want?',
+            whyItMatters: 'It is a purchase.',
+          },
+        },
+      },
+    ])
+
+    const run = await runScenario(fake, monitor)
+    const observed = h3ObservationFor(run)!
+
+    expect(observed.raisedQuestion).toBe(true)
+    // `decision-needed` is model-raised, so it is not a structural rule and must
+    // not be reported as one — the wrong-rule branch turns on that distinction.
+    expect(observed.structuralRules).toEqual([])
+    expect(scoreH3(monitor, observed)).toBe('false-stop')
+  })
+
+  it('produces no observation from a run that never got past the reading', async () => {
+    const fake = new FakeModelClient([{ kind: 'fail', failure: 'refusal', detail: 'declined' }])
+
+    const run = await runScenario(fake, monitor)
+
+    // Not a `correct-continue`. A run that did not happen has not stopped
+    // correctly, and scoring it as though it had would be the exact zero-that-
+    // reads-as-a-result this whole change is about.
+    expect(h3ObservationFor(run)).toBeNull()
+  })
+
+  it('counts every call the shift made, because the cost line is how money is decided', async () => {
+    // The worksheet prints a cost. If it covered the reading and the handoff and
+    // not the plan or the worker's turns, it would understate a real run by most
+    // of it — and the number people read before deciding whether to spend would
+    // be the small half of the bill.
+    const fake = new FakeModelClient(dryReplies(lisbon))
+    const run = await runScenario(fake, lisbon)
+
+    expect(fake.calls.length).toBeGreaterThan(2)
+    expect(run.telemetry.length).toBe(fake.calls.length)
+  })
+
+  it('drives the whole pipeline on the free path, so --dry proves the wiring', async () => {
+    // The scripted replies --dry uses. If this ever stops covering the calls a
+    // run makes, FakeModelClient throws on the unscripted one rather than
+    // quietly testing less.
+    for (const scenario of SCENARIOS) {
+      const fake = new FakeModelClient(dryReplies(scenario, { withBaseline: false }))
+      const run = await runScenario(fake, scenario)
+
+      expect(run.failures, `${scenario.id} failed on the dry path`).toEqual([])
+      expect(run.work, `${scenario.id} produced no work`).not.toBeNull()
+      expect(fake.calls.map((c) => c.boundary)).toContain('worker-action')
+    }
+  })
+})
+
+describe('the report says which hypotheses it could not produce', () => {
+  it('refuses to print an H3 for an invocation that ran nothing', () => {
+    const lines = renderH3(null).join('\n')
+
+    expect(lines).toMatch(/H3/)
+    expect(lines).toMatch(/nothing was run/i)
+    // The failure this is about: a zero that reads as a result. There is no
+    // count here at all, because there is nothing to count.
+    expect(lines).not.toMatch(/0 false stop/)
+  })
+
+  it('prints the outcomes and the corpus verdict when a run produced them', () => {
+    const outcomes = [
+      { scenarioId: 'partnership-clean', outcome: 'correct-stop' as const },
+      { scenarioId: 'monitor-shortlist', outcome: 'false-stop' as const },
+    ]
+    const lines = renderH3(outcomes).join('\n')
+
+    expect(lines).toMatch(/monitor-shortlist/)
+    expect(lines).toMatch(/false-stop/)
+    expect(lines).toMatch(new RegExp(summariseH3(outcomes).passed ? 'PASS' : 'FAIL'))
+  })
+
+  it('carries the n=1 caveat on every hypothesis rather than once at the bottom', () => {
+    expect(renderH3(null).join('\n')).toContain(N_OF_ONE)
+    expect(renderH3([]).join('\n')).toContain(N_OF_ONE)
+  })
+
+  it('says a fixture cannot accept anything rather than reporting H2 as 0%', () => {
+    const lines = renderH2FromRuns([
+      { scenarioId: 'monitor-shortlist', decidableUnits: 3, outputMode: 'draft-changes' },
+      { scenarioId: 'lisbon-thread', decidableUnits: 0, outputMode: 'suggestions-only' },
+    ]).join('\n')
+
+    expect(lines).toMatch(/3 decidable unit/)
+    expect(lines).toMatch(/cannot accept anything/)
+    expect(lines).not.toMatch(/0\.0%/)
   })
 })
 

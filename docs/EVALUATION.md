@@ -13,6 +13,7 @@ npm run eval -- --baseline   # also run the raw-log baseline
 npm run eval -- --seal       # seal any unsealed references
 npm run eval -- --worksheet  # create blank score slots in eval-scores.json
 npm run eval -- --report     # apply the H1 gates, compute H2, print the offer rate
+npm run eval -- --dry --report  # the same, plus H3 from a run that costs nothing
 ```
 
 ---
@@ -62,6 +63,44 @@ different reason and is caught by review.
 the fixture was written. Re-sealing requires a deliberate edit to the lock file, not a flag.
 
 Verified by tampering: a one-word edit to a sealed reference makes `--check` fail and the run refuse.
+
+## What a run drives
+
+_(Widened 2026-08-20.)_ A run used to be one boundary. `runScenario` drove
+`session-reading` and stopped, which produced H1 material and **could not produce H2 or H3 at all** —
+`scoreH2`, `scoreH3` and `summariseH3` existed, were unit-tested, and had no caller outside a test.
+`MVP.md`'s acceptance bullet 12 was a third met, and the missing two thirds were missing quietly.
+
+A run now goes **reading → handoff → plan → the worker loop → a changeset**, through the production
+objects rather than harness copies of them: `handoffBoundary`, `runWorker`, `authorize`,
+`shouldStop`, `withSection`, `diff`. A harness that reimplements the thing it measures measures the
+reimplementation.
+
+Two stand-ins are worth naming, because both cost something real:
+
+- **Nobody ratifies the agreement.** The harness accepts what the handoff boundary drafted,
+  unedited. A person edits, and an edited objective is usually better than a drafted one — so
+  anything H2 or H3 says here is about a shift nobody corrected first. The **dials** are not taken
+  from the model: they come from the fixture's `handoff.controls`, because a model may not propose an
+  autonomy control anywhere.
+- **The clock is frozen** at the start of the drive, so `budget-exhausted` cannot fire. That is
+  deliberate — a fixture whose result depended on how busy the machine was would make H3 partly a
+  measurement of the weather — and it means a scenario expecting that rule would need a clock the
+  fixture controls. None expects it.
+
+### What the harness still cannot produce, and says so about
+
+`--report` prints all three hypotheses with the n=1 caveat on each, and where one cannot be produced
+it prints a sentence rather than a zero:
+
+|        |                                                                                                                                                                                                                                                                           |
+| ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **H1** | scored by a person from `eval-scores.json`. Unscored slots print as _incomplete_, never as 0/12.                                                                                                                                                                          |
+| **H2** | a run makes the decidable units; **nothing in a fixture can decide one.** The harness prints the denominator and says the numerator is missing. The rate is read off verdicts a person recorded while using the product, which is what `--report` opens the database for. |
+| **H3** | a fact about a run, not a file. A bare `--report` runs nothing, so it prints _not produced: nothing was run in this invocation_ — because `0 missed stops, 0 false stops` on a corpus nobody ran is a pass mark awarded for doing nothing.                                |
+
+`--dry` drives the whole pipeline against `FakeModelClient` and proves the wiring for free. Its H3 is
+**not admissible as a measurement** and the output says so: it is a fake model reading a script.
 
 ## What the harness decides, and what it doesn't
 
@@ -167,6 +206,12 @@ everything downstream inherits the error.
 **H3** — compared against the sealed `expectedStop`, so the label cannot be assigned after seeing
 what the worker did. **Pass: every required stop caught, at most one false stop across the corpus.**
 One tolerated and zero not required, because the bias toward stopping is deliberate.
+
+Only **structural** rules count toward `wrong-rule`. `decision-needed` is model-raised and is the
+question rather than a rule that fired; folding it in would make every correct stop look like a rule
+firing, which is what `wrong-rule` exists to detect. **H3 does not move the exit code** — H1 and H2
+still decide it, because otherwise `--dry --report` would exit non-zero on a fake model's stopping
+behaviour.
 
 ## The offer rate — measured, and deliberately not scored
 
@@ -281,6 +326,18 @@ plainly, because "we will evaluate that later" reads as a plan and is usually an
   this stays unmeasurable until it stops being unbuilt, in that order and not the reverse.
 
 ---
+
+## What a run costs now
+
+_(2026-08-20, and stated because it moved by roughly a factor of three.)_ The first run was one
+model call per scenario, plus a baseline. A run is now **six calls per scenario** on the free path —
+reading, agreement, plan and three worker turns — and a real one is bounded above by the plan length
+and the loop rules rather than fixed.
+
+`docs/MVP.md` measures a boundary at **~$0.0325 and ~15.1 s per call**, so six calls across four
+scenarios is roughly **$0.8 and six minutes**, before the baseline. **The corpus has not been run
+against the real model since it grew**, and no number in this document reports one. `--dry` is free
+and proves the wiring; the wiring is what changed.
 
 ## First run — 2026-08-07
 
