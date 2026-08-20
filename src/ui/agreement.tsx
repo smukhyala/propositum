@@ -47,43 +47,42 @@
  * and no model-facing schema has a field that could carry one. The third is a
  * sentence someone has to keep true in a `.tsx` file, and it is this one.
  *
- * **Today both sentences come from this sitting's reading and from nothing
- * else.** `draftContract` builds them from the handoff boundary's output, over
- * claims produced from this session's own events; the Intention is stamped onto
- * the contract as an id and its words are read by nothing. So the honest half
- * of the requirement is the half this screen can keep, and `WhereTheWordsCameFrom`
- * keeps it: a person can tell *this is what I worked out from this afternoon*
- * from *this is what you said in March*, because the screen says which it is.
+ * ~~**Today both sentences come from this sitting's reading and from nothing
+ * else.**~~ **Amended 2026-08-20 ([ADR-0017](../../docs/adr/0017-continuing-an-intention.md)):
+ * they come from one of two places and the screen says which.** On a first
+ * sitting they are still the handoff boundary's output, drafted over claims
+ * produced from this session's own events. When the work is being picked back
+ * up — more than one sitting under the same Intention — `draftContract`
+ * pre-fills them from the Intention itself, which is a sentence a person wrote
+ * or ratified and which no model may write. `WhereTheWordsCameFrom` renders the
+ * arm it was handed, so a person can tell *this is what I worked out from this
+ * afternoon* from *this is what you said in March*.
  *
- * **What is still owed, named rather than implied:** the other branch. The day
- * anything pre-fills either field from a durable Intention, this screen must
- * also say WHEN those words were written, and that needs a field on
- * `ContractDrafted` that does not exist — the provenance cannot be inferred
- * here, and a screen that guessed it would be the failure wearing the fix's
- * clothes.
+ * ~~**What is still owed, named rather than implied:** the other branch.~~
+ * **Owed, then paid, in the wave that made the branch reachable.** The second
+ * arm carries `writtenAtEpochMs` and this screen prints the day — which is
+ * what the struck sentence asked for and is the whole of the answer to
+ * *quietly*. What it does NOT do is make the sentence true: ADR-0011's honest
+ * limit stands unchanged, a person who wrote something in March gets it in
+ * August with no prompt to revisit it, and the date is the only thing here that
+ * gives them a reason to look.
  *
  * ── How weak the tripwire is, measured rather than asserted ──────────────
  *
  * This docblock used to say `tests/reachability.test.ts` *"pins the claim to
  * the code that makes it true, so the day it stops being true the suite says
- * so"*. It does not, and the overstatement is worth more than the reassurance.
- * What that test actually does is grep the `draftContract`..`acceptContract`
- * slice of `src/server/actions.ts` for `objective: drafted.value.objective` and
- * the matching `definitionOfDone`. So:
+ * so"*. It did not: it grepped the `draftContract`..`acceptContract` slice of
+ * `src/server/actions.ts` for `objective: drafted.value.objective`, which
+ * catches the sentence being rewired and does not catch an Intention-sourced
+ * value arriving as an ADDITIONAL field that this component then prefers.
  *
- *   - It DOES catch the sentence being rewired to a different source, because
- *     the assignment it names would have to change.
- *   - It does NOT catch an Intention-sourced value arriving as an ADDITIONAL
- *     field that this component then prefers. Both greps stay green, the suite
- *     stays green, and the paragraph below becomes false on screen.
- *
- * Closing that would mean `ContractDrafted` carrying an explicit provenance
- * discriminant this component renders from — a union with exactly one arm
- * today, and an unreachable branch beside it, which is the speculative shape
- * this repo refuses elsewhere. So the tripwire stays as the partial thing it
- * is, and this paragraph is the honest description of it: the second reader of
- * this file is the guard against the second case, and there is no substitute
- * named here that would make that untrue.
+ * **The hole is closed and it was closed the way that test asked for.**
+ * `ContractDrafted.words` is the provenance discriminant it named, both arms are
+ * reachable, and the guard now asserts that this component branches on it and
+ * that each branch renders a different account. What is still not a test is the
+ * TRUTH of the second arm's date — that it is `Intention.updatedAt` and not
+ * some other timestamp — and the only thing holding that is one assignment in
+ * `draftContract` with the reachability grep on it.
  *
  * ── The quotations are beside the agreement, never inside it ─────────────
  *
@@ -116,7 +115,7 @@ import { Button, Section, VisuallyHidden } from './primitives'
 import { Done, Refused } from './sprites'
 import { Quotation } from './reading'
 import { acceptContract } from '../server/actions'
-import type { ContractDrafted } from '../server/actions'
+import type { ContractDrafted, PrefilledWords } from '../server/actions'
 import {
   ACTION_KINDS,
   CONFIRMABLE_ACTION_KINDS,
@@ -398,7 +397,7 @@ export function Agreement({ draft, defaults, sourceLabels, onBack, onHandedOver 
       <Styles />
 
       <Section title="What I'll work on" index={1}>
-        <WhereTheWordsCameFrom />
+        <WhereTheWordsCameFrom words={draft.words} />
 
         <label>
           <span className="ag-label">The objective</span>
@@ -728,30 +727,55 @@ export function Agreement({ draft, defaults, sourceLabels, onBack, onHandedOver 
  * The account of the two pre-filled sentences, above the fields they account
  * for.
  *
- * ── Why it is a fixed sentence and not a variable one ────────────────────
+ * ── Two branches, because there are now two sources ──────────────────────
  *
- * Because the answer is currently fixed. `draftContract` writes `objective` and
- * `definitionOfDone` from the handoff boundary's output, drafted over claims
- * that came from this session's own events, and there is no path by which a
- * durable Intention's words reach either field. Rendering a branch for the
- * other case would be an attribution affordance nothing can reach — which reads
- * as proof that provenance is handled here, while the case it is meant to
- * handle stays unhandled. The screen says the one true thing instead.
+ * ~~Because the answer is currently fixed.~~ *Amended 2026-08-20, ADR-0017.*
+ * `draftContract` fills the fields either from the handoff boundary's output —
+ * drafted over claims that came from this session's own events — or, when this
+ * work is being picked back up, from the Intention a person wrote for it. The
+ * branch is not inferred here: it is `ContractDrafted.words`, a discriminant the
+ * server sets, because a screen that guessed its own provenance would be the
+ * failure wearing the fix's clothes.
  *
- * ── Why it names WHEN without printing a date ────────────────────────────
+ * ── Why only one of the two prints a date ────────────────────────────────
  *
- * The masthead above already carries this session's window — "3:41 pm — still
- * going", or a closed range — so the time is on screen once, where a person
- * reads it as the time of the sitting rather than as the time of a sentence. A
- * second timestamp here would be the same fact twice, and the two could
- * disagree after a reload.
+ * The first does not, and that is unchanged. The masthead above already carries
+ * this session's window — "3:41 pm — still going", or a closed range — so the
+ * time is on screen once, where a person reads it as the time of the sitting
+ * rather than as the time of a sentence. A second timestamp there would be the
+ * same fact twice, and the two could disagree after a reload.
  *
- * The distinction it exists to make is the one ADR-0011 asks for in a single
- * line: **this is what I worked out from this afternoon**, not **this is what
- * you said in March**. When the second becomes possible, the words are the
- * thing that has to change here, and the date has to come with them.
+ * The second must, and that is the whole reason this branch waited for a field
+ * on `ContractDrafted`. `CONTEXT.md`'s ruling forbids an objective inherited
+ * **quietly**, *because nothing on screen would say it had been* — and words a
+ * person wrote in March, pre-filled in August with nothing naming the month, are
+ * that failure exactly. The day is printed rather than an elapsed count, because
+ * *"3 months ago"* is a computed word about somebody's own sentence and a date
+ * is the thing they can check against their own memory.
+ *
+ * ── What neither branch claims ───────────────────────────────────────────
+ *
+ * That the sentence is right. ADR-0011 is explicit that human ratification
+ * removes silence rather than staleness, and this paragraph removes silence. A
+ * person who reads the date and clicks anyway has been told; a person who does
+ * not read it has been told anyway, which is the most a display can do.
  */
-function WhereTheWordsCameFrom() {
+function WhereTheWordsCameFrom({ words }: { readonly words: PrefilledWords }) {
+  if (words.from === 'your-intention') {
+    return (
+      <>
+        <Styles />
+        <p className="ag-from">
+          <span className="ag-from-head">In your own words, from {WROTE_ON.format(new Date(words.writtenAtEpochMs))}</span>
+          You are picking this back up, so both sentences below are the ones you settled for this
+          work rather than anything Propositum worked out this afternoon. Nothing has changed them
+          since. If the work has moved on, change them here &mdash; this agreement is settled
+          fresh every time, and nothing runs on the old wording by itself.
+        </p>
+      </>
+    )
+  }
+
   return (
     <>
       <Styles />
@@ -765,6 +789,15 @@ function WhereTheWordsCameFrom() {
     </>
   )
 }
+
+/** The day a person last wrote their own words, spelled out. Never an elapsed
+ *  count: "3 months ago" is a computed word about somebody's own sentence, and
+ *  a date is what they can check against their own memory of writing it. */
+const WROTE_ON = new Intl.DateTimeFormat('en-US', {
+  day: 'numeric',
+  month: 'long',
+  year: 'numeric',
+})
 
 function nearestChoice(minutes: number): number {
   let best = TIME_CHOICES[0] ?? 30

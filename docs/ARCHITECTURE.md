@@ -15,6 +15,22 @@ archived verbatim at
 [`docs/superpowers/specs/2026-08-16-direction-update-source.md`](./superpowers/specs/2026-08-16-direction-update-source.md).
 §8 is its *do not build yet* list, and it is binding here.
 
+**A second direction document arrived on 2026-08-20** and is archived beside it at
+[`2026-08-20-everyday-intelligence-direction-source.md`](./superpowers/specs/2026-08-20-everyday-intelligence-direction-source.md).
+It names eleven systems — Observation Engine, Semantic Activity Engine, Cortex, Intent Engine,
+Frontier, Intervention Policy, Agent Orchestrator, Computer Runtime, Verification Layer, Permission
+Layer, Learning Layer. **Nine of the eleven are the layers below under other names, and nothing is
+renamed after one**, on the same rule the *Honest limits* section states about these ten:
+organising words are not vocabulary. [ADR-0016](./adr/0016-everyday-computing-direction.md) records
+which four of its requirements slice 1 takes and which it declines.
+
+**Not one status cell below moved when those ADRs landed, and that is deliberate.** ADR-0016,
+ADR-0017 and ADR-0018 are decisions; the code they authorise is not written as this paragraph is
+added. The layer that gets built is re-marked **by the wave that builds it** — which is what the
+*Self-correcting* note under Outcome / Learning asked for and did not get on its first pass. A
+status cell moved in advance of the code is exactly the failure this column exists to prevent, and
+it would be the easiest one to commit on the day three ADRs land at once.
+
 ---
 
 ## The thesis
@@ -66,7 +82,7 @@ two are new: one has data and no reader, and one is not being built.
 
 | Layer | Status | Owned today by |
 |---|---|---|
-| Intention Graph | **partial** — one flat table, no graph; ~~`intentionState()` computed and unrendered~~ *re-marked 2026-08-16:* the lifecycle word is on the front door | `Intention` in `prisma/schema.prisma`, `src/domain/intention/state.ts` ([ADR-0011](./adr/0011-intention-above-worksession.md)), `src/server/front-door.ts`, `src/app/page.tsx` |
+| Intention Graph | **partial** — one flat table, no graph; ~~`intentionState()` computed and unrendered~~ *re-marked 2026-08-16:* the lifecycle word is on the front door; *re-marked 2026-08-20:* and what happened under an Intention is on two screens before the click | `Intention` in `prisma/schema.prisma`, `src/domain/intention/state.ts` ([ADR-0011](./adr/0011-intention-above-worksession.md)), `src/domain/intention/work-so-far.ts` ([ADR-0017](./adr/0017-continuing-an-intention.md)), `src/server/front-door.ts`, `src/server/work-so-far.ts`, `src/app/page.tsx` |
 | State Ingestion | **partial** — one sensor, browser only | `ledger-writer.ts`, the MV3 extension |
 | State Reconciler | **partial** — `matchProject` only | `src/domain/detection/match-project.ts` |
 | Progress Reasoner | **partial** — offer grounds, no ranking | `src/domain/detection/grounds.ts` |
@@ -114,8 +130,28 @@ model-inferred, still cold every time. Two nullable foreign keys attach work to 
 keeps working with no backfill. **At most one Intention per Project**, for now. Scope for that slice
 is [`MVP.md`](./MVP.md), which marks it *not yet built at the time of writing* in its own voice.
 
+**Re-marked again 2026-08-20, in the wave that built `WorkSoFar`
+([ADR-0017](./adr/0017-continuing-an-intention.md)) — which is what the *Self-correcting* note asks
+for, and what the paragraph at the top of this file said the ADRs themselves had not earned.** What
+landed is a **computed view and no schema at all**: `git diff --stat prisma/schema.prisma` is empty
+for that change, deliberately, because a stored version of *what has already happened under this
+Intention* is the thing ADR-0011 forbids and *computed* is therefore the property that makes it
+legal rather than a preference about where state lives. `src/domain/intention/work-so-far.ts` folds
+it from rows a person wrote, approved, accepted or rejected; `src/persistence/repositories/index.ts`
+gathers the rows; `src/server/work-so-far.ts` converts them once for every reader; and it renders on
+the accept screen **before the click that starts the sitting** and on the project screen. It also
+chooses which words the agreement screen pre-fills, and `ContractDrafted` now carries **when those
+words were written** — the one thing `CONTEXT.md`'s `IntentionState` entry still listed as owed.
+
+**What that does NOT move the marker for.** There is still no graph and still one Intention per
+Project, which are the two things *partial* names, so the cell above says *partial* still. This is
+the layer's third re-marking and none of the three has been about the word that qualifies it.
+
 **Not authorised either, and not on the way.** Subgoals, dependencies, artifacts, people and decisions
 as nodes. More than one Intention per Project. Any edge that is not one of those two foreign keys.
+`WorkSoFar` reaching `compilePolicy`, the gate, or a prompt — it **may inform a person and may not
+inform a decision**, the same posture a `BusyInterval` has under
+[ADR-0014](./adr/0014-reading-free-busy.md), and `tests/work-so-far-scope.test.ts` is the guard.
 
 **The word *graph* is aspirational here and is kept only so this document and the direction it came
 from can be read side by side.** Two nullable foreign keys pointing at one row are a table, which is
@@ -352,11 +388,19 @@ what the worker read.
 `ChangeVerdict` (per proposed change), `OutcomeVerdict` (per held production), `ConfirmationVerdict`
 (per irreversible action a person authorised). What a person accepted or rejected cannot be rewritten.
 
-**Two of the three can be written today, not three.** `confirmations.create` is pinned at zero callers
+~~**Two of the three can be written today, not three.** `confirmations.create` is pinned at zero callers
 in `tests/reachability.test.ts`, so no `ConfirmationRequest` is ever raised and therefore no
 `ConfirmationVerdict` can exist. The deterministic rule that would raise one is written and no dial
-can switch it off; nothing has yet asked it a question. That is the pin's exact purpose — a rule
-nothing raises is a rule that never fires, and it is invisible in a green suite.
+can switch it off; nothing has yet asked it a question.~~ **Re-marked 2026-08-20, in the wave that
+gave the gate a reason to stop: all three can be written.** `confirmations.create` has a caller, a
+`ConfirmationRequest` is raised, and a `ConfirmationVerdict` can therefore exist — so the third
+verdict table stops being a table nothing could fill.
+
+**The unstruck sentence is the one that mattered, and it is still exactly right:** that is the pin's
+exact purpose — a rule nothing raises is a rule that never fires, and it is invisible in a green
+suite. It was pinned for that reason and the pin is what went red. Kept unstruck because the
+argument outlives the fact it was attached to, which is the difference between a status marker and a
+reason.
 
 ~~**Not built: any reader.** Two specific holes, both named rather than summarised:~~ **Both closed
 2026-08-16, and re-marked here in the wave that closed them — which is what the *Self-correcting*

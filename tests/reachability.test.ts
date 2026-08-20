@@ -891,6 +891,58 @@ describe('the safety machinery is reachable from the product', () => {
     ).toContain("'needs-you'")
   })
 
+  it('where you left off reaches both screens, or the fold is a paragraph nobody reads', () => {
+    /**
+     * ADR-0017's whole argument turns on WHERE this renders, not on whether it
+     * is computed. *"It renders on the accept screen, before the click that
+     * starts the sitting"* is the answer to `CONTEXT.md`'s ruling that forbids
+     * an objective inherited **quietly** — *"because nothing on screen would say
+     * it had been"*. A fold that computed perfectly and reached no screen would
+     * satisfy every other test in this repository and close none of that.
+     *
+     * Three needles, because there are three ways for this to go quiet and only
+     * one of them is a deleted call:
+     *
+     *   - the fold, called by the one place that converts rows into it;
+     *   - the two screens, each holding the component;
+     *   - the component itself, which must reach `WHERE_YOU_LEFT_OFF` — the
+     *     heading is `CONTEXT.md`'s consumer wording and a screen that wrote its
+     *     own would have renamed the term on the only surface it appears on.
+     *
+     * What this cannot see is the shape `front-door.ts` was written over: a
+     * value computed and then discarded. `tests/work-so-far.test.ts` holds the
+     * sentences and `tests/agreement-words.test.ts` renders the screen that
+     * chooses between them, which is as close as this repository gets.
+     */
+    const fold = 'src/domain/intention/work-so-far.ts'
+    const server = 'src/server/work-so-far.ts'
+    const component = 'src/ui/work-so-far.tsx'
+
+    expect(
+      callersOf('workSoFar(', fold),
+      'nothing folds the rows — Where you left off is computed by nobody',
+    ).toContain(server)
+    expect(
+      callersOf('WHERE_YOU_LEFT_OFF', fold),
+      'the heading is written somewhere other than the one place that holds it',
+    ).toContain(component)
+    expect(
+      callersOf('WhereYouLeftOff', component),
+      'the accept screen no longer shows what is being carried forward — before the click is the whole of ADR-0017’s answer to “quietly”',
+    ).toContain('src/app/start/page.tsx')
+    expect(
+      callersOf('WhereYouLeftOff', component),
+      'the project screen no longer shows what happened under this Intention',
+    ).toContain('src/app/projects/[projectId]/page.tsx')
+
+    // And the one derivation, not two. `describeProject` loads it for the accept
+    // screen so that screen and the pre-fill are chosen against the same rows.
+    expect(
+      callersOf('whereYouLeftOffIn(', server),
+      'nothing loads the fold for a project — one of the two screens is assembling its own',
+    ).toEqual(expect.arrayContaining(['src/server/actions.ts', 'src/app/projects/[projectId]/page.tsx']))
+  })
+
   it('the re-entry note is reachable from the front door, or it stays four clicks deep', () => {
     /**
      * `/shifts/<contractId>` is where "While you were away" lives, and Home did
@@ -2033,51 +2085,80 @@ describe('a project nobody created can still be corrected', () => {
  * that would notice if it stopped being true."* This is that test, and it is
  * honest about being half of one.
  *
- * What it CAN check is that the sentence on the agreement screen is currently
- * true: the two pre-filled fields are built from the handoff boundary's output,
- * over claims from this sitting, and a durable Intention's words reach neither.
- * What it cannot check is the branch that does not exist — the day something
- * pre-fills either field from an Intention, this goes red, and the fix is to
- * say WHEN those words were written rather than to loosen the grep.
+ * ~~What it cannot check is the branch that does not exist — the day something
+ * pre-fills either field from an Intention, this goes red, and the fix is to say
+ * WHEN those words were written rather than to loosen the grep.~~
+ * **Amended 2026-08-20 ([ADR-0017](../docs/adr/0017-continuing-an-intention.md)),
+ * in the wave that made the branch reachable — which is what the struck sentence
+ * asked for.** `draftContract` now pre-fills from the Intention when work is
+ * being picked back up, so the old grep would have gone red; it did not, because
+ * the model's assignment is still there on the other arm of the same ternary,
+ * which is the exact vacuity this file exists to notice. So the assertions moved
+ * rather than loosened: BOTH sources are named, the discriminant that tells them
+ * apart is named, and the date the second one must print is named.
+ *
+ * `tests/agreement-words.test.ts` renders the screen and asserts the two
+ * accounts differ and that the second carries a month and a year. That is the
+ * half a grep genuinely cannot do, and it is why the assertions here are about
+ * the WIRING and not about the words.
  */
 describe('the agreement screen says where its two sentences came from', () => {
-  it('the pre-filled words come from this sitting’s reading, and from nothing older', () => {
-    /**
-     * What this catches, and what it does not — because the component's own
-     * docblock used to claim the stronger version of both.
-     *
-     * It catches the assignment being REWIRED: the objective coming from
-     * anywhere other than the drafting call would have to change these two
-     * lines. It does NOT catch an Intention-sourced value arriving as an
-     * ADDITIONAL field that `Agreement` then prefers — the literals below would
-     * still be present, this stays green, and the screen's paragraph becomes
-     * false. Closing that needs a provenance discriminant on `ContractDrafted`,
-     * which is a union with one arm and an unreachable branch until a second
-     * source exists. Named here rather than left for a reader to discover.
-     */
+  const drafting = () => {
     const actions = readFileSync(join(repo, 'src/server/actions.ts'), 'utf8')
-    const drafting = actions.slice(
+    const slice = actions.slice(
       actions.indexOf('export async function draftContract'),
       actions.indexOf('export async function acceptContract'),
     )
-
     // Guards against the slice silently matching nothing, which would make
     // every assertion below vacuous.
-    expect(drafting.length).toBeGreaterThan(200)
+    expect(slice.length).toBeGreaterThan(200)
+    return slice
+  }
 
+  it('this sitting’s reading is still one of the two sources, and still the default', () => {
     expect(
-      drafting,
-      'the drafted objective no longer comes from this sitting’s reading — the agreement screen must now say where it does come from, and when those words were written',
+      drafting(),
+      'the drafted objective no longer comes from this sitting’s reading at all — a first sitting has nothing older to fall back on',
     ).toMatch(/objective:\s*drafted\.value\.objective/)
     expect(
-      drafting,
-      'the drafted definition of done no longer comes from this sitting’s reading — same fix as above',
+      drafting(),
+      'the drafted definition of done no longer comes from this sitting’s reading — same gap as above',
     ).toMatch(/definitionOfDone:\s*drafted\.value\.definitionOfDone/)
   })
 
-  it('and the screen makes that claim out loud, rather than leaving it implied', () => {
+  it('the other source is a person’s own words, carried with the day they wrote them', () => {
+    /**
+     * The assertion the old version could not make. A pre-fill from something
+     * written before this sitting existed is precisely what `CONTEXT.md`'s
+     * ruling forbids doing QUIETLY, and the date is the whole of the difference
+     * between doing it and doing it quietly.
+     */
+    const slice = drafting()
+
+    expect(
+      slice,
+      'nothing pre-fills from the Intention — the continuation ADR-0017 authorised is not wired',
+    ).toMatch(/objective:\s*leftOff\.objective/)
+    expect(
+      slice,
+      'the Intention-sourced pre-fill carries no timestamp — the screen cannot say when those words were written',
+    ).toMatch(/writtenAtEpochMs:\s*leftOff\.wordsWrittenAtEpochMs/)
+  })
+
+  it('the two are told apart by a discriminant the server sets, not by the screen guessing', () => {
+    const slice = drafting()
+    const agreement = stripComments(readFileSync(join(repo, 'src/ui/agreement.tsx'), 'utf8'))
+
+    expect(slice, 'the drafted contract carries no provenance').toMatch(/words:\s*words\.provenance/)
+    expect(
+      agreement,
+      'the agreement screen no longer reads the provenance it is handed — a threaded prop nothing branches on is the discarded-result shape this file was rewritten over',
+    ).toMatch(/words\.from\s*===\s*'your-intention'/)
+  })
+
+  it('and the screen makes both claims out loud, rather than leaving either implied', () => {
     // Comments stripped for the reason the top of this file gives: the
-    // component's own docblock says this phrase, and a claim satisfied by a
+    // component's own docblock says these phrases, and a claim satisfied by a
     // comment about the claim is the failure that verified this whole file.
     const agreement = stripComments(readFileSync(join(repo, 'src/ui/agreement.tsx'), 'utf8'))
 
@@ -2085,6 +2166,10 @@ describe('the agreement screen says where its two sentences came from', () => {
       agreement,
       'the agreement screen no longer says where its pre-filled sentences came from',
     ).toContain('Worked out from this session')
+    expect(
+      agreement,
+      'the agreement screen no longer says the words are the person’s own when they are',
+    ).toContain('In your own words')
   })
 })
 

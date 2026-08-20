@@ -50,6 +50,12 @@ function screen(
     contractId: 'contract-1',
     objective: 'Find the delivery date for my last order',
     definitionOfDone: 'The date is written down',
+    // `this-session` because this file is about what the panel claims the
+    // agreement PERMITS, and the account above the fields is about where the
+    // words CAME FROM. Pinning the other arm here would couple a test of the
+    // allowlist copy to a change in the pre-fill source — `agreement-words`
+    // owns that distinction and asserts both arms.
+    words: { from: 'this-session' },
     suggestedTimeLimitMinutes: 30,
     approvedSourceIds: ['source-1'],
     allowedActionKinds: [...allowedActionKinds],

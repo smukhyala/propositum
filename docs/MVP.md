@@ -80,6 +80,23 @@ A partnership or event proposal. The person researches approved sources, drafts 
 The implementation stays domain-neutral. The scenario exists to make the fixtures and the interface
 concrete, not to specialise the code.
 
+**Two everyday shapes join it, 2026-08-20 ([ADR-0016](adr/0016-everyday-computing-direction.md)):
+a product comparison and a planning thread.** Research-and-draft is the *"Silicon Valley version of
+knowledge work"* the 2026-08-20 direction document says to design past, and comparison shopping was
+worse than absent — `src/domain/detection/grounds.ts` named it as one of this design's **residual
+false positives**, so the flagship example in one document was the failure case in the other
+([ADR-0018](adr/0018-the-everyday-shapes.md)).
+
+**They arrive as sealed eval scenarios, which is the only form a use case takes in this repository.**
+Not a second demo path, not a screen, not a branch in the code: two entries in
+`src/fixtures/scenarios/` with references written before any run and hashed into
+`references.lock.json`. They are also chosen to fill the two scenario **classes** the corpus has
+never had — a `straightforward` one, so H3 can finally measure a false stop, and a `structural` one
+— which is why the domain widening and the missing half of the H3 corpus are one piece of work and
+not two. The sentence above about staying domain-neutral is unchanged and is now load-bearing: a
+`shopping` detector or a `trip` detector would be the first domain-specialised code in this pipeline,
+and ADR-0018 refuses both in favour of one ground describing a *behaviour*.
+
 ---
 
 ## User journey
@@ -113,10 +130,21 @@ concrete, not to specialise the code.
 
 Step 8 is where slice 0 ends. See [Out of scope](#out-of-scope).
 
-**The `Intention` outlives step 8. Nothing resumes it.** The row persists and its lifecycle state
-stays computable, and that is the whole of it: slice 0 ships no scheduler, no notification, and no
-second shift. Picking the work back up is still a person opening their laptop and starting a sitting.
-Saying the row survives is a claim about storage, not about continuity.
+**The `Intention` outlives step 8. ~~Nothing resumes it.~~ Nothing resumes it *on its own*, and a
+person resuming it is no longer starting from four numbers** *(amended 2026-08-20,
+[ADR-0017](adr/0017-continuing-an-intention.md))*. The row persists and its lifecycle state
+stays computable, and slice 0 ships no scheduler, no notification, and no
+second shift — **all of which is still true**. Picking the work back up is still a person opening
+their laptop and starting a sitting.
+
+What changed is what they are shown when they do. `carryOnCandidate` already carried the `Project`,
+and its own docblock is precise that it carried *"No objective, no reading, no claim"* — the second
+evening saw `{sittings: 3, sources: 5, documents: 1}`. `WorkSoFar` folds the rows those counts were
+counting: what previous Shifts produced, how each decidable unit was decided, which questions are
+still open, and where the last run stopped. **Saying the row survives was a claim about storage.
+This is a claim about what is on screen, and it is still not a claim about continuity** — nothing
+here notices that the work matters, decides to resume it, or knows that today's tabs continue last
+week's until a person opens the laptop and the ordinary detector fires.
 
 ---
 
@@ -134,7 +162,18 @@ structural stop conditions · a `ShiftReport` · per-change accept and reject ·
 scoring H1, H2 and H3 · **an `Intention` above `WorkSession` in the domain language, a `Project` and
 a `WorkSession` attachable to one without a graph system, and a minimal desired outcome, definition
 of success and lifecycle state** *(added 2026-08-16,
-[ADR-0011](adr/0011-intention-above-worksession.md))*.
+[ADR-0011](adr/0011-intention-above-worksession.md))* · **`WorkSoFar`, a deterministic computed fold
+showing what previous sittings under one `Intention` settled, rendered before the click that starts
+the next one** *(added 2026-08-20, [ADR-0017](adr/0017-continuing-an-intention.md))* · **one further
+`GroundKind`, `compared-options`, and three collected signals — scroll, exit type and arrival —
+finally read by the offer grounds** *(added 2026-08-20,
+[ADR-0018](adr/0018-the-everyday-shapes.md))*.
+
+**`WorkSoFar` adds no table and no column**, which is not a saving but the property that makes it
+legal: a stored or model-written version of the same thing is what ADR-0011 forbids. `compared-options`
+does add one member to a closed enum, and ADR-0018 states in its own voice that a fifth investment
+ground is *"the closest thing available to lowering `INVESTMENT_REQUIRED`"* — the bar constants
+themselves do not move, and the standing fixture of an ordinary afternoon of reading is the guard.
 
 Those three additions are exactly what direction §8 permits, and the boundaries around them are
 part of the scope, not decoration:
@@ -284,6 +323,23 @@ Recorded so they can be checked rather than absorbed.
    `"tabs"`, `"webNavigation"`, or `"history"` — losing `transitionType` ("typed" vs "followed a
    link"), the most semantically loaded raw signal available. Revisit if H1 scores badly and
    ablation implicates navigation intent.
+
+   **The revisit clause was pointed at on 2026-08-20 and deliberately not fired**
+   ([ADR-0016](adr/0016-everyday-computing-direction.md), refusal 2).
+   [`docs/research/intent-signals.md`](./research/intent-signals.md) §3 ranks `chrome.tabs` events
+   and `query` **row 1 of 16** at a cost of *"nothing. No permission, no warning, no manifest
+   change"*, and `webNavigation` row 4, also warning-free. On cost alone both are free, and the
+   reason for declining is not cost: **H1 has never been scored**, so taking them now would fire a
+   revisit clause before the evidence that triggers it exists — which is how a threshold fixed in
+   advance becomes one negotiated afterwards, the failure *Why the bar is set to be failed* exists
+   to prevent. Slice 1 produces the number. If H1 scores badly and ablation implicates navigation
+   intent, this clause fires on evidence.
+
+   `chrome.tabs` carries a second cost `webNavigation` does not, and it should not be bundled with
+   it when the clause does fire: under the `https://*/*` grant it returns the URL and title of
+   **every open https tab**, and what prevents that is `tests/extension-permissions.test.ts` — our
+   code declining, not Chrome refusing, as [`VISION.md`](./VISION.md) was corrected to say on
+   2026-08-17.
 2. **2,000 characters of readable text per `ApprovedSource` is enough** for a reading to be about
    content rather than titles. Expensive to revisit: `ObservationEvent`s are append-only, so
    changing the budget invalidates every fixture already captured.
