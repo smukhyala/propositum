@@ -42,6 +42,17 @@
  */
 
 /**
+ * Types only, and that is what keeps this from being a cycle.
+ *
+ * `detect.ts` imports four functions from here, so a value import back would be
+ * a real one. `import type` is erased by `verbatimModuleSyntax`, so nothing
+ * circular exists at runtime — and the two closed sets stay declared beside the
+ * `AmbientObservation` fields they classify, where their arguments are, rather
+ * than being copied into a fifth place.
+ */
+import type { Arrival, ExitType } from './detect'
+
+/**
  * Words that carry no subject.
  *
  * Includes the big platform names, deliberately. They appear in the title of
@@ -49,13 +60,93 @@
  * into one enormous false thread.
  */
 const STOPWORDS = new Set([
-  'the', 'a', 'an', 'and', 'or', 'but', 'of', 'for', 'to', 'in', 'on', 'at', 'by', 'with', 'from',
-  'is', 'are', 'was', 'were', 'be', 'been', 'it', 'its', 'this', 'that', 'these', 'those', 'as',
-  'how', 'what', 'why', 'when', 'where', 'who', 'which', 'can', 'do', 'does', 'you', 'your', 'i',
-  'my', 'we', 'our', 'us', 'me', 'new', 'more', 'get', 'best', 'top', 'via', 'about', 'all', 'into',
-  'google', 'search', 'youtube', 'twitter', 'reddit', 'github', 'linkedin', 'facebook', 'medium',
-  'home', 'page', 'index', 'login', 'sign', 'welcome', 'loading', 'untitled', 'dashboard', 'inbox',
-  'docs', 'doc', 'pdf', 'html', 'www', 'com', 'org', 'net', 'io', 'ai', 'app', 'jobs', 'careers',
+  'the',
+  'a',
+  'an',
+  'and',
+  'or',
+  'but',
+  'of',
+  'for',
+  'to',
+  'in',
+  'on',
+  'at',
+  'by',
+  'with',
+  'from',
+  'is',
+  'are',
+  'was',
+  'were',
+  'be',
+  'been',
+  'it',
+  'its',
+  'this',
+  'that',
+  'these',
+  'those',
+  'as',
+  'how',
+  'what',
+  'why',
+  'when',
+  'where',
+  'who',
+  'which',
+  'can',
+  'do',
+  'does',
+  'you',
+  'your',
+  'i',
+  'my',
+  'we',
+  'our',
+  'us',
+  'me',
+  'new',
+  'more',
+  'get',
+  'best',
+  'top',
+  'via',
+  'about',
+  'all',
+  'into',
+  'google',
+  'search',
+  'youtube',
+  'twitter',
+  'reddit',
+  'github',
+  'linkedin',
+  'facebook',
+  'medium',
+  'home',
+  'page',
+  'index',
+  'login',
+  'sign',
+  'welcome',
+  'loading',
+  'untitled',
+  'dashboard',
+  'inbox',
+  'docs',
+  'doc',
+  'pdf',
+  'html',
+  'www',
+  'com',
+  'org',
+  'net',
+  'io',
+  'ai',
+  'app',
+  'jobs',
+  'careers',
 ])
 
 /**
@@ -756,6 +847,56 @@ export interface ThreadPage {
    *  they left and chose to come back, which is a different fact entirely. */
   readonly visits: number
   /**
+   * How each of those returns was arrived at, in time order. Empty for a page
+   * seen once — `visits` is the tally and this is what each arrival past the
+   * first was.
+   *
+   * ── Why the ARRIVALS and not just the count, 2026-08-20 ──────────────────
+   *
+   * `came-back` used to read `visits >= 2` and nothing else, and Adar, Teevan &
+   * Dumais's 612,000-user revisit study says that in the only band a
+   * thirty-minute window can see, 77% of returns are a click home from a spoke
+   * of the same site. `grounds.ts` wrote that finding down on 2026-08-17 and
+   * declined to act on it, because the buffer could not tell the two apart.
+   * This is the field that lets it: `'same-origin'` IS the click home, and the
+   * other members are not. See `returnedTo` in `grounds.ts` for the predicate
+   * and [ADR-0018](../../../docs/adr/0018-the-everyday-shapes.md) for the
+   * decision.
+   *
+   * **Optional, and absent is not permissive.** A page whose returns nothing
+   * classified cannot fire `came-back`, which is the direction ADR-0008 says to
+   * be wrong in — a missed intent ground costs an offer nobody sees. It also
+   * means a fixture has to say HOW somebody came back before it may stand for
+   * somebody coming back, which is the failure mode `docs/PRODUCT_PRINCIPLES.md`
+   * §13 records about fixtures that were smaller than the sessions they named.
+   */
+  readonly returnArrivals?: readonly Arrival[] | undefined
+  /**
+   * How far down this page they got, 0 to 1, deepest report wins. Absent when
+   * nothing reported one.
+   *
+   * Bounded at the app's door, never here — see
+   * `AmbientObservation.scrollFraction`, which this is the per-page fold of.
+   *
+   * **Zero is a real reading and not a missing one.** `content.js` starts its
+   * counter at zero and reports whatever it reached, so a page that fits on one
+   * screen and was read completely reports zero — the same false negative
+   * `classifyEngagement` fixed on the SESSION path by adding `interacted`, a
+   * field the ambient path has no room for. `grounds.ts` therefore uses this to
+   * refuse only in conjunction with `exitType`, and never as a floor of its own.
+   */
+  readonly scrollFraction?: number | undefined
+  /**
+   * How this page was left, latest report wins. Absent when they have not left
+   * it — which, on a live buffer, is the page they are reading right now.
+   *
+   * Latest rather than first, because Chrome fires `visibilitychange` and then
+   * `pagehide` on an ordinary same-tab navigation, so a page navigated away
+   * from reports `'hidden'` and then `'left-cached'`, and the second is the
+   * more informative of the two.
+   */
+  readonly exitType?: ExitType | undefined
+  /**
    * The title of the tab group this page sits in, if the person named one.
    *
    * ── Beside `terms`, never inside it ──────────────────────────────────────
@@ -927,7 +1068,8 @@ export function findThreads(input: readonly ThreadPage[]): Thread[] {
   // A thread the person searched for outranks one they merely passed through,
   // then breadth, then time.
   threads.sort(
-    (a, b) => b.searches - a.searches || b.pages.length - a.pages.length || b.engagedMs - a.engagedMs,
+    (a, b) =>
+      b.searches - a.searches || b.pages.length - a.pages.length || b.engagedMs - a.engagedMs,
   )
   return threads
 }

@@ -106,16 +106,89 @@ Two fixtures are therefore part of this decision and not follow-up work:
   and whose size matches it. A fixture smaller than the session it records is not a smaller test, it
   is a different one.
 
-## The measurement this ADR owes, and does not yet have
+## The measurement this ADR owes ~~, and does not yet have~~
 
-`PRODUCT_PRINCIPLES.md` §13 and the reachability pins both require the change that consumes these
+~~`PRODUCT_PRINCIPLES.md` §13 and the reachability pins both require the change that consumes these
 signals to say **which afternoons started qualifying and which stopped**. That is a result, not a
-prediction, and it does not exist as this ADR is written.
+prediction, and it does not exist as this ADR is written.~~
 
-It is owed **in this section**, appended by the wave that lands the code, measured against the
+~~It is owed **in this section**, appended by the wave that lands the code, measured against the
 fixture corpus and against `src/fixtures/afternoons/`. Writing a guess here would be worse than
 leaving it empty: a number in an ADR reads as measured whether or not anybody measured it, and this
-document's whole subject is a bar moving.
+document's whole subject is a bar moving.~~
+
+**Measured 2026-08-20**, by running one corpus of afternoons through `detectWork` → `groundsFor`
+twice: once against the detector at `decide/everyday-direction` and once against the branch that
+lands this ADR. Twenty-seven afternoons — every ambient buffer and every `ThreadPage` fixture in the
+repository that reaches the offer bar, plus `src/fixtures/afternoons/`, plus three re-encodings
+explained below. **Twenty went unchanged. Two started qualifying. Five stopped.**
+
+### The two that started qualifying
+
+| Afternoon                                                                                                                                                                                                                                                                                                                                                      | Before  | After         | On                 |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- | ------------- | ------------------ |
+| **Ten monitors across three retailers, ~15 minutes** — the new fixture, and the shape the direction document asks for. One search, ten product pages, four on one shop and three on each of the others, each held 30–50s and scrolled past halfway, one page returned to from a different shop. Nothing held a minute; thread spans 12.5, under `SUSTAINED_MS` | refused | **QUALIFIES** | `compared-options` |
+| **The standing newsletter afternoon, read past halfway with a link home from another site** — twelve links across three sites at 45s each, nine minutes, no search, no page held a minute                                                                                                                                                                      | refused | **QUALIFIES** | `compared-options` |
+
+The second row is the honest cost and it is not a contrived buffer: it is the fixture
+`PRODUCT_PRINCIPLES.md` §13 is about, with two fields changed to say the pages were read rather than
+skimmed and that the return came from another site. **Three news sites covering one story produce
+exactly it.** `grounds.ts` cannot tell that from three retailers, for the same reason `read-around`
+cannot tell six arXiv abstracts from six product pages, and it is pinned in `tests/grounds.test.ts`
+rather than left to be met in use.
+
+**The flagship example is not in this table, and that is worth knowing.** At the _twenty_ minutes the
+direction document names, ten monitors across three shops already spanned `SUSTAINED_MS` and was
+already offered work on span-plus-breadth. What this ADR admits is the same trip conducted in under a
+quarter of an hour, which is most of them.
+
+### The five that stopped qualifying
+
+| Afternoon                                                                                            | Ground lost                  | Why                                                                                                             |
+| ---------------------------------------------------------------------------------------------------- | ---------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| **The arXiv reader** — three abstracts on one host, one held a minute, clicked back to the first     | `came-back`                  | The return is `'same-origin'`. **This is the cost §2 names by name**, and it is a real refusal of real research |
+| **A newsletter link, three pages of the site it went to, one read, then a click home on that site**  | `came-back`                  | Same predicate, the shape it was aimed at                                                                       |
+| **The same afternoon with the return unclassified** (fixture as written before this change)          | `came-back`                  | No arrival, no claim. Re-encoded as the reopened tab its docstring describes, it qualifies again                |
+| **The skimmed afternoon past `SUSTAINED_MS`, return unclassified**                                   | `came-back`                  | As above. Re-encoded, it still qualifies — that cost is unchanged                                               |
+| **A qualifying research afternoon with every page parked** — scroll 0 and left `'hidden'` on all six | `read-deeply`, `read-around` | `heldOpenUnread`. This is the only place scroll and exit type change an answer                                  |
+
+Three of those five are one predicate meeting one shape. Two of them are fixtures that had no arrival
+on them because arrivals did not exist when they were written: **the afternoon they stand for still
+qualifies once it is written down the way a browser reports it**, and the fixtures were updated to
+say how somebody came back rather than left asserting that they did. That distinction is the whole
+of what changed for those two, and reporting them as _stopped qualifying_ without it would overstate
+this change by 40%.
+
+### What did not move
+
+`src/fixtures/afternoons/world-models-synthesised.json` — the committed capture — **qualifies before
+and after, on the same six grounds.** Its return to the first arXiv abstract came from openreview.net
+and was classified `'back-or-forward'`, which `RETURN_ARRIVALS` keeps. Strip the three signals off
+every row and it loses `came-back` and stays sufficient on its two searches;
+`tests/afternoon-capture.test.ts` now asserts exactly that, where it used to assert the answer was
+unchanged.
+
+Also unmoved: the ordinary-reading afternoon in both its forms (`tests/grounds.test.ts` and the
+real-path version in `tests/canonical-terms.test.ts`), the skimmed newsletter afternoon at skim
+scroll, run 2, the six-abstract read-around, the bank portal, the shopping session at fifteen and at
+thirty seconds a page, `compose-offer`'s strong and weak threads, and four tabs opened from a results
+page.
+
+### How to reproduce it
+
+The harness was a throwaway: the three detection files at `decide/everyday-direction` copied beside
+the branch's, one corpus, two runs, a diff. It is not committed, because a measurement harness that
+lives on becomes a second detector nobody notices drifting. The corpus is not lost — every afternoon
+in it is a fixture in `tests/grounds.test.ts`, `tests/detection.test.ts`,
+`tests/afternoon-capture.test.ts` or `src/fixtures/afternoons/`, and the two that started qualifying
+and the five that stopped each have an assertion of their own in one of those files.
+
+### What this measurement is NOT
+
+It is a fixture corpus, not an offer rate. Nothing here says how often a real person is interrupted,
+because §10.5's measurement still does not exist and no real afternoon has been captured. Twenty-seven
+invented afternoons cannot tell you the ratio of the two rows above in a life. _Revisit when_ below is
+where that debt sits, and it is unchanged by this section.
 
 ## What was rejected
 

@@ -16,14 +16,19 @@
 import { describe, it, expect, vi } from 'vitest'
 import {
   BREADTH_AXIS,
+  COMPARED_ORIGINS,
+  COMPARISON_AXIS,
+  COMPARISON_SCROLL_FRACTION,
   DEEP_READ_MS,
   INTENT_GROUNDS,
   INTENT_REQUIRED,
+  INVESTMENT_AXES,
   INVESTMENT_GROUNDS,
   INVESTMENT_REQUIRED,
   ORIGINS_FOR_OFFER,
   PAGES_ON_ONE_ORIGIN,
   READ_AROUND_MS,
+  RETURN_ARRIVALS,
   SUSTAINED_MS,
   groundsFor,
 } from '../src/domain/detection/grounds'
@@ -36,7 +41,7 @@ import {
 } from '../src/domain/detection/topics'
 import type { ThreadPage } from '../src/domain/detection/topics'
 import { WINDOW_MS } from '../src/domain/detection/detect'
-import type { WorkDetected } from '../src/domain/detection/detect'
+import type { Arrival, ExitType, WorkDetected } from '../src/domain/detection/detect'
 // The capture layer's definition of where a glance stops. `grounds.ts` does not
 // import it — see `READ_AROUND_MS` — so the test is where the two are held
 // against each other.
@@ -45,6 +50,20 @@ import { ENGAGEMENT_DWELL_MS } from '../src/capture/semantics'
 const T0 = 1_786_471_000_000
 const MINUTE = 60_000
 
+/**
+ * ── `visits: 2` alone stopped meaning "they came back", 2026-08-20 ───────
+ *
+ * `returnedTo` now asks HOW each return was arrived at, and a return nothing
+ * classified fires nothing — see `RETURN_ARRIVALS` and ADR-0018. So a fixture
+ * here has to say how somebody came back before it may stand for somebody
+ * coming back, and `visits` alone no longer will.
+ *
+ * That is deliberately not papered over with a default. `PRODUCT_PRINCIPLES.md`
+ * §13 records the fixture that stood for twelve pages while being written at
+ * three; a default arrival would be the same failure in a smaller place — every
+ * fixture in this file would keep passing while saying nothing about the
+ * predicate the change is.
+ */
 function page(o: {
   url: string
   origin?: string
@@ -52,6 +71,11 @@ function page(o: {
   engagedMs?: number
   at?: number
   visits?: number
+  /** How each return past the first was arrived at. Empty or absent means the
+   *  fixture is making no claim, and `came-back` cannot fire on one. */
+  returnArrivals?: readonly Arrival[]
+  scrollFraction?: number
+  exitType?: ExitType
   /** Only ever set to prove the domain ignores it. `pagesOf` derives it. */
   searched?: boolean
 }): ThreadPage {
@@ -65,7 +89,16 @@ function page(o: {
     at: o.at ?? T0,
     searched: o.searched ?? searchQueryOf(o.url) !== null,
     visits: o.visits ?? 1,
+    ...(o.returnArrivals === undefined ? {} : { returnArrivals: o.returnArrivals }),
+    ...(o.scrollFraction === undefined ? {} : { scrollFraction: o.scrollFraction }),
+    ...(o.exitType === undefined ? {} : { exitType: o.exitType }),
   }
+}
+
+/** A page returned to the way most people return to one: they went somewhere
+ *  else and came back. Spelt out rather than defaulted, per the block above. */
+function returnedFromElsewhere(): { visits: number; returnArrivals: readonly Arrival[] } {
+  return { visits: 2, returnArrivals: ['cross-origin'] }
 }
 
 /** Only `terms` is read, but a half-built WorkDetected in a fixture is how a
@@ -191,8 +224,18 @@ describe('intent — did they pursue this, or receive it', () => {
     it('fires on a query followed by two pages of the thread', () => {
       const pages = [
         page({ url: SEARCH, at: T0 }),
-        page({ url: 'https://a.example/1', title: 'World Models Survey', at: T0 + MINUTE, engagedMs: 30_000 }),
-        page({ url: 'https://b.example/1', title: 'World Models Explained', at: T0 + 2 * MINUTE, engagedMs: 30_000 }),
+        page({
+          url: 'https://a.example/1',
+          title: 'World Models Survey',
+          at: T0 + MINUTE,
+          engagedMs: 30_000,
+        }),
+        page({
+          url: 'https://b.example/1',
+          title: 'World Models Explained',
+          at: T0 + 2 * MINUTE,
+          engagedMs: 30_000,
+        }),
       ]
 
       expect(grounds(pages)).toContain('searched-then-read')
@@ -201,7 +244,12 @@ describe('intent — did they pursue this, or receive it', () => {
     it('does not fire on a query followed by one page', () => {
       const pages = [
         page({ url: SEARCH, at: T0 }),
-        page({ url: 'https://a.example/1', title: 'World Models Survey', at: T0 + MINUTE, engagedMs: 30_000 }),
+        page({
+          url: 'https://a.example/1',
+          title: 'World Models Survey',
+          at: T0 + MINUTE,
+          engagedMs: 30_000,
+        }),
       ]
 
       expect(grounds(pages)).not.toContain('searched-then-read')
@@ -236,10 +284,7 @@ describe('intent — did they pursue this, or receive it', () => {
     it('does not fire when a second search is the only thing after the first', () => {
       // Two searches and nothing read is a search going badly, which is the
       // worst possible moment to interrupt somebody.
-      const pages = [
-        page({ url: SEARCH, at: T0 }),
-        page({ url: SEARCH_AGAIN, at: T0 + MINUTE }),
-      ]
+      const pages = [page({ url: SEARCH, at: T0 }), page({ url: SEARCH_AGAIN, at: T0 + MINUTE })]
 
       expect(grounds(pages)).not.toContain('searched-then-read')
     })
@@ -247,10 +292,7 @@ describe('intent — did they pursue this, or receive it', () => {
 
   describe('refined-the-search', () => {
     it('fires on two distinct queries sharing the thread terms', () => {
-      const pages = [
-        page({ url: SEARCH, at: T0 }),
-        page({ url: SEARCH_AGAIN, at: T0 + MINUTE }),
-      ]
+      const pages = [page({ url: SEARCH, at: T0 }), page({ url: SEARCH_AGAIN, at: T0 + MINUTE })]
 
       expect(grounds(pages)).toContain('refined-the-search')
     })
@@ -278,9 +320,13 @@ describe('intent — did they pursue this, or receive it', () => {
   })
 
   describe('came-back', () => {
-    it('fires when a page of the thread was returned to', () => {
+    it('fires when a page of the thread was returned to from somewhere else', () => {
       const pages = [
-        page({ url: 'https://a.example/1', title: 'World Models Survey', visits: 2 }),
+        page({
+          url: 'https://a.example/1',
+          title: 'World Models Survey',
+          ...returnedFromElsewhere(),
+        }),
         page({ url: 'https://b.example/1', title: 'World Models Explained' }),
       ]
 
@@ -294,6 +340,108 @@ describe('intent — did they pursue this, or receive it', () => {
       ]
 
       expect(grounds(pages)).not.toContain('came-back')
+    })
+
+    /**
+     * ── The narrowing, 2026-08-20. ADR-0018, part 2 ──────────────────────
+     *
+     * Adar, Teevan & Dumais over 612,000 users: in the sub-hour band a
+     * thirty-minute window can see, 77.0% of revisits came from the same
+     * domain, 2.9% were reached by a search, and the self-reported intent
+     * behind the band is *"buy something, monitor live content"*. `grounds.ts`
+     * wrote that down on 2026-08-17 and retuned nothing, naming the predicate
+     * it would take. These are that predicate.
+     */
+    it('does not fire on a click home from a spoke of the same site', () => {
+      // The 77%. A return whose arrival says they never left the site is not
+      // an act of navigation about anything, and it used to be indistinguishable
+      // from a return to a paper somebody is working through.
+      const pages = [
+        page({
+          url: 'https://a.example/1',
+          title: 'World Models Survey',
+          visits: 2,
+          returnArrivals: ['same-origin'],
+        }),
+        page({ url: 'https://b.example/1', title: 'World Models Explained' }),
+      ]
+
+      expect(grounds(pages)).not.toContain('came-back')
+    })
+
+    it('does not fire on a return nothing classified', () => {
+      // A tally with no arrival beside it makes no claim about where they came
+      // from, and this ground's whole content is now that claim. Under-firing
+      // is the direction ADR-0008 says to be wrong in.
+      const pages = [
+        page({ url: 'https://a.example/1', title: 'World Models Survey', visits: 2 }),
+        page({ url: 'https://b.example/1', title: 'World Models Explained' }),
+      ]
+
+      expect(grounds(pages)).not.toContain('came-back')
+    })
+
+    it('fires on any of the three arrivals that are not the same site', () => {
+      // Back or forward, a reopened tab, a link from elsewhere. `RETURN_ARRIVALS`
+      // argues each; this is the table, so adding a fourth member is a diff here.
+      for (const arrival of RETURN_ARRIVALS) {
+        const pages = [
+          page({
+            url: 'https://a.example/1',
+            title: 'World Models Survey',
+            visits: 2,
+            returnArrivals: [arrival],
+          }),
+          page({ url: 'https://b.example/1', title: 'World Models Explained' }),
+        ]
+
+        expect(grounds(pages), arrival).toContain('came-back')
+      }
+    })
+
+    it('refuses the arXiv reader who clicked back to the first abstract, and that is the stated cost', () => {
+      /**
+       * `returnedTo`'s own block named this session before the predicate
+       * landed: *"it would also refuse the real one it names beside them,
+       * somebody reading three abstracts on arXiv and clicking back to the
+       * first."* It does. Pinned rather than hidden, the way the shopping
+       * session admitted by `read-around` is pinned below.
+       *
+       * The person who also searched keeps `searched-then-read`. The person who
+       * did not now has no intent ground at all, and this is that person.
+       */
+      const abstracts = [
+        page({
+          url: 'https://arxiv.org/abs/2501.1',
+          title: 'World Models Survey',
+          engagedMs: DEEP_READ_MS,
+          visits: 2,
+          returnArrivals: ['same-origin'],
+          at: T0,
+        }),
+        page({
+          url: 'https://arxiv.org/abs/2501.2',
+          title: 'World Models Control',
+          engagedMs: 40_000,
+          at: T0 + MINUTE,
+        }),
+        page({
+          url: 'https://arxiv.org/abs/2501.3',
+          title: 'World Models Scaling',
+          engagedMs: 40_000,
+          at: T0 + 2 * MINUTE,
+        }),
+      ]
+
+      const result = groundsFor(detected(SUBJECT, abstracts), abstracts)
+
+      expect(result.kinds).not.toContain('came-back')
+      for (const kind of INTENT_GROUNDS) expect(result.kinds).not.toContain(kind)
+      // The investment was real and is still counted. What is gone is the
+      // permission to act on it.
+      expect(result.kinds).toContain('read-deeply')
+      expect(result.kinds).toContain('read-around')
+      expect(result.sufficient).toBe(false)
     })
   })
 
@@ -331,8 +479,18 @@ describe('intent — did they pursue this, or receive it', () => {
     it('still recognises a real search the extension never labelled', () => {
       const pages = [
         page({ url: SEARCH, searched: false, at: T0 }),
-        page({ url: 'https://a.example/1', title: 'World Models Survey', at: T0 + MINUTE, engagedMs: 30_000 }),
-        page({ url: 'https://b.example/1', title: 'World Models Explained', at: T0 + 2 * MINUTE, engagedMs: 30_000 }),
+        page({
+          url: 'https://a.example/1',
+          title: 'World Models Survey',
+          at: T0 + MINUTE,
+          engagedMs: 30_000,
+        }),
+        page({
+          url: 'https://b.example/1',
+          title: 'World Models Explained',
+          at: T0 + 2 * MINUTE,
+          engagedMs: 30_000,
+        }),
       ]
 
       expect(grounds(pages)).toContain('searched-then-read')
@@ -349,9 +507,9 @@ describe('investment — was enough spent to be worth an offer', () => {
     })
 
     it('does not fire a moment short of it', () => {
-      expect(grounds([page({ url: 'https://a.example/1', engagedMs: DEEP_READ_MS - 1 })])).not.toContain(
-        'read-deeply',
-      )
+      expect(
+        grounds([page({ url: 'https://a.example/1', engagedMs: DEEP_READ_MS - 1 })]),
+      ).not.toContain('read-deeply')
     })
 
     it('does not add up short reads across pages', () => {
@@ -419,7 +577,12 @@ describe('investment — was enough spent to be worth an offer', () => {
      */
     const around = (n: number, engagedMs: number) =>
       Array.from({ length: n }, (_, i) =>
-        page({ url: `https://arxiv.org/abs/250${i}`, title: `World Models ${i}`, engagedMs, at: T0 + i * MINUTE }),
+        page({
+          url: `https://arxiv.org/abs/250${i}`,
+          title: `World Models ${i}`,
+          engagedMs,
+          at: T0 + i * MINUTE,
+        }),
       )
 
     it('fires on three engaged pages of one site', () => {
@@ -463,7 +626,11 @@ describe('investment — was enough spent to be worth an offer', () => {
       const mixed = [
         ...around(PAGES_ON_ONE_ORIGIN, 40_000),
         ...Array.from({ length: 3 }, (_, i) =>
-          page({ url: `https://arxiv.org/abs/glance${i}`, title: 'World Models', engagedMs: 4_000 }),
+          page({
+            url: `https://arxiv.org/abs/glance${i}`,
+            title: 'World Models',
+            engagedMs: 4_000,
+          }),
         ),
       ]
 
@@ -498,10 +665,25 @@ describe('investment — was enough spent to be worth an offer', () => {
        */
       const overlapping = [
         ...Array.from({ length: PAGES_ON_ONE_ORIGIN }, (_, i) =>
-          page({ url: `https://arxiv.org/abs/250${i}`, title: 'World Models', engagedMs: 40_000, at: T0 + i * MINUTE }),
+          page({
+            url: `https://arxiv.org/abs/250${i}`,
+            title: 'World Models',
+            engagedMs: 40_000,
+            at: T0 + i * MINUTE,
+          }),
         ),
-        page({ url: 'https://openreview.net/forum', title: 'World Models', engagedMs: 40_000, at: T0 + 4 * MINUTE }),
-        page({ url: 'https://github.com/x/world-models', title: 'World Models', engagedMs: 40_000, at: T0 + 5 * MINUTE }),
+        page({
+          url: 'https://openreview.net/forum',
+          title: 'World Models',
+          engagedMs: 40_000,
+          at: T0 + 4 * MINUTE,
+        }),
+        page({
+          url: 'https://github.com/x/world-models',
+          title: 'World Models',
+          engagedMs: 40_000,
+          at: T0 + 5 * MINUTE,
+        }),
       ]
 
       expect(grounds(overlapping)).toContain('followed-across')
@@ -515,7 +697,11 @@ describe('investment — was enough spent to be worth an offer', () => {
       const searching = [
         page({ url: SEARCH, engagedMs: 40_000, at: T0 }),
         page({ url: SEARCH_AGAIN, engagedMs: 40_000, at: T0 + MINUTE }),
-        page({ url: 'https://www.google.com/search?q=world+models+survey', engagedMs: 40_000, at: T0 + 2 * MINUTE }),
+        page({
+          url: 'https://www.google.com/search?q=world+models+survey',
+          engagedMs: 40_000,
+          at: T0 + 2 * MINUTE,
+        }),
       ]
 
       expect(grounds(searching)).toContain('refined-the-search')
@@ -560,18 +746,92 @@ describe('sufficiency — one of these AND two of those', () => {
     page({ url: 'https://a.example/3', engagedMs: 40_000, at: T0 + 2 * MINUTE }),
   ]
 
-  it('every investment ground and no intent is not enough', () => {
+  it('every investment ground that CAN fire without intent, and no intent, is not enough', () => {
     const result = groundsFor(detected(SUBJECT, investmentOnly), investmentOnly)
 
-    // Every investment ground fires. The rule is what refuses, not a shortage
-    // of evidence — which is the whole argument against a flat k-of-n counter.
-    for (const kind of INVESTMENT_GROUNDS) expect(result.kinds).toContain(kind)
+    /**
+     * ~~Every investment ground fires.~~ **Four of the five, as of 2026-08-20,
+     * and the fifth is a property rather than a gap.**
+     *
+     * `compared-options` requires a return that arrival observed as
+     * `'cross-origin'`, and any such return also fires `came-back`. So the
+     * ground cannot fire on a buffer with no intent ground in it — not because
+     * this fixture is short of evidence, but because the two read the same
+     * fact. That is one buffer paying on both halves of the sufficiency rule,
+     * it is a consequence of the ground ADR-0018 specifies rather than a choice
+     * made here, and it is asserted below so that it is a known property
+     * instead of a surprise.
+     *
+     * What this test is for is unchanged: the RULE refuses, not a shortage of
+     * evidence, which is the whole argument against a flat k-of-n counter.
+     */
+    for (const kind of INVESTMENT_GROUNDS) {
+      if (kind === 'compared-options') continue
+      expect(result.kinds).toContain(kind)
+    }
     expect(result.sufficient).toBe(false)
+  })
+
+  it('compared-options cannot fire without came-back, because they read one fact', () => {
+    // The property the test above works around, asserted directly rather than
+    // left as a comment. If a future change lets this ground fire on its own,
+    // the test above starts skipping a ground that could have been exercised
+    // and this one says so.
+    const comparing = [
+      page({
+        url: 'https://a.example/1',
+        title: 'World Models Survey',
+        engagedMs: 30_000,
+        scrollFraction: 0.8,
+        ...returnedFromElsewhere(),
+        at: T0,
+      }),
+      page({
+        url: 'https://b.example/1',
+        title: 'World Models Explained',
+        engagedMs: 30_000,
+        scrollFraction: 0.8,
+        at: T0 + MINUTE,
+      }),
+      page({
+        url: 'https://c.example/1',
+        title: 'Training World Models',
+        engagedMs: 30_000,
+        scrollFraction: 0.8,
+        at: T0 + 2 * MINUTE,
+      }),
+    ]
+
+    const result = groundsFor(detected(SUBJECT, comparing), comparing)
+
+    expect(result.kinds).toContain('compared-options')
+    expect(result.kinds).toContain('came-back')
+  })
+
+  it('puts every investment ground on exactly one axis', () => {
+    // The rule `INVESTMENT_AXES` states about itself. A ground added to
+    // `INVESTMENT_GROUNDS` and forgotten in the axes would silently stop being
+    // able to count toward sufficiency at all, and every other test here would
+    // stay green.
+    const placed = INVESTMENT_AXES.flatMap((axis) => [...axis])
+
+    expect([...placed].sort()).toEqual([...INVESTMENT_GROUNDS].sort())
+    expect(new Set(placed).size).toBe(placed.length)
+  })
+
+  it('gives the comparison its own axis, apart from breadth', () => {
+    expect(COMPARISON_AXIS).toEqual(['compared-options'])
+    for (const kind of BREADTH_AXIS) expect(COMPARISON_AXIS).not.toContain(kind)
   })
 
   it('one intent ground and one investment ground is not enough', () => {
     const pages = [
-      page({ url: 'https://a.example/1', engagedMs: DEEP_READ_MS, visits: 2, at: T0 }),
+      page({
+        url: 'https://a.example/1',
+        engagedMs: DEEP_READ_MS,
+        ...returnedFromElsewhere(),
+        at: T0,
+      }),
       page({ url: 'https://b.example/1', at: T0 + MINUTE }),
     ]
 
@@ -585,7 +845,12 @@ describe('sufficiency — one of these AND two of those', () => {
 
   it('one intent ground and two investment grounds is enough', () => {
     const pages = [
-      page({ url: 'https://a.example/1', engagedMs: DEEP_READ_MS, visits: 2, at: T0 }),
+      page({
+        url: 'https://a.example/1',
+        engagedMs: DEEP_READ_MS,
+        ...returnedFromElsewhere(),
+        at: T0,
+      }),
       page({ url: 'https://b.example/1', at: T0 + MINUTE }),
       page({ url: 'https://c.example/1', at: T0 + 2 * MINUTE }),
     ]
@@ -600,10 +865,20 @@ describe('sufficiency — one of these AND two of those', () => {
     // Searched, refined, and came back — inside two minutes, having read almost
     // nothing. That is what a search going badly looks like.
     const pages = [
-      page({ url: SEARCH, at: T0, visits: 2 }),
+      page({ url: SEARCH, at: T0, ...returnedFromElsewhere() }),
       page({ url: SEARCH_AGAIN, at: T0 + MINUTE }),
-      page({ url: 'https://a.example/1', title: 'World Models Survey', at: T0 + MINUTE + 1, engagedMs: 25_000 }),
-      page({ url: 'https://b.example/1', title: 'World Models Explained', at: T0 + MINUTE + 2, engagedMs: 25_000 }),
+      page({
+        url: 'https://a.example/1',
+        title: 'World Models Survey',
+        at: T0 + MINUTE + 1,
+        engagedMs: 25_000,
+      }),
+      page({
+        url: 'https://b.example/1',
+        title: 'World Models Explained',
+        at: T0 + MINUTE + 2,
+        engagedMs: 25_000,
+      }),
     ]
 
     const result = groundsFor(detected(SUBJECT, pages), pages)
@@ -631,10 +906,30 @@ describe('sufficiency — one of these AND two of those', () => {
      */
     const glance = [
       page({ url: SEARCH, at: T0 }),
-      page({ url: 'https://arxiv.org/abs/2501.1', title: 'World Models Survey', engagedMs: 30_000, at: T0 + 10_000 }),
-      page({ url: 'https://arxiv.org/abs/2501.2', title: 'World Models Control', engagedMs: 30_000, at: T0 + 20_000 }),
-      page({ url: 'https://arxiv.org/abs/2501.3', title: 'World Models Scaling', engagedMs: 30_000, at: T0 + 30_000 }),
-      page({ url: 'https://openreview.net/forum', title: 'World Models Review', engagedMs: 30_000, at: T0 + 100_000 }),
+      page({
+        url: 'https://arxiv.org/abs/2501.1',
+        title: 'World Models Survey',
+        engagedMs: 30_000,
+        at: T0 + 10_000,
+      }),
+      page({
+        url: 'https://arxiv.org/abs/2501.2',
+        title: 'World Models Control',
+        engagedMs: 30_000,
+        at: T0 + 20_000,
+      }),
+      page({
+        url: 'https://arxiv.org/abs/2501.3',
+        title: 'World Models Scaling',
+        engagedMs: 30_000,
+        at: T0 + 30_000,
+      }),
+      page({
+        url: 'https://openreview.net/forum',
+        title: 'World Models Review',
+        engagedMs: 30_000,
+        at: T0 + 100_000,
+      }),
     ]
 
     const result = groundsFor(detected(SUBJECT, glance), glance)
@@ -652,10 +947,30 @@ describe('sufficiency — one of these AND two of those', () => {
     // breadth counts once, and the read is a different accident.
     const withARead = [
       page({ url: SEARCH, at: T0 }),
-      page({ url: 'https://arxiv.org/abs/2501.1', title: 'World Models Survey', engagedMs: DEEP_READ_MS, at: T0 + 10_000 }),
-      page({ url: 'https://arxiv.org/abs/2501.2', title: 'World Models Control', engagedMs: 30_000, at: T0 + 20_000 }),
-      page({ url: 'https://arxiv.org/abs/2501.3', title: 'World Models Scaling', engagedMs: 30_000, at: T0 + 30_000 }),
-      page({ url: 'https://openreview.net/forum', title: 'World Models Review', engagedMs: 30_000, at: T0 + 100_000 }),
+      page({
+        url: 'https://arxiv.org/abs/2501.1',
+        title: 'World Models Survey',
+        engagedMs: DEEP_READ_MS,
+        at: T0 + 10_000,
+      }),
+      page({
+        url: 'https://arxiv.org/abs/2501.2',
+        title: 'World Models Control',
+        engagedMs: 30_000,
+        at: T0 + 20_000,
+      }),
+      page({
+        url: 'https://arxiv.org/abs/2501.3',
+        title: 'World Models Scaling',
+        engagedMs: 30_000,
+        at: T0 + 30_000,
+      }),
+      page({
+        url: 'https://openreview.net/forum',
+        title: 'World Models Review',
+        engagedMs: 30_000,
+        at: T0 + 100_000,
+      }),
     ]
 
     const result = groundsFor(detected(SUBJECT, withARead), withARead)
@@ -691,8 +1006,7 @@ describe('the real session that was refused, 2026-08-16', () => {
   const SCIENCE = 'https://www.science.org/doi/10.1126/scirobotics.perturbation'
   const GITHUB = 'https://github.com/example/perturbation-sim'
 
-  const query = (q: string, at: number) =>
-    page({ url: `https://www.google.com/search?q=${q}`, at })
+  const query = (q: string, at: number) => page({ url: `https://www.google.com/search?q=${q}`, at })
 
   const run2 = [
     query('what+is+perturbation+in+robotics', T0),
@@ -702,7 +1016,23 @@ describe('the real session that was refused, 2026-08-16', () => {
       at: T0 + MINUTE,
       // The read that was called a skim.
       engagedMs: 60_000,
+      /**
+       * ── Reconstructed, not recorded, and that distinction is the point ──
+       *
+       * This session is from 2026-08-16 and `arrival` did not exist until
+       * 2026-08-18, so the recording carries a tally and no classification.
+       * What the recording DOES carry is the page order: they read the arXiv
+       * paper, went to science.org and github.com, and came back. Coming back
+       * from science.org is `'cross-origin'` by construction, so this is the
+       * order re-read rather than a value invented to keep a test green.
+       *
+       * If that reasoning is ever found to be wrong, the honest fix is to drop
+       * the field and let `came-back` stop firing here — which would leave the
+       * session offered on `searched-then-read` and `refined-the-search`
+       * anyway, so nothing about this file's conclusions rests on it.
+       */
       visits: 2,
+      returnArrivals: ['cross-origin'],
     }),
     query('perturbation+robotics+definition', T0 + 3 * MINUTE),
     page({
@@ -763,10 +1093,26 @@ describe('the real session that was refused, 2026-08-16', () => {
      */
     const thin = [
       query('what+is+perturbation+in+robotics', T0),
-      page({ url: ARXIV, title: 'Perturbation-Aware Robotics Navigation', at: T0 + 1000, engagedMs: 20_000, visits: 2 }),
+      page({
+        url: ARXIV,
+        title: 'Perturbation-Aware Robotics Navigation',
+        at: T0 + 1000,
+        engagedMs: 20_000,
+        ...returnedFromElsewhere(),
+      }),
       query('perturbation+robotics+definition', T0 + 2000),
-      page({ url: SCIENCE, title: 'Robustness to Perturbation in Legged Robotics', at: T0 + 3000, engagedMs: 15_000 }),
-      page({ url: GITHUB, title: 'Perturbation Simulation for Robotics', at: T0 + 4000, engagedMs: 10_000 }),
+      page({
+        url: SCIENCE,
+        title: 'Robustness to Perturbation in Legged Robotics',
+        at: T0 + 3000,
+        engagedMs: 15_000,
+      }),
+      page({
+        url: GITHUB,
+        title: 'Perturbation Simulation for Robotics',
+        at: T0 + 4000,
+        engagedMs: 10_000,
+      }),
       query('perturbation+theory+robotics+control', T0 + 3 * MINUTE),
     ]
 
@@ -836,10 +1182,19 @@ describe('the false positive that must not qualify', () => {
    * to — which is what an afternoon of newsletter reading actually looks like,
    * and which fires `read-around` as well.
    *
-   * This is the fixture that keeps `[...INVESTMENT_GROUNDS]` honest: it must
+   * ~~This is the fixture that keeps `[...INVESTMENT_GROUNDS]` honest: it must
    * fail the day a fifth ground is added and nothing here fires it, because a
    * group whose members are never all exercised together is a group nobody is
-   * checking the sufficiency rule against.
+   * checking the sufficiency rule against.~~
+   *
+   * **It did exactly that on 2026-08-20, and the answer is not to widen this
+   * fixture.** `compared-options` is the fifth ground and it cannot fire on an
+   * afternoon with no intent ground at all, because the return it requires is
+   * the same fact `came-back` reads — so no fixture in this describe block can
+   * ever fire all five, and one that could would have stopped being the
+   * newsletter afternoon. The group is exercised together in `sufficiency`
+   * instead, by an axis-coverage test that names any ground nothing places, and
+   * the fifth member has its own describe block below.
    */
   const deeperAfternoon = [
     ...afternoon,
@@ -857,10 +1212,15 @@ describe('the false positive that must not qualify', () => {
     }),
   ]
 
-  it('is refused with every one of the four investment grounds firing', () => {
+  it('is refused with every one of the four investment grounds an intentless afternoon can fire', () => {
     const deeper = groundsFor(detected(SUBJECT, deeperAfternoon), deeperAfternoon)
 
-    expect(deeper.kinds).toEqual([...INVESTMENT_GROUNDS])
+    expect(deeper.kinds).toEqual([
+      'read-deeply',
+      'stayed-with-it',
+      'followed-across',
+      'read-around',
+    ])
     for (const kind of INTENT_GROUNDS) expect(deeper.kinds).not.toContain(kind)
     expect(deeper.sufficient).toBe(false)
   })
@@ -906,7 +1266,28 @@ describe('the false positive that must not qualify', () => {
       engagedMs: 45_000,
       // Twelve links in nine minutes, and one of them reopened.
       at: T0 + i * 45_000,
-      visits: i === 0 ? 2 : 1,
+      /**
+       * ── Two fields added 2026-08-20, and the afternoon is unchanged ──────
+       *
+       * The docstring above has always said *"a tab reopened, a link followed
+       * home"*, and `visits: 2` used to be the whole of that claim.
+       * `RETURN_ARRIVALS` means the fixture now has to say WHICH, so it says
+       * the one it always described: a reopened tab, which arrives
+       * `'no-referrer'` because a bookmark, a history entry and an omnibox
+       * completion all do. That is inside `RETURN_ARRIVALS`, so `came-back`
+       * still fires and this fixture still refuses on investment alone, which
+       * is what it exists to do.
+       *
+       * **Scroll is 0.3 and it is a claim about the afternoon, not a knob.**
+       * Forty-five seconds on a page is the top third of it — that IS what
+       * skimming a newsletter link looks like, and if it were half the page for
+       * forty-five seconds it would be a different afternoon. `compared-options`
+       * wants `COMPARISON_SCROLL_FRACTION`, so it does not fire here, and the
+       * test below pins the version of this afternoon that WOULD fire it rather
+       * than leaving the boundary implicit.
+       */
+      ...(i === 0 ? { visits: 2, returnArrivals: ['no-referrer' as const] } : {}),
+      scrollFraction: 0.3,
     }),
   )
 
@@ -966,6 +1347,58 @@ describe('the false positive that must not qualify', () => {
     expect(result.kinds).toContain('stayed-with-it')
     expect(result.sufficient).toBe(true)
   })
+
+  it('is refused for two reasons once compared-options exists, and both are pinned', () => {
+    /**
+     * ADR-0018 adds a ground that lowers the bar, and this is the afternoon
+     * `PRODUCT_PRINCIPLES.md` §13 says must survive it. Two separate things
+     * refuse it, and neither is allowed to be the only one on the record —
+     * §13's failure mode is precisely a fixture that passed for a reason
+     * nobody had checked.
+     */
+    const result = groundsFor(detected(SUBJECT, skimmed), skimmed)
+
+    expect(result.kinds).not.toContain('compared-options')
+    // One: nothing here was read past halfway.
+    expect(skimmed.every((p) => (p.scrollFraction ?? 0) < COMPARISON_SCROLL_FRACTION)).toBe(true)
+    // Two: the return is a reopened tab, which is not the arrival that
+    // OBSERVES a different origin in between.
+    expect(skimmed.some((p) => (p.returnArrivals ?? []).includes('cross-origin'))).toBe(false)
+    expect(result.sufficient).toBe(false)
+  })
+
+  it('the same afternoon read past halfway with a link home IS offered, and that is the cost', () => {
+    /**
+     * The accepted cost of `compared-options`, at the size it really is, pinned
+     * the way the shopping session and the newsletter-past-`SUSTAINED_MS` are
+     * pinned above rather than left to be met in use.
+     *
+     * Twelve links across three sites at forty-five seconds each — no search,
+     * no page held for a minute, nine minutes end to end — becomes an offer as
+     * soon as those pages were read past halfway and one of them was returned
+     * to from another site. Three news sites covering one story produce exactly
+     * this. Nothing in this file can tell that from three retailers, and
+     * telling them apart is what a model would be for.
+     */
+    const readProperly = skimmed.map((p, i) =>
+      page({
+        url: p.url,
+        title: p.title,
+        engagedMs: p.engagedMs,
+        at: p.at,
+        scrollFraction: 0.8,
+        ...(i === 0 ? returnedFromElsewhere() : {}),
+      }),
+    )
+
+    const result = groundsFor(detected(SUBJECT, readProperly), readProperly)
+
+    expect(result.kinds).toContain('compared-options')
+    expect(result.kinds).toContain('came-back')
+    expect(result.kinds).not.toContain('read-deeply')
+    expect(result.kinds).not.toContain('stayed-with-it')
+    expect(result.sufficient).toBe(true)
+  })
 })
 
 describe('depth on one site, which used to be worth nothing — 2026-08-17', () => {
@@ -1019,7 +1452,14 @@ describe('depth on one site, which used to be worth nothing — 2026-08-17', () 
     // tabs, and it is refused exactly as it was before this ground existed.
     const glanced = [
       page({ url: SEARCH, at: T0 }),
-      ...abstracts.map((abstract, i) => page({ url: abstract.url, title: abstract.title, engagedMs: 20_000, at: T0 + (i + 1) * MINUTE })),
+      ...abstracts.map((abstract, i) =>
+        page({
+          url: abstract.url,
+          title: abstract.title,
+          engagedMs: 20_000,
+          at: T0 + (i + 1) * MINUTE,
+        }),
+      ),
     ]
 
     const glancedResult = groundsFor(detected(SUBJECT, glanced), glanced)
@@ -1116,9 +1556,24 @@ describe('depth on one site, which used to be worth nothing — 2026-08-17', () 
      */
     const portal = [
       page({ url: 'https://www.google.com/search?q=chase+statement+download', at: T0 }),
-      page({ url: 'https://secure.chase.com/statements', title: 'Chase Statement', engagedMs: 70_000, at: T0 + MINUTE }),
-      page({ url: 'https://secure.chase.com/activity', title: 'Chase Statement Activity', engagedMs: 20_000, at: T0 + 2 * MINUTE }),
-      page({ url: 'https://secure.chase.com/download', title: 'Chase Statement Download', engagedMs: 20_000, at: T0 + 4 * MINUTE }),
+      page({
+        url: 'https://secure.chase.com/statements',
+        title: 'Chase Statement',
+        engagedMs: 70_000,
+        at: T0 + MINUTE,
+      }),
+      page({
+        url: 'https://secure.chase.com/activity',
+        title: 'Chase Statement Activity',
+        engagedMs: 20_000,
+        at: T0 + 2 * MINUTE,
+      }),
+      page({
+        url: 'https://secure.chase.com/download',
+        title: 'Chase Statement Download',
+        engagedMs: 20_000,
+        at: T0 + 4 * MINUTE,
+      }),
     ]
 
     const result = groundsFor(detected(['chase', 'statement'], portal), portal)
@@ -1137,16 +1592,274 @@ describe('depth on one site, which used to be worth nothing — 2026-08-17', () 
      * them read, and a tab reopened.
      */
     const noSearch = [
-      page({ url: 'https://news.example/digest', title: 'World Models Digest', engagedMs: 30_000, at: T0, visits: 2 }),
-      page({ url: 'https://blog.example/posts/world-models', title: 'Notes on World Models', engagedMs: 70_000, at: T0 + MINUTE }),
-      page({ url: 'https://blog.example/posts/world-models-2', title: 'More World Models', engagedMs: 30_000, at: T0 + 2 * MINUTE }),
-      page({ url: 'https://blog.example/posts/world-models-3', title: 'World Models Again', engagedMs: 30_000, at: T0 + 4 * MINUTE }),
+      page({
+        url: 'https://news.example/digest',
+        title: 'World Models Digest',
+        engagedMs: 30_000,
+        at: T0,
+        ...returnedFromElsewhere(),
+      }),
+      page({
+        url: 'https://blog.example/posts/world-models',
+        title: 'Notes on World Models',
+        engagedMs: 70_000,
+        at: T0 + MINUTE,
+      }),
+      page({
+        url: 'https://blog.example/posts/world-models-2',
+        title: 'More World Models',
+        engagedMs: 30_000,
+        at: T0 + 2 * MINUTE,
+      }),
+      page({
+        url: 'https://blog.example/posts/world-models-3',
+        title: 'World Models Again',
+        engagedMs: 30_000,
+        at: T0 + 4 * MINUTE,
+      }),
     ]
 
     const result = groundsFor(detected(SUBJECT, noSearch), noSearch)
 
     expect(result.kinds).toEqual(['came-back', 'read-deeply', 'read-around'])
     expect(result.sufficient).toBe(true)
+  })
+})
+
+describe('comparing options across sites, which used to be a false positive — 2026-08-20', () => {
+  /**
+   * ── The session this stands for, at the size it was ──────────────────────
+   *
+   * Twelve minutes on a Tuesday evening choosing a monitor. Ten product pages
+   * across three retailers — four on one, three on each of the others — each
+   * one held between thirty and fifty seconds and scrolled down past the
+   * picture to the specification table, and one page returned to from a
+   * different retailer's listing after the shortlist had narrowed to two.
+   *
+   * **Ten pages, three sites, twelve minutes, one return. That is what is
+   * written below**, and `PRODUCT_PRINCIPLES.md` §13 is the reason the sentence
+   * and the array are checked against each other: the last standing fixture was
+   * written at three pages while its docstring said twelve across three sites,
+   * a new investment ground then admitted the real afternoon and not the
+   * fixture, and the suite stayed green through the exact regression it exists
+   * to catch.
+   *
+   * ── Why twelve minutes and not the twenty the direction document says ────
+   *
+   * The direction document's flagship is *"ten monitors, twenty minutes"*, and
+   * at twenty minutes this afternoon spans `SUSTAINED_MS` and fires
+   * `stayed-with-it` — which, beside breadth, makes it sufficient with no new
+   * ground involved at all. A fixture for `compared-options` that would qualify
+   * without `compared-options` tests nothing. Twelve minutes is the same
+   * shopping trip at the length that needs the ground, and the last test in
+   * this block pins the twenty-minute version as already-admitted so that the
+   * difference between the two is on the record rather than in somebody's head.
+   *
+   * ── Not a shopping detector, and this is where that is checked ───────────
+   *
+   * ADR-0018 refuses a `shopping` detector and a `trip` detector by name.
+   * Nothing in `grounds.ts` mentions a retailer, a price or a product, and the
+   * flats fixture at the end of this block is the same arithmetic on the same
+   * shape with the domain changed and no code changed.
+   */
+  const RETAILERS = [
+    'https://www.retailer-a.example',
+    'https://shop-b.example',
+    'https://c-electronics.example',
+  ]
+
+  /** Four pages on the first retailer, three on each of the others. Ten. */
+  const SPREAD = [0, 0, 0, 0, 1, 1, 1, 2, 2, 2]
+
+  const monitors = SPREAD.map((retailer, i) =>
+    page({
+      url: `${RETAILERS[retailer]}/monitor-${i}`,
+      title: '27 inch 4K monitor',
+      // Thirty to fifty seconds each, and nothing held for a minute — reading a
+      // specification table is not reading an essay.
+      engagedMs: 30_000 + (i % 3) * 10_000,
+      // Twelve minutes end to end, which is under `SUSTAINED_MS`.
+      at: T0 + i * 80_000,
+      // Past the picture to the specifications.
+      scrollFraction: 0.7,
+      exitType: 'left-cached',
+      // The one they went back to, from a different retailer's listing.
+      ...(i === 2 ? returnedFromElsewhere() : {}),
+    }),
+  )
+
+  const result = groundsFor(detected(['monitor', 'inch'], monitors), monitors)
+
+  it('is the session its docstring describes, counted rather than asserted in prose', () => {
+    // §13's failure mode, made mechanical. The prose above says ten pages,
+    // three sites, twelve minutes and one return; this is the array agreeing.
+    expect(monitors).toHaveLength(10)
+    expect(new Set(monitors.map((p) => p.origin)).size).toBe(3)
+    expect(monitors[monitors.length - 1]!.at - monitors[0]!.at).toBe(12 * MINUTE)
+    expect(monitors.filter((p) => p.visits >= 2)).toHaveLength(1)
+  })
+
+  it('is offered', () => {
+    expect(result.sufficient).toBe(true)
+  })
+
+  it('rests on compared-options, and would not stand without it', () => {
+    // The two investment axes are breadth and the comparison, and the other two
+    // grounds are provably absent — nothing held for a minute, and twelve
+    // minutes is short of fifteen. So this fails the moment `compared-options`
+    // is taken back out, rather than passing on some other ground quietly
+    // picking up the slack.
+    expect(result.kinds).toContain('compared-options')
+    expect(result.kinds).toContain('came-back')
+    expect(result.kinds).not.toContain('read-deeply')
+    expect(result.kinds).not.toContain('stayed-with-it')
+    expect(result.kinds).not.toContain('searched-then-read')
+
+    // And the arithmetic, said out loud: without the comparison axis this is
+    // one investment axis and is refused, which is what it was until today.
+    const withoutComparison: readonly GroundKind[] = result.kinds.filter(
+      (kind) => kind !== 'compared-options',
+    )
+    const axes = INVESTMENT_AXES.filter((axis) =>
+      (axis as readonly GroundKind[]).some((kind) => withoutComparison.includes(kind)),
+    ).length
+    expect(axes).toBe(INVESTMENT_REQUIRED - 1)
+  })
+
+  it('says how many pages across how many sites, and names no site', () => {
+    // Counts, never page-authored text — the same rule the rest of the block
+    // follows. The number of SITES is the claim; which sites is not.
+    expect(result.sentences).toContain(
+      'You read 10 pages across 3 sites and went back to one of them.',
+    )
+    for (const sentence of result.sentences) expect(sentence).not.toContain('27 inch')
+  })
+
+  it('does not fire on the same trip conducted on one retailer', () => {
+    // `COMPARED_ORIGINS` is the breadth half. Ten pages of one shop is
+    // `read-around`, which already existed and which folds into breadth.
+    const oneShop = monitors.map((p) =>
+      page({
+        url: p.url.replace(/^https:\/\/[^/]+/, RETAILERS[0]!),
+        title: p.title,
+        engagedMs: p.engagedMs,
+        at: p.at,
+        scrollFraction: p.scrollFraction ?? 0,
+        ...(p.visits >= 2 ? returnedFromElsewhere() : {}),
+      }),
+    )
+
+    const oneShopResult = groundsFor(detected(['monitor', 'inch'], oneShop), oneShop)
+
+    expect(new Set(oneShop.map((p) => p.origin)).size).toBeLessThan(COMPARED_ORIGINS)
+    expect(oneShopResult.kinds).not.toContain('compared-options')
+    expect(oneShopResult.kinds).toContain('read-around')
+    expect(oneShopResult.sufficient).toBe(false)
+  })
+
+  it('does not fire when the pages were open but never read down', () => {
+    // `COMPARISON_SCROLL_FRACTION` is the other half, and it is what separates
+    // this from the skimmed newsletter afternoon two blocks up. Ten tabs opened
+    // across three shops and glanced at is not weighing anything.
+    const glanced = monitors.map((p) =>
+      page({
+        url: p.url,
+        title: p.title,
+        engagedMs: p.engagedMs,
+        at: p.at,
+        scrollFraction: COMPARISON_SCROLL_FRACTION - 0.01,
+        ...(p.visits >= 2 ? returnedFromElsewhere() : {}),
+      }),
+    )
+
+    const glancedResult = groundsFor(detected(['monitor', 'inch'], glanced), glanced)
+
+    expect(glancedResult.kinds).not.toContain('compared-options')
+    expect(glancedResult.sufficient).toBe(false)
+  })
+
+  it('does not fire when the return was a click home from the same shop', () => {
+    // The Adar/Teevan/Dumais 77%, arriving at the new ground rather than at
+    // `came-back`. A shortlist you come back to from another shop is the
+    // behaviour; a click back to a listing you never left is not.
+    const sameSite = monitors.map((p) =>
+      page({
+        url: p.url,
+        title: p.title,
+        engagedMs: p.engagedMs,
+        at: p.at,
+        scrollFraction: p.scrollFraction ?? 0,
+        ...(p.visits >= 2 ? { visits: 2, returnArrivals: ['same-origin' as const] } : {}),
+      }),
+    )
+
+    const sameSiteResult = groundsFor(detected(['monitor', 'inch'], sameSite), sameSite)
+
+    expect(sameSiteResult.kinds).not.toContain('compared-options')
+    expect(sameSiteResult.kinds).not.toContain('came-back')
+    expect(sameSiteResult.sufficient).toBe(false)
+  })
+
+  it('is the same arithmetic for flats, because the ground describes a behaviour', () => {
+    /**
+     * ADR-0018's refusal, executable. Monitors, hotels, insurance plans and
+     * apartments all produce this shape, and the only thing that changed
+     * between this fixture and the one above is the words.
+     */
+    const LETTINGS = [
+      'https://www.lettings-a.example',
+      'https://flats-b.example',
+      'https://c-property.example',
+    ]
+
+    const flats = SPREAD.map((site, i) =>
+      page({
+        url: `${LETTINGS[site]}/flat-${i}`,
+        title: 'Two bedroom flat to rent',
+        engagedMs: 30_000 + (i % 3) * 10_000,
+        at: T0 + i * 80_000,
+        scrollFraction: 0.7,
+        exitType: 'left-cached',
+        ...(i === 2 ? returnedFromElsewhere() : {}),
+      }),
+    )
+
+    const flatsResult = groundsFor(detected(['bedroom', 'flat', 'rent'], flats), flats)
+
+    expect(flatsResult.kinds).toEqual(result.kinds)
+    expect(flatsResult.sufficient).toBe(true)
+  })
+
+  it('was already admitted at the twenty minutes the direction document names', () => {
+    /**
+     * The honest boundary of the claim above. At twenty minutes this afternoon
+     * spans `SUSTAINED_MS`, and span plus breadth was two investment axes long
+     * before ADR-0018 — so the flagship example was NOT one of the afternoons
+     * this change admits. What the change admits is the same trip conducted in
+     * less than a quarter of an hour, which is most of them.
+     */
+    const twentyMinutes = monitors.map((p, i) =>
+      page({
+        url: p.url,
+        title: p.title,
+        engagedMs: p.engagedMs,
+        at: T0 + i * ((20 * MINUTE) / 9),
+        scrollFraction: p.scrollFraction ?? 0,
+        ...(p.visits >= 2 ? returnedFromElsewhere() : {}),
+      }),
+    )
+
+    const longer = groundsFor(detected(['monitor', 'inch'], twentyMinutes), twentyMinutes)
+
+    expect(longer.kinds).toContain('stayed-with-it')
+    // Two axes without the comparison: span, and breadth.
+    const withoutComparison: readonly GroundKind[] = longer.kinds.filter(
+      (kind) => kind !== 'compared-options',
+    )
+    const axes = INVESTMENT_AXES.filter((axis) =>
+      (axis as readonly GroundKind[]).some((kind) => withoutComparison.includes(kind)),
+    ).length
+    expect(axes).toBe(INVESTMENT_REQUIRED)
   })
 })
 
@@ -1158,7 +1871,7 @@ describe('what the person is shown', () => {
       title: 'World Models Survey',
       engagedMs: DEEP_READ_MS,
       at: T0 + MINUTE,
-      visits: 2,
+      ...returnedFromElsewhere(),
     }),
     page({ url: 'https://b.example/1', title: 'World Models Explained', at: T0 + 2 * MINUTE }),
     page({ url: 'https://c.example/1', title: 'Training World Models', at: T0 + 3 * MINUTE }),
