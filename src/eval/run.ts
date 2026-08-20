@@ -327,6 +327,24 @@ async function driveWork(
     },
   )
 
+  /**
+   * The worker loop's own boundary failure, which this array could not record.
+   *
+   * `failures` already carried the reading, the baseline and the handoff, and
+   * stopped there — so a shift whose every `worker-action` call failed printed
+   * `0 action(s) taken` under an empty FAILURES heading, and the worksheet read
+   * as a model that chose to do nothing. That is the most expensive kind of
+   * wrong number: it is plausible, and it scores.
+   *
+   * It does NOT return null the way the three above do. A failed shift still
+   * produced a run, a base hash and a status, and dropping all of it would
+   * replace one silence with another.
+   */
+  if (result.boundaryFailure) {
+    const b = result.boundaryFailure
+    failures.push(`worker (${b.boundary}): ${b.failure} — ${b.detail}`)
+  }
+
   const drafts = result.produced.filter(
     (p): p is Extract<OutcomeProposal, { kind: 'section-prose' }> => p.kind === 'section-prose',
   )
@@ -752,7 +770,13 @@ export function renderWorksheet(run: ScenarioRun): string {
       ? `on ${w.stoppedBy.join(', ')}${w.terminalReason === undefined ? '' : ` (${w.terminalReason})`}`
       : w.summary !== undefined
         ? 'because it said it was finished'
-        : 'with no stop rule — the plan ran out'
+        : // A failed run is the FOURTH no-rule ending, and it used to be told as
+          // the third: "the plan ran out" is a sentence about a run that worked,
+          // printed over one whose boundary never returned. The FAILURES block
+          // below now carries which boundary and what it said.
+          w.status === 'failed'
+          ? `on a boundary failure${w.terminalReason === undefined ? '' : ` (${w.terminalReason})`}`
+          : 'with no stop rule — the plan ran out'
     out.push(`  ended ${w.status} ${ending}`)
     if (w.summary !== undefined) out.push(`  said: ${w.summary}`)
     for (const question of w.questionsRaised) out.push(`  asked: ${question}`)
