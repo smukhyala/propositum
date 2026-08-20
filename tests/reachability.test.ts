@@ -152,13 +152,18 @@ describe('the safety machinery is reachable from the product', () => {
     // which returns nothing if nothing ever called `reports.create`.
     const callers = callersOf('reports.create', 'src/persistence/repositories/index.ts')
 
-    expect(callers, 'no code path writes a ShiftReport — see tests/reachability.test.ts').not.toEqual([])
+    expect(
+      callers,
+      'no code path writes a ShiftReport — see tests/reachability.test.ts',
+    ).not.toEqual([])
   })
 
   it('something calls runWorker, or Take over strands the session', () => {
     const callers = callersOf('runWorker', 'src/runtime/worker-loop.ts')
 
-    expect(callers, 'runWorker has no caller — a handed-over session never completes').not.toEqual([])
+    expect(callers, 'runWorker has no caller — a handed-over session never completes').not.toEqual(
+      [],
+    )
   })
 
   it('something returns the session to the person', () => {
@@ -293,9 +298,10 @@ describe('the safety machinery is reachable from the product', () => {
     // read three pages and answered a question had nowhere to say so.
     const callers = callersOf('outcomes.create', 'src/persistence/repositories/index.ts')
 
-    expect(callers, 'nothing writes a ShiftOutcome — a run can only produce a document').not.toEqual(
-      [],
-    )
+    expect(
+      callers,
+      'nothing writes a ShiftOutcome — a run can only produce a document',
+    ).not.toEqual([])
     expect(
       callers,
       'the outcome writers must be the only caller, so kind and reversibility have one author',
@@ -612,7 +618,9 @@ describe('the safety machinery is reachable from the product', () => {
 
     it('the ORM delete lives only in the repository', () => {
       const deleters = PRODUCTION.filter((f) =>
-        /actionEvidence\.delete(Many)?\(/.test(stripImports(stripComments(readFileSync(f, 'utf8')))),
+        /actionEvidence\.delete(Many)?\(/.test(
+          stripImports(stripComments(readFileSync(f, 'utf8'))),
+        ),
       ).map((f) => relative(repo, f))
 
       expect(
@@ -902,6 +910,145 @@ describe('the safety machinery is reachable from the product', () => {
     )
   })
 
+  it('a run holds the browser control, or the channel has no customer', () => {
+    /**
+     * Moved up out of *deferred, and asserted as deferred* when the run path
+     * started building one — which is that block working as intended.
+     *
+     * Both ends of the channel had existed for a wave: the five `/api/act/*`
+     * routes are live and `createBrowserControl` is the client. Nothing held the
+     * middle, so the app could hand out instructions nobody had written and the
+     * routes could have been deleted with every test still green — precisely the
+     * shape of the three defects at the top of this file.
+     *
+     * The construction is CONDITIONAL and must stay so: `WorkerDeps.browser` is
+     * optional because a drafting run that cannot propose a browser kind has no
+     * use for a debugger attachment, and handing every run one would be a
+     * capability granted by tidiness. So this asserts a caller exists, never that
+     * every run gets one.
+     */
+    expect(
+      callersOf('createBrowserControl(', 'src/runtime/browser-control.ts'),
+      'nothing builds a browser control — the five /api/act/* routes have no customer',
+    ).toContain('src/server/execute-run.ts')
+  })
+
+  it('a contract can actually grant a browser kind, or the control is never built', () => {
+    /**
+     * The half a caller-grep cannot see, and the reason this assertion exists
+     * beside the one above rather than being folded into it.
+     *
+     * `callersOf('createBrowserControl(')` goes green the moment any line
+     * mentions it, including one guarded by a condition nothing in production
+     * can satisfy. Until this change nothing could: `draftContract` granted
+     * `DOCUMENT_ACTION_KINDS`, derived by subtracting the browser set, so no
+     * contract this codebase could produce named a kind that needs a live page —
+     * and a conditional control would have been reachable in the grep and dead
+     * in the product. That is the same defect wearing the guard's own clothes.
+     *
+     * So the grant is asserted at the place that writes the column.
+     */
+    expect(
+      callersOf('grantableActionKinds', 'src/domain/handoff/policy.ts'),
+      'no contract writer decides what to grant — an unpinned shift permits nothing',
+    ).toContain('src/server/actions.ts')
+  })
+
+  it('the gate stops for a person, or ConfirmationRequest can never occur', () => {
+    /**
+     * The one that was worth watching, and the promotion is the point.
+     *
+     * A `ConfirmationRequest` is deterministic and no dial can switch it off —
+     * but a rule nothing raises is a rule that never fires, and it is invisible
+     * in a green suite exactly the way `registerContentScripts` was. Every
+     * consumer half had shipped: the screen, the two verdicts, the expiry sweep,
+     * the credited deadline, the continuation run. Nothing had ever written the
+     * row they all read.
+     *
+     * The producer is the run path, not the gate and not the loop:
+     * `authorize()` refuses `confirmation_required` and stays two-armed, the
+     * loop reports which intent it was refused on, and `execute-run` writes the
+     * question and parks the run. Asserted on the writer, because that is the
+     * end that was missing.
+     */
+    expect(
+      callersOf('confirmations.create', 'src/persistence/repositories/index.ts'),
+      'nothing raises a confirmation — the pause is a rule that never fires',
+    ).toContain('src/server/execute-run.ts')
+  })
+
+  it('the question is code-generated, or a model asks for its own permission', () => {
+    /**
+     * The pause is only worth anything if the sentence a person reads was not
+     * written by the thing asking. ADR-0010 §5: *"a model that could write the
+     * words asking for its own permission is a model that can argue for
+     * itself."*
+     *
+     * Two halves, and the second is the one a refactor loses. Without a caller
+     * the builder is decoration; without the builder reaching the COLUMN, the
+     * summary would fall back to whatever string was nearest — which on this
+     * path is `proposal.reason`, model prose, in a field CONTEXT.md declares
+     * code-generated.
+     */
+    expect(
+      callersOf('confirmationQuestion(', 'src/domain/execution/confirmation-question.ts'),
+      'nothing builds the question — the summary would have to come from somewhere else',
+    ).toContain('src/runtime/worker-loop.ts')
+
+    const executeRun = stripImports(
+      stripComments(readFileSync(join(repo, 'src/server/execute-run.ts'), 'utf8')),
+    )
+    expect(executeRun, 'the confirmation summary is not the code-generated question').toMatch(
+      /summary:\s*result\.awaiting\.question/,
+    )
+  })
+
+  it('something reports a lost tab, or two structural stop rules cannot fire', () => {
+    /**
+     * Moved up when the run path started reporting control loss.
+     *
+     * `control-lost` and `action-limit` are structural and deterministic and
+     * both were unraisable, for different reasons that this file's old comment
+     * had merged into one: `actionsTaken` had been supplied since the continuing
+     * loop landed, and `controlLost` never had a writer at all.
+     *
+     * What that cost was not silence. A run whose tab was closed kept proposing
+     * into a dead channel — authorised, dispatched, failed, recorded
+     * `unverified` — until three consecutive failures tripped `no-progress` and
+     * the person read *"I stopped because I was going in circles without
+     * changing anything"* about a run that stopped because they closed the tab.
+     */
+    expect(
+      callersOf('controlLost', 'src/domain/execution/stop-conditions.ts'),
+      'nothing reports control loss — a closed tab is reported as going in circles',
+    ).toContain('src/runtime/worker-loop.ts')
+  })
+
+  it('the extension is told which run it is driving, or Stop reaches nothing', () => {
+    /**
+     * ADR-0010 §7 is headed *"Three ways to stop it, and stopping never needs
+     * the app"*, and two of the three end in `postHalt(state.runId, reason)`.
+     *
+     * The extension reads that id off the command that opened the tab —
+     * `command.runId ?? params.runId ?? null` — and `/api/act/next` did not send
+     * one, so it was permanently `null`. `haltRequestSchema` requires a non-empty
+     * `runId`, so the route answered 403 before `runs.requestCancel` ran, and
+     * `postHalt` ends in a `.catch(() => {})` that never noticed. **The person
+     * pressed Stop, the chip said it had stopped, and the run carried on — and
+     * opened a fresh controlled tab on its next navigate.**
+     *
+     * It was unreachable while nothing drove a browser. It is not any more, so
+     * the envelope carries the id and this is the guard on it.
+     */
+    const next = stripImports(
+      stripComments(readFileSync(join(repo, 'src/app/api/act/next/route.ts'), 'utf8')),
+    )
+    expect(
+      next,
+      'the command envelope carries no runId — the extension cannot halt anything',
+    ).toMatch(/command:\s*\{[\s\S]*?\brunId\b/)
+  })
+
   it('the browser tools are reachable from the run path, or the six kinds cannot act', () => {
     /**
      * `ACTION_KINDS` gained six members in wave 2 and the loop threw on all of
@@ -916,7 +1063,14 @@ describe('the safety machinery is reachable from the product', () => {
      * browser kind in scope, and the panel in `src/ui/agreement.tsx` still tells
      * the truth because of it.
      */
-    for (const tool of ['observePage(', 'clickElement(', 'typeText(', 'pressKey(', 'navigateTo(', 'captureScreen(']) {
+    for (const tool of [
+      'observePage(',
+      'clickElement(',
+      'typeText(',
+      'pressKey(',
+      'navigateTo(',
+      'captureScreen(',
+    ]) {
       expect(
         callersOf(tool, 'src/policy/tools.ts'),
         `${tool} has no caller — the capability exists and nothing can carry it out`,
@@ -984,16 +1138,6 @@ describe('deferred, and asserted as deferred', () => {
     ).toEqual([])
   })
 
-  it('nothing reports a lost tab or an action limit, so two stop rules cannot fire', () => {
-    // `control-lost` and `action-limit` are structural and deterministic, and
-    // `evaluateStructuralStops` cannot raise either until a caller supplies
-    // `controlLost` / `actionsTaken` on RunProgress.
-    expect(
-      callersOf('controlLost', 'src/domain/execution/stop-conditions.ts'),
-      'something reports control loss now — move this into the section above',
-    ).toEqual([])
-  })
-
   /**
    * The computer-use tables, landed ahead of everything that uses them.
    *
@@ -1049,6 +1193,24 @@ describe('deferred, and asserted as deferred', () => {
      * `click-element`, which can press a page's own Send button, is not a
      * landing kind. Landing is about whose act put the effect into the world.
      *
+     * ── Strengthened when a run started driving the browser ──────────────
+     *
+     * This survived the wave that made three of its neighbours red, and it
+     * survived on a better reason than *not yet*. `classifyPausedRequest` in
+     * `extension/src/cdp.js` fails **every non-`GET` request, unconditionally,
+     * with no bypass anywhere in the file** — not after a confirmation, not for
+     * a confirmed intent, not at all. So while Propositum holds a tab, no
+     * request that changes something out there leaves it, and a landing kind
+     * would be a claim the transport cannot honour: a run marked `landed` for an
+     * effect the network layer aborted, and a person told *"This already
+     * happened, outside Propositum"* about something that did not.
+     *
+     * That is worth stating precisely, because it also names what a future
+     * landing kind actually costs. It is not a line in this set. It is a bypass
+     * in the extension's request handler, which is the one mechanism in ADR-0010
+     * that cannot be talked out of firing — and spending it needs its own ADR,
+     * the same way `Runtime.evaluate` does.
+     *
      * So `src/server/outcomes/external-effect.ts` drops everything it is handed,
      * by design, and the drop is the enforcement rather than a fallback. The day
      * someone adds a landing kind this goes RED — which is the point. A mutating
@@ -1061,42 +1223,14 @@ describe('deferred, and asserted as deferred', () => {
       policy,
     )
 
-    expect(declaration, 'LANDING_ACTION_KINDS is not declared the way this test reads it').not.toBeNull()
+    expect(
+      declaration,
+      'LANDING_ACTION_KINDS is not declared the way this test reads it',
+    ).not.toBeNull()
     expect(
       declaration?.[1]?.trim(),
       'a kind lands now — external-effect is reachable, so move this into the section above',
     ).toBe('')
-  })
-
-  it('the gate never stops for a person, so ConfirmationRequest cannot occur', () => {
-    // This is the one worth watching. A ConfirmationRequest is deterministic
-    // and no dial can switch it off — but a rule nothing raises is a rule that
-    // never fires, and it would be invisible in a green suite exactly the way
-    // `registerContentScripts` was.
-    expect(
-      callersOf('confirmations.create', repos),
-      'the gate raises confirmations now — move this into the section above',
-    ).toEqual([])
-  })
-
-  it('no worker holds the browser control, so the channel has no customer', () => {
-    /**
-     * The control channel is reachable from the extension's side and from
-     * nothing on the worker's side.
-     *
-     * Both ends of it exist: the routes are live and `createBrowserControl` is
-     * the client the worker would use. What is missing is the run path that
-     * builds one — which means the app can hand out instructions nobody has
-     * written, and the four `/api/act/*` routes could be deleted tomorrow with
-     * every test still green. That is precisely the shape of the three defects
-     * at the top of this file, so it is asserted rather than left implicit.
-     *
-     * It goes red the moment a run constructs a BrowserControl. Move it then.
-     */
-    expect(
-      callersOf('createBrowserControl(', 'src/runtime/browser-control.ts'),
-      'a run drives the browser now — move this into the section above',
-    ).toEqual([])
   })
 
   it('scroll lands on the ambient path and no ground consults it', () => {
@@ -1746,7 +1880,10 @@ describe('the extension can actually capture', () => {
     const end = worker.indexOf('ambient: true')
     expect(end, 'the ambient branch no longer answers with `ambient: true`').toBeGreaterThan(-1)
     const from = worker.lastIndexOf('if (!session) {', end)
-    expect(from, 'the no-session branch is gone — this guard has no branch to be about').toBeGreaterThan(-1)
+    expect(
+      from,
+      'the no-session branch is gone — this guard has no branch to be about',
+    ).toBeGreaterThan(-1)
     const branch = worker.slice(from, end)
 
     // Non-vacuous, both ways. It has to contain the call whose argument is the
@@ -1806,9 +1943,10 @@ describe('the extension can actually capture', () => {
     // permission is paid for and nothing fills the field.
     const worker = extensionSource('service-worker.js')
 
-    expect(worker, 'nothing looks a tab group up — the tabGroups permission buys nothing').toContain(
-      'chrome.tabGroups.get(',
-    )
+    expect(
+      worker,
+      'nothing looks a tab group up — the tabGroups permission buys nothing',
+    ).toContain('chrome.tabGroups.get(')
     expect(
       worker,
       'the group title never reaches the ambient buffer, so the app can only ever be told by a curl',

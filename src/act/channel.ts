@@ -281,7 +281,11 @@ export const controlFailureSchema = z.enum([
  * at the door rather than half-handled in the route.
  */
 export const reportRequestSchema = z.union([
-  z.object({ intentId: z.string().min(1), ok: z.literal(true), observation: pageObservationSchema }),
+  z.object({
+    intentId: z.string().min(1),
+    ok: z.literal(true),
+    observation: pageObservationSchema,
+  }),
   z.object({ intentId: z.string().min(1), ok: z.literal(true), capture: screenCaptureSchema }),
   z.object({
     intentId: z.string().min(1),
@@ -321,8 +325,37 @@ export const haltRequestSchema = z.object({
 })
 export type HaltRequest = z.infer<typeof haltRequestSchema>
 
-/** One instruction, as the extension receives it. */
+/**
+ * One instruction, as the extension receives it.
+ *
+ * ── Why the run id travels OUTBOUND, having been refused inbound ─────────
+ *
+ * `/api/act/next` argues at length that there is no run id in the REQUEST, on
+ * purpose: the extension drives one tab, does not know which run is talking to
+ * it, and giving a component that shares a process with every page in the
+ * browser one more thing worth stealing buys nothing. That argument is about
+ * what the extension has to KNOW to be answered, and it still holds.
+ *
+ * It does not settle what the extension needs to STOP. `POST /api/act/halt`
+ * takes a run id, and stopping is the thing that must work when everything else
+ * does not, so it cannot be looked up at the moment it is needed — the app is
+ * exactly what may be unreachable then. `service-worker.js` was written for
+ * this and reads `command.runId` when it opens the controlled tab, storing it
+ * beside `controlledTabId` for the life of the attachment.
+ *
+ * **This field did not exist, and the consequence was a Stop that stopped
+ * nothing.** `runId` resolved to `null`, `haltRequestSchema` requires a non-empty
+ * string, so the halt was refused 403 before `runs.requestCancel` — and the
+ * extension never noticed, because `postHalt` ends in a `.catch(() => {})`. The
+ * person pressed Stop, the chip reported success, the tab detached, and the run
+ * carried on and opened a fresh controlled tab on its next `navigate`. It cost
+ * nothing while no run drove a browser, which is exactly why it went unseen.
+ *
+ * It is an identifier and not a credential: the control token is what the
+ * dispatch door checks, and this only names which run a halt is about.
+ */
 export interface DispatchedCommand {
+  readonly runId: string
   readonly intentId: string
   readonly kind: DispatchableKind
   readonly params: Record<string, unknown>
@@ -405,11 +438,7 @@ export type ControlCaller =
   | { readonly from: 'extension'; readonly expectedOrigin: string }
 
 export type ControlRejection =
-  | 'bad-content-type'
-  | 'missing-custom-header'
-  | 'bad-origin'
-  | 'bad-token'
-  | 'malformed-envelope'
+  'bad-content-type' | 'missing-custom-header' | 'bad-origin' | 'bad-token' | 'malformed-envelope'
 
 export type ControlAdmission<T> =
   | { readonly ok: true; readonly body: T }
@@ -433,8 +462,7 @@ export interface ControlRequest {
  * which is damage without needing to read anything.
  */
 export type ControlBody<T> =
-  | { readonly kind: 'json'; readonly schema: z.ZodType<T> }
-  | { readonly kind: 'none' }
+  { readonly kind: 'json'; readonly schema: z.ZodType<T> } | { readonly kind: 'none' }
 
 export function admitControl<T>(
   request: ControlRequest,

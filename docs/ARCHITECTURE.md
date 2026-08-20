@@ -265,15 +265,38 @@ never kills its children and orphans are the default rather than the edge
 rows. One worker `AgentRun` and one reviewer `AgentRun` inside one `Shift`. Research is confined to
 `ApprovedSource`s by `allowlisted()` in `src/policy/fetcher.ts`.
 
-**Built and not yet reachable, asserted as such.** The browser-acting path from
-[ADR-0010](./adr/0010-acting-in-the-browser.md) has both ends: the five `/api/act/*` routes are live
-and `createBrowserControl` in `src/runtime/browser-control.ts` is the client a run would use. **No run
-constructs one.** `tests/reachability.test.ts`'s *deferred, and asserted as deferred* block pins
-`callersOf('createBrowserControl(')` to `[]`, and pins `LANDING_ACTION_KINDS` to empty, so no
-`external-effect` outcome can occur either. [`VISION.md`](./VISION.md) files computer use under
-**Now** and ADR-0010 decided it; the capability is decided and the channel is built, and the run path
-that holds the control is the piece still unwired. Saying so here is the point of the pin — a reader
-who checks the ADR and stops would conclude something stronger than the code supports.
+**Built, and reachable since 2026-08-20.** The browser-acting path from
+[ADR-0010](./adr/0010-acting-in-the-browser.md) had both ends and no middle: the five `/api/act/*`
+routes were live, `createBrowserControl` in `src/runtime/browser-control.ts` was the client, and no
+run constructed one. `src/server/execute-run.ts` now does, for a run whose ratified contract grants a
+kind that needs a live page under it and whose row holds a control token. The construction is
+**conditional and must stay so** — handing every drafting run a debugger attachment it never uses is
+a capability granted by tidiness, which is what `WorkerDeps.browser` being optional is for.
+
+A contract can grant one because `grantableActionKinds` now decides by the one fact that separates the
+two shifts: a shift that pins a document grants the document verbs, and a shift that does not grants
+the browser six. The second branch used to grant `[]` — a ratified agreement permitting nothing, which
+an accepted `WorkOffer` not expecting `document-changes` reached in production.
+
+**`ConfirmationRequest` can now occur**, which is the half of ADR-0010 that had never run. The gate
+refuses `confirmation_required` and stays two-armed; the loop reports which intent it was refused on;
+`execute-run.ts` writes a **code-generated** question — `src/domain/execution/confirmation-question.ts`,
+pure, no model prose — and parks the run `awaiting-confirmation`. **One pause per run**, because
+`creditedDeadlineFor` sums `(requestedAt, decidedAt)` pairs and overlapping pauses would credit the
+same wait twice.
+
+**`LANDING_ACTION_KINDS` is still empty and still pinned**, on a stronger reason than *not yet*:
+`classifyPausedRequest` in `extension/src/cdp.js` fails every non-`GET` request unconditionally, with
+no bypass for a confirmed action, so a landing kind would be a claim the transport cannot honour. No
+`external-effect` outcome can occur. The consequence, stated because it is surprising: **a confirmed
+click whose page posts still fails**, with `blocked-request`. Propositum can operate a page and cannot
+send from it.
+
+**Honest limit: every mutating browser action asks.** `RunContext.targetEvidence` has no supplier, so
+the classifier escalates every `click-element`, `type-text` and `press-key`. That is the cautious
+state by construction rather than by care, and the extraction that would quieten it is deliberately
+not wired — it is the mechanism that *removes* confirmations, and it belongs to the unit that owns the
+snapshot map.
 
 ---
 
@@ -300,7 +323,19 @@ screen joins through `changeId`. `findings.forRun` is pinned at zero callers in 
 
 **Honest limit: `unverified` is the routine value.** Under the "leave your desk, not the building"
 constraint a local worker stops when the Mac sleeps, so an effect that landed with no check after it
-is ordinary rather than exceptional.
+is ordinary rather than exceptional. A browser-driving run adds a second routine source of it: every
+channel failure is recorded `unverified`, and `not-reported` means the instruction reached a browser
+and may have run.
+
+**Honest limit: a paused run is not reviewed.** A run that stops for a confirmation records its
+outcomes and skips the reviewer; the continuation reviews its own. Since `ReviewFinding` cannot block
+a change, fail a run or grant anything, what is lost is advice on the outcomes that leg produced —
+recorded in ADR-0010's amendment rather than left to be discovered.
+
+**Newly verified rather than assumed: losing the browser is a stop.** `controlLost` reaches
+`evaluateStructuralStops`, so a closed tab ends the run as `control-lost` — *"I lost the tab I was
+working in."* Before this it kept proposing into a dead channel until three consecutive failures
+tripped `no-progress` and the person read that it had been going in circles.
 
 *What would have to exist first for this layer to be load-bearing:* a finding that can hold a change,
 which is a permission question and not a prompt question, and re-fetching so the reviewer can read

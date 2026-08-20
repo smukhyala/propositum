@@ -32,6 +32,16 @@
  * one more thing worth stealing. The runs worth looking at are the ones with a
  * worker currently blocked on a report, which the act store knows.
  *
+ * **The RESPONSE carries one, and that is not a reversal of the paragraph
+ * above.** It refuses a run id as an INPUT — the extension must not be able to
+ * choose which run it is answered about — and says nothing about what it needs
+ * in order to stop. `POST /api/act/halt` takes a run id, and ADR-0010 §7 says
+ * stopping must work with the app closed, so the id cannot be fetched at the
+ * moment it is wanted. It rides out with the command that opens the tab, which
+ * is what `service-worker.js` has always read it from. Until it was sent, every
+ * halt raised from the browser was refused by a schema before
+ * `runs.requestCancel` ran, in a request whose failure nothing checked.
+ *
  * **The cost, stated rather than discovered later: with two runs acting at once,
  * this route would hand run B's instruction to the extension attached to run A's
  * tab.** Today one run acts at a time, so it cannot happen; the moment two can,
@@ -114,6 +124,14 @@ export async function GET(request: Request) {
 
       return NextResponse.json({
         command: {
+          // Outbound only, and it is what makes Stop real. See the note on
+          // `DispatchedCommand`: the section above refuses a run id in the
+          // REQUEST and that still holds, but `POST /api/act/halt` takes one and
+          // stopping cannot depend on the app being reachable to look it up. The
+          // extension stores it beside `controlledTabId` when the tab is
+          // created; without it every halt from the browser was refused 403 by a
+          // schema, silently, and the run carried on.
+          runId,
           intentId: queued.intentId,
           kind: queued.kind as DispatchableKind,
           params: (queued.params ?? {}) as Record<string, unknown>,

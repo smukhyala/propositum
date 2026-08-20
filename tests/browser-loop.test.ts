@@ -122,7 +122,8 @@ function observed(n: number): PageObservation {
 }
 
 class FakeBrowser implements BrowserControl {
-  readonly dispatched: Array<{ intentId: string; kind: string; params: Record<string, unknown> }> = []
+  readonly dispatched: Array<{ intentId: string; kind: string; params: Record<string, unknown> }> =
+    []
   private readonly scripted: BrowserReport[]
 
   constructor(scripted: ReadonlyArray<BrowserReport>) {
@@ -139,7 +140,9 @@ class FakeBrowser implements BrowserControl {
 
     const next = this.scripted.shift()
     if (!next) {
-      throw new Error(`FakeBrowser: unscripted dispatch of "${input.kind}" (#${this.dispatched.length}).`)
+      throw new Error(
+        `FakeBrowser: unscripted dispatch of "${input.kind}" (#${this.dispatched.length}).`,
+      )
     }
     return next
   }
@@ -396,7 +399,11 @@ describe('a proposal cannot act on a page the run did not just see', () => {
     // There is no special case for "the first one". A run that has observed
     // nothing has no current snapshot, and every ref is stale against it.
     const d = deps(
-      [plan('click blind'), act({ kind: 'click-element', ref: 'r1', snapshotId: 'snap-1' }), done()],
+      [
+        plan('click blind'),
+        act({ kind: 'click-element', ref: 'r1', snapshotId: 'snap-1' }),
+        done(),
+      ],
       [],
     )
 
@@ -751,11 +758,9 @@ describe('a control failure lands in the ledger', () => {
   })
 
   it('refuses a browser kind when the run has no channel, rather than reporting success', async () => {
-    const d = deps(
-      [plan('look'), act({ kind: 'observe-page' }), done()],
-      [],
-      { browser: undefined },
-    )
+    const d = deps([plan('look'), act({ kind: 'observe-page' }), done()], [], {
+      browser: undefined,
+    })
 
     await runWorker(job(), d)
 
@@ -776,12 +781,7 @@ describe('a captured screen is attached, not merely announced', () => {
      * nothing again, and burn the action cap discovering it does not work.
      */
     const d = deps(
-      [
-        plan('look closer'),
-        act({ kind: 'observe-page' }),
-        act({ kind: 'capture-screen' }),
-        done(),
-      ],
+      [plan('look closer'), act({ kind: 'observe-page' }), act({ kind: 'capture-screen' }), done()],
       [
         { ok: true, observation: observed(1) },
         {
@@ -861,27 +861,28 @@ describe('a confirmation pause is not a run going in circles', () => {
     expect(d.recorded.intents[1]?.refusedRule).toBe('confirmation_required')
   })
 
-  it('does not halt on three consecutive pauses, under either loop rule', async () => {
+  it('stops at the first pause, and never under a loop rule', async () => {
     /**
-     * Three correct requests for permission, back to back, with nothing between
-     * them.
+     * A pause ends the run, and it ends it as a QUESTION rather than as a halt.
      *
-     * ── What the first version of this test missed ───────────────────────
+     * ── What this assertion used to be, and why it moved ─────────────────
      *
-     * It proposed the same three clicks and asserted three refusals, and got
-     * two. `PAUSING_RULES` was exempting a pause from `consecutiveRefusals`
-     * only, while every refusal still incremented `consecutiveNoProgress` — and
-     * both limits are 3. So the run halted on the same turn it always had, now
-     * under `no-progress`, and was reported as *"I stopped because I was going
-     * in circles without changing anything."*
+     * It used to propose three clicks back to back and assert that all three
+     * were refused with the run still not halted — the property being that a
+     * pause must never be reported as `no-progress` or `refusal-loop`. That
+     * property is why `PAUSING_RULES` exists, and it survives verbatim; what
+     * changed is where it is asserted, because a run can no longer reach a
+     * second pause.
      *
-     * The test was rewritten to route around it, by separating each ask with a
-     * navigate that reset the progress counter. That made the suite green over
-     * a defect: an exemption that moves a halt from one rule to another has
-     * exempted nothing, and the replacement label is worse — a person reading it
-     * about a run that asked them three questions concludes the machine was
-     * confused rather than waiting. A review caught it; the assertion is now the
-     * hard one, with nothing between the asks.
+     * ADR-0010 §5 says the run halts when the gate refuses for want of
+     * confirmation, and the mechanical reason is in `creditedDeadlineFor`:
+     * it sums `(requestedAt, decidedAt)` pairs, so two questions asked a minute
+     * apart and answered together would credit the same wait twice. The pause
+     * credit is only correct if pauses are serial, and one pause per run is
+     * what makes them serial.
+     *
+     * So the earlier version's stronger reading — *nothing between the asks* —
+     * is now structural rather than tested: there is no second ask.
      */
     const d = deps(
       [
@@ -898,13 +899,71 @@ describe('a confirmation pause is not a run going in circles', () => {
 
     const result = await runWorker(job(), d)
 
-    expect(result.refusals).toBe(3)
+    expect(result.refusals).toBe(1)
     expect(d.recorded.intents.filter((i) => !i.authorized).map((i) => i.refusedRule)).toEqual([
       'confirmation_required',
-      'confirmation_required',
-      'confirmation_required',
     ])
+
+    // The half that matters: no stop rule fired. A person whose run stopped to
+    // ask them something must not read "I kept needing things the agreement
+    // does not allow" or "I was going in circles".
     expect(result.stoppedBy).toEqual([])
+    expect(result.terminalReason).toBeUndefined()
+  })
+
+  it('reports which refused intent the question is about', async () => {
+    /**
+     * The refused `ActionIntent` is the join `ConfirmationRequest.intentId`
+     * needs, and it is the thing `confirmationIdFor` matches a continuation's
+     * proposal against. Returning the id rather than the proposal is what keeps
+     * the model out of it: the person is asked about a row the gate already
+     * refused, not about a description the worker supplied.
+     */
+    const d = deps(
+      [
+        plan('press it'),
+        act({ kind: 'observe-page' }),
+        act({ kind: 'click-element', ref: 'r1', snapshotId: 'snap-1' }),
+      ],
+      [{ ok: true, observation: observed(1) }],
+      blind,
+    )
+
+    const result = await runWorker(job(), d)
+
+    expect(result.awaiting?.intentId).toBe('intent-2')
+    expect(result.awaiting?.kind).toBe('click-element')
+  })
+
+  it('builds the question from the page the browser attested, not from the model', async () => {
+    // `observed(1)` is served from `https://orders.example.com/...`, which is
+    // what Chrome said. The worker's own `reason` is 'because', and it must not
+    // appear anywhere in what the person reads.
+    const d = deps(
+      [
+        plan('press it'),
+        act({ kind: 'observe-page' }),
+        act({ kind: 'click-element', ref: 'r1', snapshotId: 'snap-1' }),
+      ],
+      [{ ok: true, observation: observed(1) }],
+      blind,
+    )
+
+    const result = await runWorker(job(), d)
+
+    expect(result.awaiting?.question).toBe('Press something on orders.example.com')
+    expect(result.awaiting?.question).not.toContain('because')
+  })
+
+  it('produces no question at all when the run was never paused', async () => {
+    const d = deps(
+      [plan('just look'), act({ kind: 'observe-page' }), done()],
+      [{ ok: true, observation: observed(1) }],
+    )
+
+    const result = await runWorker(job(), d)
+
+    expect(result.awaiting).toBeUndefined()
   })
 
   it('still counts three ORDINARY refusals as a loop', async () => {
@@ -927,17 +986,23 @@ describe('a confirmation pause is not a run going in circles', () => {
     expect(result.stoppedBy).toContain('refusal-loop')
   })
 
-  it('still ends a run whose every proposal is a pause', async () => {
+  it('cannot loop on pauses at all, which is stronger than being bounded', async () => {
     /**
-     * The consequence of exempting a pause from both counters, bounded.
+     * What this replaces, and why the replacement is stronger rather than
+     * looser.
      *
-     * With neither loop rule counting a pause, a run that proposes an
-     * irreversible action every single turn has nothing ending it — refusals do
-     * not advance `actionsTaken`, so `action-limit` never fires either. In
-     * production that is thirty minutes of model calls; under an injected clock
-     * it is an infinite loop, which is how this would have been discovered.
+     * It used to assert that a run proposing an irreversible action every turn
+     * was ENDED BY THE TURN CAP, because with a pause exempt from both loop
+     * counters nothing else finished it — thirty minutes of model calls in
+     * production, and a genuinely infinite loop under an injected clock. The
+     * bound was the fix.
      *
-     * So the turn count is bounded by the same number, and the run ends.
+     * The bound is still there and still guards every other way of looping. It
+     * is no longer what ends this run: the first pause does, on turn two, so the
+     * failure that test was written for is now impossible rather than capped.
+     * The scenario is kept — forty-five proposals, all of them pauses — so that
+     * a change which reopened the loop would be caught here by the run not
+     * ending where it should.
      */
     const replies: ScriptedReply<unknown>[] = [plan('ask forever'), act({ kind: 'observe-page' })]
     for (let i = 0; i < MAX_ACTIONS_PER_RUN + 5; i += 1) {
@@ -948,17 +1013,79 @@ describe('a confirmation pause is not a run going in circles', () => {
 
     const result = await runWorker(job(), d)
 
-    expect(result.stoppedBy).toContain('action-limit')
-    // One authorized action all run — the observe. The cap that bit was the one
-    // on turns, not the one on permitted actions.
+    expect(result.stoppedBy).toEqual([])
+    expect(result.refusals).toBe(1)
+    // One authorized action all run — the observe.
     expect(result.actionsTaken).toBe(1)
-    expect(result.refusals).toBe(MAX_ACTIONS_PER_RUN - 1)
+    // ...and the model was asked exactly three times: the plan, the observe, and
+    // the one proposal that paused. Forty-two scripted replies went unused.
+    expect(result.awaiting?.intentId).toBe('intent-2')
+  })
+})
+
+/* ── 6a. losing the browser is a stop, not a string of failures ────────── */
+
+describe('losing the tab ends the run as control-lost', () => {
+  /**
+   * `control-lost` and its consumer sentence — *"I lost the tab I was working
+   * in."* — have existed in `STOP_RULES` since stop conditions were written, and
+   * `evaluateStructuralStops` has been unable to raise it because nothing set
+   * `RunProgress.controlLost`. `tests/reachability.test.ts` pinned that absence.
+   *
+   * The failure it leaves is not silence, which would at least be visible. The
+   * run keeps proposing into a channel that has no hands: each action is
+   * authorized, dispatched, fails, and is recorded `unverified`, until three
+   * consecutive failures trip `no-progress` and the person is told *"I stopped
+   * because I was going in circles without changing anything"* — about a run
+   * that was going in circles because they closed the tab.
+   */
+  it('stops on the first control-lost rather than circling', async () => {
+    const d = deps(
+      [
+        plan('look, then look again'),
+        act({ kind: 'observe-page' }),
+        act({ kind: 'observe-page' }),
+        act({ kind: 'observe-page' }),
+        done(),
+      ],
+      [
+        { ok: true, observation: observed(1) },
+        { ok: false, failure: 'control-lost', detail: 'the tab is gone' },
+      ],
+    )
+
+    const result = await runWorker(job(), d)
+
+    expect(result.stoppedBy).toEqual(['control-lost'])
+    // The failed action is still a recorded row. Losing the hands does not
+    // erase what was attempted.
+    expect(d.recorded.outcomes.at(-1)).toMatchObject({
+      result: 'failed',
+      scopeVerdict: 'unverified',
+    })
+  })
+
+  it('does not treat an ordinary channel failure as losing the browser', async () => {
+    // `not-delivered` says the instruction never left the app. The hands are
+    // still there, and a run that stopped over one would be quitting on a
+    // recoverable hiccup.
+    const d = deps(
+      [plan('look twice'), act({ kind: 'observe-page' }), act({ kind: 'observe-page' }), done()],
+      [
+        { ok: false, failure: 'not-delivered', detail: 'nothing took it' },
+        { ok: true, observation: observed(1) },
+      ],
+    )
+
+    const result = await runWorker(job(), d)
+
+    expect(result.stoppedBy).toEqual([])
   })
 })
 
 /* ── 6b. the person's yes actually lands ───────────────────────────────── */
 
-describe("a confirmed action is not asked about twice", () => {
+describe('a confirmed action is not asked about twice', () => {
   /**
    * The end-to-end bug this closes, in one sentence: `confirmRequest` records
    * the yes, the continuation run proposes the same action, and the gate refuses
@@ -1008,14 +1135,10 @@ describe("a confirmed action is not asked about twice", () => {
   it('does not let a yes about one control cover a different one', async () => {
     // The person was shown `r9`. A yes about that is not a yes about `r1`, and
     // the match is on the identifying params rather than on the kind alone.
-    const d = deps(
-      proposeClick(),
-      [{ ok: true, observation: observed(1) }],
-      {
-        elementEvidence: undefined,
-        history: readerWith([confirmed({ params: { ref: 'r9' } })]),
-      },
-    )
+    const d = deps(proposeClick(), [{ ok: true, observation: observed(1) }], {
+      elementEvidence: undefined,
+      history: readerWith([confirmed({ params: { ref: 'r9' } })]),
+    })
 
     await runWorker(job(), d)
 

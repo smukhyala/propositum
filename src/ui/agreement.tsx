@@ -117,7 +117,12 @@ import { Done, Refused } from './sprites'
 import { Quotation } from './reading'
 import { acceptContract } from '../server/actions'
 import type { ContractDrafted } from '../server/actions'
-import { ACTION_KINDS, compilePolicy, TIME_LIMIT_CHOICES } from '../domain/handoff/policy'
+import {
+  ACTION_KINDS,
+  CONFIRMABLE_ACTION_KINDS,
+  compilePolicy,
+  TIME_LIMIT_CHOICES,
+} from '../domain/handoff/policy'
 import type { ActionKind, AutonomyControls } from '../domain/handoff/policy'
 import type { CalendarTimeSuggestion } from '../server/calendar'
 
@@ -233,24 +238,28 @@ export const ACTION_LABEL: Readonly<Record<ActionKind, string>> = {
  * the same kind of promise, and they are not: one is a choice, the other is an
  * absence.
  *
- * ── This list becomes FALSE the moment a contract grants `click-element` ──
+ * ── The list stayed; the SENTENCE UNDER IT had to change ─────────────────
  *
- * Read this before granting a browser capability from any handoff path.
+ * This block used to end *"when a browser handoff ships, this panel must change
+ * with it"*, naming three sentences that would go false together. The browser
+ * handoff shipped: a shift with no document now grants the six browser verbs,
+ * and all three went false at once. They are corrected below rather than
+ * carried, and the corrections are conditional on what was actually granted,
+ * because a document shift is still a document shift and its version of each
+ * sentence was true and stays true.
  *
- * `ActionKind` now also holds the browser-driving verbs, and `click-element`
- * can press the page's own *Send*, *Buy* or *Delete* button. So *"Propositum
- * has no way to do them, and no setting on this page turns one on"* stops being
- * true for any contract that grants it. The claim survives today only because
- * `draftContract` grants `DOCUMENT_ACTION_KINDS`, which excludes every browser
- * verb — so no contract this code can currently produce makes the panel lie.
+ * What is still true unconditionally, and is the whole reason the list survives:
+ * **there is no code here that composes a message, places an order, publishes
+ * or deletes.** `tests/architecture.test.ts` asserts those functions do not
+ * exist. What stopped being true is the inference a reader drew from it — that
+ * the effects were therefore unreachable — because `click-element` presses the
+ * page's own Send button and the page decides what that means.
  *
- * When a browser handoff ships, this panel must change with it: the honest
- * version says what stands between a click and an order, which is the
- * confirmation pause, not an absence. Two other sentences in this component go
- * false at the same moment and are named here so they are found together —
- * *"Nothing lands in the document itself"* (a click lands immediately, with no
- * review step) and *"If a page it reads links somewhere else, it cannot follow
- * the link"* (`navigate` follows links within an approved source).
+ * So the honest version says what actually stands there, and it is not an
+ * absence: a confirmation pause, per action, raised by deterministic code, with
+ * no dial that turns it off. It is weaker, and saying so is the point of the
+ * rewrite. Anybody tempted to shorten these sentences back should read
+ * ADR-0010's first paragraph first.
  */
 const ABSENT: readonly string[] = [
   'Send an email or a message',
@@ -342,6 +351,22 @@ export function Agreement({ draft, defaults, sourceLabels, onBack, onHandedOver 
   const allowed = ACTION_KINDS.filter((kind) => policy.actionKindAllowlist.has(kind))
   const switchedOff = ACTION_KINDS.filter((kind) => !policy.actionKindAllowlist.has(kind))
 
+  /**
+   * Two facts about this agreement that three sentences below depend on.
+   *
+   * Derived from the COMPILED allowlist rather than from the draft's stored
+   * kinds, for the reason this whole panel is built on: flipping a dial has to
+   * move the words as well as the permission, and the only way that is
+   * guaranteed is by asking the function the gate asks. Under
+   * *"Research only — don't write"* `compilePolicy` removes every kind that can
+   * operate a page, so `mayOperate` goes false and the strong sentence comes
+   * back — correctly, because under that setting it is true again.
+   */
+  const mayOperate = ACTION_KINDS.some(
+    (kind) => CONFIRMABLE_ACTION_KINDS.has(kind) && policy.actionKindAllowlist.has(kind),
+  )
+  const mayFollowLinks = policy.actionKindAllowlist.has('navigate')
+
   function handOver(): void {
     setProblem(null)
     start(async () => {
@@ -420,15 +445,31 @@ export function Agreement({ draft, defaults, sourceLabels, onBack, onHandedOver 
           ))}
         </ul>
         <p className="ag-hint" style={{ marginTop: 0 }}>
-          These are the sources you approved and Propositum actually used this session. If a page it
-          reads links somewhere else, it cannot follow the link — it will tell you it didn&rsquo;t.
+          These are the sources you approved and Propositum actually used this session.{' '}
+          {mayFollowLinks ? (
+            <>
+              It can open other pages on these sites. If a link goes anywhere else, it cannot follow
+              it — it will tell you it didn&rsquo;t.
+            </>
+          ) : (
+            <>
+              If a page it reads links somewhere else, it cannot follow the link — it will tell you
+              it didn&rsquo;t.
+            </>
+          )}
         </p>
       </Section>
 
       <Section title="What I can change" index={3}>
         {/* A Shift that pins no document has to say so rather than name a place
-            that does not exist. The second sentence survives either way: nothing
-            lands anywhere until the person decides on it. */}
+            that does not exist.
+
+            The second sentence used to survive either way — "nothing lands
+            anywhere on its own" — and it stopped being true for a shift that can
+            operate a page. Pressing something on a live page is not a proposal
+            waiting for a decision; it happens as it is pressed. So the sentence
+            splits, and the version a person reads is decided by the compiled
+            allowlist rather than by which one reads better. */}
         <p className="ag-hint-tight">
           {draft.documentTitle === null ? (
             <>Nothing yet — this shift has no document under it. </>
@@ -437,8 +478,18 @@ export function Agreement({ draft, defaults, sourceLabels, onBack, onHandedOver 
               In <strong>{draft.documentTitle}</strong>, and nowhere else.{' '}
             </>
           )}
-          Nothing lands anywhere on its own — Propositum proposes and you decide on each one when
-          you get back.
+          {mayOperate ? (
+            <>
+              Anything Propositum writes is a proposal you decide on when you get back. Pressing and
+              typing are different: they happen on the page as they happen, so before anything it
+              might not be able to take back, Propositum stops and asks you about that one thing.
+            </>
+          ) : (
+            <>
+              Nothing lands anywhere on its own — Propositum proposes and you decide on each one
+              when you get back.
+            </>
+          )}
         </p>
 
         <h3 className="ag-group-head">What Propositum may do</h3>
@@ -477,7 +528,11 @@ export function Agreement({ draft, defaults, sourceLabels, onBack, onHandedOver 
         ) : null}
 
         <div className="ag-absent">
-          <h3 className="ag-group-head">What Propositum cannot do at all</h3>
+          <h3 className="ag-group-head">
+            {mayOperate
+              ? 'What Propositum has no way to do itself'
+              : 'What Propositum cannot do at all'}
+          </h3>
           <ul className="ag-perms">
             {ABSENT.map((thing) => (
               <li className="ag-perm" key={thing}>
@@ -488,10 +543,20 @@ export function Agreement({ draft, defaults, sourceLabels, onBack, onHandedOver 
               </li>
             ))}
           </ul>
-          <p className="ag-hint" style={{ marginTop: 0 }}>
-            These aren&rsquo;t switched off. Propositum has no way to do them, and no setting on this
-            page turns one on.
-          </p>
+          {mayOperate ? (
+            <p className="ag-hint" style={{ marginTop: 0 }}>
+              These aren&rsquo;t switched off, and there is nothing in Propositum that does any of
+              them. What it can do is press a button on a page — and a page&rsquo;s own button might
+              be one of these. So before it presses anything it can&rsquo;t be sure it could take
+              back, it stops and asks you about that one thing. That isn&rsquo;t a setting: nothing
+              on this page turns it off, and time running out never counts as a yes.
+            </p>
+          ) : (
+            <p className="ag-hint" style={{ marginTop: 0 }}>
+              These aren&rsquo;t switched off. Propositum has no way to do them, and no setting on
+              this page turns one on.
+            </p>
+          )}
         </div>
       </Section>
 
@@ -587,10 +652,7 @@ export function Agreement({ draft, defaults, sourceLabels, onBack, onHandedOver 
           />
         )}
 
-        <GuidanceEntry
-          field={guidanceField}
-          onAdd={(line) => setGuidance([...guidance, line])}
-        />
+        <GuidanceEntry field={guidanceField} onAdd={(line) => setGuidance([...guidance, line])} />
 
         {draft.quotedConstraints.length > 0 ? (
           <aside className="ag-aside">
