@@ -1778,6 +1778,68 @@ describe('comparing options across sites, which used to be a false positive — 
     expect(glancedResult.sufficient).toBe(false)
   })
 
+  it('does not fire when each page was glanced at rather than held', () => {
+    /**
+     * ── The session this stands for, at the size it was ────────────────────
+     *
+     * The same shopping trip, at the speed nobody was shopping: ten product
+     * pages across the same three retailers, in the same twelve minutes, each
+     * one scrolled past the picture and each one held for **nineteen seconds**
+     * — a second under `READ_AROUND_MS` — with the same single return from a
+     * different retailer's listing. Ten pages, three sites, twelve minutes, one
+     * return, nineteen seconds each, and the assertions below are the array
+     * agreeing rather than the docstring being believed (`PRODUCT_PRINCIPLES.md`
+     * §13).
+     *
+     * ── Why this needed its own test ───────────────────────────────────────
+     *
+     * `wasRead(page, READ_AROUND_MS)` is condition 2, and half of it is dead
+     * weight here: `heldOpenUnread` needs `scrollFraction === 0` and this
+     * ground already demands half a page, so the floor is the whole of what
+     * condition 2 contributes. Nothing held it. Measured: with that line
+     * deleted, the only tests in the repository that fail are this one and the
+     * structural count in `tests/reachability.test.ts` that landed with it — the
+     * two negatives above run at thirty to fifty seconds a page and clear the
+     * floor comfortably, so neither of them is about it — while three pages
+     * glanced at for a second each, across three origins and scrolled past
+     * halfway, start producing `compared-options`.
+     *
+     * That direction matters. `compared-options` LOWERS the bar: it is the
+     * ground that makes a twelve-minute afternoon sufficient. A floor missing
+     * from a bar-lowering ground is the false-positive class ADR-0008 names as
+     * the expensive failure — somebody asked to read and ratify a proposal
+     * about a burst of tabs they clicked through and closed.
+     */
+    const glimpsed = monitors.map((p) =>
+      page({
+        url: p.url,
+        title: p.title,
+        engagedMs: READ_AROUND_MS - 1_000,
+        at: p.at,
+        scrollFraction: p.scrollFraction ?? 0,
+        exitType: 'left-cached',
+        ...(p.visits >= 2 ? returnedFromElsewhere() : {}),
+      }),
+    )
+
+    expect(glimpsed).toHaveLength(10)
+    expect(new Set(glimpsed.map((p) => p.origin)).size).toBe(3)
+    expect(glimpsed[glimpsed.length - 1]!.at - glimpsed[0]!.at).toBe(12 * MINUTE)
+    expect(glimpsed.filter((p) => p.visits >= 2)).toHaveLength(1)
+    // Under the floor, and not by the veto: every page was scrolled, so
+    // `heldOpenUnread` refuses none of them and the dwell is doing the work.
+    expect(glimpsed.every((p) => p.engagedMs < READ_AROUND_MS)).toBe(true)
+    expect(glimpsed.every((p) => (p.scrollFraction ?? 0) >= COMPARISON_SCROLL_FRACTION)).toBe(true)
+
+    const glimpsedResult = groundsFor(detected(['monitor', 'inch'], glimpsed), glimpsed)
+
+    expect(glimpsedResult.kinds).not.toContain('compared-options')
+    // The same floor is condition 2 of `read-around`, so breadth goes with it
+    // and what is left is one return — which is not an offer.
+    expect(glimpsedResult.kinds).not.toContain('read-around')
+    expect(glimpsedResult.sufficient).toBe(false)
+  })
+
   it('does not fire when the return was a click home from the same shop', () => {
     // The Adar/Teevan/Dumais 77%, arriving at the new ground rather than at
     // `came-back`. A shortlist you come back to from another shop is the
