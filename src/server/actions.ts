@@ -36,6 +36,7 @@ import { readableCause } from './problem'
 import { confirmRequest, haltRun, rejectRequest } from './confirmations'
 import { ambientStore, captureStore } from './capture-store'
 import { countQuietly } from './offer-tally'
+import { whereYouLeftOffIn, whereYouLeftOffOn } from './work-so-far'
 import { describeWork, signatureOf } from './ambient-store'
 // ADR-0014. Three imports, none of which can decide anything: a nullable
 // suggestion, the one function that joins it to a drafted contract, and a
@@ -60,6 +61,7 @@ import { checkDrift, hashContent, materialise } from '../domain/document/changes
 import type { Decision } from '../domain/document/changeset'
 import { normalise } from '../domain/document/normalise'
 import { isDecidable } from '../domain/outcome/shift-outcome'
+import type { WorkSoFar } from '../domain/intention/work-so-far'
 import { DOCUMENT_ACTION_KINDS } from '../domain/handoff/policy'
 import type { ActionKind, AutonomyControls } from '../domain/handoff/policy'
 import type { ClaimInput } from '../persistence/repositories/index'
@@ -383,6 +385,25 @@ export interface CarriedProject {
   /** Words this subject and that project's name have in common. The reason,
    *  shown, so a wrong guess is arguable rather than mysterious. */
   readonly overlap: number
+  /**
+   * What has already happened under this project's Intention — `WorkSoFar`,
+   * folded, rendered as *Where you left off* beside the four counts above.
+   *
+   * ── Why it sits beside the counts rather than replacing them ─────────
+   *
+   * The counts answer *is this the right project* and are the reason the
+   * filing decision is arguable at a glance. This answers *what did I decide
+   * last time*, which is a different question and the one
+   * [ADR-0017](../../docs/adr/0017-continuing-an-intention.md) exists for:
+   * *"what carries forward is counted rather than said."* Deleting the counts
+   * would take the filing decision's own evidence off the screen it is made
+   * on.
+   *
+   * Null when the project has no Intention, which is every project created
+   * before ADR-0011 and every degraded acceptance since. The box is absent
+   * rather than empty.
+   */
+  readonly workSoFar: WorkSoFar | null
 }
 
 /** Every project as something `matchProject` can compare against. */
@@ -396,16 +417,27 @@ async function projectCandidates(): Promise<ProjectCandidate[]> {
   }))
 }
 
-/** The counts behind the carry-on box, for one project. */
+/**
+ * The counts behind the carry-on box, and what happened under it, for one
+ * project.
+ *
+ * The fold is loaded HERE rather than by the screen, so that the accept screen
+ * and the project screen read one derivation. Two screens each assembling
+ * *Where you left off* is the shape `front-door.ts` opens by refusing, and the
+ * failure would be worse than a wrong status word: the accept screen would show
+ * one account of the work while the pre-fill on the agreement was chosen against
+ * another.
+ */
 async function describeProject(
   project: { id: string; name: string },
   overlap: number,
 ): Promise<CarriedProject> {
   const { repos } = await appContext()
-  const [sittings, sources, documents] = await Promise.all([
+  const [sittings, sources, documents, leftOff] = await Promise.all([
     repos.sessions.forProject(project.id),
     repos.projects.approvedSources(project.id),
     repos.documents.forProject(project.id),
+    whereYouLeftOffIn(project.id, Date.now()),
   ])
 
   return {
@@ -415,6 +447,7 @@ async function describeProject(
     sources: sources.filter((source) => source.grantState === 'granted').length,
     documents: documents.length,
     overlap,
+    workSoFar: leftOff?.view ?? null,
   }
 }
 
@@ -2268,10 +2301,51 @@ export interface QuotedConstraint {
   readonly verbatim: boolean
 }
 
+/**
+ * Where the two pre-filled sentences came from, and when they were written.
+ *
+ * ── Why this is a discriminant and not a flag ────────────────────────────
+ *
+ * `tests/reachability.test.ts` asked for exactly this, by name, and said why:
+ * a grep proving the objective comes from the drafting call *"does NOT catch an
+ * Intention-sourced value arriving as an ADDITIONAL field that `Agreement` then
+ * prefers — the literals would still be present, this stays green, and the
+ * screen's paragraph becomes false. Closing that needs a provenance
+ * discriminant on `ContractDrafted`, which is a union with one arm and an
+ * unreachable branch until a second source exists."* A second source exists now,
+ * so the union has two arms and neither branch is unreachable.
+ *
+ * ── Why the second arm carries a date and the first does not ─────────────
+ *
+ * ADR-0011's answer to `CONTEXT.md`'s ruling on cross-session continuity is that
+ * nothing is inherited **quietly**, and it names *on screen wherever it is used*
+ * as the softest third of that answer — *"a sentence someone has to keep true in
+ * `.tsx` files"*. A sentence written in March, pre-filled in August with nothing
+ * saying when, is the exact failure the ruling described. So the arm that can
+ * carry old words carries the day they were written, and the agreement screen
+ * prints it.
+ *
+ * The `this-session` arm has no date because printing one there would be the
+ * same fact twice: the masthead above the fields already carries this sitting's
+ * window, and two timestamps that can disagree after a reload is worse than one.
+ */
+export type PrefilledWords =
+  | { readonly from: 'this-session' }
+  | {
+      /** The Intention this Project's work sits under — a sentence a person
+       *  wrote or ratified, which no model may write. */
+      readonly from: 'your-intention'
+      /** `Intention.updatedAt`: when a person last wrote or corrected them. */
+      readonly writtenAtEpochMs: number
+    }
+
 export interface ContractDrafted {
   readonly contractId: string
   readonly objective: string
   readonly definitionOfDone: string
+  /** Where `objective` and `definitionOfDone` above came from. The agreement
+   *  screen renders an account of this above the fields it accounts for. */
+  readonly words: PrefilledWords
   readonly suggestedTimeLimitMinutes: number
   readonly approvedSourceIds: readonly string[]
   readonly allowedActionKinds: readonly ActionKind[]
@@ -2476,6 +2550,64 @@ export async function draftContract(readingId: string): Promise<ActionResult<Con
 
     const minutes = Math.min(480, Math.max(5, Math.round(drafted.value.suggestedTimeLimitMinutes)))
 
+    /* ── the two sentences a person is asked to ratify ──────────────────── */
+
+    /**
+     * Whose words go in the fields, decided by what has already happened.
+     *
+     * ── This is the one thing `WorkSoFar` decides, and it decides no more ─
+     *
+     * ADR-0017 bounds where the fold may go in one line: *"It renders to a
+     * person and feeds the pre-filled `StatedIntent` on the agreement screen. It
+     * does not reach `compilePolicy`, it does not reach the gate, and it is not
+     * in a prompt."* This is that feeding, and the bound is visible from here:
+     * the fold is read AFTER the handoff call, so there is no statement above it
+     * that could carry it into a boundary; the scope, the dials, the action
+     * kinds and the time limit are all decided without it; and it chooses
+     * between two sets of human-ratified-or-ratifiable words rather than
+     * producing any.
+     *
+     * ── Why more than one sitting is the test ────────────────────────────
+     *
+     * Because that is what makes this a CONTINUATION rather than a start. On the
+     * first sitting the Intention was written minutes ago from the same offer
+     * this reading came out of, so the two sources say the same thing and the
+     * model's version is the one drafted against what actually happened this
+     * afternoon. On the second evening they are different sentences with
+     * different authors, and ADR-0011 §3 is explicit about which wins: *"where
+     * the drafting path previously started from a reading of the sitting, it may
+     * now start from a sentence written before the sitting existed."*
+     *
+     * ── The cost, which ADR-0011 predicted and this does not reduce ──────
+     *
+     * A stale Intention now pre-fills a contract. The person who wrote *"win the
+     * Northwind renewal"* in March gets that sentence in August and nothing here
+     * knows the renewal closed in May. The human ratification below is the only
+     * thing between it and a run, and it is carrying more weight than it was
+     * designed for. What this change adds is the one mitigation available
+     * without inference: the screen says WHEN those words were written, so a
+     * reader can notice the date is old. It does not make the sentence true, and
+     * ADR-0011's *Revisit when* names exactly this as the failure to watch for.
+     */
+    const leftOff = await whereYouLeftOffOn(session.intentionId, Date.now())
+    const pickingBackUp = leftOff !== null && leftOff.view.sittings > 1
+
+    const words: {
+      objective: string
+      definitionOfDone: string
+      provenance: PrefilledWords
+    } = pickingBackUp
+      ? {
+          objective: leftOff.objective,
+          definitionOfDone: leftOff.definitionOfDone,
+          provenance: { from: 'your-intention', writtenAtEpochMs: leftOff.wordsWrittenAtEpochMs },
+        }
+      : {
+          objective: drafted.value.objective,
+          definitionOfDone: drafted.value.definitionOfDone,
+          provenance: { from: 'this-session' },
+        }
+
     /* ── constraints, quoted and attributed ─────────────────────────────── */
 
     const quotedConstraints: QuotedConstraint[] = reading.claims
@@ -2569,8 +2701,8 @@ export async function draftContract(readingId: string): Promise<ActionResult<Con
        * for the next one.
        */
       intentionId: session.intentionId,
-      objective: drafted.value.objective,
-      definitionOfDone: drafted.value.definitionOfDone,
+      objective: words.objective,
+      definitionOfDone: words.definitionOfDone,
       guidance: [],
       approvedSourceIds,
       allowedActionKinds,
@@ -2612,8 +2744,9 @@ export async function draftContract(readingId: string): Promise<ActionResult<Con
       withCalendarSuggestion(
         {
           contractId: contract.id,
-          objective: drafted.value.objective,
-          definitionOfDone: drafted.value.definitionOfDone,
+          objective: words.objective,
+          definitionOfDone: words.definitionOfDone,
+          words: words.provenance,
           suggestedTimeLimitMinutes: minutes,
           approvedSourceIds,
           allowedActionKinds,

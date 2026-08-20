@@ -73,6 +73,9 @@ function draftWith(
     contractId: 'contract-1',
     objective: 'Work out which of the three quotes to accept',
     definitionOfDone: 'A note saying which, and why',
+    // The first sitting's arm: the model drafted these from what it read. The
+    // other arm is `tests/agreement-words.test.ts`'s subject.
+    words: { from: 'this-session' },
     suggestedTimeLimitMinutes: proposal,
     approvedSourceIds: ['source-1'],
     allowedActionKinds: [],

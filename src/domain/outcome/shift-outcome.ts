@@ -83,6 +83,44 @@ export const PRODUCIBLE: readonly string[] = [
   'something done out on a page — a form filled in, a reply sent — which cannot be taken back',
 ]
 
+/**
+ * The five kinds again, as a noun that can be counted inside a sentence.
+ *
+ * A third restatement of the same closed set, and it lives beside the other two
+ * for the reason `PRODUCIBLE` gives: same file, same order, one entry each, so a
+ * sixth kind arriving without a sentence is visible on sight rather than
+ * discovered by a screen rendering `message-draft` at somebody.
+ *
+ * ── Why it is not `src/ui/outcome.tsx`'s `KIND_LABEL` ────────────────────
+ *
+ * That one is a HEADING — title case, standing on its own above a card, one per
+ * outcome. These are mid-sentence and counted: *"Propositum has produced changes
+ * to your document and 2 answers."* The two cannot be one map without one of the
+ * readings being wrong, and the words are CONTEXT.md's in both — *"changes to
+ * your document" / "a list" / "an answer" / "a message, unsent" / "something
+ * that happened"* — so they say the same thing in the two grammars the interface
+ * actually needs.
+ *
+ * `many` interpolates the count; `one` never does, because *"1 answer"* where a
+ * person would say *"an answer"* is the tell that a screen is rendering a
+ * database.
+ */
+export const KIND_IN_A_SENTENCE: Readonly<
+  Record<ShiftOutcomeKind, { readonly one: string; readonly many: (n: number) => string }>
+> = {
+  'document-changes': {
+    one: 'changes to your document',
+    many: (n) => `${n} sets of changes to your document`,
+  },
+  collection: { one: 'a list', many: (n) => `${n} lists` },
+  answer: { one: 'an answer', many: (n) => `${n} answers` },
+  'message-draft': { one: 'a message, unsent', many: (n) => `${n} messages, unsent` },
+  'external-effect': {
+    one: 'something that happened',
+    many: (n) => `${n} things that happened`,
+  },
+}
+
 /** The stored kind, or `null` when it is outside the closed set. */
 export function asShiftOutcomeKind(raw: string): ShiftOutcomeKind | null {
   return (SHIFT_OUTCOME_KINDS as readonly string[]).includes(raw) ? (raw as ShiftOutcomeKind) : null
