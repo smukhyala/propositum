@@ -50,9 +50,24 @@
  *     all four now arrive from a browser rather than from a `curl`, and the
  *     sentence above is true of what is held for the first time.
  *
- *     **Nothing reads scroll, exit type or arrival to decide anything**, and
+ *     ~~**Nothing reads scroll, exit type or arrival to decide anything**, and
  *     `tests/reachability.test.ts` holds all three as deferred assertions so
- *     wiring one cannot happen quietly.
+ *     wiring one cannot happen quietly.~~
+ *
+ *     **Re-marked 2026-08-20
+ *     ([ADR-0018](../../docs/adr/0018-the-everyday-shapes.md)): both halves of
+ *     that sentence are false.** All three are read. `detect.ts` folds them onto
+ *     `ThreadPage` and `grounds.ts` decides on them — `heldOpenUnread` is
+ *     `scrollFraction === 0 && exitType === 'hidden'`, `cameFromElsewhere` reads
+ *     `returnArrivals`, and `comparedOptions` reads scroll and arrival together
+ *     — and those grounds move the offer bar in both directions, which is
+ *     exactly what the struck sentence promised they could not do. The three
+ *     deferred assertions went red in the same wave and were replaced by *the
+ *     three landed signals are consulted, and each by something named*. This
+ *     note is re-marked rather than edited because it made a promise about a
+ *     guard: somebody wiring a fourth consumer on the strength of it would have
+ *     got a green suite and no warning, which is the failure `detect.ts` was
+ *     corrected for on the day and this file was not.
  *
  *     *(Widened 2026-08-18, after review, and the correction is worth reading
  *     because the sentence above was ahead of what the guard did. Each deferral
@@ -60,17 +75,30 @@
  *     is consumed in four files outside it — including `src/server/front-door.ts`,
  *     which is the offer bar. A planted line there suppressing every strand
  *     whenever any observation was `'no-referrer'` passed all 1,496 tests and
- *     the typecheck. The guards now cover every file under `src` and `scripts`,
+ *     the typecheck. ~~The guards now cover every file under `src` and `scripts`,
  *     with an explicit allowance naming each transport site and its exact
- *     count.)*
+ *     count.~~ **Re-marked 2026-08-20: that mechanism is gone.** An exact-count
+ *     budget cannot survive the promotion above, and `unallowedMentions` in
+ *     `tests/reachability.test.ts` now has no caller at all. What replaced it is
+ *     the weaker positive claim that a named reader exists in a named file —
+ *     which cannot catch a mention appearing somewhere nobody thought to name,
+ *     and that loss is recorded in the test file rather than hidden. The
+ *     planted-line story above is worth keeping precisely because the guard that
+ *     would have caught it no longer runs.)*
  *
  *     The group title has exactly one reader
  *     and it is in this file: `describeWork` puts it in a sentence. It reaches
  *     no ground, no gate and no prompt, which is asserted rather than intended.
  *
- *     Three unread signals is a number worth writing down rather than letting
+ *     ~~Three unread signals is a number worth writing down rather than letting
  *     accumulate. The deferred block carries what would end it, and what should
- *     happen if that never arrives.
+ *     happen if that never arrives.~~ **Re-marked 2026-08-20: none of them is
+ *     unread, so there is no number to write down.** The expiry the `arrival`
+ *     deferral carried — judge all three against an offer-rate measurement, or
+ *     take the fields out rather than keep filling them — was discharged by
+ *     consuming them. What is left over from it is a different debt, and it is
+ *     ADR-0018's *Revisit when*: `npm run eval -- --report` prints
+ *     offers-per-observed-hour and still has nobody's real afternoons behind it.
  *
  *     One thing worth naming while the list is being rewritten: a group title
  *     is the first thing this buffer holds that the PERSON wrote, rather than a

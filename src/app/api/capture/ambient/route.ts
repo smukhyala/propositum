@@ -87,8 +87,17 @@ import { countQuietly } from '@/server/offer-tally'
  * this: **`left-unloaded` is four events** — navigated onward, closed the tab,
  * quit the browser, reloaded — and a content script cannot tell them apart
  * without `tabs`, `webNavigation` or `history`, all three of which this product
- * refuses. Nothing reads the field yet; `tests/reachability.test.ts` holds that
- * as a deferred assertion, and the reason is written there.
+ * refuses. ~~Nothing reads the field yet; `tests/reachability.test.ts` holds that
+ * as a deferred assertion, and the reason is written there.~~
+ *
+ * **Re-marked 2026-08-20 (ADR-0018): the field is read, and the deferred
+ * assertion no longer exists.** `heldOpenUnread` in
+ * `src/domain/detection/grounds.ts` is `scrollFraction === 0 && exitType ===
+ * 'hidden'` — a page nobody scrolled that was switched away from is not a read —
+ * and it vetoes pages inside `readAround`, `deepestRead` and `comparedOptions`,
+ * all three of which decide whether an offer is made. The pin that used to hold
+ * this went red in the wave that wired it and was deleted; `detect.ts` was
+ * re-marked on the day and this door was not.
  *
  * **`groupTitle` — the label a person typed for their own group of tabs.** It
  * is the one field on this route that is neither derived from a URL nor written

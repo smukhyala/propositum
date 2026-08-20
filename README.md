@@ -28,7 +28,7 @@ while you're gone. You come back to what changed, why, and what it couldn't deci
 | [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) | Ten layers, each marked with what is built and what would have to exist first. Five layers are partial or absent — ~~six~~, corrected 2026-08-19 and now counted by a test. |
 | [`docs/ROADMAP.md`](./docs/ROADMAP.md) | Four stages. Stage 1 points at MVP.md rather than restating it; stages 2–4 are direction, not commitment, and none is implemented. ~~Stage 1's one addition — the `Intention` table — is not implemented either as of 2026-08-16.~~ **Amended 2026-08-16, later the same day: the table, the two nullable foreign keys and the lifecycle word landed.** This cell was written in the doc wave and outlived it by hours — the fifth stale count in this table, and the one with the shortest half-life. |
 | [`docs/PRODUCT_PRINCIPLES.md`](./docs/PRODUCT_PRINCIPLES.md) | ~~Ten principles~~ **15 principles, corrected 2026-08-16**, each stating what it concretely forbids. PRODUCT_PRINCIPLES.md's own header carries the count and is the authority on it — and says the header had been wrong since principle 11 arrived. Fourth stale count in this table, in the document that tells the others to say the true thing. |
-| [`docs/research/`](./docs/research/) | ~4,900 lines answering the questions the architecture waited on. |
+| [`docs/research/`](./docs/research/) | The long answers to the questions the architecture waited on. ~~\~4,900 lines~~ **The number is deleted rather than corrected, 2026-08-20.** It was right on the day it was written, 2026-08-06, and was a little over half the truth by 2026-08-18 — `intent-signals.md` arrived and `intent-suggestion-quality.md` grew, and neither moved this cell. `tests/counts.test.ts` has no rule for the noun *lines*, so this is the one count in this table nothing checks, and the row two below says the ADR count went stale *"because nothing counted them. Something counts them now"* — true of that row and never true of this one. `wc -l docs/research/*.md` is the only version of this figure that stays true. |
 | [`docs/FOUNDING_BRIEF.md`](./docs/FOUNDING_BRIEF.md) | The originating brief, kept as history. |
 | [`docs/adr/`](./docs/adr/) | ~~Seven decisions~~ ~~eleven, corrected 2026-08-16~~ ~~15 decisions, corrected 2026-08-19~~ **18 decisions — three landed 2026-08-20 with the everyday-computing direction ([ADR-0018](./docs/adr/0018-the-everyday-shapes.md) is the newest)**, each with the option it rejected and why. The number went stale four ADRs ago, was corrected, and went stale again by four within three days — because nothing counted them. Something counts them now. |
 | Runtime | Next 16, TypeScript strict, Prisma + SQLite, Zod 4, Vitest. ~~336 tests.~~ ~~1,028 across 40 files, measured 2026-08-16.~~ ~~1,124 across 44 files, measured 2026-08-16 after the Intention slice.~~ **The number is gone, 2026-08-19.** It was stale by a factor of three, then stale within the day, then stale again — three corrections making the same argument, which this cell has finally taken: `npm test` prints it, nothing here can check it, so nothing here says it. `tests/counts.test.ts` fails if it comes back. |
@@ -47,8 +47,13 @@ this paragraph accounts for six of them — corrected 2026-08-16, twice in one d
 **The number is deleted rather than corrected again, 2026-08-20 — which is what the struck sentence
 already told the next reader to do.** It said *"Read `tests/reachability.test.ts`'s deferred, and
 asserted as deferred block rather than this sentence — it is the thing that is enforced, and this one
-is prose that has now gone stale three times."* Slice 1 would have made it four: five pins were
-promoted out of the block in one wave, and the honest move is to stop keeping the count in two places.
+is prose that has now gone stale three times."* Slice 1 would have made it four: ~~five pins were
+promoted out of the block in one wave~~ **struck 2026-08-20, later the same day — the fourth pin
+count this paragraph has had to withdraw, and this one was wrong when it was written rather than
+overtaken later.** No single wave promoted that many, the block had lost none of its pins yet on the
+day the sentence was typed, and the paragraph immediately below this one enumerates more than the
+sentence claimed. It is deleted rather than corrected, for the reason the sentence itself gives:
+the honest move is to stop keeping the count in two places.
 `tests/counts.test.ts` says the same in its own header — *"Deleting the number is always allowed and
 always passes, which is the outcome the README argues for in its own prose."*
 
@@ -64,8 +69,25 @@ rather than caution: the extension fails every non-`GET` request unconditionally
 would be a claim the channel cannot honour. [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) marks
 each of these against the layer it belongs to.
 
-**Not measured:** the harness produces H1 material and cannot yet produce H2 or H3, and both
-scenarios expect a stop — so the false-stop half of H3 has nothing to score against.
+~~**Not measured:** the harness produces H1 material and cannot yet produce H2 or H3, and both
+scenarios expect a stop — so the false-stop half of H3 has nothing to score against.~~
+**Struck 2026-08-20, by the harness that landed the same day.** Three claims in one sentence, and
+the corpus moved under all three. A run now goes reading → handoff → plan → the worker loop → a
+changeset, and `scripts/eval.ts` calls `scoreH3` on every driven run. The corpus is four scenarios,
+not two. `monitor-shortlist` and `lisbon-thread` seal `shouldRaise: false`, which is exactly the
+input `scoreH3`'s `false-stop` arm needs, and `tests/eval.test.ts` asserts that outcome against the
+real fixture. [`docs/EVALUATION.md`](./docs/EVALUATION.md) was corrected by the same workstream and
+this line was not — one claim in two places, one of which nothing checks, which is the failure
+`tests/counts.test.ts`'s own header is about.
+
+**What is still not measured, said narrowly rather than rounded back up.** No hypothesis has a
+number: `eval-scores.json` is still the blank worksheet and the H1 component scores are typed by a
+person after a run, because a model judge shares the generator's blind spots. A run cannot produce
+an H2 *rate* — a rate needs verdicts, a verdict is what a person did to real work, and a fixture
+accepts nothing; `renderH2FromRuns` reports the denominator and says the numerator is missing, and
+the rate is read off the database by `npm run eval -- --report` and nowhere else. `budget-exhausted`
+is unreachable because the drive freezes the clock, and ADR-0007's `information-missing` class still
+has no scenario.
 
 Work is tracked on the [wayfinder map](https://github.com/smukhyala/propositum/issues/1).
 
@@ -138,11 +160,20 @@ npm run verify:model  # offline SDK checks, plus a live round-trip if a key is p
 ```
 CONTEXT.md              the ubiquitous language — read this first
 docs/                   MVP, vision, principles, research, ADRs
-prisma/                 SQLite schema (minimal by design until the ledger model lands)
+prisma/                 the SQLite schema, including the append-only ledger tables
 scripts/                verification utilities
 src/app/                Next.js routes
 tests/                  offline tests, no credentials required
 ```
+
+~~`prisma/  SQLite schema (minimal by design until the ledger model lands)`~~ **Re-marked
+2026-08-20.** The ledger model landed and is now the largest thing in the schema:
+`ObservationEvent`, `ActionIntent`, `ActionOutcome` and `ModelCallRecord` are all in
+`prisma/schema.prisma`, and `src/persistence/ledger-writer.ts` is its single writer. The line was
+written on 2026-08-06 against a schema that held one model, and it outlived that by a fortnight
+while the status paragraph at the top of this file said the ledger was wired. Struck out here
+rather than in the block above, because strikethrough does not render inside a fence — and a
+description hidden in a code block is not a count, so nothing here could have caught it.
 
 ---
 

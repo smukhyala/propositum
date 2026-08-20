@@ -440,13 +440,30 @@ describe('every failure degrades to saying nothing', () => {
 describe('with no calendar connected, the drafted contract is unchanged', () => {
   /**
    * The exact shape `draftContract` returns today, as it returned it before
-   * ADR-0014. If this literal ever needs editing to keep the test green,
-   * something below it has started adding a key.
+   * ADR-0014. ~~If this literal ever needs editing to keep the test green,
+   * something below it has started adding a key.~~
+   *
+   * **Re-marked 2026-08-20: it never needed editing, and a key was added
+   * anyway.** ADR-0017 put `words` fourth on `ContractDrafted`, and this mirror
+   * went on describing an eight-key object that nothing returns. Nothing caught
+   * it because the promise the struck sentence made is not one this literal can
+   * keep: it carries no type annotation, `withCalendarSuggestion` is generic
+   * over `T extends object`, and the assertions below are about that function's
+   * behaviour rather than about the payload — so they stayed green against a
+   * shape no caller produces. `tests/agreement-words.test.ts` writes
+   * `const draft: ContractDrafted = {`, which is the version of this that a
+   * typecheck can hold; adding the annotation here is a change to a test file
+   * this correction is not making. Until somebody does, this literal is
+   * maintained by hand. `words` is placed fourth to match `ContractDrafted`,
+   * and that placement is documentation and nothing more — both key-order
+   * assertions below compare this object to itself, so neither can notice the
+   * order drifting from the one `draftContract` actually returns.
    */
   const drafted = {
     contractId: 'ctr_1',
     objective: 'Compare the partner tiers',
     definitionOfDone: 'A one-page summary of the three tiers',
+    words: { from: 'this-session' },
     suggestedTimeLimitMinutes: 60,
     approvedSourceIds: ['src_1', 'src_2'],
     allowedActionKinds: ['read-approved-source', 'read-document', 'draft-section'],
