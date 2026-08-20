@@ -14,11 +14,13 @@
 import { describe, it, expect } from 'vitest'
 import {
   ACTION_KINDS,
+  DOCUMENT_ACTION_KINDS,
   MAX_ACTIONS_PER_RUN,
   MAX_MUTATING_ACTIONS_PER_RUN,
   MAX_PLAN_STEPS,
   MUTATING_ACTION_KINDS,
   compilePolicy,
+  grantableActionKinds,
 } from '../src/domain/handoff/policy'
 import type { ActionKind, AutonomyControls, ContractScope } from '../src/domain/handoff/policy'
 import { authorize } from '../src/policy/gate'
@@ -157,9 +159,14 @@ describe('deny by default', () => {
   })
 
   it('refuses an action kind the contract did not grant', () => {
-    const r = gate({ kind: 'draft-section', params: { documentId: 'doc-1' } }, {}, {}, {
-      allowedActionKinds: ['read-approved-source'],
-    })
+    const r = gate(
+      { kind: 'draft-section', params: { documentId: 'doc-1' } },
+      {},
+      {},
+      {
+        allowedActionKinds: ['read-approved-source'],
+      },
+    )
     expect(r).toEqual({ authorized: false, rule: 'action_kind_not_allowed' })
   })
 
@@ -196,7 +203,10 @@ describe('Output is a real permission, not a display mode', () => {
   })
 
   it('draft-changes permits it', () => {
-    const r = gate({ kind: 'draft-section', params: { documentId: 'doc-1' } }, { output: 'draft-changes' })
+    const r = gate(
+      { kind: 'draft-section', params: { documentId: 'doc-1' } },
+      { output: 'draft-changes' },
+    )
     expect(r.authorized).toBe(true)
   })
 })
@@ -280,9 +290,9 @@ describe('the browser capabilities', () => {
     // The difference between clicking `Cancel order` and clicking whatever
     // re-rendered into its place.
     for (const kind of ['click-element', 'type-text', 'press-key'] as const) {
-      expect(gate({ ...valid(kind), params: { ...VALID_PARAMS[kind], snapshotId: 'snap-0' } })).toEqual(
-        { authorized: false, rule: 'stale_snapshot' },
-      )
+      expect(
+        gate({ ...valid(kind), params: { ...VALID_PARAMS[kind], snapshotId: 'snap-0' } }),
+      ).toEqual({ authorized: false, rule: 'stale_snapshot' })
     }
   })
 
@@ -308,9 +318,9 @@ describe('the browser capabilities', () => {
       authorized: false,
       rule: 'element_ref_missing',
     })
-    expect(gate({ ...valid('type-text'), params: { snapshotId: 'snap-1', inputText: 'x' } })).toEqual(
-      { authorized: false, rule: 'element_ref_missing' },
-    )
+    expect(
+      gate({ ...valid('type-text'), params: { snapshotId: 'snap-1', inputText: 'x' } }),
+    ).toEqual({ authorized: false, rule: 'element_ref_missing' })
   })
 
   it('refuses a key outside the closed set, because the grammar does not enforce unions', () => {
@@ -440,9 +450,7 @@ describe('a path cannot escape the origin it is joined to', () => {
     // If the parser ever stopped stripping these, the case above would be
     // guarding against nothing and would still be green. This asserts the
     // hazard is real rather than remembered.
-    expect(new URL('/\t/evil.example', 'https://good.example').origin).toBe(
-      'https://evil.example',
-    )
+    expect(new URL('/\t/evil.example', 'https://good.example').origin).toBe('https://evil.example')
   })
 
   it('takes the origin from an approved source by id, never from the proposal', () => {
@@ -475,9 +483,9 @@ describe('the document capability exists iff a base is pinned', () => {
     // Capability before payload: with no base there is no document capability
     // at all, so that is the honest reason even when the proposal also forgot
     // to name a document.
-    expect(gate({ kind: 'read-document', params: {} }, {}, {}, { baseVersionId: undefined })).toEqual(
-      { authorized: false, rule: 'no_document_pinned' },
-    )
+    expect(
+      gate({ kind: 'read-document', params: {} }, {}, {}, { baseVersionId: undefined }),
+    ).toEqual({ authorized: false, rule: 'no_document_pinned' })
   })
 
   it('leaves every other kind untouched by the pin', () => {
@@ -499,9 +507,9 @@ describe('the two caps', () => {
   })
 
   it('permits the action that lands exactly on the cap minus one', () => {
-    expect(gate(valid('observe-page'), {}, { actionsTaken: MAX_ACTIONS_PER_RUN - 1 }).authorized).toBe(
-      true,
-    )
+    expect(
+      gate(valid('observe-page'), {}, { actionsTaken: MAX_ACTIONS_PER_RUN - 1 }).authorized,
+    ).toBe(true)
   })
 
   it('refuses only the mutating kinds once the mutating cap is reached', () => {
@@ -523,7 +531,12 @@ describe('the two caps', () => {
   })
 
   it('treats navigating and reading as non-mutating, because reaching the world is not changing it', () => {
-    for (const kind of ['navigate', 'read-approved-source', 'observe-page', 'capture-screen'] as const) {
+    for (const kind of [
+      'navigate',
+      'read-approved-source',
+      'observe-page',
+      'capture-screen',
+    ] as const) {
       expect(MUTATING_ACTION_KINDS.has(kind)).toBe(false)
     }
   })
@@ -568,11 +581,12 @@ describe('the Progress dial, redefined as one change per step', () => {
   })
 
   it('compiles to a number rather than to prompt wording', () => {
-    expect(compilePolicy(scope, { ...controls, progress: 'current-step-only' }).maxMutatingActions)
-      .toBe(1)
-    expect(compilePolicy(scope, { ...controls, progress: 'remaining-plan' }).maxMutatingActions).toBe(
-      MAX_MUTATING_ACTIONS_PER_RUN,
-    )
+    expect(
+      compilePolicy(scope, { ...controls, progress: 'current-step-only' }).maxMutatingActions,
+    ).toBe(1)
+    expect(
+      compilePolicy(scope, { ...controls, progress: 'remaining-plan' }).maxMutatingActions,
+    ).toBe(MAX_MUTATING_ACTIONS_PER_RUN)
   })
 
   it('still lets a run READ freely under current-step-only', () => {
@@ -582,7 +596,8 @@ describe('the Progress dial, redefined as one change per step', () => {
     for (const kind of ACTION_KINDS) {
       if (MUTATING_ACTION_KINDS.has(kind)) continue
       expect(
-        gate(valid(kind), { progress: 'current-step-only' }, { mutatingActionsTaken: 5 }).authorized,
+        gate(valid(kind), { progress: 'current-step-only' }, { mutatingActionsTaken: 5 })
+          .authorized,
         `${kind} was refused`,
       ).toBe(true)
     }
@@ -649,12 +664,20 @@ describe('confirmation is a refusal, and it is the last one', () => {
     // approve refusals is worse off than one who was never asked, because we
     // took a real safeguard and spent it on noise.
     const earlier: Array<[string, ReturnType<typeof gate>]> = [
-      ['budget', gate(valid('click-element'), {}, { targetEvidence: buyButton, nowEpochMs: 10_001 })],
+      [
+        'budget',
+        gate(valid('click-element'), {}, { targetEvidence: buyButton, nowEpochMs: 10_001 }),
+      ],
       [
         'allowlist',
-        gate(valid('click-element'), {}, { targetEvidence: buyButton }, {
-          allowedActionKinds: ['read-document'],
-        }),
+        gate(
+          valid('click-element'),
+          {},
+          { targetEvidence: buyButton },
+          {
+            allowedActionKinds: ['read-document'],
+          },
+        ),
       ],
       [
         'action limit',
@@ -682,13 +705,21 @@ describe('confirmation is a refusal, and it is the last one', () => {
       ],
       [
         'stale snapshot',
-        gate(valid('click-element'), {}, { targetEvidence: buyButton, currentSnapshotId: 'snap-0' }),
+        gate(
+          valid('click-element'),
+          {},
+          { targetEvidence: buyButton, currentSnapshotId: 'snap-0' },
+        ),
       ],
       [
         'missing ref',
-        gate({ ...valid('click-element'), params: { snapshotId: 'snap-1' } }, {}, {
-          targetEvidence: buyButton,
-        }),
+        gate(
+          { ...valid('click-element'), params: { snapshotId: 'snap-1' } },
+          {},
+          {
+            targetEvidence: buyButton,
+          },
+        ),
       ],
     ]
 
@@ -757,7 +788,13 @@ describe('confirmation is a refusal, and it is the last one', () => {
       formHasSensitiveField: true,
     }
 
-    for (const kind of ['read-approved-source', 'read-document', 'observe-page', 'capture-screen', 'navigate'] as const) {
+    for (const kind of [
+      'read-approved-source',
+      'read-document',
+      'observe-page',
+      'capture-screen',
+      'navigate',
+    ] as const) {
       expect(gate(valid(kind), {}, { targetEvidence: hostile }).authorized, kind).toBe(true)
     }
   })
@@ -792,17 +829,26 @@ describe('check order, pair by pair', () => {
     },
     {
       name: 'the allowlist beats the action cap',
-      result: gate(valid('click-element'), {}, { actionsTaken: 999 }, {
-        allowedActionKinds: ['read-document'],
-      }),
+      result: gate(
+        valid('click-element'),
+        {},
+        { actionsTaken: 999 },
+        {
+          allowedActionKinds: ['read-document'],
+        },
+      ),
       wins: 'action_kind_not_allowed',
     },
     {
       name: 'the action cap beats the mutating cap',
-      result: gate(valid('click-element'), { progress: 'current-step-only' }, {
-        actionsTaken: 999,
-        mutatingActionsTaken: 999,
-      }),
+      result: gate(
+        valid('click-element'),
+        { progress: 'current-step-only' },
+        {
+          actionsTaken: 999,
+          mutatingActionsTaken: 999,
+        },
+      ),
       wins: 'action_limit_exceeded',
     },
     {
@@ -817,7 +863,11 @@ describe('check order, pair by pair', () => {
     {
       name: 'off-plan beats a stale snapshot',
       result: gate(
-        { ...valid('click-element'), stepOrdinal: undefined, params: { snapshotId: 'snap-0', ref: 'e1' } },
+        {
+          ...valid('click-element'),
+          stepOrdinal: undefined,
+          params: { snapshotId: 'snap-0', ref: 'e1' },
+        },
         { initiative: 'follow-closely' },
       ),
       wins: 'off_plan',
@@ -843,9 +893,13 @@ describe('check order, pair by pair', () => {
     },
     {
       name: 'a sensitive form beats a required confirmation',
-      result: gate(valid('type-text'), {}, {
-        targetEvidence: { ...harmless, isSubmitControl: true, formHasSensitiveField: true },
-      }),
+      result: gate(
+        valid('type-text'),
+        {},
+        {
+          targetEvidence: { ...harmless, isSubmitControl: true, formHasSensitiveField: true },
+        },
+      ),
       wins: 'password_field',
     },
   ]
@@ -905,7 +959,10 @@ describe('exhaustive control matrix', () => {
   it('never authorizes an unapproved source under any combination', () => {
     for (const dials of DIALS) {
       expect(
-        gate({ kind: 'read-approved-source', params: { approvedSourceId: 'src-elsewhere' } }, dials),
+        gate(
+          { kind: 'read-approved-source', params: { approvedSourceId: 'src-elsewhere' } },
+          dials,
+        ),
       ).toEqual({ authorized: false, rule: 'source_not_approved' })
 
       expect(
@@ -978,16 +1035,26 @@ describe('every refusal rule is reachable', () => {
     },
     {
       rule: 'step_out_of_scope',
-      result: gate(valid('click-element'), { progress: 'current-step-only' }, {
-        mutatingActionsTaken: 1,
-      }),
+      result: gate(
+        valid('click-element'),
+        { progress: 'current-step-only' },
+        {
+          mutatingActionsTaken: 1,
+        },
+      ),
     },
-    { rule: 'plan_limit_exceeded', result: gate(valid('observe-page'), {}, { planLength: MAX_PLAN_STEPS + 1 }) },
+    {
+      rule: 'plan_limit_exceeded',
+      result: gate(valid('observe-page'), {}, { planLength: MAX_PLAN_STEPS + 1 }),
+    },
     {
       rule: 'off_plan',
-      result: gate({ ...valid('observe-page'), stepOrdinal: undefined }, {
-        initiative: 'follow-closely',
-      }),
+      result: gate(
+        { ...valid('observe-page'), stepOrdinal: undefined },
+        {
+          initiative: 'follow-closely',
+        },
+      ),
     },
     {
       rule: 'stale_snapshot',
@@ -1017,15 +1084,23 @@ describe('every refusal rule is reachable', () => {
     },
     {
       rule: 'password_field',
-      result: gate(valid('type-text'), {}, {
-        targetEvidence: { ...harmless, formHasSensitiveField: true },
-      }),
+      result: gate(
+        valid('type-text'),
+        {},
+        {
+          targetEvidence: { ...harmless, formHasSensitiveField: true },
+        },
+      ),
     },
     {
       rule: 'confirmation_required',
-      result: gate(valid('click-element'), {}, {
-        targetEvidence: { ...harmless, isSubmitControl: true },
-      }),
+      result: gate(
+        valid('click-element'),
+        {},
+        {
+          targetEvidence: { ...harmless, isSubmitControl: true },
+        },
+      ),
     },
   ]
 
@@ -1096,11 +1171,127 @@ describe('evidence cannot be borrowed from another element', () => {
 
     const verdict = authorize(
       policy,
-      { kind: 'press-key', params: { key: 'Enter', snapshotId: 's1' }, reason: 'submit', stepOrdinal: 1 },
+      {
+        kind: 'press-key',
+        params: { key: 'Enter', snapshotId: 's1' },
+        reason: 'submit',
+        stepOrdinal: 1,
+      },
       { ...run, currentSnapshotId: 's1', targetEvidence: benign },
       'i',
     )
 
     expect(verdict).toEqual({ authorized: false, rule: 'confirmation_required' })
+  })
+})
+
+/* ── what a contract grants, before any dial touches it ────────────────── */
+
+describe('a shift with no document grants the browser verbs, not nothing', () => {
+  /**
+   * The hole this closes, stated as the hole rather than as the feature.
+   *
+   * `draftContract` granted `[]` whenever nothing was pinned, and that state is
+   * reachable in production: an accepted `WorkOffer` whose `expectedKinds` omit
+   * `document-changes` skips the document lookup AND the skeleton creation, so
+   * `pinned` is null and the contract permits nothing at all. Such a run plans,
+   * proposes, is refused `action_kind_not_allowed` three times, and halts with
+   * *"I kept needing things the agreement does not allow"* — a shift that was
+   * accepted, ran, and could never have done anything.
+   *
+   * The gate was never the problem. Every one of these kinds already passes
+   * `authorize()` and already has a tool; what was missing was any contract
+   * that could name one.
+   */
+  it('grants every browser kind and no document kind', () => {
+    expect([...grantableActionKinds(false)]).toEqual([
+      'observe-page',
+      'navigate',
+      'click-element',
+      'type-text',
+      'press-key',
+      'capture-screen',
+    ])
+  })
+
+  it('grants every document kind and no browser kind when a base is pinned', () => {
+    expect([...grantableActionKinds(true)]).toEqual([...DOCUMENT_ACTION_KINDS])
+  })
+
+  /**
+   * Enum order, not a hand-written list.
+   *
+   * The agreement panel renders in the order it is handed, so this decides what
+   * a person reads first. A second literal would drift from the enum the day a
+   * kind is added, and the drift would show up as a permission screen listing
+   * things in an order nobody chose.
+   */
+  it('lists in enum order, so the panel is not reading a second opinion', () => {
+    for (const pinsDocument of [true, false]) {
+      const positions = grantableActionKinds(pinsDocument).map((kind) => ACTION_KINDS.indexOf(kind))
+      expect([...positions].sort((a, b) => a - b)).toEqual(positions)
+    }
+  })
+
+  /**
+   * The two halves partition the enum. Neither over-grants, and — the direction
+   * that actually costs something — neither leaves a kind ungrantable by every
+   * path, which is how a capability comes to exist with no contract able to
+   * name it.
+   */
+  it('partitions the enum between them', () => {
+    const both = [...grantableActionKinds(true), ...grantableActionKinds(false)]
+    expect([...both].sort()).toEqual([...ACTION_KINDS].sort())
+  })
+})
+
+describe('the Output dial removes what can change things, on both kinds of shift', () => {
+  const dials = (output: 'suggestions-only' | 'draft-changes'): AutonomyControls => ({
+    ...controls,
+    output,
+  })
+
+  /**
+   * One rule where there were two.
+   *
+   * `acceptContract` filtered `draft-section` BY NAME, which was right while the
+   * only grantable mutating kind was `draft-section`. On a browser shift the
+   * mutating kinds are `click-element`, `type-text` and `press-key`, and a name
+   * filter would have left every one of them under a dial labelled *"Research
+   * only — don't write"*. `MUTATING_ACTION_KINDS` is the same set `compilePolicy`
+   * already subtracts, so the stored scope and the compiled policy now agree by
+   * construction rather than by two people remembering the same thing.
+   */
+  it('leaves a browser shift able to read and unable to operate', () => {
+    const policy = compilePolicy(
+      { approvedSourceIds: [], allowedActionKinds: grantableActionKinds(false) },
+      dials('suggestions-only'),
+    )
+
+    expect([...policy.actionKindAllowlist].sort()).toEqual(
+      ['capture-screen', 'navigate', 'observe-page'].sort(),
+    )
+  })
+
+  it('leaves a browser shift able to operate under draft-changes', () => {
+    const granted = grantableActionKinds(false)
+    const policy = compilePolicy(
+      { approvedSourceIds: [], allowedActionKinds: granted },
+      dials('draft-changes'),
+    )
+
+    for (const kind of granted) expect(policy.actionKindAllowlist.has(kind)).toBe(true)
+  })
+
+  it('still removes exactly draft-section from a document shift', () => {
+    const granted = grantableActionKinds(true)
+    const policy = compilePolicy(
+      { approvedSourceIds: [], allowedActionKinds: granted, baseVersionId: 'v' },
+      dials('suggestions-only'),
+    )
+
+    expect([...policy.actionKindAllowlist].sort()).toEqual(
+      granted.filter((kind) => kind !== 'draft-section').sort(),
+    )
   })
 })

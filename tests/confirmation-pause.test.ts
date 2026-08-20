@@ -66,6 +66,10 @@ import {
 import { startWorkerProcess } from '../src/runtime/worker-process'
 import type { FenceVerdict, RunFence } from '../src/runtime/worker-process'
 import { ConfirmationScreen } from '../src/ui/confirm'
+import { createLedgerWriter } from '../src/persistence/ledger-writer'
+import { executeRun } from '../src/server/execute-run'
+import { FakeModelClient } from '../src/model/fake'
+import { fixtureFetcher } from '../src/policy/fetcher'
 
 const MINUTE = 60_000
 const HOUR = 60 * MINUTE
@@ -367,7 +371,12 @@ describe('only a human writes a ConfirmationVerdict', () => {
 
     // And no run path calls it. If this fails, somebody has given a model, a
     // worker or a reviewer the ability to answer its own question.
-    for (const file of ['runtime/worker-loop.ts', 'runtime/worker-process.ts', 'server/execute-run.ts', 'policy/gate.ts']) {
+    for (const file of [
+      'runtime/worker-loop.ts',
+      'runtime/worker-process.ts',
+      'server/execute-run.ts',
+      'policy/gate.ts',
+    ]) {
       expect(writers.some((w) => w.startsWith(file))).toBe(false)
     }
   })
@@ -502,7 +511,11 @@ describe('expiry', () => {
     const askedAt = new Date('2026-07-03T09:05:00Z')
     const paused = await pausedShift({ acceptedAt: new Date('2026-07-03T09:00:00Z'), askedAt })
 
-    const late = await confirmRequest(ctx, paused.requestId, new Date(askedAt.getTime() + 25 * HOUR))
+    const late = await confirmRequest(
+      ctx,
+      paused.requestId,
+      new Date(askedAt.getTime() + 25 * HOUR),
+    )
     expect(late.ok).toBe(false)
     if (late.ok) return
     expect(late.reason).toBe('expired')
@@ -532,7 +545,9 @@ describe('expiry', () => {
     expect(confirmationHasExpired({ requestedAtEpochMs: asked, nowEpochMs: asked + day - 1 })).toBe(
       false,
     )
-    expect(confirmationHasExpired({ requestedAtEpochMs: asked, nowEpochMs: asked + day })).toBe(true)
+    expect(confirmationHasExpired({ requestedAtEpochMs: asked, nowEpochMs: asked + day })).toBe(
+      true,
+    )
   })
 })
 
@@ -595,7 +610,9 @@ describe('the credited deadline is a pure function of immutable timestamps', () 
 /* ═══════════════════════════════════════ 7. the fence and the kill switch ══ */
 
 describe('the fence CONTEXT.md always described', () => {
-  function harness(row: { status: string; claimedBy: string | null; cancelRequested: boolean } | null) {
+  function harness(
+    row: { status: string; claimedBy: string | null; cancelRequested: boolean } | null,
+  ) {
     let captured: RunFence | null = null
     const deps = {
       sweepExpiredLeases: vi.fn(async () => 0),
@@ -1093,7 +1110,9 @@ describe('the near-misses, kept red', () => {
     // propagates out and completes a healthy shift as failed — pressing "Take
     // back control" would be the thing that broke the run.
     expect(await settleAbandonedIntents(ctx, run.id)).toBe(0)
-    expect(await db.prisma.actionOutcome.findUnique({ where: { intentId: inFlight.id } })).toBeNull()
+    expect(
+      await db.prisma.actionOutcome.findUnique({ where: { intentId: inFlight.id } }),
+    ).toBeNull()
   })
 
   it('adds the expiry note to a report the shift already has', async () => {
@@ -1387,5 +1406,269 @@ describe('what the notification is told', () => {
     await rejectRequest(ctx, pending.requestId, new Date('2026-03-01T09:10:00Z'))
     const found = await oldestPendingConfirmation(ctx, Date.parse('2026-03-01T09:11:00Z'))
     expect(found?.requestId).not.toBe(pending.requestId)
+  })
+})
+
+/* ══════════════════════════════ 9. a run actually gets into that state ══════ */
+
+/**
+ * Everything above starts from a paused shift this file builds by hand.
+ *
+ * That was the only option available: `confirmations.create` had no caller, so
+ * the transition INTO the state could not be exercised, and the whole of the
+ * machinery below it — the screen, the two verdicts, the expiry sweep, the
+ * credited deadline, the continuation — was tested against rows nothing had
+ * ever written. `tests/reachability.test.ts` pinned that absence and called it
+ * *"the one worth watching"*, on the grounds that a rule nothing raises is a
+ * rule that never fires and is invisible in a green suite.
+ *
+ * This is the transition, driven end to end: a ratified contract that grants
+ * the browser verbs, a run that observes a page through a stubbed control
+ * channel, a click the gate refuses because there is no evidence about the
+ * element, and the row a person is eventually shown.
+ */
+describe('a run reaches the paused state on its own', () => {
+  /**
+   * The app's half of `/api/act/dispatch`, small enough to read.
+   *
+   * `createBrowserControl` posts a JSON body and parses a `dispatchResponse`.
+   * Standing in for the route rather than starting a server keeps this a test
+   * about the run path — whether the pause is raised and the run parked — and
+   * `tests/act-channel.test.ts` already drives the real routes.
+   *
+   * It answers ONE dispatch, the `observe-page`. The click that follows never
+   * reaches a browser, because the gate refuses it first, and that is the whole
+   * assertion: a scripted second answer going unused is the evidence that
+   * nothing was dispatched.
+   */
+  function stubbedChannel(observation: Record<string, unknown>): {
+    fetch: typeof globalThis.fetch
+    dispatched: string[]
+  } {
+    const dispatched: string[] = []
+    const fetch = (async (_url: string | URL | Request, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body ?? '{}')) as { kind?: string }
+      dispatched.push(body.kind ?? 'unknown')
+      return new Response(JSON.stringify({ ok: true, report: { ok: true, observation } }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    }) as unknown as typeof globalThis.fetch
+
+    return { fetch, dispatched }
+  }
+
+  async function browserShift(): Promise<{ contractId: string }> {
+    const sessionId = (await repos.sessions.start(projectId)).id
+    const reading = await repos.readings.create({
+      sessionId,
+      throughSeq: 0,
+      claims: [{ kind: 'objective', text: 'Find my delivery date.', ordinal: 0, evidence: [] }],
+    })
+    const contract = await repos.contracts.createDraft({
+      sessionId,
+      readingId: reading.id,
+      objective: 'Find my delivery date.',
+      definitionOfDone: 'The date is written down.',
+      guidance: [],
+      approvedSourceIds: [],
+      // What `draftContract` now grants a shift with nothing pinned. Written out
+      // rather than imported so this test says what it is exercising.
+      allowedActionKinds: [
+        'observe-page',
+        'navigate',
+        'click-element',
+        'type-text',
+        'press-key',
+        'capture-screen',
+      ],
+      baseVersionId: null,
+      initiative: 'use-judgment',
+      progress: 'remaining-plan',
+      output: 'draft-changes',
+      interruption: 'stop-only-when-blocked',
+      timeLimitMinutes: 30,
+    })
+    await repos.contracts.accept(contract.id, new Date())
+
+    // What handing the work over does. Set here so the pause path can be asked
+    // whether it hands the session BACK — starting from `observing` would make
+    // that question unanswerable, which is how the first version of the last
+    // assertion in this block passed while checking nothing.
+    await repos.sessions.markAway(sessionId)
+
+    return { contractId: contract.id }
+  }
+
+  const OBSERVATION = {
+    snapshotId: 'snap-1',
+    url: 'https://orders.example.test/orders/8812',
+    title: 'Your orders',
+    tree: 'e1 button "Track shipment"',
+    truncated: false,
+  }
+
+  const REPLIES = [
+    { kind: 'ok' as const, value: { steps: [{ intent: 'Open my orders and find the date.' }] } },
+    { kind: 'ok' as const, value: { kind: 'observe-page', reason: 'See what is on the page.' } },
+    {
+      kind: 'ok' as const,
+      value: {
+        kind: 'click-element',
+        reason: 'Track shipment shows the delivery date.',
+        ref: 'e1',
+        snapshotId: 'snap-1',
+      },
+    },
+    { kind: 'ok' as const, value: { kind: 'observe-page', reason: 'Read it.' } },
+  ]
+
+  async function drive(): Promise<{ runId: string; contractId: string; dispatched: string[] }> {
+    const { contractId } = await browserShift()
+    const enqueued = await repos.runs.enqueue({ contractId, role: 'worker' })
+
+    /**
+     * Claimed by id rather than through `runs.claim`, which takes the OLDEST
+     * pending row.
+     *
+     * Other tests in this file leave continuations pending on purpose — that is
+     * what a confirmed question produces — so `claim()` here would take one of
+     * those and leave this run without a token. The failure is subtle and
+     * order-dependent: no token means `browserFor` returns undefined, the run
+     * has no hands, and `observe-page` fails with *"no browser to carry it out
+     * in"* instead of reaching the click. Worth the note, because the same shape
+     * would make a real second worker steal a run mid-suite.
+     *
+     * The mint site is still `scripts/worker.ts`, and
+     * `tests/reachability.test.ts` is what holds that.
+     */
+    await db.prisma.agentRun.update({
+      where: { id: enqueued.id },
+      data: {
+        status: 'claimed',
+        claimedBy: 'test-runner',
+        startedAt: new Date(),
+        leaseUntil: new Date(Date.now() + 60_000),
+        controlToken: 'control-token-for-this-run',
+      },
+    })
+
+    // The page the person will be shown beside the question. Written here
+    // because `/api/act/report` is what writes one in production and this test
+    // stands in for the route.
+    await repos.evidence.create({
+      runId: enqueued.id,
+      kind: 'page-snapshot',
+      url: OBSERVATION.url,
+      untrusted: { title: OBSERVATION.title },
+    })
+
+    const { fetch, dispatched } = stubbedChannel(OBSERVATION)
+
+    await executeRun(enqueued.id, {
+      // The full `AppContext`, which is `ConfirmationContext` plus a ledger and
+      // a closable database. `ctx` above is the narrower shape on purpose — see
+      // its docblock in `src/server/confirmations.ts` — so this reassembles the
+      // wide one rather than widening the field every other test here uses.
+      ctx: { db, repos, ledger: createLedgerWriter(db.prisma) },
+      model: new FakeModelClient(REPLIES as never),
+      fetcher: fixtureFetcher({}),
+      fence: { check: async () => ({ proceed: true as const }) },
+      now: () => Date.now(),
+      fetch,
+    })
+
+    return { runId: enqueued.id, contractId, dispatched }
+  }
+
+  it('writes the ConfirmationRequest nothing used to write', async () => {
+    const { runId } = await drive()
+
+    const request = await db.prisma.confirmationRequest.findFirstOrThrow({ where: { runId } })
+
+    // Code-generated from the browser-attested URL and the kind. The worker's
+    // own `reason` — "Track shipment shows the delivery date" — is model prose
+    // and must not be what a person is asked to authorise.
+    expect(request.summary).toBe('Press something on orders.example.test')
+    expect(request.summary).not.toContain('Track shipment')
+  })
+
+  it('points the question at the refused intent, and leaves it refused', async () => {
+    const { runId } = await drive()
+
+    const request = await db.prisma.confirmationRequest.findFirstOrThrow({ where: { runId } })
+    const intent = await db.prisma.actionIntent.findUniqueOrThrow({
+      where: { id: request.intentId },
+      include: { outcome: true },
+    })
+
+    expect(intent.kind).toBe('click-element')
+    expect(intent.authorized).toBe(false)
+    expect(intent.refusedRule).toBe('confirmation_required')
+    // A refusal produces exactly one row and NO ActionOutcome — its fate was
+    // fully determined the moment the gate decided.
+    expect(intent.outcome).toBeNull()
+  })
+
+  it('shows the person the page the run was looking at', async () => {
+    const { runId } = await drive()
+
+    const request = await db.prisma.confirmationRequest.findFirstOrThrow({ where: { runId } })
+    expect(request.evidenceId).not.toBeNull()
+
+    const view = await confirmationView(ctx, request.id, Date.now())
+    expect(view?.attested.url).toContain('orders.example.test')
+  })
+
+  it('parks the run and takes its browser credential away', async () => {
+    const { runId } = await drive()
+
+    const run = await db.prisma.agentRun.findUniqueOrThrow({ where: { id: runId } })
+
+    expect(run.status).toBe('awaiting-confirmation')
+    // No terminalReason: there is nothing terminal to explain, and the question
+    // is the explanation.
+    expect(run.terminalReason).toBeNull()
+    // A run parked overnight on a question must not still hold a credential
+    // that drives somebody's browser.
+    expect(run.controlToken).toBeNull()
+  })
+
+  it('dispatches the looking and never the clicking', async () => {
+    const { dispatched } = await drive()
+
+    // The gate refused the click before any tool ran, so the only thing that
+    // reached the channel was the observation. If this ever holds
+    // `click-element`, something pressed a button in a live page without a
+    // person having said yes.
+    expect(dispatched).toEqual(['observe-page'])
+  })
+
+  it('writes no ShiftReport, because the shift has not ended', async () => {
+    const { contractId } = await drive()
+
+    // The pause is not an ending. `expireConfirmations` writes the note if the
+    // question goes unanswered for a day; `admitRun` writes it if the answer
+    // arrives too late; a yes starts a continuation which writes its own.
+    expect(await repos.reports.forContract(contractId)).toBeNull()
+  })
+
+  it('leaves the session away rather than inventing a phase for waiting', async () => {
+    const { contractId } = await drive()
+
+    const contract = await db.prisma.handoffContract.findUniqueOrThrow({
+      where: { id: contractId },
+      select: { sessionId: true },
+    })
+    const session = await db.prisma.workSession.findUniqueOrThrow({
+      where: { id: contract.sessionId },
+    })
+
+    // ADR-0010 records this as a lie it is knowingly telling: `SessionPhase` has
+    // no honest value for a person sitting at their desk being asked a question
+    // under a screen headed "While you were away". Keeping `away` is the
+    // smaller lie, and marking the session observing would be the larger one —
+    // it would say the work came back when it is still waiting for them.
+    expect(session.phase).toBe('away')
   })
 })

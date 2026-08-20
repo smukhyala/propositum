@@ -404,6 +404,102 @@ every 30 seconds, and the security argument was never about the transport being 
 about the four controls, which hold. ADR-0002's table is corrected in place;
 `docs/SECURITY_AND_PRIVACY.md` said "WebSocket" too and is corrected with it.
 
+## What became reachable, 2026-08-20
+
+Recorded here because everything above describes a design and, for nine days, none of it ran. Both
+ends of the control channel existed and no run built the middle; `tests/reachability.test.ts` pinned
+`callersOf('createBrowserControl(')` at `[]`, `confirmations.create` at `[]`, and `controlLost` at
+`[]`. Three of those four pins are now red and have moved into the reachable section. **The fourth
+did not, and the reason it did not is the most important paragraph here.**
+
+### What a person can now hand over
+
+A shift whose accepted `WorkOffer` does not expect `document-changes` grants the six browser verbs.
+Before this it granted `[]` — a ratified agreement that permitted nothing, under which every proposal
+was refused `action_kind_not_allowed` until `refusal-loop` ended the shift and the person read *"I
+kept needing things the agreement does not allow."* That state was reachable, shipped, and had never
+been anybody's intention; it is the hole this capability landed in rather than a new surface built
+beside it.
+
+The Output dial is what separates the two readings of a browser shift, and it needed no new argument
+because `compilePolicy` already carried one: `suggestions-only` removes every kind that can operate a
+page, leaving `observe-page`, `navigate` and `capture-screen`. *Research only — don't write* now
+means a run that crosses a site by following links and reads what it lands on, and operates nothing.
+
+### What now stops for a person, and how often
+
+`ConfirmationRequest` could not occur. It can, and the run path is what raises it: the gate refuses
+`confirmation_required` and stays two-armed, the loop reports which intent it was refused on, and
+`src/server/execute-run.ts` writes the question and parks the run `awaiting-confirmation`. §5's
+ordering is implemented as written — refused intent, question, halt, new `AgentRun` on a yes.
+
+**One pause per run, and that is arithmetic rather than taste.** `creditedDeadlineFor` credits a
+shift back the time it waited by summing `(requestedAt, decidedAt)` pairs. Two questions asked a
+minute apart and answered together are two pairs over nearly the same interval, so the wait would be
+credited twice and a time limit the person set would quietly stop meaning what it says. Serial pauses
+are what make that sum correct.
+
+**Every mutating browser action asks, today.** `RunContext.targetEvidence` has no supplier, so
+`evidenceFor` returns null, `classifyReversibility` escalates, and every `click-element`, `type-text`
+and `press-key` stops and asks. That is the cautious state and it is deliberate: the extraction that
+would quieten it is the thing that *removes* confirmations, and building it in the same change that
+first grants the capability is the erosion this ADR opens by warning about. It stays with the unit
+that owns the snapshot map.
+
+The cost is real and is not smoothed over: a run that needs three clicks costs three answers and
+three runs. What it does not cost is the confirmation storm §"Risks" predicts, because a pause ends
+the run — there is no twentieth dialog to click through, only a stop.
+
+### `LANDING_ACTION_KINDS` is still empty, and now for a stronger reason
+
+The set did not gain a member, and the reason is not *not yet*. `classifyPausedRequest` in
+`extension/src/cdp.js` fails **every non-`GET` request unconditionally**, with no bypass for a
+confirmed action anywhere in the file. While Propositum holds a tab, no request that changes
+something out there is sent from it — including after a person has said yes.
+
+So a landing kind added today would be a claim the transport cannot honour: a `ShiftOutcome` marked
+`landed`, offered no verdict, telling somebody *"This already happened, outside Propositum"* about a
+request Chrome aborted. `src/server/outcomes/external-effect.ts` still drops everything by design and
+that drop is still the enforcement.
+
+**This also names what a landing kind actually costs, which was previously easy to underestimate.**
+It is not a line in a set. It is a bypass in the extension's request handler — §3's primary mechanism,
+the one described here as *"the one that cannot be talked out of firing"* — and spending it needs its
+own ADR for the same reason `Runtime.evaluate` does.
+
+The consequence worth stating plainly: **a confirmed click whose page posts still fails**, with
+`blocked-request`. The person is asked, says yes, the continuation clicks again, and the request is
+aborted at the network. That is a coherent product — Propositum can operate a page and cannot send
+from it — and it is *not* what §5's step 4 implies when it says the continuation "is allowed". §5
+describes the gate allowing it, which is true; the network refusing it afterwards is a second
+mechanism §3 always said was unconditional. The two were never reconciled in prose. They are now.
+
+### A stop that had never worked
+
+§7 is headed *"Three ways to stop it, and stopping never needs the app"*, and two of the three end in
+`postHalt(state.runId, reason)`. `/api/act/next` never sent a `runId`, so the extension's was
+permanently `null`, `haltRequestSchema` requires a non-empty string, and the route answered 403 before
+`runs.requestCancel` ran — inside a request whose failure nothing checked, because `postHalt` ends in
+a `.catch(() => {})`. **The person pressed Stop, the chip reported that it had stopped, the tab
+detached, and the run carried on and opened a fresh controlled tab on its next `navigate`.**
+
+It cost nothing while no run drove a browser, which is exactly why nobody found it. The envelope now
+carries the id. Recorded here rather than only in a commit message because it is the second time this
+ADR has documented a numbered safety claim that was not true of the shipped code, and §1 already says
+what that pattern is worth.
+
+### What was left undone, deliberately
+
+- **The element-evidence extraction.** Above; it is the quieting mechanism and it is another unit's.
+- **`approvedOrigins` on the wire.** The extension seeds its origin set from the URL of the first
+  `navigate`, so a contract approving two sources can act on the first and has the second refused
+  `off-origin`. The direction is closed — the extension can only ever narrow from what the app told
+  it — so this is a functional limit rather than a safety one, and it is written down here because the
+  failure will present as an unexplained abort.
+- **The reviewer pass on a paused run.** A run that parks does not get one; the continuation reviews
+  its own. `ReviewFinding` is display-only and cannot block anything, so the cost is advice on the
+  outcomes that leg produced.
+
 ## Revisit when
 
 - **A confirmation is clicked through and something lands that should not have.** That is the

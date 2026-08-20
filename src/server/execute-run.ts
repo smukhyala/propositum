@@ -48,15 +48,23 @@ import { STOP_RULES } from '../domain/execution/stop-conditions'
 import { allowlisted } from '../policy/fetcher'
 import type { SourceFetcher } from '../policy/fetcher'
 import { readableCause } from './problem'
-import { confirmationForIntent, confirmedRequestIdsFor, creditedDeadlineFor, settleAbandonedIntents } from './confirmations'
+import {
+  confirmationForIntent,
+  confirmedRequestIdsFor,
+  creditedDeadlineFor,
+  settleAbandonedIntents,
+} from './confirmations'
 import type { RunFence } from '../runtime/worker-process'
 import { FINDING_KINDS, reviewBoundary, reviewHandlesFor } from '../model/boundaries/review'
 import type { ReviewedOutcome } from '../model/boundaries/review'
 import { loadWorkspace } from './outcomes/workspace'
 import { recordOutcomes } from './outcomes/index'
 import { sectionTitleFor } from './outcomes/document-changes'
+import { createBrowserControl } from '../runtime/browser-control'
+import type { BrowserDeps } from '../policy/tools'
 import type { AppContext } from './db'
 import type { ModelClient } from '../model/client'
+import { BROWSER_ACTION_KINDS } from '../domain/handoff/policy'
 import type { ActionKind } from '../domain/handoff/policy'
 
 export interface ExecuteDeps {
@@ -76,6 +84,120 @@ export interface ExecuteDeps {
    * true of the documentation and false of the software.
    */
   readonly fence: RunFence
+  /**
+   * How the browser control reaches this app, for the runs that have one.
+   *
+   * Injected like every other piece of I/O this file takes — the model, the
+   * fetcher, the clock — rather than reached for off the global, and for the
+   * same reason: a run that drives a browser is otherwise only exercisable
+   * against a listening dev server, which means the pause that ends such a run
+   * could only be tested by hand-writing the rows it produces. Those rows were
+   * hand-written for a whole wave, and `confirmations.create` had no caller
+   * underneath them.
+   *
+   * Defaults to `globalThis.fetch`, which is what production uses.
+   */
+  readonly fetch?: typeof globalThis.fetch | undefined
+}
+
+/**
+ * Where the worker posts its instructions, which is this app.
+ *
+ * The worker is a separate OS process (ADR-0001) and cannot call a route
+ * in-process, so it goes over HTTP to the dev server on loopback — the same
+ * address `src/server/calendar.ts` resolves for the OAuth redirect, read the
+ * same way, because two spellings of "where Propositum is" is how one of them
+ * comes to be wrong on the machine that changed its port.
+ *
+ * Not a secret and not a permission. The control token on the run is what the
+ * `/api/act/*` door checks; this is only the address it is knocking on.
+ */
+function appOrigin(): string {
+  return process.env['PROPOSITUM_BASE_URL'] ?? 'http://127.0.0.1:3117'
+}
+
+/**
+ * The channel to the person's real Chrome, for the runs that have one.
+ *
+ * ── Why this is conditional, and what the condition is ───────────────────
+ *
+ * `WorkerDeps.browser` is optional and its docblock says why: wiring one
+ * unconditionally would mean every drafting run held a handle to a debugger
+ * attachment it never uses, *"which is a capability granted by tidiness"*. So
+ * the condition is the only honest one available — does the contract the person
+ * ratified actually grant a kind that needs a live page under it.
+ *
+ * The token is the second half. It is minted at the claim by whoever claimed
+ * the run (`scripts/worker.ts`) and cleared on every terminal transition, so a
+ * run without one is a run that is not currently anybody's to drive. Building a
+ * control around a null token would produce a client that gets a 403 on its
+ * first dispatch and reports it as `not-delivered` — a channel failure standing
+ * in for a missing credential, which is the least legible failure available.
+ * Absent is better: `perform` records *"this run has no browser to carry it out
+ * in"*, which names the actual condition.
+ *
+ * ── What this does NOT decide ────────────────────────────────────────────
+ *
+ * Anything about what may be done through it. The gate decides every action,
+ * `classifyReversibility` decides what has to be asked about first, and the
+ * extension refuses to let a non-`GET` request leave the tab at all. This
+ * function decides only whether there is a channel.
+ */
+function browserFor(input: {
+  runId: string
+  controlToken: string | null
+  allowedActionKinds: readonly string[]
+  fetch: typeof globalThis.fetch
+}): BrowserDeps | undefined {
+  const needsBrowser = input.allowedActionKinds.some((kind) =>
+    BROWSER_ACTION_KINDS.has(kind as ActionKind),
+  )
+  if (!needsBrowser || input.controlToken === null) return undefined
+
+  return {
+    control: createBrowserControl({
+      appOrigin: appOrigin(),
+      runId: input.runId,
+      token: input.controlToken,
+      fetch: input.fetch,
+    }),
+  }
+}
+
+/**
+ * The page the person should be looking at while they decide.
+ *
+ * ── Why the LAST snapshot is the right one ───────────────────────────────
+ *
+ * A run halts at its first pause, so the tree it last observed is the tree the
+ * proposal was made against — the page the action would have landed on. That
+ * only holds because pauses are serial: if a run could ask about a click, carry
+ * on navigating, and ask again, the latest snapshot would be a different page
+ * and this would show somebody the wrong one.
+ *
+ * ── Why a screenshot is not preferred, even when there is one ────────────
+ *
+ * `ConfirmationRequest.evidenceId` is a foreign key from an append-only table,
+ * so the sweep can neither delete the row it points at nor clear the pointer —
+ * ADR-0010 records that as a permanent retention created by a section headed
+ * *retention*, and names screenshots as the rows most likely to be caught by it
+ * because a tree being insufficient is exactly what produces one. Pinning the
+ * page-snapshot rather than the capture keeps the kept-forever row the cheaper
+ * and less revealing of the two, without costing the person anything: the
+ * screen renders the tree's attested URL either way.
+ *
+ * Returns null when the run observed nothing, which the gate makes unreachable
+ * for a confirmable kind — `stale_snapshot` refuses a ref against no snapshot —
+ * and which is handled anyway, because a question with no picture beside it is
+ * far better than no question.
+ */
+async function lastPageSnapshot(ctx: AppContext, runId: string): Promise<string | null> {
+  const rows = await ctx.repos.evidence.forRun(runId)
+  for (let i = rows.length - 1; i >= 0; i -= 1) {
+    const row = rows[i]
+    if (row !== undefined && row.kind === 'page-snapshot') return row.id
+  }
+  return null
 }
 
 /**
@@ -346,8 +468,7 @@ export async function executeRun(runId: string, deps: ExecuteDeps): Promise<void
    */
   const acceptedAt = contract.acceptedAt?.getTime() ?? deps.now()
   const deadlineEpochMs =
-    (await creditedDeadlineFor(ctx, contract.id)) ??
-    acceptedAt + contract.timeLimitMinutes * 60_000
+    (await creditedDeadlineFor(ctx, contract.id)) ?? acceptedAt + contract.timeLimitMinutes * 60_000
 
   const job: WorkerJob = {
     runId,
@@ -391,7 +512,10 @@ export async function executeRun(runId: string, deps: ExecuteDeps): Promise<void
       model: deps.model,
       ledger: ledgerFor(ctx, runId, deps.fence),
       readSource: {
-        fetcher: allowlisted(deps.fetcher, workspace.sources.map((s) => s.originPattern)),
+        fetcher: allowlisted(
+          deps.fetcher,
+          workspace.sources.map((s) => s.originPattern),
+        ),
         sources: {
           urlFor: async (id) => {
             const source = workspace.sources.find((s) => s.id === id)
@@ -403,6 +527,35 @@ export async function executeRun(runId: string, deps: ExecuteDeps): Promise<void
         versions: { byId: (id) => ctx.repos.documents.version(id) },
         ...(contract.baseVersionId === null ? {} : { baseVersionId: contract.baseVersionId }),
       },
+      /**
+       * The hands, when this contract granted any.
+       *
+       * This is ADR-0010's middle. Both ends of the control channel existed —
+       * the five `/api/act/*` routes are live and `createBrowserControl` is the
+       * client — and nothing held it, so the app could hand out instructions
+       * nobody had written and the routes could have been deleted with every
+       * test still green. `tests/reachability.test.ts` asserted that absence on
+       * purpose; this is the line that makes the assertion move.
+       *
+       * `elementEvidence` is deliberately NOT supplied beside it, and that is
+       * the safe direction rather than an omission. With no lookup the gate sees
+       * `null`, `classifyReversibility` escalates, and every `click-element`,
+       * `type-text` and `press-key` stops and asks the person. Wiring the
+       * extraction up makes the pause QUIETER; there is no input to it that can
+       * turn `requires-confirmation` back into `ordinary`. Building the thing
+       * that removes confirmations in the same change that first grants the
+       * capability is exactly the erosion ADR-0010 warns arrives as an
+       * improvement, so it stays for the unit that owns the snapshot map.
+       */
+      ...(() => {
+        const browser = browserFor({
+          runId,
+          controlToken: run.controlToken,
+          allowedActionKinds: contract.allowedActionKinds,
+          fetch: deps.fetch ?? globalThis.fetch,
+        })
+        return browser === undefined ? {} : { browser }
+      })(),
       // Resume, crash recovery and the startup sweep all read the same rows
       // through this. See `src/runtime/history.ts` for why there is one path and
       // not three.
@@ -464,7 +617,13 @@ export async function executeRun(runId: string, deps: ExecuteDeps): Promise<void
     }
 
     await ctx.repos.runs.complete(runId, 'failed', new Date(deps.now()), 'error')
-    await writeReport(ctx, contract.id, null, [], error instanceof Error ? error.message : String(error))
+    await writeReport(
+      ctx,
+      contract.id,
+      null,
+      [],
+      error instanceof Error ? error.message : String(error),
+    )
     return
   }
 
@@ -479,6 +638,63 @@ export async function executeRun(runId: string, deps: ExecuteDeps): Promise<void
     workspace,
     produced: result.produced,
   })
+
+  /**
+   * The run stopped to ask, so it parks rather than finishes.
+   *
+   * ── ADR-0010 §5, in the order it gives ───────────────────────────────────
+   *
+   * The refused `ActionIntent` is already written and committed — the loop did
+   * that before returning — so the row this request points at is on disk. Here
+   * the question is written, and the run ends `awaiting-confirmation`, which
+   * `runs.complete` treats as terminal and which clears the control token: a run
+   * parked overnight on a question must not still hold a credential that drives
+   * a browser. If the person says yes, `confirmRequest` enqueues a NEW
+   * `AgentRun` carrying `resumesRunId`, and it mints its own.
+   *
+   * **Nothing is rewritten and no row changes.** At this moment the truth is
+   * *it asked, and it was not yet allowed*, and that is what the ledger says. A
+   * design that reached back and turned the refusal into an approval would be
+   * deleting the only evidence a human was ever consulted, on the exact action
+   * where that evidence matters most.
+   *
+   * ── The three things this deliberately does not do ───────────────────────
+   *
+   * **No `ShiftReport`.** `awaiting-confirmation` takes no `terminalReason`
+   * because there is nothing terminal to explain — the `ConfirmationRequest` IS
+   * the explanation. The report gets written when the pause resolves badly:
+   * `expireConfirmations` after a day, `admitRun` when the answer arrived past
+   * the credited deadline.
+   *
+   * **No `markObserving`.** The session stays `away`, which ADR-0010's own risk
+   * list settles: *"`SessionPhase` has no honest value for a confirmation
+   * pause… Keeping `away` is the smaller lie."* It is still a lie and it is
+   * still written down there rather than smoothed over here.
+   *
+   * **No reviewer pass.** A second pass over half a shift's work would judge a
+   * production the continuation is still adding to. `ReviewFinding` is
+   * display-only and cannot block anything, so deferring it costs advice on the
+   * outcomes this leg produced and nothing else — recorded as a real cost in
+   * ADR-0010's amendment rather than left to be discovered.
+   *
+   * The outcomes themselves ARE recorded, above. `historyForContract` rebuilds
+   * turns and counts off durable rows and does not rebuild `produced`, so a
+   * paused run that skipped `recordOutcomes` would silently bin whatever it had
+   * managed to do before it needed permission.
+   */
+  if (result.awaiting !== undefined) {
+    const evidenceId = await lastPageSnapshot(ctx, runId)
+
+    await ctx.repos.confirmations.create({
+      runId,
+      intentId: result.awaiting.intentId,
+      summary: result.awaiting.question,
+      ...(evidenceId === null ? {} : { evidenceId }),
+    })
+
+    await ctx.repos.runs.complete(runId, 'awaiting-confirmation', new Date(deps.now()))
+    return
+  }
 
   await ctx.repos.runs.complete(
     runId,
@@ -546,7 +762,12 @@ export async function executeRun(runId: string, deps: ExecuteDeps): Promise<void
 async function review(
   ctx: AppContext,
   deps: ExecuteDeps,
-  contract: { id: string; objective: string; definitionOfDone: string; guidance: readonly string[] },
+  contract: {
+    id: string
+    objective: string
+    definitionOfDone: string
+    guidance: readonly string[]
+  },
   workerRunId: string,
 ): Promise<void> {
   try {
@@ -648,7 +869,7 @@ async function review(
         const changeId = changeIdByHandle.get(finding.handle) ?? null
         return {
           changeId,
-          outcomeId: changeId === null ? outcomeIdByHandle.get(finding.handle) ?? null : null,
+          outcomeId: changeId === null ? (outcomeIdByHandle.get(finding.handle) ?? null) : null,
           kind: finding.kind,
           detail: finding.detail,
         }

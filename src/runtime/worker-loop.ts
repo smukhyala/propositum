@@ -86,7 +86,7 @@
  * budget decision never depends on when the test ran.
  */
 
-import { compilePolicy, MUTATING_ACTION_KINDS } from '../domain/handoff/policy'
+import { ACTION_KINDS, compilePolicy, MUTATING_ACTION_KINDS } from '../domain/handoff/policy'
 import type { ActionKind, AutonomyControls, ContractScope } from '../domain/handoff/policy'
 import { authorize } from '../policy/gate'
 import type { AuthorizedAction, RunContext, ToolProposal } from '../policy/gate'
@@ -113,6 +113,7 @@ import {
   shouldStop,
 } from '../domain/execution/stop-conditions'
 import type { StopRuleId } from '../domain/execution/stop-conditions'
+import { confirmationQuestion } from '../domain/execution/confirmation-question'
 import type { ElementEvidence } from '../domain/execution/reversibility'
 import { SNAPSHOT_BUDGET_CHARS, datamark } from '../model/untrusted'
 import type { Datamarked } from '../model/untrusted'
@@ -223,7 +224,10 @@ export interface RunLedger {
      */
     observedBy?: string | undefined
   }): Promise<void>
-  recordSteps(runId: string, steps: ReadonlyArray<{ ordinal: number; intent: string }>): Promise<string[]>
+  recordSteps(
+    runId: string,
+    steps: ReadonlyArray<{ ordinal: number; intent: string }>,
+  ): Promise<string[]>
   advanceProgress(runId: string, step: number): Promise<void>
 }
 
@@ -266,8 +270,7 @@ export interface WorkerDeps {
    * turn `requires-confirmation` back into `ordinary`.
    */
   readonly elementEvidence?:
-    | ((input: { snapshotId: string; ref: string }) => ElementEvidence | null)
-    | undefined
+    ((input: { snapshotId: string; ref: string }) => ElementEvidence | null) | undefined
   /**
    * Where the run reads what has already happened under this contract.
    *
@@ -369,6 +372,43 @@ export interface DecisionRaised {
   readonly atStep: number
 }
 
+/**
+ * The run stopped because it needs a person to say yes to one thing.
+ *
+ * ── Why the loop reports this instead of writing it ──────────────────────
+ *
+ * A `ConfirmationRequest` is a row, and rows on the run's terminal transition
+ * belong to `src/server/execute-run.ts` — the loop returns a `WorkerResult` and
+ * that file turns it into rows. More than tidiness: parking the run is one
+ * transaction with `runs.complete(…, 'awaiting-confirmation', …)`, which clears
+ * the control token, and a loop that could write the request without ending the
+ * run could leave a question outstanding against a run still holding a
+ * credential and driving a browser.
+ *
+ * ── Why it is a single value and not a list ──────────────────────────────
+ *
+ * **One pause per run**, and the reason is arithmetic rather than taste.
+ * `creditedDeadlineFor` credits a shift back the time it spent waiting, by
+ * summing `(requestedAt, decidedAt)` pairs. Two questions asked a minute apart
+ * and answered together are two pairs covering almost the same interval, so the
+ * wait would be credited twice — and the person's time limit, which they set,
+ * would quietly stop meaning what it says. Serial pauses are what make the sum
+ * correct, and one per run is what makes them serial.
+ *
+ * It also matches ADR-0010 §5, which halts the run at the refusal rather than
+ * carrying on: a run that has been told it needs permission should stop
+ * touching the person's signed-in session, not keep operating it elsewhere.
+ */
+export interface ConfirmationNeeded {
+  /** The REFUSED `ActionIntent`. Committed before this was returned, so the
+   *  row `ConfirmationRequest.intentId` points at is already on disk. */
+  readonly intentId: string
+  readonly kind: ActionKind
+  /** Code-generated from attested facts. Never model prose — see
+   *  `../domain/execution/confirmation-question`. */
+  readonly question: string
+}
+
 export interface WorkerResult {
   readonly status: 'succeeded' | 'failed'
   readonly stoppedBy: readonly StopRuleId[]
@@ -393,6 +433,15 @@ export interface WorkerResult {
    *  outcome for. Reported so a caller can see the sweep did something, rather
    *  than having to diff the ledger to find out. */
   readonly recovered: number
+  /**
+   * The run stopped to ask, and this is what about. Absent on every other
+   * ending.
+   *
+   * A caller that ignores it gets a run which recorded a refusal and told
+   * nobody — which is what happened before this field existed, and is why
+   * `confirmations.create` had no caller for the whole of wave 2.
+   */
+  readonly awaiting?: ConfirmationNeeded | undefined
 }
 
 export async function runWorker(job: WorkerJob, deps: WorkerDeps): Promise<WorkerResult> {
@@ -459,6 +508,27 @@ export async function runWorker(job: WorkerJob, deps: WorkerDeps): Promise<Worke
   let page: PageObservation | null = null
   let screenshot: ScreenCapture | null = null
 
+  /**
+   * The hands are gone, and every further proposal is into a dead channel.
+   *
+   * Set once and never cleared, because losing the tab is not a hiccup: the
+   * attachment ended, and only a person creating a new one brings it back.
+   * `evaluateStructuralStops` turns it into `control-lost`, whose sentence is
+   * *"I lost the tab I was working in."*
+   *
+   * Without it the run kept going — authorising, dispatching, failing, recording
+   * `unverified` — until three consecutive failures tripped `no-progress` and
+   * the person was told it had been going in circles. That is a true sentence
+   * about the wrong thing, and it blames the machine for something the person
+   * very often did on purpose by closing the tab.
+   *
+   * Only `control-lost` sets it. `not-delivered` means the instruction never
+   * left the app and `not-reported` means nobody answered; neither says the
+   * attachment is over, and quitting on either would abandon a run over a
+   * recoverable hiccup.
+   */
+  let controlLost = false
+
   const progress = () => ({
     nowEpochMs: deps.now(),
     deadlineEpochMs: job.deadlineEpochMs,
@@ -466,6 +536,7 @@ export async function runWorker(job: WorkerJob, deps: WorkerDeps): Promise<Worke
     consecutiveRefusals,
     actionsTaken,
     maxActions: policy.maxActions,
+    controlLost,
   })
 
   const finish = (rules: readonly StopRuleId[], status: 'succeeded' | 'failed'): WorkerResult => ({
@@ -478,6 +549,21 @@ export async function runWorker(job: WorkerJob, deps: WorkerDeps): Promise<Worke
     actionsTaken,
     summary,
     recovered,
+  })
+
+  /**
+   * The other ending: the run stopped to ask, and stopped for no other reason.
+   *
+   * Deliberately NOT a `StopRuleId`. A stop rule is a limit that happened TO the
+   * run and renders under *"Where I stopped"*; this is the gate working exactly
+   * as designed, and reporting it beside `budget-exhausted` would tell somebody
+   * their shift ran into a wall when what it did was wait for them. `stoppedBy`
+   * stays empty and `terminalReason` stays undefined — `awaiting-confirmation`
+   * takes none, because the question is the explanation.
+   */
+  const askFirst = (awaiting: ConfirmationNeeded): WorkerResult => ({
+    ...finish([], 'succeeded'),
+    awaiting,
   })
 
   // Budget can already be gone before we plan — check before spending a call.
@@ -625,7 +711,11 @@ export async function runWorker(job: WorkerJob, deps: WorkerDeps): Promise<Worke
        */
       consecutiveNoProgress += 1
 
-      history.push({ kind: 'question', summary: proposal.decisionNeeded.question, outcome: 'raised' })
+      history.push({
+        kind: 'question',
+        summary: proposal.decisionNeeded.question,
+        outcome: 'raised',
+      })
 
       const afterQuestion = shouldStop(progress(), job.controls.interruption, false)
       if (afterQuestion.halt) return finish(afterQuestion.rules, 'succeeded')
@@ -715,7 +805,7 @@ export async function runWorker(job: WorkerJob, deps: WorkerDeps): Promise<Worke
         // would let a proposal choose which element it is judged as.
         targetEvidence:
           page !== null && proposal.ref
-            ? deps.elementEvidence?.({ snapshotId: page.snapshotId, ref: proposal.ref }) ?? null
+            ? (deps.elementEvidence?.({ snapshotId: page.snapshotId, ref: proposal.ref }) ?? null)
             : null,
         // Read off durable `ConfirmationVerdict` rows before the call, because
         // the gate never queries. Membership is all it checks: an id absent from
@@ -764,7 +854,38 @@ export async function runWorker(job: WorkerJob, deps: WorkerDeps): Promise<Worke
         refusedRule: verdict.rule,
       })
 
-      history.push({ kind: proposal.kind, summary: proposal.reason, outcome: `refused: ${verdict.rule}` })
+      history.push({
+        kind: proposal.kind,
+        summary: proposal.reason,
+        outcome: `refused: ${verdict.rule}`,
+      })
+
+      /**
+       * The pause, raised the moment the gate asks for it.
+       *
+       * ADR-0010 §5 in order: the refused intent is written (above), a question
+       * is composed from attested facts, and the run halts. The person answers,
+       * and a NEW `AgentRun` picks the work up carrying their yes. Nothing here
+       * is rewritten and no row changes — at this moment the truth is *it asked,
+       * and it was not yet allowed*, and that is what the ledger says.
+       *
+       * `page?.url` is what CHROME reported about the tab, not what the page
+       * said about itself, and the worker's own `reason` is not consulted: a
+       * model that could write the words asking for its own permission is a
+       * model that can argue for itself.
+       */
+      const askedAbout = ACTION_KINDS.find((candidate) => candidate === proposal.kind)
+      if (verdict.rule === 'confirmation_required' && askedAbout !== undefined) {
+        return askFirst({
+          intentId,
+          kind: askedAbout,
+          question: confirmationQuestion({
+            kind: askedAbout,
+            attestedUrl: page?.url ?? null,
+            ...(typeof params.key === 'string' ? { key: params.key } : {}),
+          }),
+        })
+      }
 
       const afterRefusal = shouldStop(progress(), job.controls.interruption, false)
       if (afterRefusal.halt) return finish(afterRefusal.rules, 'succeeded')
@@ -812,6 +933,17 @@ export async function runWorker(job: WorkerJob, deps: WorkerDeps): Promise<Worke
       // says what was attempted — and never an exception that escapes the loop
       // and takes the run's record with it.
       failed = describeFailure(error)
+
+      // ...and one of those failures is not about an action at all. `control-lost`
+      // says the attachment ended — the person closed the tab, pressed Chrome's
+      // own Cancel, or clicked the overlay chip — so there is nothing left to
+      // act through and the next forty proposals would each fail the same way.
+      // Recorded here rather than inferred from a run of failures, because
+      // "three things failed" and "the hands are gone" are different facts and
+      // only one of them has an honest sentence.
+      if (error instanceof BrowserControlError && error.failure === 'control-lost') {
+        controlLost = true
+      }
     }
 
     // Attempted either way. An action that was authorised and dispatched counts
@@ -1112,7 +1244,10 @@ async function perform(
      * writer for a shape must exist before the capability that makes it.
      */
     case 'observe-page': {
-      const observed = await observePage(action as AuthorizedAction<'observe-page'>, browserFor(deps, kind))
+      const observed = await observePage(
+        action as AuthorizedAction<'observe-page'>,
+        browserFor(deps, kind),
+      )
       return { summary: `looked at ${observed.url}`, changedSomething: false, observed }
     }
 
@@ -1129,22 +1264,42 @@ async function perform(
     }
 
     case 'click-element': {
-      const observed = await clickElement(action as AuthorizedAction<'click-element'>, browserFor(deps, kind))
-      return { summary: `clicked, and the page is now ${observed.url}`, changedSomething: true, observed }
+      const observed = await clickElement(
+        action as AuthorizedAction<'click-element'>,
+        browserFor(deps, kind),
+      )
+      return {
+        summary: `clicked, and the page is now ${observed.url}`,
+        changedSomething: true,
+        observed,
+      }
     }
 
     case 'type-text': {
-      const observed = await typeText(action as AuthorizedAction<'type-text'>, browserFor(deps, kind))
+      const observed = await typeText(
+        action as AuthorizedAction<'type-text'>,
+        browserFor(deps, kind),
+      )
       return { summary: 'typed into the page', changedSomething: true, observed }
     }
 
     case 'press-key': {
-      const observed = await pressKey(action as AuthorizedAction<'press-key'>, browserFor(deps, kind))
-      return { summary: `pressed a key, and the page is now ${observed.url}`, changedSomething: true, observed }
+      const observed = await pressKey(
+        action as AuthorizedAction<'press-key'>,
+        browserFor(deps, kind),
+      )
+      return {
+        summary: `pressed a key, and the page is now ${observed.url}`,
+        changedSomething: true,
+        observed,
+      }
     }
 
     case 'capture-screen': {
-      const captured = await captureScreen(action as AuthorizedAction<'capture-screen'>, browserFor(deps, kind))
+      const captured = await captureScreen(
+        action as AuthorizedAction<'capture-screen'>,
+        browserFor(deps, kind),
+      )
       return { summary: 'took a picture of the page', changedSomething: false, captured }
     }
   }

@@ -47,10 +47,7 @@ import { createModelClient } from '../model/provider'
 import type { ModelCallSink } from '../model/provider'
 import type { FailureKind, ModelClient } from '../model/client'
 import { datamark } from '../model/untrusted'
-import {
-  handlesFor,
-  sessionReadingBoundary,
-} from '../model/boundaries/session-reading'
+import { handlesFor, sessionReadingBoundary } from '../model/boundaries/session-reading'
 import type { PromptEvent } from '../model/boundaries/session-reading'
 import { handoffBoundary, sourceHandlesFor } from '../model/boundaries/handoff'
 import { EVERY_STRAND, detectThreads, threadPagesOf } from '../domain/detection/detect'
@@ -62,7 +59,7 @@ import type { Decision } from '../domain/document/changeset'
 import { normalise } from '../domain/document/normalise'
 import { isDecidable } from '../domain/outcome/shift-outcome'
 import type { WorkSoFar } from '../domain/intention/work-so-far'
-import { DOCUMENT_ACTION_KINDS } from '../domain/handoff/policy'
+import { MUTATING_ACTION_KINDS, grantableActionKinds } from '../domain/handoff/policy'
 import type { ActionKind, AutonomyControls } from '../domain/handoff/policy'
 import type { ClaimInput } from '../persistence/repositories/index'
 
@@ -88,8 +85,7 @@ export interface ActionProblem {
 }
 
 export type ActionResult<T> =
-  | { readonly ok: true; readonly value: T }
-  | { readonly ok: false; readonly problem: ActionProblem }
+  { readonly ok: true; readonly value: T } | { readonly ok: false; readonly problem: ActionProblem }
 
 function ok<T>(value: T): ActionResult<T> {
   return { ok: true, value }
@@ -180,7 +176,8 @@ function sayWhyTheModelFailed(failure: FailureKind): ActionProblem {
     case 'schema-mismatch':
       return {
         code: 'model-unusable',
-        message: "What came back didn't hold together, so Propositum recorded nothing rather than guess.",
+        message:
+          "What came back didn't hold together, so Propositum recorded nothing rather than guess.",
       }
     case 'transport':
       return {
@@ -207,7 +204,11 @@ function textOf(source: Record<string, unknown>, key: string): string | null {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null
 }
 
-const CLOCK = new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false })
+const CLOCK = new Intl.DateTimeFormat('en-GB', {
+  hour: '2-digit',
+  minute: '2-digit',
+  hour12: false,
+})
 
 /**
  * Why a gap happened, said the way a person would say it.
@@ -326,7 +327,10 @@ async function createProject(name: string): Promise<ActionResult<ProjectCreated>
     )
   }
   if (clean.length > 120) {
-    return no<ProjectCreated>('invalid-input', 'That name is too long — keep it under 120 characters.')
+    return no<ProjectCreated>(
+      'invalid-input',
+      'That name is too long — keep it under 120 characters.',
+    )
   }
 
   const { repos } = await appContext()
@@ -350,7 +354,10 @@ export async function renameProject(
     const clean = name.trim()
     if (!clean) return no<ProjectCreated>('invalid-input', 'Give it a name to go by.')
     if (clean.length > 120) {
-      return no<ProjectCreated>('invalid-input', 'That name is too long — keep it under 120 characters.')
+      return no<ProjectCreated>(
+        'invalid-input',
+        'That name is too long — keep it under 120 characters.',
+      )
     }
 
     const { repos } = await appContext()
@@ -1020,10 +1027,7 @@ export async function startFromSuggestion(
     if (live) {
       const running = await repos.sessions.byId(live.sessionId)
       if (running && running.phase !== 'ended') {
-        return no<WorkStarted>(
-          'already-done',
-          'A session is already running. End that one first.',
-        )
+        return no<WorkStarted>('already-done', 'A session is already running. End that one first.')
       }
     }
 
@@ -1381,7 +1385,10 @@ export interface OfferOnScreen {
 /** The words behind a signature, when nothing has named it yet. Ugly and true
  *  beats absent — `world+models+labs` is at least recognisable. */
 function subjectFromSignature(signature: string): string {
-  return signature.split('+').filter((word) => word !== '').join(' ')
+  return signature
+    .split('+')
+    .filter((word) => word !== '')
+    .join(' ')
 }
 
 /**
@@ -1391,9 +1398,9 @@ function subjectFromSignature(signature: string): string {
  * anything the request said beyond which thread it is asking about, which is
  * the property the whole shape exists for.
  */
-export async function offerForThread(threadSignature: string): Promise<
-  ActionResult<OfferOnScreen | null>
-> {
+export async function offerForThread(
+  threadSignature: string,
+): Promise<ActionResult<OfferOnScreen | null>> {
   return attempt(async () => {
     const thread = threadSignature.trim()
     if (thread === '') return ok<OfferOnScreen | null>(null)
@@ -1440,8 +1447,7 @@ export async function offerForThread(threadSignature: string): Promise<
       (detected ? groundsFor(detected, threadPagesOf(observations, detected, now)).sentences : [])
 
     const describedFor = detected ? describeWork(detected, thread, named) : null
-    const sentence =
-      describedFor?.sentence ?? `You have been looking into ${subject}.`
+    const sentence = describedFor?.sentence ?? `You have been looking into ${subject}.`
     const because = describedFor?.because ?? `Across ${patterns.length} sites.`
 
     const candidate = await carryOnCandidate(subject)
@@ -2267,7 +2273,10 @@ export async function editClaim(claimId: string, text: string): Promise<ActionRe
   return attempt(async () => {
     const clean = text.trim()
     if (!clean) {
-      return no<ClaimEdited>('invalid-input', "Say what it should be instead — an empty line can't stand in for it.")
+      return no<ClaimEdited>(
+        'invalid-input',
+        "Say what it should be instead — an empty line can't stand in for it.",
+      )
     }
 
     const { repos } = await appContext()
@@ -2406,7 +2415,7 @@ export async function draftContract(readingId: string): Promise<ActionResult<Con
     if (!reading) {
       return no<ContractDrafted>(
         'not-found',
-        "Propositum has lost what it understood about that session. Start again from the session.",
+        'Propositum has lost what it understood about that session. Start again from the session.',
       )
     }
 
@@ -2457,7 +2466,9 @@ export async function draftContract(readingId: string): Promise<ActionResult<Con
      * what the carry-forward above exists to produce. The offer's stated shape
      * would be silently overridden by the presence of an old file.
      */
-    const existing = expectsDocument ? (await repos.documents.forProject(session.projectId))[0] : undefined
+    const existing = expectsDocument
+      ? (await repos.documents.forProject(session.projectId))[0]
+      : undefined
     const base = existing === undefined ? null : await repos.documents.latestVersion(existing.id)
 
     if (existing !== undefined && base === null) {
@@ -2519,18 +2530,15 @@ export async function draftContract(readingId: string): Promise<ActionResult<Con
     // filter is the boundary.
     const claimsForHandoff = reading.claims.filter((c) => c.kind !== 'constraint')
 
-    const drafted = await client.run(
-      handoffBoundary(sourceHandlesFor(handled)),
-      {
-        claims: claimsForHandoff.map((c) => ({
-          kind: c.kind,
-          text: c.text,
-          ...(c.confidence === null ? {} : { confidence: c.confidence }),
-        })),
-        sources: handled.map((s) => ({ handle: s.handle, label: s.label })),
-        documentTitle: subject,
-      },
-    )
+    const drafted = await client.run(handoffBoundary(sourceHandlesFor(handled)), {
+      claims: claimsForHandoff.map((c) => ({
+        kind: c.kind,
+        text: c.text,
+        ...(c.confidence === null ? {} : { confidence: c.confidence }),
+      })),
+      sources: handled.map((s) => ({ handle: s.handle, label: s.label })),
+      documentTitle: subject,
+    })
 
     if (!drafted.ok) return { ok: false, problem: sayWhyTheModelFailed(drafted.failure) } as const
 
@@ -2614,11 +2622,12 @@ export async function draftContract(readingId: string): Promise<ActionResult<Con
       .filter((c) => c.kind === 'constraint')
       .map((c) => {
         const citedEventId = c.evidence[0]?.eventId
-        const sourceId = citedEventId === undefined ? null : sourceByEventId.get(citedEventId) ?? null
+        const sourceId =
+          citedEventId === undefined ? null : (sourceByEventId.get(citedEventId) ?? null)
         const quote = c.evidence[0]?.quote
         return {
           text: quote ?? c.text,
-          sourceLabel: sourceId === null ? null : labelById.get(sourceId) ?? null,
+          sourceLabel: sourceId === null ? null : (labelById.get(sourceId) ?? null),
           verbatim: quote !== undefined,
         }
       })
@@ -2652,14 +2661,19 @@ export async function draftContract(readingId: string): Promise<ActionResult<Con
         content: skeleton,
         contentHash: hashContent(skeleton),
       })
-      pinned = { id: created.versionId, content: skeleton, contentHash: hashContent(skeleton), ordinal: 1 }
+      pinned = {
+        id: created.versionId,
+        content: skeleton,
+        contentHash: hashContent(skeleton),
+        ordinal: 1,
+      }
       documentTitle = title
     }
 
     /* ── persist the draft ──────────────────────────────────────────────── */
 
     /**
-     * The DOCUMENT capability, granted only when there is a document.
+     * The capability, decided by whether this shift has a document under it.
      *
      * `DOCUMENT_ACTION_KINDS` used to be granted unconditionally, which was
      * harmless while every contract pinned a base and is not now. The gate
@@ -2671,16 +2685,26 @@ export async function draftContract(readingId: string): Promise<ActionResult<Con
      * lists a capability the gate will refuse is the screen teaching people not
      * to read it.
      *
-     * Not `ACTION_KINDS` either: the enum holds the browser-driving verbs now,
-     * and a person drafting a proposal has no business granting *"Click
-     * something on the page"*. A browser handoff grants those deliberately, from
-     * the path that offers one.
+     * ── The `[]` this replaces, and why it was worse than an over-grant ──
      *
-     * Full document capability at draft time; the Output dial removes
-     * `draft-section` at ratification. Defaults are static product constants,
-     * never model-proposed.
+     * The unpinned branch granted NOTHING. That is reachable — an accepted
+     * `WorkOffer` whose `expectedKinds` omit `document-changes` sets
+     * `expectsDocument` false, which skips the lookup and the skeleton alike —
+     * and it produced a ratified agreement under which every proposal is
+     * refused `action_kind_not_allowed` until `refusal-loop` ends the shift.
+     * The person read a permission screen listing no permissions and pressed
+     * the button anyway, because the screen did not look like a refusal.
+     *
+     * A shift with no document is a shift whose work is out on the web, so it
+     * grants the browser six — ADR-0010's handoff, and the thing that made the
+     * control channel reachable. `grantableActionKinds` owns which; this file
+     * owns only the question it is asked.
+     *
+     * Full capability at draft time; the Output dial removes everything that
+     * can change something at ratification. Defaults are static product
+     * constants, never model-proposed.
      */
-    const allowedActionKinds = pinned === null ? [] : [...DOCUMENT_ACTION_KINDS]
+    const allowedActionKinds = [...grantableActionKinds(pinned !== null)]
 
     const controls = DEFAULT_CONTROLS
     const contract = await repos.contracts.createDraft({
@@ -2891,7 +2915,10 @@ export async function acceptContract(
     const objective = (controls.objective ?? draft.objective).trim()
     const definitionOfDone = (controls.definitionOfDone ?? draft.definitionOfDone).trim()
     if (!objective) {
-      return no<ContractAccepted>('invalid-input', "Say what Propositum should work on while you're away.")
+      return no<ContractAccepted>(
+        'invalid-input',
+        "Say what Propositum should work on while you're away.",
+      )
     }
     if (!definitionOfDone) {
       return no<ContractAccepted>('invalid-input', 'Say how Propositum will know it is finished.')
@@ -2901,12 +2928,26 @@ export async function acceptContract(
     // handoff boundary has no field that could carry it.
     const guidance = (controls.guidance ?? []).map((g) => g.trim()).filter((g) => g.length > 0)
 
-    // The Output dial, applied to the stored scope. `compilePolicy` applies it
-    // again at run time; both agreeing is the point, not redundancy.
-    const allowedActionKinds: ActionKind[] =
-      controls.output === 'suggestions-only'
-        ? DOCUMENT_ACTION_KINDS.filter((k) => k !== 'draft-section')
-        : [...DOCUMENT_ACTION_KINDS]
+    /**
+     * The Output dial, applied to the stored scope. `compilePolicy` applies it
+     * again at run time; both agreeing is the point, not redundancy.
+     *
+     * **Subtracting `MUTATING_ACTION_KINDS` rather than `draft-section` by
+     * name.** The name filter was correct while the only grantable mutating
+     * kind was `draft-section` — on a document shift the two are the same
+     * subtraction and this is not a behaviour change. On a browser shift they
+     * are not: `click-element`, `type-text` and `press-key` are the mutating
+     * kinds, and a name filter would have left all three under a dial whose
+     * label reads *"Research only — don't write"*. That is the one thing
+     * `compilePolicy`'s own argument says must never happen — the
+     * safest-looking option being the one that is not safest — and it would
+     * have happened in the stored scope while the compiled policy told the
+     * truth, so the panel and the gate would have disagreed about what the
+     * person had granted.
+     */
+    const allowedActionKinds: ActionKind[] = grantableActionKinds(
+      draft.baseVersionId !== null,
+    ).filter((kind) => controls.output !== 'suggestions-only' || !MUTATING_ACTION_KINDS.has(kind))
 
     const unchanged =
       draft.objective === objective &&

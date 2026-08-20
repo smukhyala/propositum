@@ -143,6 +143,27 @@ export const CONFIRMABLE_ACTION_KINDS: ReadonlySet<ActionKind> = new Set<ActionK
  * Note carefully what it does NOT mean: `click-element` is not a landing kind,
  * and it can still press Send. Landing is about whose act put the effect into
  * the world, not about whether an effect is possible.
+ *
+ * ── It stayed empty when the browser handoff shipped, deliberately ───────
+ *
+ * The obvious reading of ADR-0010 is that granting `click-element` is what
+ * makes an effect land, so the set should have gained a member the day a
+ * contract granted one. It did not, and the reason is in the extension rather
+ * than here: `classifyPausedRequest` fails **every non-`GET` request
+ * unconditionally**, with no bypass for a confirmed action anywhere in
+ * `extension/src/cdp.js`. While Propositum holds a tab, nothing that changes
+ * something out there is sent from it.
+ *
+ * So a member added today would be a claim the transport cannot honour — a
+ * `ShiftOutcome` reported `landed`, offered no verdict, and telling somebody
+ * *"This already happened, outside Propositum"* about a request Chrome aborted.
+ * The honest encoding of *the capability is granted and the effect still cannot
+ * leave* is a kind that is not landing, which is what this is.
+ *
+ * What that makes the cost of a landing kind explicit about: it is not a line
+ * in this set. It is a bypass in the extension's request handler — the one
+ * mechanism ADR-0010 says cannot be talked out of firing — and it belongs in
+ * its own ADR for the same reason `Runtime.evaluate` does.
  */
 export const LANDING_ACTION_KINDS: ReadonlySet<ActionKind> = new Set<ActionKind>()
 
@@ -181,6 +202,48 @@ export const BROWSER_ACTION_KINDS: ReadonlySet<ActionKind> = new Set<ActionKind>
 export const DOCUMENT_ACTION_KINDS: readonly ActionKind[] = ACTION_KINDS.filter(
   (kind) => !BROWSER_ACTION_KINDS.has(kind),
 )
+
+/**
+ * What a contract grants, decided by the one fact that separates the two shifts.
+ *
+ * ── The state this replaces was a contract that permitted NOTHING ────────
+ *
+ * `draftContract` granted `DOCUMENT_ACTION_KINDS` when a base was pinned and
+ * `[]` when one was not, and the second branch is reachable: an accepted
+ * `WorkOffer` whose `expectedKinds` omit `document-changes` skips both the
+ * document lookup and the skeleton creation, so nothing is pinned and the
+ * contract permits nothing at all. That run plans, proposes, is refused
+ * `action_kind_not_allowed` three times and halts reporting *"I kept needing
+ * things the agreement does not allow"* — which is true, and is a description
+ * of an agreement that could never have allowed anything.
+ *
+ * A shift with no document is a shift whose work is out on the web, so what it
+ * grants is the browser set. That is the ADR-0010 handoff, and it is the piece
+ * that was missing rather than a new decision: the tools exist, the gate
+ * already admits every one of these kinds, and `compilePolicy` below already
+ * argues at length about what the Output dial does to them.
+ *
+ * ── Two branches over one enum, and the partition is the point ───────────
+ *
+ * Every `ActionKind` is grantable by exactly one of the two, so a capability
+ * cannot come to exist with no contract able to name it — which is the same
+ * failure `tests/reachability.test.ts` exists for, one layer up from a caller.
+ * Both branches are derived from `BROWSER_ACTION_KINDS` rather than listed, so
+ * a new kind lands on one side by its own membership and on neither by
+ * accident.
+ *
+ * **This grants no landing kind, because there are none.** See
+ * `LANDING_ACTION_KINDS` above: the browser six are mechanisms, and what stops
+ * a mechanism from becoming an irreversible effect is the confirmation pause
+ * plus the extension's unconditional refusal to let a non-`GET` request leave
+ * the tab. Neither of those lives here, and this function must never grow an
+ * opinion about them.
+ */
+export function grantableActionKinds(pinsDocument: boolean): readonly ActionKind[] {
+  return pinsDocument
+    ? DOCUMENT_ACTION_KINDS
+    : ACTION_KINDS.filter((kind) => BROWSER_ACTION_KINDS.has(kind))
+}
 
 /**
  * Kinds whose target is an element in a specific accessibility-tree snapshot.

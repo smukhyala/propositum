@@ -96,6 +96,39 @@ is derived from rows a person can go and look at, every one of which is reachabl
 screen, and none of it can grant anything. It is a display, and a display that is skipped shows
 nothing that a gate would have enforced.
 
+## The cost this bought, recorded on the day it was bought
+
+**A stale `Intention` can now pre-fill a `HandoffContract`.** `draftContract` takes its `objective`
+and `definitionOfDone` from the Intention when `WorkSoFar` says there has been more than one sitting
+under it, so the sentence somebody wrote in March is what a run in August is drafted from.
+
+That is not a surprise and it is not new — it is
+[ADR-0011](0011-intention-above-worksession.md)'s own predicted failure, arriving on the first
+occasion something read the row:
+
+> The person who types _"win the Northwind renewal by shipping the tier comparison"_ in March is not
+> prompted again in August, and nothing in this design detects that the renewal closed in May.
+
+ADR-0011 accepted that cost on the strength of one mitigation — _"on screen wherever it is used"_ —
+and then named that same clause as its own weak link, _"an interface requirement, not a property of
+the schema"_. This ADR is where the clause is either kept or quietly dropped, so: **it is kept, and
+the mechanism is a date.** `ContractDrafted` carries a two-armed discriminant naming where the words
+came from, and when they came from an Intention it carries `Intention.updatedAt`; the agreement
+screen prints the month and year above the fields it accounts for. That closes the one thing
+`CONTEXT.md`'s `IntentionState` entry still listed as owed.
+
+**What a date does and does not buy.** It cannot tell anyone the sentence is wrong — nothing in this
+system knows the renewal closed. What it does is stop the sentence from arriving _anonymous_: a
+person reading _"you wrote this in March"_ above a pre-filled objective is being asked a question
+they can answer, and one reading the objective alone is not being asked anything at all. That is the
+whole of the mitigation and it should not be read as more.
+
+**Where this could still go wrong, said plainly.** A person who clicks through the agreement screen
+has checked less than one who typed, the screen is now longer, and the date is one line on it. If
+somebody later proposes removing the date to reduce clutter, or pre-filling from an Intention with a
+single sitting behind it, that is this paragraph being spent — and it is the paragraph, not the
+field, that ADR-0011's weak link was resting on.
+
 ## The name
 
 `WorkSoFar` — a **computed view**, consumer wording **"Where you left off"**.

@@ -328,14 +328,28 @@ following a list written before it looked. `ActionKind` now enumerates **mechani
 effects, so a click can press *Send* — and every action the browser attests as irreversible stops and
 asks you first.
 
-**Narrowed 2026-08-16.** The capability is decided and the channel is built; **no run yet constructs
+~~**Narrowed 2026-08-16.** The capability is decided and the channel is built; **no run yet constructs
 one.** `tests/reachability.test.ts` pins `callersOf('createBrowserControl(')` to `[]` and pins
 `LANDING_ACTION_KINDS` empty beside it, so nothing has driven a browser and no `external-effect`
-outcome can occur. What is shipped is the decision and the transport, not a run. The **Now** stays
+outcome can occur. What is shipped is the decision and the transport, not a run.~~ The **Now** stays
 where [ADR-0010](./adr/0010-acting-in-the-browser.md) put it — the capability was decided, and
 writing *Later* back in would be a false claim in the modest direction. What moves is how much the
 **Now** claims. [`README.md`](../README.md) and [`ARCHITECTURE.md`](./ARCHITECTURE.md) say the same
 thing in the same words, and this file was the last of the three to catch up.
+
+**Widened back 2026-08-20, and only the first half of the narrowing is struck.** A run constructs a
+`BrowserControl`: a shift whose ratified agreement grants a kind needing a live page acts in the
+person's own Chrome, and `confirmations.create` has a caller, so the gate now genuinely stops and
+asks before anything the browser attests it cannot take back. Both pins moved out of *deferred, and
+asserted as deferred*. **`LANDING_ACTION_KINDS` did not**, and the reason is better than the caution
+it looks like: `classifyPausedRequest` in the extension fails every non-`GET` request
+unconditionally, with no bypass for a confirmed action anywhere in that file, so a landing kind would
+be a capability the transport refuses to carry — a claim, not a feature.
+
+**And the honest cost is the one ADR-0010 named in its own opening, arriving on schedule.** Nothing
+here is more reversible than it was; what changed is that the pause is now something a person will
+actually meet, and *"a pause is strictly weaker than an absence"* stops being a sentence about a
+hypothetical. The absence that made this section comfortable to read for nine days is gone.
 
 **The stated preference order below is honoured, and this is the one line of this document the new
 design satisfies rather than contradicts.** Structure first, pixels only as a fallback: the

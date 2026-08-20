@@ -42,20 +42,27 @@ label), the heartbeat gap sweeper (so two of four `CaptureGap` reasons cannot oc
 `ModelCallRecord` writer was wired 2026-08-16 and the reachability claim moved into the reachable
 section; every model call now records its boundary, model, latency, tokens and failure kind.**
 
-~~That is three.~~ ~~**Corrected 2026-08-16: the suite pins seven.**~~ **The suite pins ten, and
-this paragraph accounts for six of them — corrected 2026-08-16, twice in one day.** The count above
-was wrong in both directions at once: it had not caught up with four capabilities, and it had never
-counted `joinedExisting`, `projects.rename`, `revokeSource` or `sessions.refile` at all. Read
-`tests/reachability.test.ts`'s *deferred, and asserted as deferred* block rather than this sentence
-— it is the thing that is enforced, and this one is prose that has now gone stale three times.
-The four this paragraph had not
-caught up with are `controlLost` (two structural stop rules cannot fire), `findings.forRun`
-(outcome-scoped review findings are written and never shown), `confirmations.create` (the gate has
-never yet stopped to ask a person anything), and `createBrowserControl` — **no run drives the
-browser**, so the acting path decided in [ADR-0010](./docs/adr/0010-acting-in-the-browser.md) has both
-ends built and nothing holding the middle. `LANDING_ACTION_KINDS` is likewise empty, so no
-irreversible outcome can occur. [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) marks each of these
-against the layer it belongs to.
+~~That is three.~~ ~~**Corrected 2026-08-16: the suite pins seven.**~~ ~~**The suite pins ten, and
+this paragraph accounts for six of them — corrected 2026-08-16, twice in one day.**~~
+**The number is deleted rather than corrected again, 2026-08-20 — which is what the struck sentence
+already told the next reader to do.** It said *"Read `tests/reachability.test.ts`'s deferred, and
+asserted as deferred block rather than this sentence — it is the thing that is enforced, and this one
+is prose that has now gone stale three times."* Slice 1 would have made it four: five pins were
+promoted out of the block in one wave, and the honest move is to stop keeping the count in two places.
+`tests/counts.test.ts` says the same in its own header — *"Deleting the number is always allowed and
+always passes, which is the outcome the README argues for in its own prose."*
+
+**What slice 1 moved, since a reader who remembers the old sentence needs to know which way.**
+`createBrowserControl`, `confirmations.create` and `controlLost` are all reachable now
+([#91](https://github.com/smukhyala/propositum/issues/91)): a run drives the browser, the gate stops
+to ask a person, and a lost tab is reported. `scrollFraction`, exit type and arrival are read by the
+offer grounds ([ADR-0018](./docs/adr/0018-the-everyday-shapes.md)). What is still pinned as deferred
+is the shift-report narrative boundary, the gap sweeper, outcome-scoped review findings, and
+`LANDING_ACTION_KINDS` — **still empty, so no irreversible outcome can occur**, which
+[ADR-0010](./docs/adr/0010-acting-in-the-browser.md) now records as a decision about the transport
+rather than caution: the extension fails every non-`GET` request unconditionally, so a landing kind
+would be a claim the channel cannot honour. [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) marks
+each of these against the layer it belongs to.
 
 **Not measured:** the harness produces H1 material and cannot yet produce H2 or H3, and both
 scenarios expect a stop — so the false-stop half of H3 has nothing to score against.
@@ -166,9 +173,12 @@ work, adaptive autonomy, structured app integrations, ~~computer use,~~ cross-de
 **Computer use struck 2026-08-16.** It moved from Later to Now on 2026-08-11
 ([ADR-0010](./docs/adr/0010-acting-in-the-browser.md)) and this line did not move with it, which is
 the same failure as the stale counts above and in the more embarrassing direction: understating what
-the product can do is still saying a false thing about it. What is actually true is narrower than
+the product can do is still saying a false thing about it. ~~What is actually true is narrower than
 either version — the control channel is built and **no run yet constructs one**, asserted in
-`tests/reachability.test.ts`. [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) marks it layer by
+`tests/reachability.test.ts`.~~ **Struck 2026-08-20: a run constructs one.** The narrower claim was
+true for nine days and is not now — a shift whose ratified agreement grants a kind needing a live
+page drives the person's own Chrome, and the gate stops for a person before anything the browser
+attests it cannot take back. What has *not* moved is `LANDING_ACTION_KINDS`, still empty. [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) marks it layer by
 layer; [`docs/ROADMAP.md`](./docs/ROADMAP.md) has the stages beyond slice 0.
 
 The project's own principle applies to its README: say the true thing, including when it's

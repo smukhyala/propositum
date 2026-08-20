@@ -23,7 +23,12 @@ import { POST as dispatchRoute } from '../src/app/api/act/dispatch/route'
 import { GET as nextRoute } from '../src/app/api/act/next/route'
 import { POST as reportRoute } from '../src/app/api/act/report/route'
 import { POST as haltRoute } from '../src/app/api/act/halt/route'
-import { CONTROL_HEADER, MIN_HOLD_MS, admitControl, dispatchRequestSchema } from '../src/act/channel'
+import {
+  CONTROL_HEADER,
+  MIN_HOLD_MS,
+  admitControl,
+  dispatchRequestSchema,
+} from '../src/act/channel'
 import { appContext } from '../src/server/db'
 import type { AppContext } from '../src/server/db'
 
@@ -143,7 +148,11 @@ function extensionGet(overrides: Record<string, string> = {}): Request {
   })
 }
 
-function extensionPost(path: string, body: unknown, overrides: Record<string, string> = {}): Request {
+function extensionPost(
+  path: string,
+  body: unknown,
+  overrides: Record<string, string> = {},
+): Request {
   return new Request(`http://127.0.0.1:3117${path}`, {
     method: 'POST',
     headers: {
@@ -183,7 +192,26 @@ describe('an instruction reaches the browser and the report comes back', () => {
     const held = dispatchRoute(workerRequest(dispatchBody(runId, intentId)))
 
     const polled = await json(await nextRoute(extensionGet()))
-    expect(polled['command']).toMatchObject({ intentId, kind: 'observe-page' })
+    expect(polled['command']).toMatchObject({ runId, intentId, kind: 'observe-page' })
+
+    /**
+     * The run id is on the envelope, and it is Stop that needs it.
+     *
+     * Asserted here rather than in a test of its own because this is the only
+     * moment it is ever handed over: `service-worker.js` reads `command.runId`
+     * when the first `navigate` opens the controlled tab and stores it for the
+     * life of the attachment, because ADR-0010 §7 requires stopping to work with
+     * the app closed — which rules out fetching it when it is wanted.
+     *
+     * Until it was sent, this key was absent, the extension's `runId` was
+     * permanently `null`, and `haltRequestSchema` refused every halt raised from
+     * the browser with a 403 that `postHalt`'s `.catch(() => {})` swallowed. The
+     * chip said it had stopped; the run had not.
+     *
+     * `toMatchObject` is partial, which is exactly how the absence survived a
+     * green suite for a wave — so the presence is named explicitly.
+     */
+    expect(Object.keys(polled['command'] as object)).toContain('runId')
 
     // The row moved under the guarded UPDATE, which is the durable half of the
     // handover. The held response is the convenience.
