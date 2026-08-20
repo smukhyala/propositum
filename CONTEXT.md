@@ -225,6 +225,39 @@ see — a mutation that computed a state and discarded it kept the whole suite g
 blocked · waiting (as a member).
 **Consumer:** Working · Propositum is on it · Needs you · Sleeping · Done.
 
+### WorkSoFar — *computed view*
+What has already happened under one Intention, folded from rows and shown to a person **before** they
+start the next sitting. Sittings so far and when the last one ended · sources already approved ·
+documents in play · what previous Shifts produced, by ShiftOutcomeKind · how each decidable unit was
+decided · which DecisionNeeded are still open · where the last run stopped.
+
+**Deterministic, and that is the property rather than an implementation note.** No model call, no
+inference, no prose. Every member folds a row a person wrote, approved, accepted or rejected —
+which is what lets a durable statement of prior work exist at all without reopening ADR-0011. A
+stored or model-written version is a different object and needs that ADR reopened;
+[ADR-0017](docs/adr/0017-continuing-an-intention.md) says so in its own *Revisit when*.
+
+**Computed, never stored**, on the precedent `EnforcedPolicy`, `Shift`, `ActionStatus` and
+`IntentionState` all set: two stores for one truth is how a UI comes to display something the gate
+cannot enforce. There is no `WorkSoFar` column and no `WorkSoFar` table.
+
+**It may inform a person; it may not inform a decision.** Same posture as `BusyInterval` under
+[ADR-0014](docs/adr/0014-reading-free-busy.md), and stated here for the same reason: it does not
+reach `compilePolicy`, the gate, or any prompt. It renders on the accept screen beside what
+`carryOnCandidate` already shows, on the project screen, and it informs the words pre-filled into a
+`StatedIntent` that a human then ratifies.
+
+**What it is not.** Not `SessionReading` — that is one sitting, model-inferred, evidence-bearing and
+cold every time, and it stays that way. Not the Intention itself, which is the human-ratified
+sentence this folds work *underneath*. Not a prediction: nothing here says what comes next.
+
+*Checked against the banned words:* not `SessionState` (that is `SessionReading`), not `Task`, and
+deliberately not anything containing `Progress` — Principle 1 is *activity is not progress*, and a
+fold over activity is exactly the thing that must not borrow the word.
+*Displaces:* cross-session summary · memory · context carryover · the project's history · what you
+were doing last time.
+**Consumer:** Where you left off.
+
 ### Project — *table*
 The single durable workspace (`id`, `name`, `createdAt`). Owns every ApprovedSource, Document and
 WorkSession. No objective, no status, **no free-text description** — a description that inference
@@ -670,7 +703,7 @@ Closed and code-owned, in two groups that are part of the type rather than a com
 | Group | Members |
 |---|---|
 | intent | `searched-then-read` · `refined-the-search` · `came-back` |
-| investment | `read-deeply` · `stayed-with-it` · `followed-across` · `read-around` |
+| investment | `read-deeply` · `stayed-with-it` · `followed-across` · `read-around` · `compared-options` |
 
 Adding a member is a schema change, never configuration. **No `other`.** Never model output, so the
 enum is a genuine constraint rather than a prose hint. The thresholds behind each member are the
@@ -689,6 +722,18 @@ into three or more read pages of a single site, which is research and is equally
 accepted cost, recorded in full in `src/domain/detection/grounds.ts` and in ADR-0009 §2. *(Both
 corrections made the same day: it shipped counting as a ground beside `followed-across` rather than
 folding into it, and with "engaged" meaning "visible for a nonzero time" rather than read.)*
+**Amended 2026-08-20: `compared-options` is the eighth member and the fifth investment ground
+([ADR-0018](docs/adr/0018-the-everyday-shapes.md)).** Several comparable pages on DIFFERENT origins,
+each held and scrolled far enough to have been read, with at least one return that arrival says was
+not same-origin. It exists because comparison shopping was, until this ADR, named in
+`src/domain/detection/grounds.ts` as one of this design's **residual false positives** — the same
+afternoon the direction document makes a flagship example. It sits on its own axis rather than on
+`BREADTH_AXIS`, so a comparison cannot also pay as `followed-across` off one buffer.
+**What it costs is stated where the cost is:** `INVESTMENT_REQUIRED` stays at 2 and there is now one
+more way to reach it, which `grounds.ts` calls *"the closest thing available to lowering
+`INVESTMENT_REQUIRED`"* about this exact kind of change. The guard is the standing fixture of an
+ordinary afternoon of reading, which must still not qualify.
+
 *Checked against the banned words:* not bare `action`, not `signal` (displaced by ObservationEvent).
 *Displaces:* signal type · heuristic name · rule id (in detection) · trigger · other · misc.
 **Consumer:** internal — rendered as a sentence, never as a name: *"you searched, then read three
@@ -1956,10 +2001,17 @@ Recorded so they are found deliberately rather than discovered.
 - **The injection surface grew by roughly two orders of magnitude**, from a 2,000-character excerpt
   read once to an accessibility tree read every turn, every accessible name of it page-authored.
   ADR-0006 says datamarking is depth, not a boundary, and depth scaled a hundredfold is still depth.
-- **~~This is 38 terms.~~ ~~This is 52.~~ ~~This is 54.~~ ~~This is 55.~~ This is 56.** Fourteen
+- **~~This is 38 terms.~~ ~~This is 52.~~ ~~This is 54.~~ ~~This is 55.~~ ~~This is 56.~~ This is
+  57.** Fourteen
   were added on 2026-08-11 for composed offers and browser action, two on 2026-08-16 for persistent
   intentions — `Intention` and `IntentionState` — one on 2026-08-17 for authored labels:
-  `AuthoredLabel` — and one on 2026-08-18 for reading a calendar: `BusyInterval`.
+  `AuthoredLabel` — one on 2026-08-18 for reading a calendar: `BusyInterval` — and one on 2026-08-20
+  for continuing an Intention across sittings: `WorkSoFar`
+  ([ADR-0017](docs/adr/0017-continuing-an-intention.md)).
+  **The count here is not the authority and never was** — `README.md` carries it and
+  `tests/counts.test.ts` checks that one against the glossary itself, which is the only version of
+  this claim that has ever been able to stay true. This line is kept because the *history* in it is
+  worth reading and a bare current number is not.
   Small against nine brief objects, seven model boundaries, an append-only
   ledger, a diff model, a policy gate and an acting agent. **Not small in absolute terms, and no
   longer arguably small at all.** The earlier note said roughly six earn their place only

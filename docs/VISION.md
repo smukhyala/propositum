@@ -13,13 +13,24 @@ possible, and puts the right worker — human or model — on it inside explicit
 
 **None of that sentence is shipped.** What this change leaves behind is one sensor, one worker, one
 reviewer — all three of which existed before it — plus one flat `Intention` table and a lifecycle
-word computed from rows that already existed. **The table is the one thing this stage is still
+word computed from rows that already existed. ~~**The table is the one thing this stage is still
 adding**: [ADR-0011](./adr/0011-intention-above-worksession.md) decided it,
 [`MVP.md`](./MVP.md) records it as *not yet built at the time of writing*, and
 [`ARCHITECTURE.md`](./ARCHITECTURE.md) says how to check whether it is a table yet or still a
-decision. The gap between those two paragraphs is the subject of every **Later** below, and it is
-the width of the product. Keeping a reader able to tell the two apart is the most valuable property
-this document has.
+decision.~~ **Struck 2026-08-20. The table landed on 2026-08-16 and this paragraph did not follow
+it**, so for four days the document's own orientation sentence described a state it had left — in
+the file whose stated purpose is keeping *Now* and *Later* apart. It is struck rather than deleted
+because the drift is the point: this is the third time a `not yet` outlived the thing it qualified,
+and the other two are struck in place below for the same reason.
+[`ARCHITECTURE.md`](./ARCHITECTURE.md) §1 still carries the one-command check, which is now the only
+version of this claim that can go stale visibly. The gap between those two paragraphs is the subject
+of every **Later** below, and it is the width of the product. Keeping a reader able to tell the two
+apart is the most valuable property this document has.
+
+**Slice 1 is in flight as of 2026-08-20** — [ADR-0016](./adr/0016-everyday-computing-direction.md)
+records the direction it comes from and, at greater length, the four things that direction asks for
+which are **not** being built: leaving Chrome, taking two free Chrome permissions before H1 has a
+number, learning an intervention threshold, and letting inference write an `Intention`.
 
 ---
 
@@ -108,11 +119,27 @@ and correction is the entire mechanism by which the contract becomes trustworthy
 **Later.** ~~Reading intention across sessions and across projects.~~ **Amended 2026-08-16
 ([ADR-0011](./adr/0011-intention-above-worksession.md)): an intention is specified to *persist*
 across sessions; *reading* one across sessions still does not happen.** The `Intention` carries
-forward because a person ratified it and can see it — once the table exists, which it does not yet.
-Propositum still infers each sitting from scratch, still does not recognise that today's work
-continues last week's without being told, and still does not learn that you always want the
+forward because a person ratified it and can see it — ~~once the table exists, which it does not
+yet~~ **and the table exists as of 2026-08-16**.
+Propositum still infers each sitting from scratch, ~~still does not recognise that today's work
+continues last week's without being told,~~ and still does not learn that you always want the
 objection section drafted before the pricing section. **Persistence was the small half of this
 section, and it is the half this change takes on. Nothing about the other half moved.**
+
+*(Amended again 2026-08-20 — [ADR-0017](./adr/0017-continuing-an-intention.md). **One clause above
+is struck and it is the narrower one.** `WorkSoFar` is a deterministic fold over every sitting under
+one Intention — sources already approved, what previous Shifts produced, how each decidable unit was
+decided, which questions are still open, where the last run stopped — rendered on the accept screen
+**before** the click that starts the next sitting. So today's work is filed with last week's and a
+person can see what is being carried, which is what the struck clause denied.
+
+**What is emphatically not struck is the sentence before it.** Propositum still infers each sitting
+from scratch: `SessionReading` is per-sitting, model-inferred and cold every time, and `WorkSoFar`
+contains no inference at all — that is the property, not a shortcoming to be fixed later, because
+the moment a model writes durable state about a person, ADR-0011's whole argument has to be made
+again. The distinction this paragraph now rests on is between **filing** work under a continuing
+Intention, which happens, and **reading** an intention across sittings, which does not. Anyone
+reading "continuation works" out of this section has taken the first for the second.)*
 
 ---
 
