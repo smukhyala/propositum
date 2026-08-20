@@ -1,0 +1,328 @@
+{
+  "note": "SYNTHESISED, not a recording — 2026-08-20. Twenty-three observations posted through the real /api/capture/ambient route and read back out of the real /api/capture/ambient/debug route in one process, so the file is a genuine capture of a genuine buffer and the browsing in it is invented. It stands in for an evening spent choosing a monitor: one search, then ten product pages across three retailers — four on one and three on each of the others — each held between thirty and fifty seconds and scrolled down past the picture to the specification table, and then a return to the third of them from a different retailer once the shortlist had narrowed. The buffer covers about sixteen minutes and the thread spans twelve and a half, which is under SUSTAINED_MS, and nothing was held for a full minute — so stayed-with-it and read-deeply both stay silent and this afternoon clears the offer bar on compared-options, or not at all. It was refused before ADR-0018 landed. Nobody browsed this.",
+  "held": 23,
+  "now": 1787256079198,
+  "origins": [
+    {
+      "origin": "https://www.retailer-a.example",
+      "pages": 4,
+      "engagedMinutes": 1,
+      "titles": [
+        "Aurora 27 inch 4K monitor — specifications",
+        "Aurora 27 inch 4K monitor with hub",
+        "Meridian 27 inch 4K monitor",
+        "Meridian 27 inch 4K monitor, refurbished"
+      ]
+    },
+    {
+      "origin": "https://shop-b.example",
+      "pages": 3,
+      "engagedMinutes": 1,
+      "titles": [
+        "Aurora 27 inch 4K monitor",
+        "Meridian 27 inch 4K monitor — specifications",
+        "Calder 27 inch 4K monitor"
+      ]
+    },
+    {
+      "origin": "https://c-electronics.example",
+      "pages": 3,
+      "engagedMinutes": 1,
+      "titles": [
+        "Calder 27 inch 4K monitor with hub",
+        "Aurora 27 inch 4K monitor — specifications",
+        "Meridian 27 inch 4K monitor with hub"
+      ]
+    },
+    {
+      "origin": "https://www.google.com",
+      "pages": 1,
+      "engagedMinutes": 0,
+      "titles": [
+        "27 inch 4k monitor usb c hub - Google Search"
+      ]
+    }
+  ],
+  "detectsWork": {
+    "terms": [
+      "inch",
+      "monitor",
+      "hub",
+      "aurora",
+      "meridian",
+      "calder"
+    ],
+    "labels": [
+      "inch",
+      "monitor",
+      "hub",
+      "aurora",
+      "meridian",
+      "calder"
+    ],
+    "origins": [
+      "https://www.google.com",
+      "https://www.retailer-a.example",
+      "https://shop-b.example",
+      "https://c-electronics.example"
+    ],
+    "pages": 11,
+    "searches": 1,
+    "engagedMs": 392000,
+    "since": 1787255119184,
+    "focus": "Meridian 27 inch 4K monitor",
+    "titles": [
+      "27 inch 4k monitor usb c hub - Google Search",
+      "Aurora 27 inch 4K monitor — specifications",
+      "Aurora 27 inch 4K monitor with hub",
+      "Meridian 27 inch 4K monitor",
+      "Meridian 27 inch 4K monitor, refurbished",
+      "Aurora 27 inch 4K monitor",
+      "Meridian 27 inch 4K monitor — specifications",
+      "Calder 27 inch 4K monitor",
+      "Calder 27 inch 4K monitor with hub",
+      "Aurora 27 inch 4K monitor — specifications",
+      "Meridian 27 inch 4K monitor with hub"
+    ],
+    "urls": [
+      "https://www.google.com/search?q=27+inch+4k+monitor+usb+c+hub",
+      "https://www.retailer-a.example/monitors/0",
+      "https://www.retailer-a.example/monitors/1",
+      "https://www.retailer-a.example/monitors/2",
+      "https://www.retailer-a.example/monitors/3",
+      "https://shop-b.example/monitors/4",
+      "https://shop-b.example/monitors/5",
+      "https://shop-b.example/monitors/6",
+      "https://c-electronics.example/monitors/7",
+      "https://c-electronics.example/monitors/8",
+      "https://c-electronics.example/monitors/9"
+    ],
+    "because": "searched-and-followed"
+  },
+  "detectsPause": null,
+  "grounds": {
+    "kinds": [
+      "searched-then-read",
+      "came-back",
+      "followed-across",
+      "read-around",
+      "compared-options"
+    ],
+    "sufficient": true,
+    "sentences": [
+      "You searched, then read 10 more pages.",
+      "You went back to www.retailer-a.example after leaving it.",
+      "You followed it across 4 sites.",
+      "You read 4 pages on www.retailer-a.example.",
+      "You read 10 pages across 3 sites and went back to one of them."
+    ]
+  },
+  "observations": [
+    {
+      "at": 1787255119184,
+      "origin": "https://www.google.com",
+      "url": "https://www.google.com/search?q=27+inch+4k+monitor+usb+c+hub",
+      "title": "27 inch 4k monitor usb c hub - Google Search",
+      "kind": "query",
+      "arrival": "no-referrer"
+    },
+    {
+      "at": 1787255149184,
+      "origin": "https://www.retailer-a.example",
+      "url": "https://www.retailer-a.example/monitors/0",
+      "title": "Aurora 27 inch 4K monitor — specifications",
+      "kind": "navigation",
+      "arrival": "cross-origin"
+    },
+    {
+      "at": 1787255179184,
+      "origin": "https://www.retailer-a.example",
+      "url": "https://www.retailer-a.example/monitors/0",
+      "title": "Aurora 27 inch 4K monitor — specifications",
+      "kind": "engagement",
+      "engagedMs": 30000,
+      "scrollFraction": 0.71,
+      "exitType": "left-unloaded"
+    },
+    {
+      "at": 1787255229184,
+      "origin": "https://www.retailer-a.example",
+      "url": "https://www.retailer-a.example/monitors/1",
+      "title": "Aurora 27 inch 4K monitor with hub",
+      "kind": "navigation",
+      "arrival": "same-origin"
+    },
+    {
+      "at": 1787255259184,
+      "origin": "https://www.retailer-a.example",
+      "url": "https://www.retailer-a.example/monitors/1",
+      "title": "Aurora 27 inch 4K monitor with hub",
+      "kind": "engagement",
+      "engagedMs": 40000,
+      "scrollFraction": 0.63,
+      "exitType": "left-cached"
+    },
+    {
+      "at": 1787255309184,
+      "origin": "https://www.retailer-a.example",
+      "url": "https://www.retailer-a.example/monitors/2",
+      "title": "Meridian 27 inch 4K monitor",
+      "kind": "navigation",
+      "arrival": "same-origin"
+    },
+    {
+      "at": 1787255339184,
+      "origin": "https://www.retailer-a.example",
+      "url": "https://www.retailer-a.example/monitors/2",
+      "title": "Meridian 27 inch 4K monitor",
+      "kind": "engagement",
+      "engagedMs": 50000,
+      "scrollFraction": 0.84,
+      "exitType": "left-cached"
+    },
+    {
+      "at": 1787255389184,
+      "origin": "https://www.retailer-a.example",
+      "url": "https://www.retailer-a.example/monitors/3",
+      "title": "Meridian 27 inch 4K monitor, refurbished",
+      "kind": "navigation",
+      "arrival": "same-origin"
+    },
+    {
+      "at": 1787255419184,
+      "origin": "https://www.retailer-a.example",
+      "url": "https://www.retailer-a.example/monitors/3",
+      "title": "Meridian 27 inch 4K monitor, refurbished",
+      "kind": "engagement",
+      "engagedMs": 30000,
+      "scrollFraction": 0.58,
+      "exitType": "left-unloaded"
+    },
+    {
+      "at": 1787255469184,
+      "origin": "https://shop-b.example",
+      "url": "https://shop-b.example/monitors/4",
+      "title": "Aurora 27 inch 4K monitor",
+      "kind": "navigation",
+      "arrival": "cross-origin"
+    },
+    {
+      "at": 1787255499184,
+      "origin": "https://shop-b.example",
+      "url": "https://shop-b.example/monitors/4",
+      "title": "Aurora 27 inch 4K monitor",
+      "kind": "engagement",
+      "engagedMs": 40000,
+      "scrollFraction": 0.77,
+      "exitType": "left-cached"
+    },
+    {
+      "at": 1787255549184,
+      "origin": "https://shop-b.example",
+      "url": "https://shop-b.example/monitors/5",
+      "title": "Meridian 27 inch 4K monitor — specifications",
+      "kind": "navigation",
+      "arrival": "same-origin"
+    },
+    {
+      "at": 1787255579184,
+      "origin": "https://shop-b.example",
+      "url": "https://shop-b.example/monitors/5",
+      "title": "Meridian 27 inch 4K monitor — specifications",
+      "kind": "engagement",
+      "engagedMs": 50000,
+      "scrollFraction": 0.69,
+      "exitType": "left-cached"
+    },
+    {
+      "at": 1787255629184,
+      "origin": "https://shop-b.example",
+      "url": "https://shop-b.example/monitors/6",
+      "title": "Calder 27 inch 4K monitor",
+      "kind": "navigation",
+      "arrival": "same-origin"
+    },
+    {
+      "at": 1787255659184,
+      "origin": "https://shop-b.example",
+      "url": "https://shop-b.example/monitors/6",
+      "title": "Calder 27 inch 4K monitor",
+      "kind": "engagement",
+      "engagedMs": 30000,
+      "scrollFraction": 0.62,
+      "exitType": "left-unloaded"
+    },
+    {
+      "at": 1787255709184,
+      "origin": "https://c-electronics.example",
+      "url": "https://c-electronics.example/monitors/7",
+      "title": "Calder 27 inch 4K monitor with hub",
+      "kind": "navigation",
+      "arrival": "cross-origin"
+    },
+    {
+      "at": 1787255739184,
+      "origin": "https://c-electronics.example",
+      "url": "https://c-electronics.example/monitors/7",
+      "title": "Calder 27 inch 4K monitor with hub",
+      "kind": "engagement",
+      "engagedMs": 40000,
+      "scrollFraction": 0.81,
+      "exitType": "left-cached"
+    },
+    {
+      "at": 1787255789184,
+      "origin": "https://c-electronics.example",
+      "url": "https://c-electronics.example/monitors/8",
+      "title": "Aurora 27 inch 4K monitor — specifications",
+      "kind": "navigation",
+      "arrival": "same-origin"
+    },
+    {
+      "at": 1787255819184,
+      "origin": "https://c-electronics.example",
+      "url": "https://c-electronics.example/monitors/8",
+      "title": "Aurora 27 inch 4K monitor — specifications",
+      "kind": "engagement",
+      "engagedMs": 50000,
+      "scrollFraction": 0.74,
+      "exitType": "left-cached"
+    },
+    {
+      "at": 1787255869184,
+      "origin": "https://c-electronics.example",
+      "url": "https://c-electronics.example/monitors/9",
+      "title": "Meridian 27 inch 4K monitor with hub",
+      "kind": "navigation",
+      "arrival": "same-origin"
+    },
+    {
+      "at": 1787255899184,
+      "origin": "https://c-electronics.example",
+      "url": "https://c-electronics.example/monitors/9",
+      "title": "Meridian 27 inch 4K monitor with hub",
+      "kind": "engagement",
+      "engagedMs": 30000,
+      "scrollFraction": 0.66,
+      "exitType": "left-unloaded"
+    },
+    {
+      "at": 1787256029184,
+      "origin": "https://www.retailer-a.example",
+      "url": "https://www.retailer-a.example/monitors/2",
+      "title": "Meridian 27 inch 4K monitor",
+      "kind": "navigation",
+      "arrival": "cross-origin"
+    },
+    {
+      "at": 1787256059184,
+      "origin": "https://www.retailer-a.example",
+      "url": "https://www.retailer-a.example/monitors/2",
+      "title": "Meridian 27 inch 4K monitor",
+      "kind": "engagement",
+      "engagedMs": 52000,
+      "scrollFraction": 0.93,
+      "exitType": "hidden"
+    }
+  ]
+}

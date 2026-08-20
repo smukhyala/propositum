@@ -28,7 +28,11 @@ import { ambientObservationFields } from './support/ambient-fields'
 
 const T0 = 1_000_000
 
-function nav(at: number, url: string, origin = 'https://northwind.example.com'): AmbientObservation {
+function nav(
+  at: number,
+  url: string,
+  origin = 'https://northwind.example.com',
+): AmbientObservation {
   return { at, origin, url, title: url, kind: 'navigation' }
 }
 
@@ -41,7 +45,11 @@ function read(
   return { at, origin, url, title: url, kind: 'engagement', engagedMs }
 }
 
-function query(at: number, url: string, origin = 'https://northwind.example.com'): AmbientObservation {
+function query(
+  at: number,
+  url: string,
+  origin = 'https://northwind.example.com',
+): AmbientObservation {
   return { at, origin, url, title: url, kind: 'query' }
 }
 
@@ -131,11 +139,43 @@ describe('what must not be mistaken for work', () => {
 describe('what is work — a subject followed across sites', () => {
   /** Three sites, one subject. The shape research actually has. */
   const thread: AmbientObservation[] = [
-    { at: T0, origin: 'https://a.example', url: 'https://a.example/1', title: 'World Models Survey', kind: 'navigation' },
-    { at: T0 + 1, origin: 'https://a.example', url: 'https://a.example/1', title: 'World Models Survey', kind: 'engagement', engagedMs: ENGAGED_MS_FOR_WORK / 2 },
-    { at: T0 + 2, origin: 'https://b.example', url: 'https://b.example/1', title: 'World Models Explained', kind: 'navigation' },
-    { at: T0 + 3, origin: 'https://b.example', url: 'https://b.example/1', title: 'World Models Explained', kind: 'engagement', engagedMs: ENGAGED_MS_FOR_WORK / 2 },
-    { at: T0 + 4, origin: 'https://c.example', url: 'https://c.example/1', title: 'Training World Models', kind: 'navigation' },
+    {
+      at: T0,
+      origin: 'https://a.example',
+      url: 'https://a.example/1',
+      title: 'World Models Survey',
+      kind: 'navigation',
+    },
+    {
+      at: T0 + 1,
+      origin: 'https://a.example',
+      url: 'https://a.example/1',
+      title: 'World Models Survey',
+      kind: 'engagement',
+      engagedMs: ENGAGED_MS_FOR_WORK / 2,
+    },
+    {
+      at: T0 + 2,
+      origin: 'https://b.example',
+      url: 'https://b.example/1',
+      title: 'World Models Explained',
+      kind: 'navigation',
+    },
+    {
+      at: T0 + 3,
+      origin: 'https://b.example',
+      url: 'https://b.example/1',
+      title: 'World Models Explained',
+      kind: 'engagement',
+      engagedMs: ENGAGED_MS_FOR_WORK / 2,
+    },
+    {
+      at: T0 + 4,
+      origin: 'https://c.example',
+      url: 'https://c.example/1',
+      title: 'Training World Models',
+      kind: 'navigation',
+    },
   ]
 
   it('finds the subject, not the site', () => {
@@ -159,9 +199,27 @@ describe('what is work — a subject followed across sites', () => {
     // Searching for something states the intent outright. Waiting for eight
     // minutes of dwell after that is waiting for a fact already established.
     const searched: AmbientObservation[] = [
-      { at: T0, origin: 'https://www.google.com', url: 'https://www.google.com/search?q=world+models', title: 'world models - Google Search', kind: 'query' },
-      { at: T0 + 1, origin: 'https://a.example', url: 'https://a.example/1', title: 'World Models Survey', kind: 'navigation' },
-      { at: T0 + 2, origin: 'https://b.example', url: 'https://b.example/1', title: 'World Models Explained', kind: 'navigation' },
+      {
+        at: T0,
+        origin: 'https://www.google.com',
+        url: 'https://www.google.com/search?q=world+models',
+        title: 'world models - Google Search',
+        kind: 'query',
+      },
+      {
+        at: T0 + 1,
+        origin: 'https://a.example',
+        url: 'https://a.example/1',
+        title: 'World Models Survey',
+        kind: 'navigation',
+      },
+      {
+        at: T0 + 2,
+        origin: 'https://b.example',
+        url: 'https://b.example/1',
+        title: 'World Models Explained',
+        kind: 'navigation',
+      },
     ]
 
     const found = detectWork(searched, T0 + 3)
@@ -182,8 +240,22 @@ describe('what is work — a subject followed across sites', () => {
     // count the same minute once per report.
     const repeated: AmbientObservation[] = [
       ...thread,
-      { at: T0 + 6, origin: 'https://a.example', url: 'https://a.example/1', title: 'World Models Survey', kind: 'engagement', engagedMs: ENGAGED_MS_FOR_WORK / 2 },
-      { at: T0 + 7, origin: 'https://a.example', url: 'https://a.example/1', title: 'World Models Survey', kind: 'engagement', engagedMs: ENGAGED_MS_FOR_WORK / 2 },
+      {
+        at: T0 + 6,
+        origin: 'https://a.example',
+        url: 'https://a.example/1',
+        title: 'World Models Survey',
+        kind: 'engagement',
+        engagedMs: ENGAGED_MS_FOR_WORK / 2,
+      },
+      {
+        at: T0 + 7,
+        origin: 'https://a.example',
+        url: 'https://a.example/1',
+        title: 'World Models Survey',
+        kind: 'engagement',
+        engagedMs: ENGAGED_MS_FOR_WORK / 2,
+      },
     ]
 
     expect(detectWork(repeated, T0 + 8)?.engagedMs).toBe(ENGAGED_MS_FOR_WORK)
@@ -199,11 +271,30 @@ describe('a query is a query, not a question mark', () => {
    */
   const shaped = (url: string, origin: string): AmbientObservation[] => [
     { at: T0, origin, url, title: 'World Models', kind: 'query' },
-    { at: T0 + 1, origin: 'https://a.example', url: 'https://a.example/1', title: 'World Models Survey', kind: 'navigation' },
-    { at: T0 + 2, origin: 'https://b.example', url: 'https://b.example/1', title: 'World Models Explained', kind: 'navigation' },
+    {
+      at: T0 + 1,
+      origin: 'https://a.example',
+      url: 'https://a.example/1',
+      title: 'World Models Survey',
+      kind: 'navigation',
+    },
+    {
+      at: T0 + 2,
+      origin: 'https://b.example',
+      url: 'https://b.example/1',
+      title: 'World Models Explained',
+      kind: 'navigation',
+    },
     // Enough reading that the thread clears the naming bar either way, so what
     // is being measured here is the search count and nothing else.
-    { at: T0 + 3, origin: 'https://a.example', url: 'https://a.example/1', title: 'World Models Survey', kind: 'engagement', engagedMs: ENGAGED_MS_FOR_WORK },
+    {
+      at: T0 + 3,
+      origin: 'https://a.example',
+      url: 'https://a.example/1',
+      title: 'World Models Survey',
+      kind: 'engagement',
+      engagedMs: ENGAGED_MS_FOR_WORK,
+    },
   ]
 
   it('counts a real search', () => {
@@ -231,12 +322,37 @@ describe('a query is a query, not a question mark', () => {
 
 describe('coming back to a page is a fact about the page', () => {
   const thread = (extra: AmbientObservation[] = []): AmbientObservation[] => [
-    { at: T0, origin: 'https://a.example', url: 'https://a.example/1', title: 'World Models Survey', kind: 'navigation' },
-    { at: T0 + 1, origin: 'https://b.example', url: 'https://b.example/1', title: 'World Models Explained', kind: 'navigation' },
-    { at: T0 + 2, origin: 'https://c.example', url: 'https://c.example/1', title: 'Training World Models', kind: 'navigation' },
+    {
+      at: T0,
+      origin: 'https://a.example',
+      url: 'https://a.example/1',
+      title: 'World Models Survey',
+      kind: 'navigation',
+    },
+    {
+      at: T0 + 1,
+      origin: 'https://b.example',
+      url: 'https://b.example/1',
+      title: 'World Models Explained',
+      kind: 'navigation',
+    },
+    {
+      at: T0 + 2,
+      origin: 'https://c.example',
+      url: 'https://c.example/1',
+      title: 'Training World Models',
+      kind: 'navigation',
+    },
     // Past the naming bar, so `detectWork` has something to report and the
     // arrival counts can be read off it.
-    { at: T0 + 10, origin: 'https://a.example', url: 'https://a.example/1', title: 'World Models Survey', kind: 'engagement', engagedMs: ENGAGED_MS_FOR_WORK },
+    {
+      at: T0 + 10,
+      origin: 'https://a.example',
+      url: 'https://a.example/1',
+      title: 'World Models Survey',
+      kind: 'engagement',
+      engagedMs: ENGAGED_MS_FOR_WORK,
+    },
     ...extra,
   ]
 
@@ -250,16 +366,30 @@ describe('coming back to a page is a fact about the page', () => {
 
   it('carries only the pages the thread was made of', () => {
     const observations = thread([
-      { at: T0 + 3, origin: 'https://unrelated.example', url: 'https://unrelated.example/1', title: 'Lasagne', kind: 'navigation' },
+      {
+        at: T0 + 3,
+        origin: 'https://unrelated.example',
+        url: 'https://unrelated.example/1',
+        title: 'Lasagne',
+        kind: 'navigation',
+      },
     ])
     const found = detectWork(observations, T0 + 100)
 
-    expect(threadPagesOf(observations, found!, T0 + 100).map((page) => page.url)).toEqual(found?.urls)
+    expect(threadPagesOf(observations, found!, T0 + 100).map((page) => page.url)).toEqual(
+      found?.urls,
+    )
   })
 
   it('a page seen once, then returned to, is two arrivals', () => {
     const observations = thread([
-      { at: T0 + 3, origin: 'https://a.example', url: 'https://a.example/1', title: 'World Models Survey', kind: 'navigation' },
+      {
+        at: T0 + 3,
+        origin: 'https://a.example',
+        url: 'https://a.example/1',
+        title: 'World Models Survey',
+        kind: 'navigation',
+      },
     ])
 
     // Reached through the same buffer the offer path reads, so this is the
@@ -272,7 +402,13 @@ describe('coming back to a page is a fact about the page', () => {
     // reported twice. Counting it would make `came-back` fire on any page that
     // refreshes itself.
     const observations = thread([
-      { at: T0 + 3, origin: 'https://c.example', url: 'https://c.example/1', title: 'Training World Models', kind: 'navigation' },
+      {
+        at: T0 + 3,
+        origin: 'https://c.example',
+        url: 'https://c.example/1',
+        title: 'Training World Models',
+        kind: 'navigation',
+      },
     ])
 
     expect(pageIn(observations, 'https://c.example/1')?.visits).toBe(1)
@@ -286,11 +422,42 @@ describe('coming back to a page is a fact about the page', () => {
     // arrivals at a.example have the whole thread between them, which is a
     // return.
     const observations: AmbientObservation[] = [
-      { at: T0, origin: 'https://a.example', url: 'https://a.example/1', title: 'World Models Survey', kind: 'navigation' },
-      { at: T0 + 3, origin: 'https://a.example', url: 'https://a.example/1', title: 'World Models Survey', kind: 'navigation' },
-      { at: T0 + 1, origin: 'https://b.example', url: 'https://b.example/1', title: 'World Models Explained', kind: 'navigation' },
-      { at: T0 + 2, origin: 'https://c.example', url: 'https://c.example/1', title: 'Training World Models', kind: 'navigation' },
-      { at: T0 + 10, origin: 'https://a.example', url: 'https://a.example/1', title: 'World Models Survey', kind: 'engagement', engagedMs: ENGAGED_MS_FOR_WORK },
+      {
+        at: T0,
+        origin: 'https://a.example',
+        url: 'https://a.example/1',
+        title: 'World Models Survey',
+        kind: 'navigation',
+      },
+      {
+        at: T0 + 3,
+        origin: 'https://a.example',
+        url: 'https://a.example/1',
+        title: 'World Models Survey',
+        kind: 'navigation',
+      },
+      {
+        at: T0 + 1,
+        origin: 'https://b.example',
+        url: 'https://b.example/1',
+        title: 'World Models Explained',
+        kind: 'navigation',
+      },
+      {
+        at: T0 + 2,
+        origin: 'https://c.example',
+        url: 'https://c.example/1',
+        title: 'Training World Models',
+        kind: 'navigation',
+      },
+      {
+        at: T0 + 10,
+        origin: 'https://a.example',
+        url: 'https://a.example/1',
+        title: 'World Models Survey',
+        kind: 'engagement',
+        engagedMs: ENGAGED_MS_FOR_WORK,
+      },
     ]
 
     expect(pageIn(observations, 'https://a.example/1')?.visits).toBe(2)
@@ -300,8 +467,22 @@ describe('coming back to a page is a fact about the page', () => {
     // Engagement arrives every fifteen seconds while a page is open. If those
     // counted, every page read for a minute would look like a page returned to.
     const observations = thread([
-      { at: T0 + 3, origin: 'https://a.example', url: 'https://a.example/1', title: 'World Models Survey', kind: 'engagement', engagedMs: 30_000 },
-      { at: T0 + 4, origin: 'https://a.example', url: 'https://a.example/1', title: 'World Models Survey', kind: 'engagement', engagedMs: 60_000 },
+      {
+        at: T0 + 3,
+        origin: 'https://a.example',
+        url: 'https://a.example/1',
+        title: 'World Models Survey',
+        kind: 'engagement',
+        engagedMs: 30_000,
+      },
+      {
+        at: T0 + 4,
+        origin: 'https://a.example',
+        url: 'https://a.example/1',
+        title: 'World Models Survey',
+        kind: 'engagement',
+        engagedMs: 60_000,
+      },
     ])
 
     expect(pageIn(observations, 'https://a.example/1')?.visits).toBe(1)
@@ -372,43 +553,116 @@ describe('a natural stopping point', () => {
  *    clears it with room and leaves every other bar in the same place.
  */
 const afternoon: AmbientObservation[] = [
-  { at: T0, origin: 'https://www.google.com', url: 'https://www.google.com/search?q=world+models', title: 'world models - Google Search', kind: 'query' },
-  { at: T0 + 1_000, origin: 'https://a.example', url: 'https://a.example/1', title: 'World Models Survey', kind: 'navigation' },
-  { at: T0 + 2_000, origin: 'https://a.example', url: 'https://a.example/1', title: 'World Models Survey', kind: 'engagement', engagedMs: DEEP_READ_MS * 3 },
-  { at: T0 + 3_000, origin: 'https://a.example', url: 'https://a.example/2', title: 'World Models Benchmarks', kind: 'navigation' },
-  { at: T0 + 4_000, origin: 'https://a.example', url: 'https://a.example/2', title: 'World Models Benchmarks', kind: 'engagement', engagedMs: READ_AROUND_MS * 3 },
-  { at: T0 + 5_000, origin: 'https://a.example', url: 'https://a.example/3', title: 'World Models Criticism', kind: 'navigation' },
-  { at: T0 + 6_000, origin: 'https://a.example', url: 'https://a.example/3', title: 'World Models Criticism', kind: 'engagement', engagedMs: READ_AROUND_MS * 3 },
-  { at: T0 + 7_000, origin: 'https://b.example', url: 'https://b.example/1', title: 'World Models Explained', kind: 'navigation' },
-  { at: T0 + 8_000, origin: 'https://b.example', url: 'https://b.example/1', title: 'World Models Explained', kind: 'engagement', engagedMs: DEEP_READ_MS * 3 },
-  { at: T0 + 9_000, origin: 'https://c.example', url: 'https://c.example/1', title: 'Training World Models', kind: 'navigation' },
-  { at: T0 + 10_000, origin: 'https://c.example', url: 'https://c.example/1', title: 'Training World Models', kind: 'engagement', engagedMs: DEEP_READ_MS * 3 },
+  {
+    at: T0,
+    origin: 'https://www.google.com',
+    url: 'https://www.google.com/search?q=world+models',
+    title: 'world models - Google Search',
+    kind: 'query',
+  },
+  {
+    at: T0 + 1_000,
+    origin: 'https://a.example',
+    url: 'https://a.example/1',
+    title: 'World Models Survey',
+    kind: 'navigation',
+  },
+  {
+    at: T0 + 2_000,
+    origin: 'https://a.example',
+    url: 'https://a.example/1',
+    title: 'World Models Survey',
+    kind: 'engagement',
+    engagedMs: DEEP_READ_MS * 3,
+  },
+  {
+    at: T0 + 3_000,
+    origin: 'https://a.example',
+    url: 'https://a.example/2',
+    title: 'World Models Benchmarks',
+    kind: 'navigation',
+  },
+  {
+    at: T0 + 4_000,
+    origin: 'https://a.example',
+    url: 'https://a.example/2',
+    title: 'World Models Benchmarks',
+    kind: 'engagement',
+    engagedMs: READ_AROUND_MS * 3,
+  },
+  {
+    at: T0 + 5_000,
+    origin: 'https://a.example',
+    url: 'https://a.example/3',
+    title: 'World Models Criticism',
+    kind: 'navigation',
+  },
+  {
+    at: T0 + 6_000,
+    origin: 'https://a.example',
+    url: 'https://a.example/3',
+    title: 'World Models Criticism',
+    kind: 'engagement',
+    engagedMs: READ_AROUND_MS * 3,
+  },
+  {
+    at: T0 + 7_000,
+    origin: 'https://b.example',
+    url: 'https://b.example/1',
+    title: 'World Models Explained',
+    kind: 'navigation',
+  },
+  {
+    at: T0 + 8_000,
+    origin: 'https://b.example',
+    url: 'https://b.example/1',
+    title: 'World Models Explained',
+    kind: 'engagement',
+    engagedMs: DEEP_READ_MS * 3,
+  },
+  {
+    at: T0 + 9_000,
+    origin: 'https://c.example',
+    url: 'https://c.example/1',
+    title: 'Training World Models',
+    kind: 'navigation',
+  },
+  {
+    at: T0 + 10_000,
+    origin: 'https://c.example',
+    url: 'https://c.example/1',
+    title: 'Training World Models',
+    kind: 'engagement',
+    engagedMs: DEEP_READ_MS * 3,
+  },
 ]
 
 /**
- * Scroll arrives, and nothing about the answer moves.
+ * ~~Scroll arrives, and nothing about the answer moves.~~ **It moves one thing
+ * now, 2026-08-20, and this block says which.**
  *
  * `scrollFraction` landed on `AmbientObservation` on 2026-08-17 after being
  * computed by `content.js` and dropped on arrival for the whole build. Carrying
- * a signal and consulting it are two decisions, and only the first was taken —
- * the research that motivated it (`docs/research/intent-suggestion-quality.md`)
- * was recorded as honest limits WITHOUT retuning any constant. ADR-0013 then
- * added the missing producer line, so the field now arrives from a browser
- * rather than only from a `curl`; nothing about this block changes, because
- * what it guards is the consumption and not the transport.
+ * a signal and consulting it were two decisions and only the first had been
+ * taken. [ADR-0018](../docs/adr/0018-the-everyday-shapes.md) takes the second.
  *
- * So this is the guard on that promise, and it is deliberately not a grep.
- * `tests/reachability.test.ts` asserts that no file under `src/domain/detection`
- * mentions the field; this asserts the thing anybody actually cares about, which
- * is that the same afternoon produces the same detection and the same grounds
- * whether or not the scroll is there. The two catch different mistakes: a grep
- * would miss a consumer that reached the value through a spread, and this would
- * miss a consumer whose effect happens to be nil on one fixture.
+ * ~~What must be pinned is that a plumbing change moved no bar in either
+ * direction.~~ **What must be pinned now is exactly WHICH afternoons moved**,
+ * which is what ADR-0018 and the reachability pins both ask the change that
+ * consumes these signals to say. The pairing with `tests/reachability.test.ts`
+ * is unchanged in shape and reversed in content: that file asserted no reader
+ * existed and now asserts one does; this one asserted the answer never changed
+ * and now names the buffer where it does.
  *
- * ADR-0008 names the false positive as the expensive failure, so what must be
- * pinned is that a plumbing change moved no bar in either direction.
+ * ADR-0008 still names the false positive as the expensive failure, so the
+ * assertions below are weighted the same way: the scroll fraction the old block
+ * used — 0.05, *"they read the first screenful and stopped"* — still changes
+ * nothing, because `grounds.ts` consumes scroll as a VETO in conjunction with
+ * an exit type rather than as a floor of its own. The one thing that stops
+ * counting is a page nobody ever scrolled that was switched away from, and that
+ * is here too.
  */
-describe('landing scroll changes no detection outcome', () => {
+describe('landing scroll changes one thing, and this is the thing', () => {
   const NOW = T0 + 10 * 60_000
 
   /**
@@ -425,7 +679,10 @@ describe('landing scroll changes no detection outcome', () => {
 
   const groundsOf = (observations: readonly AmbientObservation[]) => {
     const detected = detectWork(observations, NOW)
-    expect(detected, 'the fixture stopped qualifying — this test is comparing two nulls').not.toBeNull()
+    expect(
+      detected,
+      'the fixture stopped qualifying — this test is comparing two nulls',
+    ).not.toBeNull()
     return groundsFor(detected!, threadPagesOf(observations, detected!, NOW))
   }
 
@@ -437,26 +694,83 @@ describe('landing scroll changes no detection outcome', () => {
     expect(detectThreads(scrolled, NOW)).toEqual(detectThreads(afternoon, NOW))
   })
 
-  it('builds the same pages, so ThreadPage gained nothing to threshold on', () => {
-    const detected = detectWork(afternoon, NOW)!
-    expect(threadPagesOf(scrolled, detected, NOW)).toEqual(threadPagesOf(afternoon, detected, NOW))
+  it('carries the deepest scroll onto the page the grounds are computed from', () => {
+    // The half that was missing until today: the field reached
+    // `AmbientObservation` on 2026-08-17 and stopped there, so no rule could
+    // have read it even if one wanted to.
+    const detected = detectWork(scrolled, NOW)!
+    const pages = threadPagesOf(scrolled, detected, NOW)
+
+    // The pages with an engagement report behind them, which is where a scroll
+    // fraction comes from — the search page has none and must not acquire one.
+    const read = pages.filter((page) => page.engagedMs > 0)
+    expect(read.length).toBeGreaterThan(0)
+    expect(read.every((page) => page.scrollFraction === 0.05)).toBe(true)
+    expect(
+      pages.filter((page) => page.engagedMs === 0).every((p) => p.scrollFraction === undefined),
+    ).toBe(true)
+    // And absent stays absent, rather than defaulting to a number that would
+    // make "nobody reported one" indistinguishable from "they scrolled nowhere".
+    const bare = threadPagesOf(afternoon, detectWork(afternoon, NOW)!, NOW)
+    expect(bare.every((page) => page.scrollFraction === undefined)).toBe(true)
   })
 
-  it('computes the same grounds, kinds sentences and sufficiency alike', () => {
+  it('still computes the same grounds at one screenful, because scroll is not a floor', () => {
     const without = groundsOf(afternoon)
 
-    // Non-vacuous: a fixture that fires nothing would make the equality below
-    // true for the wrong reason. `read-around` is named explicitly because it is
-    // the ground a scroll fraction would be consulted by first — an equality
-    // over a grounds set that does not contain it is not guarding the thing this
-    // block is about.
+    // 0.05 is *"they read the first screenful and stopped"*, the value the old
+    // version of this block chose as the one a consumer would be tempted to
+    // threshold on. Nothing thresholds on it: `content.js`'s own note says a
+    // short page read fully scrolls nowhere, so a floor here would refuse a page
+    // somebody read every word of. `read-around` is named explicitly because it
+    // is the ground scroll is consulted by first.
     expect(without.kinds).toContain('read-around')
     expect(without.kinds.length).toBeGreaterThan(0)
     expect(groundsOf(scrolled)).toEqual(without)
   })
 
+  it('stops calling a page a read when nothing was scrolled and the tab was switched away from', () => {
+    /**
+     * The afternoon that moved. Every page unscrolled AND left `'hidden'` — a
+     * tab opened, never touched, and switched away from — which is the one
+     * conjunction `heldOpenUnread` refuses. Neither field does this alone, and
+     * the two tests above are what say so.
+     *
+     * This is the honest answer to *"which afternoons stopped qualifying"* for
+     * scroll and exit type: this one, and nothing else in the corpus.
+     */
+    const parked: AmbientObservation[] = afternoon.map((o) =>
+      o.kind === 'engagement' ? { ...o, scrollFraction: 0, exitType: 'hidden' as const } : o,
+    )
+
+    const before = groundsOf(afternoon)
+    expect(before.sufficient).toBe(true)
+    expect(before.kinds).toContain('read-deeply')
+    expect(before.kinds).toContain('read-around')
+
+    const detected = detectWork(parked, NOW)
+    expect(
+      detected,
+      'the thread itself is unaffected — only what may be claimed about it',
+    ).not.toBeNull()
+    const after = groundsFor(detected!, threadPagesOf(parked, detected!, NOW))
+
+    expect(after.kinds).not.toContain('read-deeply')
+    expect(after.kinds).not.toContain('read-around')
+    expect(after.sufficient).toBe(false)
+  })
+
   it('finds the same stopping point', () => {
-    const paused = [...afternoon, { at: T0 + 10_000, origin: 'https://c.example', url: 'https://c.example/1', title: '', kind: 'away' } as const]
+    const paused = [
+      ...afternoon,
+      {
+        at: T0 + 10_000,
+        origin: 'https://c.example',
+        url: 'https://c.example/1',
+        title: '',
+        kind: 'away',
+      } as const,
+    ]
     const scrolledPause = paused.map((o) =>
       o.kind === 'engagement' ? { ...o, scrollFraction: 0.05 } : o,
     )
@@ -510,7 +824,10 @@ describe('a tab group title changes the name and nothing else', () => {
 
   const groundsOf = (observations: readonly AmbientObservation[]) => {
     const detected = detectWork(observations, NOW)
-    expect(detected, 'the fixture stopped qualifying — this test is comparing two nulls').not.toBeNull()
+    expect(
+      detected,
+      'the fixture stopped qualifying — this test is comparing two nulls',
+    ).not.toBeNull()
     return groundsFor(detected!, threadPagesOf(observations, detected!, NOW))
   }
 
@@ -575,12 +892,57 @@ describe('a tab group title changes the name and nothing else', () => {
      * a term.
      */
     const tidiedTabs: AmbientObservation[] = [
-      { at: T0, origin: 'https://news.example', url: 'https://news.example/1', title: 'Election Results', kind: 'navigation', groupTitle: 'world models' },
-      { at: T0 + 1_000, origin: 'https://news.example', url: 'https://news.example/1', title: 'Election Results', kind: 'engagement', engagedMs: DEEP_READ_MS * 9, groupTitle: 'world models' },
-      { at: T0 + 2_000, origin: 'https://recipes.example', url: 'https://recipes.example/1', title: 'Lasagne', kind: 'navigation', groupTitle: 'world models' },
-      { at: T0 + 3_000, origin: 'https://recipes.example', url: 'https://recipes.example/1', title: 'Lasagne', kind: 'engagement', engagedMs: DEEP_READ_MS * 9, groupTitle: 'world models' },
-      { at: T0 + 4_000, origin: 'https://weather.example', url: 'https://weather.example/1', title: 'Forecast', kind: 'navigation', groupTitle: 'world models' },
-      { at: T0 + 5_000, origin: 'https://weather.example', url: 'https://weather.example/1', title: 'Forecast', kind: 'engagement', engagedMs: DEEP_READ_MS * 9, groupTitle: 'world models' },
+      {
+        at: T0,
+        origin: 'https://news.example',
+        url: 'https://news.example/1',
+        title: 'Election Results',
+        kind: 'navigation',
+        groupTitle: 'world models',
+      },
+      {
+        at: T0 + 1_000,
+        origin: 'https://news.example',
+        url: 'https://news.example/1',
+        title: 'Election Results',
+        kind: 'engagement',
+        engagedMs: DEEP_READ_MS * 9,
+        groupTitle: 'world models',
+      },
+      {
+        at: T0 + 2_000,
+        origin: 'https://recipes.example',
+        url: 'https://recipes.example/1',
+        title: 'Lasagne',
+        kind: 'navigation',
+        groupTitle: 'world models',
+      },
+      {
+        at: T0 + 3_000,
+        origin: 'https://recipes.example',
+        url: 'https://recipes.example/1',
+        title: 'Lasagne',
+        kind: 'engagement',
+        engagedMs: DEEP_READ_MS * 9,
+        groupTitle: 'world models',
+      },
+      {
+        at: T0 + 4_000,
+        origin: 'https://weather.example',
+        url: 'https://weather.example/1',
+        title: 'Forecast',
+        kind: 'navigation',
+        groupTitle: 'world models',
+      },
+      {
+        at: T0 + 5_000,
+        origin: 'https://weather.example',
+        url: 'https://weather.example/1',
+        title: 'Forecast',
+        kind: 'engagement',
+        engagedMs: DEEP_READ_MS * 9,
+        groupTitle: 'world models',
+      },
     ]
 
     expect(detectWork(tidiedTabs, NOW)).toBeNull()
@@ -605,18 +967,27 @@ describe('a tab group title changes the name and nothing else', () => {
 })
 
 /**
- * The exit type arrives, and nothing at all moves. ADR-0013.
+ * ~~The exit type arrives, and nothing at all moves. ADR-0013.~~ **It is
+ * consulted as of 2026-08-20 and this block is what it does NOT move.**
  *
- * The same guard as the scroll block above and for the same reason: it is
- * carried and deliberately not consulted. `AmbientObservation.exitType` argues
- * the deferral at length — the short version is that Fox et al.'s evidence
- * turns on separating a return from an onward navigation, and that distinction
- * lives INSIDE our `'left-unloaded'`, which a content script cannot split
- * without `tabs` or `webNavigation`.
+ * `AmbientObservation.exitType` argued the deferral at length and one half of
+ * that argument survives ADR-0018 untouched: Fox et al.'s evidence turns on
+ * separating a return from an onward navigation, and that distinction lives
+ * INSIDE our `'left-unloaded'`, which a content script cannot split without
+ * `tabs` or `webNavigation`. So the citation is still not borrowed. What is
+ * consumed is the narrower thing the deferral itself called *"honestly
+ * available now"* — the `'hidden'` versus `'left-*'` split — and only in
+ * conjunction with a scroll fraction of zero.
  *
- * `tests/reachability.test.ts` greps for a reader. This asserts the thing
- * anybody cares about, which is that the same afternoon produces the same
- * answer either way. The two catch different mistakes.
+ * That is why every run below is still an equality: how a page was LEFT changes
+ * nothing on its own, for any of the three values, on a fixture where people
+ * scrolled. The block above holds the conjunction that does change something.
+ * Keeping both is the point — a reader that started refusing on `'hidden'`
+ * alone would take the commonest exit there is out of every ground at once, and
+ * these three runs are what would say so.
+ *
+ * `tests/reachability.test.ts` is the structural pair, and it now asserts that a
+ * reader EXISTS. The two still catch different mistakes.
  */
 /**
  * Every member of the enum, and exhaustive by construction.
@@ -639,7 +1010,7 @@ const EVERY_EXIT_TYPE: Record<ExitType, true> = {
 }
 
 describe.each(Object.keys(EVERY_EXIT_TYPE) as ExitType[])(
-  'landing the exit type changes no detection outcome (%s)',
+  'how a page was left changes no detection outcome on its own (%s)',
   (exitType) => {
     const NOW = T0 + 10 * 60_000
 
@@ -655,9 +1026,20 @@ describe.each(Object.keys(EVERY_EXIT_TYPE) as ExitType[])(
       expect(detectThreads(exited, NOW)).toEqual(detectThreads(afternoon, NOW))
     })
 
-    it('builds the same pages, so ThreadPage gained nothing to threshold on', () => {
+    it('carries the exit onto every page, and changes none of the rest of one', () => {
+      // The transport half, which is new — the field reached the store on
+      // 2026-08-17 and `pagesOf` dropped it until today. Everything else about
+      // the page has to be untouched, or the equalities below would be green
+      // because two different things had both gone wrong.
       const detected = detectWork(afternoon, NOW)!
-      expect(threadPagesOf(exited, detected, NOW)).toEqual(threadPagesOf(afternoon, detected, NOW))
+      const withExit = threadPagesOf(exited, detected, NOW)
+      const bare = threadPagesOf(afternoon, detected, NOW)
+
+      const read = withExit.filter((page) => page.engagedMs > 0)
+      expect(read.length).toBeGreaterThan(0)
+      expect(read.every((page) => page.exitType === exitType)).toBe(true)
+      expect(bare.every((page) => page.exitType === undefined)).toBe(true)
+      expect(withExit.map(({ exitType: _, ...rest }) => rest)).toEqual(bare)
     })
 
     it('computes the same grounds, kinds sentences and sufficiency alike', () => {
@@ -682,22 +1064,25 @@ describe.each(Object.keys(EVERY_EXIT_TYPE) as ExitType[])(
 )
 
 /**
- * The arrival classification lands, and nothing at all moves.
+ * ~~The arrival classification lands, and nothing at all moves.~~ **It decides
+ * `came-back` as of 2026-08-20 — ADR-0018, part 2 — and only for a page
+ * somebody returned to.**
  *
- * The third signal carried and not consulted, after scroll and exit type, and
- * the third block of this shape. `AmbientObservation.arrival` argues the
- * deferral; the short version is the one that would actually bite. A
- * `'no-referrer'` arrival reads as *the person chose this*, and it is produced
- * both by somebody typing an address AND by a followed link whose page stripped
- * its referrer — which newsletters and mail clients do. So the value that looks
- * most like intent is produced by the exact afternoon `grounds.ts` exists to
- * refuse, and by every omnibox search besides.
+ * The deferral's own objection is what shapes the consumption, so it is worth
+ * restating rather than deleting. A `'no-referrer'` arrival reads as *the
+ * person chose this* and is produced both by somebody typing an address AND by
+ * a followed link whose page stripped its referrer, which newsletters and mail
+ * clients do — so the value that looks most like intent is produced by the
+ * exact afternoon `grounds.ts` exists to refuse, and by every omnibox search
+ * besides. `arrival` is therefore **not** read as an intent ground of its own.
+ * It is read only to answer a question that was already being asked and already
+ * fired an intent ground: *they came back — from where?*
  *
- * The pairing with `tests/reachability.test.ts` is the same as for the other
- * two. That file greps for a reader; this one asserts the thing anybody cares
- * about, which is that the same afternoon produces the same answer either way.
- * A grep cannot see a consumer that reaches the field through a helper, and an
- * equality cannot see a reader that happens not to change this fixture.
+ * That is why the runs below are still equalities on an afternoon with no
+ * return in it. An arrival on a page seen once changes nothing at all, for any
+ * of the five values, which is the property that would break first if somebody
+ * keyed a ground on the value rather than on the return. The block after them
+ * is the one with a return in it, and it is where the five values separate.
  */
 /**
  * Every member of the enum, exhaustive by construction.
@@ -716,7 +1101,7 @@ const EVERY_ARRIVAL: Record<Arrival, true> = {
 }
 
 describe.each(Object.keys(EVERY_ARRIVAL) as Arrival[])(
-  'landing the arrival changes no detection outcome (%s)',
+  'an arrival at a page seen once changes no detection outcome (%s)',
   (arrival) => {
     const NOW = T0 + 10 * 60_000
 
@@ -737,7 +1122,11 @@ describe.each(Object.keys(EVERY_ARRIVAL) as Arrival[])(
       expect(detectThreads(arrived, NOW)).toEqual(detectThreads(afternoon, NOW))
     })
 
-    it('builds the same pages, so ThreadPage gained nothing to threshold on', () => {
+    it('builds the same pages, because a first arrival is not a return', () => {
+      // `returnArrivals` collects the SECOND and later arrival at a URL. This
+      // afternoon has no repeats, so the list is empty however the pages were
+      // reached — which is the rule `returnArrivalsByUrl` states and this is
+      // the fixture that would catch it collecting the first one.
       const detected = detectWork(afternoon, NOW)!
       expect(threadPagesOf(arrived, detected, NOW)).toEqual(threadPagesOf(afternoon, detected, NOW))
     })
@@ -761,6 +1150,113 @@ describe.each(Object.keys(EVERY_ARRIVAL) as Arrival[])(
     })
   },
 )
+
+/**
+ * The return, and the five ways of arriving at one. ADR-0018, part 2.
+ *
+ * ── Why this block exists beside the five equalities above ───────────────
+ *
+ * Those five say that an arrival at a page seen once decides nothing. These say
+ * what an arrival at a page seen TWICE decides, which is the whole of what was
+ * wired. `came-back` used to read a tally and nothing else, and Adar, Teevan &
+ * Dumais's 612,000-user revisit study says that in the sub-hour band a
+ * thirty-minute `WINDOW_MS` can see, 77.0% of revisits came from the same
+ * domain — so the tally was measuring a click home from a spoke at least three
+ * times as often as it was measuring intent.
+ *
+ * ── This is a bar change wearing a predicate's clothes, and the numbers ──
+ *
+ * `came-back` is one of three intent grounds and one is required, so refusing a
+ * return refuses an offer outright when nothing else fired. Two of the five
+ * values now refuse: `'same-origin'`, which is the 77%, and `'reloaded'`, which
+ * is not a return at all. `grounds.ts`'s `RETURN_ARRIVALS` argues both, and this
+ * is the table that fails if either list moves.
+ */
+describe('a return fires came-back only when it came from somewhere else', () => {
+  const NOW = T0 + 10 * 60_000
+
+  /** The qualifying afternoon, plus a return to its first page. The arrival is
+   *  the only thing that varies. */
+  const returning = (arrival: Arrival): AmbientObservation[] => [
+    ...afternoon,
+    {
+      at: T0 + 11_000,
+      origin: 'https://a.example',
+      url: 'https://a.example/1',
+      title: 'World Models Survey',
+      kind: 'navigation',
+      arrival,
+    },
+  ]
+
+  const groundsOf = (observations: readonly AmbientObservation[]) => {
+    const detected = detectWork(observations, NOW)
+    expect(
+      detected,
+      'the fixture stopped qualifying — this test is comparing two nulls',
+    ).not.toBeNull()
+    return groundsFor(detected!, threadPagesOf(observations, detected!, NOW))
+  }
+
+  it('counts the return itself either way, so the ground is what changed and not the tally', () => {
+    // `visits` is unaffected by the narrowing, deliberately: the person did come
+    // back, the buffer says so, and what changed is what may be CLAIMED about
+    // it. A fix that stopped counting the visit would have been a different
+    // change with the same test results.
+    for (const arrival of Object.keys(EVERY_ARRIVAL) as Arrival[]) {
+      const observations = returning(arrival)
+      const detected = detectWork(observations, NOW)!
+      const page = threadPagesOf(observations, detected, NOW).find(
+        (p) => p.url === 'https://a.example/1',
+      )
+
+      expect(page?.visits, arrival).toBe(2)
+      expect(page?.returnArrivals, arrival).toEqual([arrival])
+    }
+  })
+
+  it('fires on cross-origin, no-referrer and back-or-forward', () => {
+    for (const arrival of ['cross-origin', 'no-referrer', 'back-or-forward'] as const) {
+      expect(groundsOf(returning(arrival)).kinds, arrival).toContain('came-back')
+    }
+  })
+
+  it('does not fire on a click home from the same site, which is the 77%', () => {
+    expect(groundsOf(returning('same-origin')).kinds).not.toContain('came-back')
+  })
+
+  it('does not fire on a reload, which is the same page and not a different origin', () => {
+    // `visitsByUrl` already refuses two navigations in a row to one URL. This is
+    // the other shape — a reload of a page they had been away from — and it is
+    // refused here rather than relying on the two rules never disagreeing.
+    expect(groundsOf(returning('reloaded')).kinds).not.toContain('came-back')
+  })
+
+  it('does not fire on a return nothing classified, which is the transport failing safe', () => {
+    // An older sender, or a navigation the content script could not classify.
+    // `came-back` under-fires, which is the direction ADR-0008 says to be wrong
+    // in, and it is a second reason on top of the one `visitsByUrl` already had.
+    const unclassified: AmbientObservation[] = [
+      ...afternoon,
+      {
+        at: T0 + 11_000,
+        origin: 'https://a.example',
+        url: 'https://a.example/1',
+        title: 'World Models Survey',
+        kind: 'navigation',
+      },
+    ]
+
+    const detected = detectWork(unclassified, NOW)!
+    const page = threadPagesOf(unclassified, detected, NOW).find(
+      (p) => p.url === 'https://a.example/1',
+    )
+
+    expect(page?.visits).toBe(2)
+    expect(page?.returnArrivals).toBeUndefined()
+    expect(groundsOf(unclassified).kinds).not.toContain('came-back')
+  })
+})
 
 describe('the detector cannot see page text', () => {
   /**

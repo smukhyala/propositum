@@ -55,6 +55,10 @@ const MINUTE = 60_000
  *  is and, more to the point, what it is not. */
 const SAVED = 'world-models-synthesised'
 
+/** The second capture, added 2026-08-20 with `compared-options`. See its own
+ *  describe block for why one afternoon on disk was not enough. */
+const COMPARING = 'comparing-monitors-synthesised'
+
 const post = (observations: readonly unknown[]) =>
   new Request('http://127.0.0.1:3117/api/capture/ambient', {
     method: 'POST',
@@ -68,8 +72,9 @@ const post = (observations: readonly unknown[]) =>
     body: JSON.stringify({ observations }),
   })
 
-const debug = (headers: Record<string, string> = { [CUSTOM_HEADER]: '1', 'sec-fetch-site': 'none' }) =>
-  new Request('http://127.0.0.1:3117/api/capture/ambient/debug', { headers })
+const debug = (
+  headers: Record<string, string> = { [CUSTOM_HEADER]: '1', 'sec-fetch-site': 'none' },
+) => new Request('http://127.0.0.1:3117/api/capture/ambient/debug', { headers })
 
 interface DebugBody {
   readonly held: number
@@ -117,7 +122,13 @@ function anAfternoon(now: number): readonly unknown[] {
       kind: 'query',
       arrival: 'no-referrer',
     },
-    { at: base + 30_000, url: a1, title: 'World Models: A Survey', kind: 'navigation', arrival: 'cross-origin' },
+    {
+      at: base + 30_000,
+      url: a1,
+      title: 'World Models: A Survey',
+      kind: 'navigation',
+      arrival: 'cross-origin',
+    },
     {
       at: base + 2 * MINUTE,
       url: a1,
@@ -127,7 +138,13 @@ function anAfternoon(now: number): readonly unknown[] {
       scrollFraction: 0.68,
       exitType: 'left-unloaded',
     },
-    { at: base + 3 * MINUTE, url: a2, title: 'Learning World Models — a Survey', kind: 'navigation', arrival: 'same-origin' },
+    {
+      at: base + 3 * MINUTE,
+      url: a2,
+      title: 'Learning World Models — a Survey',
+      kind: 'navigation',
+      arrival: 'same-origin',
+    },
     {
       at: base + 4 * MINUTE,
       url: a2,
@@ -153,7 +170,13 @@ function anAfternoon(now: number): readonly unknown[] {
       scrollFraction: 0.31,
       exitType: 'hidden',
     },
-    { at: base + 9 * MINUTE, url: a1, title: 'World Models: A Survey', kind: 'navigation', arrival: 'back-or-forward' },
+    {
+      at: base + 9 * MINUTE,
+      url: a1,
+      title: 'World Models: A Survey',
+      kind: 'navigation',
+      arrival: 'back-or-forward',
+    },
     {
       at: base + 10 * MINUTE,
       url: a1,
@@ -257,7 +280,9 @@ describe('what the debug endpoint shows', () => {
     expect(noHeader.status).toBe(403)
     expect(await noHeader.json()).toEqual({ ok: false, reason: 'missing-custom-header' })
 
-    const noProof = await debugRoute(debug({ [CUSTOM_HEADER]: '1', origin: 'https://evil.example' }))
+    const noProof = await debugRoute(
+      debug({ [CUSTOM_HEADER]: '1', origin: 'https://evil.example' }),
+    )
     expect(noProof.status).toBe(403)
   })
 })
@@ -285,7 +310,10 @@ describe('the round trip', () => {
 
     // Non-vacuous: a buffer that detected nothing would replay `null` to `null`
     // and prove none of this.
-    expect(afternoon.detectsWork, 'the fixture detects no work, so the replay compares nothing').not.toBeNull()
+    expect(
+      afternoon.detectsWork,
+      'the fixture detects no work, so the replay compares nothing',
+    ).not.toBeNull()
     expect(afternoon.grounds?.sufficient).toBe(true)
 
     expect(replayAfternoon(afternoon)).toEqual({
@@ -298,7 +326,10 @@ describe('the round trip', () => {
   it('carries the three signals into the file, which a hand-copied fixture could not', async () => {
     const now = Date.now()
     const body = await capture(anAfternoon(now))
-    const afternoon = parseAfternoon(JSON.stringify({ note: 'n', ...body }), 'the round-trip capture')
+    const afternoon = parseAfternoon(
+      JSON.stringify({ note: 'n', ...body }),
+      'the round-trip capture',
+    )
 
     const engagements = afternoon.observations.filter((o) => o.kind === 'engagement')
     expect(engagements.length).toBeGreaterThan(0)
@@ -320,19 +351,49 @@ describe('the round trip', () => {
     // The failure this prevents is the quiet one: `Date.now()` on a file saved
     // yesterday windows every row out and answers null, which reads as a
     // detector that changed its mind.
-    const body = { note: 'n', held: 1, observations: [{ at: 1, origin: 'https://a.example', url: 'https://a.example/1', title: 'A', kind: 'navigation' }], detectsWork: null, detectsPause: null, grounds: null }
+    const body = {
+      note: 'n',
+      held: 1,
+      observations: [
+        {
+          at: 1,
+          origin: 'https://a.example',
+          url: 'https://a.example/1',
+          title: 'A',
+          kind: 'navigation',
+        },
+      ],
+      detectsWork: null,
+      detectsPause: null,
+      grounds: null,
+    }
 
     expect(() => parseAfternoon(JSON.stringify(body), 'x')).toThrow(/no `now`/)
   })
 
   it('refuses a capture with no note, because a fixture nobody can explain gets believed', () => {
-    const body = { now: 1, held: 0, observations: [], detectsWork: null, detectsPause: null, grounds: null }
+    const body = {
+      now: 1,
+      held: 0,
+      observations: [],
+      detectsWork: null,
+      detectsPause: null,
+      grounds: null,
+    }
 
     expect(() => parseAfternoon(JSON.stringify(body), 'x')).toThrow(/no `note`/)
   })
 
   it('refuses an empty capture, because null replaying to null proves nothing', () => {
-    const body = { note: 'n', now: 1, held: 0, observations: [], detectsWork: null, detectsPause: null, grounds: null }
+    const body = {
+      note: 'n',
+      now: 1,
+      held: 0,
+      observations: [],
+      detectsWork: null,
+      detectsPause: null,
+      grounds: null,
+    }
 
     expect(() => parseAfternoon(JSON.stringify(body), 'x')).toThrow(/no observations/)
   })
@@ -373,20 +434,136 @@ describe('the saved afternoon', () => {
   })
 })
 
-describe('still nobody’s decision', () => {
-  it('the three signals ride all the way round and change no answer', () => {
+/**
+ * The second saved afternoon: comparing monitors across three shops.
+ * ADR-0018, 2026-08-20.
+ *
+ * ── Why a second file, when one already replays ──────────────────────────
+ *
+ * Because the one that was here answers `sufficient: true` on grounds that all
+ * existed before ADR-0018, so it cannot say whether the new ground survives the
+ * trip from a browser to a decision. Every other fixture for
+ * `compared-options` is a hand-built `ThreadPage[]` — which is the right shape
+ * for arguing arithmetic and the wrong one for proving that a scroll fraction
+ * and an arrival make it through `ambientSchema`, through the store, through
+ * `pagesOf`, and into a ground. This file went through all four.
+ *
+ * ── What makes it worth its own file rather than another test ────────────
+ *
+ * `docs/PRODUCT_PRINCIPLES.md` §13 is about a fixture that was smaller than the
+ * session it recorded. The defence is that the file's own `note` states the
+ * session in words and these tests check the words against the rows — ten pages
+ * across three retailers, a thread spanning less than `SUSTAINED_MS`, nothing
+ * held for a minute. If somebody trims this fixture, the description stops
+ * matching and the trim is what goes red.
+ */
+describe('the saved comparison afternoon', () => {
+  const afternoon: CapturedAfternoon = loadAfternoon(COMPARING)
+
+  it('says what it is, and that it is not a recording', () => {
+    expect(afternoon.note).toMatch(/SYNTHESISED/)
+  })
+
+  it('replays from disk to the answers it recorded', () => {
+    expect(afternoon.detectsWork).not.toBeNull()
+    expect(afternoon.grounds?.sufficient).toBe(true)
+
+    expect(replayAfternoon(afternoon)).toEqual({
+      detectsWork: afternoon.detectsWork,
+      detectsPause: afternoon.detectsPause,
+      grounds: afternoon.grounds,
+    })
+  })
+
+  it('clears the offer bar on compared-options, and would not clear it without', () => {
     /**
-     * The behavioural half of the deferral.
+     * The whole reason the file exists. `searched-then-read` is the intent
+     * ground; `followed-across` and `read-around` are the two ends of one axis
+     * and count once between them; `read-deeply` and `stayed-with-it` are
+     * provably absent. So the comparison is the second axis and there is no
+     * other candidate for it.
+     */
+    const kinds = afternoon.grounds?.kinds ?? []
+
+    expect(kinds).toContain('compared-options')
+    expect(kinds).toContain('searched-then-read')
+    expect(kinds).not.toContain('read-deeply')
+    expect(kinds).not.toContain('stayed-with-it')
+
+    expect(afternoon.grounds?.sentences).toContain(
+      'You read 10 pages across 3 sites and went back to one of them.',
+    )
+  })
+
+  it('is the session its note describes, counted off the rows', () => {
+    // §13, made mechanical. The note says one search, ten product pages across
+    // three retailers, and a return to one of them.
+    const products = afternoon.observations.filter(
+      (o) => o.kind === 'navigation' && !o.url.includes('google.com'),
+    )
+    const shops = new Set(products.map((o) => o.origin))
+
+    expect(new Set(products.map((o) => o.url)).size).toBe(10)
+    expect(shops.size).toBe(3)
+    expect(afternoon.observations.filter((o) => o.kind === 'query')).toHaveLength(1)
+    // Eleven navigations to ten pages: the eleventh is the return.
+    expect(products).toHaveLength(11)
+  })
+
+  it('carries a scroll fraction on every product page, because the ground needs one', () => {
+    // The transport claim, on this file rather than in general. A capture whose
+    // engagements lost their scroll would replay to a different answer, and the
+    // replay test above would say so — this says WHY.
+    const engagements = afternoon.observations.filter((o) => o.kind === 'engagement')
+
+    expect(engagements.length).toBeGreaterThan(0)
+    expect(engagements.every((o) => typeof o.scrollFraction === 'number')).toBe(true)
+    expect(afternoon.observations.some((o) => o.arrival === 'cross-origin')).toBe(true)
+  })
+
+  it('stops qualifying the moment the three signals are taken back off it', () => {
+    // The inverse of the world-models file's test, and much sharper: there, the
+    // signals cost one ground and no offer. Here they are the offer.
+    const stripped = afternoon.observations.map((o) => {
+      const { scrollFraction: _scroll, exitType: _exit, arrival: _arrival, ...rest } = o
+      return rest as AmbientObservation
+    })
+
+    const without = replayAfternoon({ ...afternoon, observations: stripped })
+
+    expect(without.grounds?.kinds).not.toContain('compared-options')
+    expect(without.grounds?.sufficient).toBe(false)
+  })
+})
+
+describe('somebody’s decision at last', () => {
+  it('the three signals ride all the way round and one of them changes the answer', () => {
+    /**
+     * ~~The behavioural half of the deferral.~~ **The behavioural half of the
+     * consumption, 2026-08-20 — ADR-0018.**
      *
-     * `tests/reachability.test.ts` holds it structurally, by budgeting every
-     * mention of the three field names in production code to an exact count.
-     * That guard is the stronger one and this does not replace it — it says
-     * something the count cannot: on a real captured buffer, with six grounds
-     * firing and sufficiency true, deleting all three signals from every row
-     * leaves the detection byte-identical.
+     * ~~The day one of them is consumed this goes red beside the reachability
+     * budget, and the two together say which afternoons started qualifying.~~
+     * That day was 2026-08-20 and this is the inverted test. It says the thing
+     * a grep cannot: on a captured buffer, with six grounds firing and
+     * sufficiency true, deleting the three signals from every row now changes
+     * the answer — and it names which ground moves, so the equality cannot go
+     * green again because some other ground quietly took over.
      *
-     * The day one of them is consumed this goes red beside the reachability
-     * budget, and the two together say which afternoons started qualifying.
+     * **`came-back` is the one, and it is the whole of the difference on this
+     * afternoon.** The return to the first arXiv abstract came from
+     * openreview.net and was classified `'back-or-forward'`, which is inside
+     * `RETURN_ARRIVALS`; strip the classification and the return is a tally
+     * nothing can read. The five other grounds are untouched: nothing here was
+     * held open unscrolled, and one site's worth of read pages is short of
+     * `COMPARED_ORIGINS`.
+     *
+     * **Sufficiency does NOT move**, which is worth asserting rather than
+     * assuming. Two searches carry the intent half on their own, so this
+     * afternoon is still offered work with or without the signals. An afternoon
+     * of research whose only intent ground was the return is the one that
+     * stopped qualifying, and `tests/grounds.test.ts` holds that case with the
+     * arXiv reader who clicked back to the first abstract.
      */
     const afternoon = loadAfternoon(SAVED)
 
@@ -398,8 +575,20 @@ describe('still nobody’s decision', () => {
     // Non-vacuous: something was actually removed.
     expect(JSON.stringify(stripped)).not.toEqual(JSON.stringify(afternoon.observations))
 
-    expect(replayAfternoon({ ...afternoon, observations: stripped })).toEqual(
-      replayAfternoon(afternoon),
+    const withSignals = replayAfternoon(afternoon)
+    const without = replayAfternoon({ ...afternoon, observations: stripped })
+
+    expect(withSignals.grounds?.kinds).toContain('came-back')
+    expect(without.grounds?.kinds).not.toContain('came-back')
+    expect(without.grounds?.kinds).toEqual(
+      withSignals.grounds?.kinds.filter((kind) => kind !== 'came-back'),
     )
+
+    // The thread, its pause and its sufficiency are all unmoved. Only what may
+    // be claimed about the return changed.
+    expect(without.detectsWork).toEqual(withSignals.detectsWork)
+    expect(without.detectsPause).toEqual(withSignals.detectsPause)
+    expect(without.grounds?.sufficient).toBe(true)
+    expect(withSignals.grounds?.sufficient).toBe(true)
   })
 })
