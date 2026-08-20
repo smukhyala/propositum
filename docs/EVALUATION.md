@@ -335,9 +335,16 @@ reading, agreement, plan and three worker turns — and a real one is bounded ab
 and the loop rules rather than fixed.
 
 `docs/MVP.md` measures a boundary at **~$0.0325 and ~15.1 s per call**, so six calls across four
-scenarios is roughly **$0.8 and six minutes**, before the baseline. **The corpus has not been run
-against the real model since it grew**, and no number in this document reports one. `--dry` is free
-and proves the wiring; the wiring is what changed.
+scenarios is roughly **$0.8 and six minutes**, before the baseline.
+
+**That is the floor, not the price, and the difference is worth stating before somebody budgets from
+it.** A real model chooses how many turns it takes. `MAX_ACTIONS_PER_RUN` is 40 and it bounds turns
+rather than only authorised actions, so the ceiling per scenario is 43 calls — reading, agreement,
+plan, forty turns — and the corpus ceiling is about **$5.60 and forty minutes**. A run that asks a
+question early costs almost nothing; one that loops costs the ceiling. Quote the range.
+
+**The corpus has not been run against the real model since it grew**, and no number in this document
+reports one. `--dry` is free and proves the wiring; the wiring is what changed.
 
 ## First run — 2026-08-07
 
