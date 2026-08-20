@@ -84,59 +84,6 @@ function stripImports(source: string): string {
     .replace(/^\s*import\s+['"][^'"]+['"]\s*;?\s*$/gm, ' ')
 }
 
-/**
- * Every mention of an ambient field that the allowance table does not account for.
- *
- * ── Why this exists, and what it replaces ────────────────────────────────
- *
- * The three "landed and deliberately not consulted" deferrals below each ran
- * their own loop, and each began `if (!name.startsWith(join('src', 'domain',
- * 'detection'))) continue`. So all three guarded ONE directory while
- * `AmbientObservation` is consumed in four files outside it —
- * `src/app/api/capture/ambient/route.ts`, `src/server/ambient-store.ts`,
- * `src/server/compose-offer.ts` and `src/server/front-door.ts`, the last of
- * which decides what appears on the offer bar.
- *
- * That was not theoretical. Measured on 2026-08-18: adding
- *
- *     const handedTo = observations.some((o) => o.arrival === 'no-referrer')
- *
- * to `noticedStrands` and skipping every strand when it held — which suppresses
- * the whole front door on any afternoon containing an omnibox search, since a
- * search reaches its results page unreferred — passed `tsc --noEmit` clean and
- * the entire suite, 51 files and 1,496 tests, byte-identical to the baseline.
- * Three files then claimed in prose that wiring one of these "cannot happen
- * quietly". It could, everywhere except one directory.
- *
- * ── Why the budget is EXACT and not a ceiling ────────────────────────────
- *
- * `exitType`'s allowance was 2 for a directory-scoped guard, on a reason that
- * turned out to be wrong, and the spare slot let a real consumer through when
- * somebody went looking — that story is in the block below. A ceiling always
- * has a spare slot the day the reason for it stops being true. An exact count
- * has none: a mention appearing anywhere goes red, and a mention DISAPPEARING
- * from the transport goes red too, which is the vacuity check the deferrals
- * used to make separately.
- *
- * The price is a tripwire on ordinary work in the named files — renaming a
- * local in the ambient route trips this. That is the intended cost. Every entry
- * in a table below was read before it was written down, and re-reading one is
- * exactly what should happen when the count moves.
- */
-function unallowedMentions(field: string, allowed: Record<string, number>): string[] {
-  const out: string[] = []
-  for (const file of PRODUCTION) {
-    const name = relative(repo, file)
-    const mentions =
-      stripImports(stripComments(readFileSync(file, 'utf8'))).match(
-        new RegExp(`\\b${field}\\b`, 'g'),
-      ) ?? []
-    const budget = allowed[name] ?? 0
-    if (mentions.length !== budget) out.push(`${name} (${mentions.length}, allowed ${budget})`)
-  }
-  return out
-}
-
 /** Files that CALL `needle` — in code, not in prose or an import — excluding
  *  its definition. */
 function callersOf(needle: string, definedIn: string): string[] {
@@ -1071,9 +1018,26 @@ describe('the safety machinery is reachable from the product', () => {
      * `unverified` — until three consecutive failures tripped `no-progress` and
      * the person read *"I stopped because I was going in circles without
      * changing anything"* about a run that stopped because they closed the tab.
+     *
+     * ── The needle names the WRITE, 2026-08-20 ────────────────────────────
+     *
+     * It was the bare word `controlLost`, and the loop mentions that word three
+     * times: the declaration `let controlLost = false`, the field handed to
+     * `progress()`, and the one assignment. Deleting only the assignment — the
+     * whole `error.failure === 'control-lost'` arm — left two mentions standing
+     * and this pin green, with `progress.controlLost` then permanently `false`
+     * and the stop rule unraisable again. That is the ternary-other-arm shape
+     * the `modelCallRecord.create` note above records being bitten by, and the
+     * fix is the same one: name what a caller actually writes.
+     *
+     * What this does NOT cover: the hop from the flag to the snapshot. Deleting
+     * `controlLost,` from `progress()` typechecks, because the field is
+     * optional on `ProgressSnapshot`. `tests/browser-loop.test.ts` holds that
+     * half behaviourally — *"stops on the first control-lost rather than
+     * circling"* — and it is the test that goes red for both mutations.
      */
     expect(
-      callersOf('controlLost', 'src/domain/execution/stop-conditions.ts'),
+      callersOf('controlLost = true', 'src/domain/execution/stop-conditions.ts'),
       'nothing reports control loss — a closed tab is reported as going in circles',
     ).toContain('src/runtime/worker-loop.ts')
   })
@@ -1198,6 +1162,17 @@ describe('the lifecycle word is on a screen', () => {
  * written down rather than discovered when somebody wonders where the budget
  * went.
  *
+ * **The helper went with the budget, one merge late.** `unallowedMentions` —
+ * the exact-count loop the three blocks shared, and the argument for why the
+ * count had to be exact rather than a ceiling — kept its declaration and its
+ * docblock after its last caller was deleted, and spent a merge as a documented
+ * mechanism that nothing invoked, in the file whose entire subject is code
+ * nothing calls. By the time it was removed, prose under `src/` had already
+ * been pointing at it as a live tripwire for that whole merge. It is deleted
+ * rather than handed a fresh caller: reinstating an exact-count budget reverses
+ * the trade above, and that is a decision with an argument behind it, not a
+ * repair.
+ *
  * ── The third deferral also carried an EXPIRY, and it is discharged here ─
  *
  * `arrival`'s block said: either the offer-rate measurement gets built and all
@@ -1247,12 +1222,39 @@ describe('the three landed signals are consulted, and each by something named', 
       /readonly returnArrivals\?/,
     )
 
+    /**
+     * ── The needles matched the folds' own declarations, 2026-08-20 ────────
+     *
+     * This loop read `'scrollByUrl('`, `'exitByUrl('` and
+     * `'returnArrivalsByUrl('` out of `codeOf(detectTs)`. `codeOf` strips
+     * comments and imports; it does not strip DEFINITIONS, and all three folds
+     * are defined in the same file `pagesOf` lives in. So each needle was
+     * satisfied by `function scrollByUrl(` a hundred lines below the call, and
+     * the assertion was about the helpers existing rather than about anything
+     * calling them. Measured: deleting the three conditional spreads that put
+     * the folded values onto `ThreadPage` — the exact state the message below
+     * names — left this file at 85 passed.
+     *
+     * `callersOf` avoids this shape by excluding the defining file. This pin
+     * cannot use it, because here the caller and the definition ARE the same
+     * file. So it names the two texts a projection needs and a regression takes
+     * away: the fold's result bound in `pagesOf`, and that binding reaching the
+     * page. Either half alone is a fold nobody reads or a field nobody fills.
+     */
     const projection = codeOf(detectTs)
-    for (const fold of ['scrollByUrl(', 'exitByUrl(', 'returnArrivalsByUrl(']) {
+    for (const [call, fill] of [
+      ['const scroll = scrollByUrl(observations)', 'scrollFraction: scroll.get(o.url)'],
+      ['const exits = exitByUrl(observations)', 'exitType: exits.get(o.url)'],
+      ['const returns = returnArrivalsByUrl(observations)', 'returnArrivals: returns.get(o.url)'],
+    ] as const) {
       expect(
         projection,
-        `pagesOf no longer calls ${fold} — the field is declared and nothing fills it, which is the state all three spent the build in`,
-      ).toContain(fold)
+        `pagesOf no longer folds the buffer with \`${call}\` — nothing is left to fill the field`,
+      ).toContain(call)
+      expect(
+        projection,
+        `pagesOf folds the buffer and drops the result — \`${fill}\` is gone, so the field is declared and nothing fills it, which is the state all three spent the build in`,
+      ).toContain(fill)
     }
   })
 
@@ -1267,8 +1269,35 @@ describe('the three landed signals are consulted, and each by something named', 
     expect(grounds, 'heldOpenUnread is gone — the two signals have no conjunction left').toContain(
       'heldOpenUnread(',
     )
-    // And it gates both grounds ADR-0018 sends it to, rather than one of them.
-    expect(grounds).toContain('wasRead(page, READ_AROUND_MS)')
+    /**
+     * And it gates BOTH grounds ADR-0018 sends it to, rather than one of them.
+     *
+     * That sentence sat over `toContain('wasRead(page, READ_AROUND_MS)')`,
+     * which could not say it: the text appears twice in `grounds.ts` — once in
+     * `readAround`, once in `comparedOptions` — and either occurrence satisfies
+     * `toContain`, so it held neither in particular. Deleting the
+     * `comparedOptions` one left this pin green and, before the negative in
+     * `tests/grounds.test.ts` existed, left the whole suite green with it — and
+     * it is not a no-op: `heldOpenUnread` is already unreachable under
+     * `COMPARISON_SCROLL_FRACTION`, so that line IS the twenty-second floor.
+     * Without it, pages glanced at for a second each start producing
+     * `compared-options` — a bar-LOWERING ground firing on the false-positive
+     * class ADR-0008 names as the expensive failure.
+     *
+     * Counted, because the two call sites are two lines of identical text and
+     * there is nothing else to tell them apart by. EXACT rather than at least
+     * two, for the reason an exact count is worth its tripwire: a third ground
+     * consulting the read floor, or the predicate hoisted into a local, is a
+     * decision to take in the file that says which grounds it gates.
+     *
+     * The behavioural half is `tests/grounds.test.ts`, which now holds a floor
+     * negative for each of the two grounds. This is the structural half, and
+     * neither is a substitute for the other.
+     */
+    expect(
+      grounds.match(/wasRead\(page, READ_AROUND_MS\)/g) ?? [],
+      'the read floor gates one ground and not both — see comparedOptions in grounds.ts',
+    ).toHaveLength(2)
   })
 
   it('consults the arrival where a RETURN is claimed, and nowhere else', () => {
@@ -1307,10 +1336,37 @@ describe('the three landed signals are consulted, and each by something named', 
 
 describe('deferred, and asserted as deferred', () => {
   it('boundary 6 is still unwired, so the narrative is a stop-rule label', () => {
-    // `execute-run` stores `narrative: stopLabel` — a consumer label rendered
-    // where model prose belongs. Not wrong, but not what the field means.
+    /**
+     * `execute-run` stores `narrative: stopLabel` — a consumer label rendered
+     * where model prose belongs. Not wrong, but not what the field means.
+     *
+     * ── The needle lost its paren, 2026-08-20, and that was the whole pin ──
+     *
+     * It read `'shiftReportBoundary('`, and no wiring of THIS boundary can ever
+     * produce that text. `shiftReportBoundary` is a plain object, not a factory:
+     * `ModelClient.run` takes it as `run(boundary, input)`, so it is written
+     * `shiftReportBoundary,` exactly the way `planBoundary`, `offerBoundary`,
+     * `subjectBoundary` and `workerActionBoundary` are. Only the three factory
+     * boundaries — `sessionReadingBoundary`, `handoffBoundary`, `reviewBoundary`
+     * — are ever followed by `(`.
+     *
+     * So the one form in which boundary 6 can be wired was the one form the
+     * needle could not see. Measured: `deps.model.run(shiftReportBoundary, {…})`
+     * live in `src/server/execute-run.ts` left this file at 85 passed and
+     * `tsc --noEmit` clean, while `README.md` and `docs/ARCHITECTURE.md` both
+     * cite this pin as the reason the narrative cannot be mistaken for done.
+     *
+     * A bare name is the right needle HERE and the wrong one for `controlLost`
+     * above, and the difference is which file the writer lives in. `callersOf`
+     * excludes the defining file and strips imports, so a bare
+     * `shiftReportBoundary` surviving in any other production file is a use and
+     * can be nothing else — the only mention today is a comment in
+     * `execute-run.ts` saying this is not boundary 6, and `stripComments`
+     * removes it. `controlLost` is declared in the same function that writes
+     * it, so there the bare name was satisfied by the declaration.
+     */
     expect(
-      callersOf('shiftReportBoundary(', 'src/model/boundaries/shift-report.ts'),
+      callersOf('shiftReportBoundary', 'src/model/boundaries/shift-report.ts'),
       'shiftReportBoundary is wired now — move this into the section above',
     ).toEqual([])
   })
