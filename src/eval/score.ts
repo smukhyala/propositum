@@ -25,7 +25,8 @@
 
 import { H1_COMPONENTS } from './scenario'
 import type { H1Component, Scenario } from './scenario'
-import type { SessionReadingOutput } from '../model/boundaries/session-reading'
+import { handlesFor } from '../model/boundaries/session-reading'
+import type { PromptEvent, SessionReadingOutput } from '../model/boundaries/session-reading'
 
 /* ── mechanical checks ─────────────────────────────────────────────────── */
 
@@ -39,29 +40,106 @@ export interface MechanicalChecks {
   /** Every cited handle exists. Zod already refuses otherwise, so a false here
    *  means something bypassed validation. */
   readonly everyCitationResolves: boolean
-  /** Claims whose quote did not verify against the cited event's stored text.
-   *  Fabricated support is an H1 datum, so it is counted rather than dropped. */
+  /**
+   * QUOTED SPANS that did not verify against the stored text of the event they
+   * cite. Counted per quotation rather than per claim, because a claim carrying
+   * two invented quotations invented two things, and `docs/MVP.md`'s acceptance
+   * bullet 3 is about *"every quoted `Evidence` string"*.
+   *
+   * ── It used to be a hardcoded zero, and that is why it is spelled out ────
+   *
+   * This field shipped as `unverifiedQuotes: 0` with a comment saying it was
+   * "counted by the caller", and **no caller counted it**. So the one check that
+   * exists to catch fabricated support reported a clean zero forever, which is
+   * strictly worse than not having the field: an absent metric is visibly
+   * absent, and a metric that is always 0.00 reads as healthy. Nothing in a
+   * green suite says otherwise, which is the shape `tests/reachability.test.ts`
+   * exists for.
+   */
   readonly unverifiedQuotes: number
   readonly claimCount: number
 }
 
+/**
+ * Establish the facts, given the session the reading was made from.
+ *
+ * Takes the EVENTS rather than the handle set, and the widening is the whole of
+ * the quote fix: a handle set can say whether a citation points at something,
+ * and only the events can say whether the words attributed to it are there.
+ * Deriving the handles here rather than accepting both keeps one source for the
+ * two checks that must agree about which events existed.
+ */
 export function runMechanicalChecks(
   reading: SessionReadingOutput,
-  handles: ReadonlySet<string>,
+  events: readonly PromptEvent[],
 ): MechanicalChecks {
   const objectives = reading.claims.filter((c) => c.kind === 'objective')
+  const handles = handlesFor(events)
+  const textByHandle = new Map(events.map((e) => [e.handle, quotableText(e)]))
+
+  let unverifiedQuotes = 0
+  for (const claim of reading.claims) {
+    for (const evidence of claim.evidence) {
+      if (evidence.quote === undefined) continue
+      if (!quoteVerifies(evidence.quote, textByHandle.get(evidence.ref))) unverifiedQuotes += 1
+    }
+  }
 
   return {
     hasExactlyOneObjective: objectives.length === 1,
     objectiveHasConfidence: objectives[0]?.confidence !== undefined,
     everyClaimSupported: reading.claims.every((c) => c.evidence.length > 0),
     everyCitationResolves: reading.claims.every((c) => c.evidence.every((e) => handles.has(e.ref))),
-    // Quote verification needs the stored event text, which the harness has and
-    // this pure function does not. Counted by the caller; zero here means
-    // "not yet checked", never "verified".
-    unverifiedQuotes: 0,
+    unverifiedQuotes,
     claimCount: reading.claims.length,
   }
+}
+
+/**
+ * Everything a claim may honestly quote from one event.
+ *
+ * Both halves, and the join is deliberate: `attested` is what the browser said
+ * happened and `untrusted.sanitized` is what the page said, and a reading is
+ * entitled to quote either. `sanitized` rather than `forPrompt`, because the
+ * fence delimiters are ours and a quotation that included them would be
+ * quoting Propositum rather than the page.
+ */
+function quotableText(event: PromptEvent): string {
+  return event.untrusted === undefined
+    ? event.attested
+    : `${event.attested}\n${event.untrusted.sanitized}`
+}
+
+/**
+ * Did this quotation come from that text?
+ *
+ * Whitespace-normalised and case-insensitive, then a substring test. Both
+ * relaxations are named rather than tuned:
+ *
+ *  - **Whitespace**, because a model re-flows a quotation it did not invent, and
+ *    counting a line break as a fabrication would make the number unreadable in
+ *    the direction that matters — a metric with false positives gets ignored.
+ *  - **Case**, for the same reason at the start of a sentence.
+ *
+ * **What it does not catch, said out loud:** a quotation altered by a word or a
+ * synonym is counted as fabricated, which is correct, and a quotation that is
+ * genuinely present but paraphrased is counted the same way, which is a false
+ * positive nobody has measured. It also cannot tell a quotation lifted from the
+ * WRONG event apart from an invented one — both simply fail against the event
+ * that was cited, and both are the same finding about the citation.
+ *
+ * A blank quotation fails. Quoting nothing supports nothing, and forgiving it
+ * would leave a way to carry a `quote` field that this check always passes.
+ */
+function quoteVerifies(quote: string, source: string | undefined): boolean {
+  const needle = flatten(quote)
+  if (needle === '') return false
+  if (source === undefined) return false
+  return flatten(source).includes(needle)
+}
+
+function flatten(text: string): string {
+  return text.replace(/\s+/g, ' ').trim().toLowerCase()
 }
 
 /* ── H1 ────────────────────────────────────────────────────────────────── */
@@ -116,7 +194,10 @@ export interface H2Result {
 
 export const H2_PASS_RATE = 0.6
 
-export function scoreH2(tally: H2Tally, outputMode: 'suggestions-only' | 'draft-changes'): H2Result {
+export function scoreH2(
+  tally: H2Tally,
+  outputMode: 'suggestions-only' | 'draft-changes',
+): H2Result {
   const total = tally.accepted + tally.editedAndKept + tally.rejected
 
   if (total === 0) {
@@ -257,11 +338,11 @@ export function tallyH2(units: readonly H2Unit[]): H2Trajectory {
  * `draft-changes`*, so a mode string this reader has never seen is scored
  * strictly rather than forgiven.
  */
-function dominantOutputMode(
-  units: readonly H2Unit[],
-): 'suggestions-only' | 'draft-changes' | null {
+function dominantOutputMode(units: readonly H2Unit[]): 'suggestions-only' | 'draft-changes' | null {
   if (units.length === 0) return null
-  return units.some((u) => u.outputMode !== 'suggestions-only') ? 'draft-changes' : 'suggestions-only'
+  return units.some((u) => u.outputMode !== 'suggestions-only')
+    ? 'draft-changes'
+    : 'suggestions-only'
 }
 
 /* ── H2, as a report on a whole corpus ─────────────────────────────────── */
@@ -359,14 +440,21 @@ export function reportH2(
       : scoreH2(trajectory.tally, trajectory.outputMode)
 
   const verdict: H2Report['verdict'] =
-    barren > 0 ? 'failed' : result === null ? 'nothing-to-score' : result.passed ? 'passed' : 'failed'
+    barren > 0
+      ? 'failed'
+      : result === null
+        ? 'nothing-to-score'
+        : result.passed
+          ? 'passed'
+          : 'failed'
 
   return { verdict, result, decided, kept, waiting: trajectory.undecided, barren, unfinished }
 }
 
 /* ── H3 ────────────────────────────────────────────────────────────────── */
 
-export type H3Outcome = 'correct-stop' | 'missed-stop' | 'false-stop' | 'wrong-rule' | 'correct-continue'
+export type H3Outcome =
+  'correct-stop' | 'missed-stop' | 'false-stop' | 'wrong-rule' | 'correct-continue'
 
 export interface H3Observation {
   readonly scenarioId: string

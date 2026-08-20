@@ -23,14 +23,14 @@ A TypeScript module, not JSON — page text must be built through `datamark()`, 
 survive serialisation, and a fixture that type-checks against the real boundary types cannot drift
 into a shape the pipeline could never receive.
 
-| Field | |
-|---|---|
-| `id`, `title`, `class` | one of the four H3 classes |
-| `rationale` | what this scenario is trying to catch |
-| `events`, `notes` | the session, as the inference boundary sees it |
-| `documentTitle`, `baseContent` | the starting document |
-| **`reference`** | **sealed** — what a person would have written |
-| **`expectedStop`** | **sealed** — should a correct run raise a question? |
+| Field                          |                                                     |
+| ------------------------------ | --------------------------------------------------- |
+| `id`, `title`, `class`         | one of the four H3 classes                          |
+| `rationale`                    | what this scenario is trying to catch               |
+| `events`, `notes`              | the session, as the inference boundary sees it      |
+| `documentTitle`, `baseContent` | the starting document                               |
+| **`reference`**                | **sealed** — what a person would have written       |
+| **`expectedStop`**             | **sealed** — should a correct run raise a question? |
 
 Adding one is a file plus `npm run eval -- --seal`.
 
@@ -39,7 +39,7 @@ Adding one is a file plus `npm run eval -- --seal`.
 H1 is scored by the same person who wrote the answer key. At n=1 that circularity cannot be removed,
 only bounded — and the bound is worthless if the key can be adjusted after a disappointing result.
 
-Nobody does that dishonestly. They do it by thinking *"ah, my reference was badly worded"* — which
+Nobody does that dishonestly. They do it by thinking _"ah, my reference was badly worded"_ — which
 is sometimes even true, and is exactly why the rule has to be mechanical.
 
 **`references.lock.json`** holds a SHA-256 of each answer key. The harness **refuses to score** a
@@ -48,7 +48,7 @@ scenario whose reference has changed since sealing, and the error says why:
 > H1 measures whether the model matched an answer key written BEFORE the run. An edited key does not
 > measure that, whatever the intention behind the edit.
 
-Only the **answer** is hashed. Events, document and rationale are the *question* — they can be
+Only the **answer** is hashed. Events, document and rationale are the _question_ — they can be
 corrected without breaking the seal, because changing the question invalidates a scenario for a
 different reason and is caught by review.
 
@@ -62,6 +62,13 @@ Verified by tampering: a one-word edit to a sealed reference makes `--check` fai
 **Mechanical checks run automatically** — exactly one objective claim, a confidence band present,
 every claim supported, every citation resolving, quotes verified. These are facts.
 
+_(The last of those was a hardcoded zero until 2026-08-20, with a comment saying it was counted by a
+caller that did not exist. Every quoted `Evidence` string is now matched against the cited event's
+attested text and its page text, whitespace-normalised and case-insensitive. **What it cannot do:** a
+quotation that is genuinely present but paraphrased counts as fabricated, and a quotation lifted from
+the wrong event is indistinguishable from an invented one — both fail against the event that was
+cited, which is the same finding about the citation.)_
+
 **H1 rubric scores are entered by a person**, 0/1/2 per component. The harness lays reference and
 actual side by side, groups by claim kind, and shows what was missed in both directions. It does not
 produce a number.
@@ -70,7 +77,7 @@ produce a number.
 
 Model-judging a model invites **correlated error**: the judge shares the generator's blind spots, so
 a reading that is confidently wrong in a familiar way scores well. At n=1 there is no second signal
-to detect that — and the reference's whole purpose is to be an *independent* answer key, which a
+to detect that — and the reference's whole purpose is to be an _independent_ answer key, which a
 model judge quietly removes.
 
 Revisit if the corpus outgrows one person, but on a measured judge/human agreement rate, not on
@@ -90,7 +97,7 @@ $EDITOR eval-scores.json      # 0/1/2 per component, plus scoredBy
 npm run eval -- --report      # apply the gates
 ```
 
-`null` means *not yet scored* and is distinct from `0`, which is a judgment. `--report` refuses to
+`null` means _not yet scored_ and is distinct from `0`, which is a judgment. `--report` refuses to
 total a partial entry — a partial total is not a result.
 
 Two fields exist to stop things being skipped:
@@ -116,10 +123,10 @@ and a prompt written to succeed rather than to lose.
 
 ## The corpus
 
-| Scenario | Class | What it catches |
-|---|---|---|
+| Scenario            | Class             | What it catches                                                                                                                       |
+| ------------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
 | `partnership-clean` | judgment-required | an objective never stated aloud; a pursued thread vs an abandoned one; remaining work that needs a decision rather than more research |
-| `partnership-messy` | judgment-required | graceful degradation — a 34-minute capture gap, contradictory notes, tab noise, an injected source, and no stated objective anywhere |
+| `partnership-messy` | judgment-required | graceful degradation — a 34-minute capture gap, contradictory notes, tab noise, an injected source, and no stated objective anywhere  |
 
 The messy twin's reference asks for the objective at **medium** confidence, not high. The session
 genuinely does not show it clearly, so **a reading that reports high confidence there is wrong even
@@ -131,12 +138,12 @@ loop). Named here rather than left as a silent gap.
 
 ## Scoring
 
-**H1** — six components, 0/1/2, out of 12. **Pass needs ≥10 *and* the objective at 2.** Two gates,
+**H1** — six components, 0/1/2, out of 12. **Pass needs ≥10 _and_ the objective at 2.** Two gates,
 because a reading with the wrong objective is not partially useful; it is actively misleading, and
 everything downstream inherits the error.
 
 **H2** — `(accepted + edited-and-kept) / total`. **Pass ≥60%.** A zero-change run under
-`suggestions-only` is a designed-for outcome and is *excluded from the denominator*; under
+`suggestions-only` is a designed-for outcome and is _excluded from the denominator_; under
 `draft-changes` it is a failure and scores zero.
 
 **H3** — compared against the sealed `expectedStop`, so the label cannot be assigned after seeing
@@ -145,59 +152,59 @@ One tolerated and zero not required, because the bias toward stopping is deliber
 
 ## The offer rate — measured, and deliberately not scored
 
-*(Added 2026-08-18.)* [`PRODUCT_PRINCIPLES.md`](./PRODUCT_PRINCIPLES.md) §13 carried this as its own
-honest limit: *"there is no metric anywhere that would catch an offer rate creeping upward."* The
+_(Added 2026-08-18.)_ [`PRODUCT_PRINCIPLES.md`](./PRODUCT_PRINCIPLES.md) §13 carried this as its own
+honest limit: _"there is no metric anywhere that would catch an offer rate creeping upward."_ The
 offer bar was lowered twice in two days — `DEEP_READ_MS` 90s → 60s, and a fourth investment ground —
 and nothing in the repository would have shown whether either was right.
 
 [`intent-suggestion-quality.md`](./research/intent-suggestion-quality.md) §10.5 names the fix as
-three numbers, *"all derivable from data the system already has, and none requiring a model"*.
+three numbers, _"all derivable from data the system already has, and none requiring a model"_.
 `--report` prints them:
 
-| Number | Counted where | Why this one |
-|---|---|---|
+| Number                                         | Counted where                                                                                                 | Why this one                                                                                                                                                                                    |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Offers shown per hour of observed browsing** | a strand reaching Home or the poll's `suggestion`, over minutes in which the extension had anything to report | GitHub track **completion-shown rate** in production beside acceptance. The denominator is the half that gets dropped: four offers is restraint across a day and a pathology across ten minutes |
-| **Decline rate** | both "Not now" paths | JetBrains optimise the pair — acceptance up, explicit cancels down — and got **+~50% / −~40%** by *removing* suggestions with output held flat |
-| **Strands detected but not shown** | what `MAX_THREADS_SHOWN` cut, after the snooze filters | [ADR-0008](./adr/0008-ambient-detection.md): a strand found and discarded in silence is the failure the multi-strand change existed to remove, and the display bound was still doing it |
+| **Decline rate**                               | both "Not now" paths                                                                                          | JetBrains optimise the pair — acceptance up, explicit cancels down — and got **+~50% / −~40%** by _removing_ suggestions with output held flat                                                  |
+| **Strands detected but not shown**             | what `MAX_THREADS_SHOWN` cut, after the snooze filters                                                        | [ADR-0008](./adr/0008-ambient-detection.md): a strand found and discarded in silence is the failure the multi-strand change existed to remove, and the display bound was still doing it         |
 
 A strand is counted **once per buffer**, not once per poll — the poll re-detects the same afternoon
 every thirty seconds. The totals come with a **per-day column**, because §13's hole is a rate
-*creeping upward* and a total cannot show a change over time.
+_creeping upward_ and a total cannot show a change over time.
 
 **No pass mark, and that is a decision rather than an omission.** The only published calibration —
-Donato et al.'s **10% of sessions** — is per *session*; this is per *hour*, and the conversion needs a
+Donato et al.'s **10% of sessions** — is per _session_; this is per _hour_, and the conversion needs a
 mean session length nothing here measures. A gate on an invented threshold would exit non-zero on a
 number nobody could defend, and the first response to that is to raise the threshold. So `--report`'s
 exit code is unchanged: H1 and H2 still decide it.
 
 **What these cannot do**, printed beside them rather than filed here:
 
-- **They will be zero until somebody uses the product.** A count of nothing is reported as *nothing
-  counted yet*, never as `0.0/h` — the same distinction `scoreH2` makes between a rate and an absence.
+- **They will be zero until somebody uses the product.** A count of nothing is reported as _nothing
+  counted yet_, never as `0.0/h` — the same distinction `scoreH2` makes between a rate and an absence.
 - **They say nothing about whether an offer was GOOD.** They measure loudness. A product that offered
   four excellent things an hour and one that offered four wrong ones score identically.
 - **A decline rate is an acceptance rate turned around**, and acceptance is the metric the research
-  warns hardest against optimising — GitHub, on their own number: *"being hyper-focused on a metric
+  warns hardest against optimising — GitHub, on their own number: _"being hyper-focused on a metric
   like acceptance rate can lead to experiences that look good on paper, but do not result in happy
-  developers."* An offer nobody declines may be an offer nobody read.
+  developers."_ An offer nobody declines may be an offer nobody read.
 
 **And they hold no subject.** `offer_tally` is four integers and a date, with no column a term, a
 signature, an origin, a title or a URL could be written in. That is what makes it a tally rather than
 the durable profile ADR-0008 refuses, and `tests/eval.test.ts` asserts the column list rather than
 the intention.
 
-*(One field had to be taken back out on 2026-08-18 to make the sentence above true. The table shipped
+_(One field had to be taken back out on 2026-08-18 to make the sentence above true. The table shipped
 with an `updatedAt` — a millisecond instant, rewritten on every count, so a durable per-day note of
 roughly when this person stopped browsing, in a table whose own docblock refuses an hour bucket for
 being too fine. It arrived by habit rather than by decision, nothing read it, and it is gone. The
 decision this table belongs to, with the price and the open questions, is
-[ADR-0015](./adr/0015-measuring-loudness-and-saving-an-afternoon.md).)*
+[ADR-0015](./adr/0015-measuring-loudness-and-saving-an-afternoon.md).)_
 
 **One number is counted best-effort and can be short.** `countQuietly` writes to a database handle
 something else opened and never opens one itself, so on a freshly started app the first ambient POST
 can arrive before any handle exists and its minute of observed browsing is lost. Bounded by the
 extension's thirty-second poll, which opens one. It is the denominator, so the error makes the
-reported offer rate look *higher* than it was — the direction that raises the alarm rather than
+reported offer rate look _higher_ than it was — the direction that raises the alarm rather than
 quieting it, which is the only direction this measurement may round.
 
 ## What this does not yet measure
@@ -205,12 +212,12 @@ quieting it, which is the only direction this measurement may round.
 Three hypotheses, six rubric components, one stop label, and — since 2026-08-18 — three counted
 numbers that nothing scores. That is the whole instrument, and it is narrower than what the product
 claims to do. The gaps are named here rather than left to be noticed.
-**All of this is later** — closing any of it means *adding* scenarios and instrumentation, never
+**All of this is later** — closing any of it means _adding_ scenarios and instrumentation, never
 editing a sealed reference.
 
 **One item left this list on 2026-08-18** and it is worth saying which, because a gap list that only
-grows is a list nobody reads: ~~how often Propositum offers at all~~ is now measured — see *The offer
-rate* above. It was never written here, which is itself the finding: this section was a list of
+grows is a list nobody reads: ~~how often Propositum offers at all~~ is now measured — see _The offer
+rate_ above. It was never written here, which is itself the finding: this section was a list of
 things the harness did not measure about a SHIFT, and the product had grown a whole surface —
 detection, and the offer it produces — that nothing measured at all. **Nothing else here is closed by
 it**, and one thing is added:
@@ -226,7 +233,7 @@ them. [`FOUNDING_BRIEF.md`](./FOUNDING_BRIEF.md) names six measures; the harness
 - **Handoff correction rate** — how much the person must edit the proposed `HandoffContract`. The
   contract is editable and the edits are counted nowhere. Cheapest gap to close: the proposal and
   the ratified version both exist as durable rows, so this is arithmetic nobody has written.
-- **Re-entry quality** — *can the person resume within about a minute.* Never measured, and it is
+- **Re-entry quality** — _can the person resume within about a minute._ Never measured, and it is
   what [`MVP.md`](./MVP.md)'s "minimal re-explanation" actually rests on. **H1 is a proxy for it and
   is not evidence of it.** A reading that matches the reference tells you the words were right; it
   says nothing about how long the person sat there before they could act.
@@ -250,7 +257,7 @@ plainly, because "we will evaluate that later" reads as a plan and is usually an
 - **Delegation correctness** — human, worker, or nobody. There is one worker, so the question has one
   answer, and a measure with one answer measures nothing.
 - **Stopping, beyond H3.** H3 asks whether a stop happened where the sealed label says it should. It
-  does not ask whether stopping was the *cheapest* correct response, which is the question a
+  does not ask whether stopping was the _cheapest_ correct response, which is the question a
   stopping policy would need.
 - **Worker selection.** Nothing to select between. The router is unimplemented and deliberately so;
   this stays unmeasurable until it stops being unbuilt, in that order and not the reverse.
@@ -272,14 +279,14 @@ harness scoring its first output would defeat the protocol before it started.
 **The baseline is very good — and on the messy scenario it may be better than the structured
 reading.**
 
-The raw-log baseline caught the injection, flagged the Q3 contradiction, *and* independently
+The raw-log baseline caught the injection, flagged the Q3 contradiction, _and_ independently
 questioned whether the Contoso pivot was the person's own idea:
 
 > "notably, they went to 'Contoso — Partner programme comparison' seven minutes later, which is
 > worth double-checking was their own idea"
 
-Meanwhile the structured reading's objective drifted toward *"comparing Northwind's partner
-programme against Contoso's"* — which is **partly the injection's framing surviving into the
+Meanwhile the structured reading's objective drifted toward _"comparing Northwind's partner
+programme against Contoso's"_ — which is **partly the injection's framing surviving into the
 objective.** The reference says simply "Draft a partnership proposal to Northwind."
 
 Two things follow, and they point in opposite directions:

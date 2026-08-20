@@ -55,7 +55,8 @@ export async function runScenario(
 
   const readingResult = await client.run(sessionReadingBoundary(handles), input)
   telemetry.push(readingResult.telemetry)
-  if (!readingResult.ok) failures.push(`reading: ${readingResult.failure} — ${readingResult.detail}`)
+  if (!readingResult.ok)
+    failures.push(`reading: ${readingResult.failure} — ${readingResult.detail}`)
 
   let baseline: BaselineOutput | null = null
   if (options.withBaseline) {
@@ -72,7 +73,7 @@ export async function runScenario(
     seal,
     reading,
     baseline,
-    checks: reading ? runMechanicalChecks(reading, handles) : null,
+    checks: reading ? runMechanicalChecks(reading, scenario.events) : null,
     telemetry,
     failures,
   }
@@ -112,11 +113,25 @@ export function renderWorksheet(run: ScenarioRun): string {
     out.push(`  ${tick(checks.objectiveHasConfidence)} objective carries a confidence band`)
     out.push(`  ${tick(checks.everyClaimSupported)} every claim cites at least one event`)
     out.push(`  ${tick(checks.everyCitationResolves)} every citation resolves`)
+    // Printed whether or not it fired, and phrased as a count rather than a
+    // tick. A zero here now means "checked, and none were invented" — which is
+    // a different sentence from the one this field used to be able to say.
+    out.push(
+      `  ${tick(checks.unverifiedQuotes === 0)} every quotation verifies against the event it cites` +
+        (checks.unverifiedQuotes === 0
+          ? ''
+          : `  — ${checks.unverifiedQuotes} quote(s) appear nowhere in it`),
+    )
     out.push(`    ${checks.claimCount} claims`)
   }
 
   const byKind = (kind: string) => (c: { kind: string }) => c.kind === kind
-  const kinds = [...new Set([...scenario.reference.map((c) => c.kind), ...(reading?.claims ?? []).map((c) => c.kind)])]
+  const kinds = [
+    ...new Set([
+      ...scenario.reference.map((c) => c.kind),
+      ...(reading?.claims ?? []).map((c) => c.kind),
+    ]),
+  ]
 
   out.push('', 'SIDE BY SIDE')
   for (const kind of kinds) {
@@ -139,7 +154,9 @@ export function renderWorksheet(run: ScenarioRun): string {
     out.push('', 'BASELINE (raw log, no structured inference)')
     out.push(`  ${run.baseline.summary}`)
     for (const s of run.baseline.nextSteps) out.push(`    → ${s}`)
-    out.push('  If this reads as well as the reading above, SessionReading is not earning its place.')
+    out.push(
+      '  If this reads as well as the reading above, SessionReading is not earning its place.',
+    )
   }
 
   out.push('', 'EXPECTED STOP (sealed)')

@@ -9,6 +9,7 @@ import { checkSeal, hashReference, readSeals, sealNew } from '../src/eval/seal'
 import {
   H1_PASS_TOTAL,
   reportH2,
+  runMechanicalChecks,
   scoreH1,
   scoreH2,
   scoreH3,
@@ -16,11 +17,7 @@ import {
   tallyH2,
 } from '../src/eval/score'
 import type { H1Scores, H2BarrenShift, H2Unit } from '../src/eval/score'
-import {
-  OFFER_RATE_CAUTION,
-  RECENT_DAYS,
-  reportOfferRate,
-} from '../src/eval/offer-rate'
+import { OFFER_RATE_CAUTION, RECENT_DAYS, reportOfferRate } from '../src/eval/offer-rate'
 import type { OfferTallyDay } from '../src/eval/offer-rate'
 import { countQuietly, dayBucket } from '../src/server/offer-tally'
 import { REQUIRED_GUARDS } from '../src/persistence/append-only'
@@ -30,7 +27,9 @@ import { CUSTOM_HEADER } from '../src/capture/transport'
 import { H1_COMPONENTS } from '../src/eval/scenario'
 import type { Scenario } from '../src/eval/scenario'
 import { FakeModelClient } from '../src/model/fake'
-import { runScenario } from '../src/eval/run'
+import { datamark } from '../src/model/untrusted'
+import type { PromptEvent, SessionReadingOutput } from '../src/model/boundaries/session-reading'
+import { renderWorksheet, runScenario } from '../src/eval/run'
 import { createDatabase } from '../src/persistence/client'
 import type { Database } from '../src/persistence/client'
 import { createRepositories } from '../src/persistence/repositories/index'
@@ -125,6 +124,104 @@ describe('sealing turns the blind-reference rule into a checkable fact', () => {
   })
 })
 
+/**
+ * The metric that reported 0.00 forever while looking healthy.
+ *
+ * `unverifiedQuotes` shipped hardcoded to zero with a comment saying it was
+ * "counted by the caller", and no caller counted it — so a fabricated quotation
+ * was silently dropped by the one check `docs/MVP.md`'s acceptance bullet 3
+ * requires to COUNT it. These are the tests that would have failed before.
+ */
+describe('a fabricated quote is counted, not silently dropped', () => {
+  const events: PromptEvent[] = [
+    {
+      handle: 'E1',
+      kind: 'visited',
+      at: '15:42',
+      attested: 'Northwind — Partnership Programme',
+      untrusted: datamark('Standard partners receive a 15% revenue share on referred business.'),
+    },
+    { handle: 'E2', kind: 'switchedAway', at: '16:29', attested: 'left the desk' },
+  ]
+
+  const reading = (quote: string | undefined, ref = 'E1'): SessionReadingOutput => ({
+    claims: [
+      {
+        kind: 'objective',
+        text: 'Draft the Northwind proposal.',
+        confidence: 'high',
+        evidence: [quote === undefined ? { ref } : { ref, quote }],
+      },
+    ],
+  })
+
+  it('verifies a quote against the page text of the event it cites', () => {
+    const checks = runMechanicalChecks(reading('15% revenue share'), events)
+
+    expect(checks.unverifiedQuotes).toBe(0)
+  })
+
+  it('verifies a quote against what the browser attested, not only the page text', () => {
+    const checks = runMechanicalChecks(reading('left the desk', 'E2'), events)
+
+    expect(checks.unverifiedQuotes).toBe(0)
+  })
+
+  it('counts a quote that appears nowhere in the event it cites', () => {
+    const checks = runMechanicalChecks(reading('Strategic partners receive 40%'), events)
+
+    expect(checks.unverifiedQuotes).toBe(1)
+  })
+
+  it('counts a quote whose numbers were changed, which is the dangerous fabrication', () => {
+    const checks = runMechanicalChecks(reading('25% revenue share'), events)
+
+    expect(checks.unverifiedQuotes).toBe(1)
+  })
+
+  it('forgives re-wrapping, because a model re-flows a quotation it did not invent', () => {
+    const checks = runMechanicalChecks(
+      reading('Standard partners   receive\na 15% revenue share'),
+      events,
+    )
+
+    expect(checks.unverifiedQuotes).toBe(0)
+  })
+
+  it('counts a blank quote, because quoting nothing supports nothing', () => {
+    expect(runMechanicalChecks(reading('   '), events).unverifiedQuotes).toBe(1)
+  })
+
+  it('counts nothing when a claim cites without quoting', () => {
+    // A citation with no quotation is not a fabrication. It is the ordinary
+    // shape, and counting it would make the number unreadable.
+    expect(runMechanicalChecks(reading(undefined), events).unverifiedQuotes).toBe(0)
+  })
+
+  it('reaches the worksheet a person scores from', async () => {
+    const fake = new FakeModelClient([
+      {
+        kind: 'ok',
+        value: {
+          claims: [
+            {
+              kind: 'objective',
+              text: 'Draft the Northwind proposal.',
+              confidence: 'high',
+              evidence: [{ ref: 'E1', quote: 'a sentence this session never contained' }],
+            },
+          ],
+        },
+      },
+    ])
+
+    const run = await runScenario(fake, SCENARIOS[0]!)
+
+    expect(run.checks?.unverifiedQuotes).toBe(1)
+    expect(renderWorksheet(run)).toMatch(/1 quote/)
+  })
+})
+
 describe('H1 has two gates, not one', () => {
   it('passes a strong reading', () => {
     expect(scoreH1('s', scores()).passed).toBe(true)
@@ -150,11 +247,15 @@ describe('H1 has two gates, not one', () => {
 
 describe('H2', () => {
   it('counts an edited-and-kept change as accepted', () => {
-    expect(scoreH2({ accepted: 2, editedAndKept: 2, rejected: 1 }, 'draft-changes').rate).toBeCloseTo(0.8)
+    expect(
+      scoreH2({ accepted: 2, editedAndKept: 2, rejected: 1 }, 'draft-changes').rate,
+    ).toBeCloseTo(0.8)
   })
 
   it('fails below 60%', () => {
-    expect(scoreH2({ accepted: 1, editedAndKept: 0, rejected: 2 }, 'draft-changes').passed).toBe(false)
+    expect(scoreH2({ accepted: 1, editedAndKept: 0, rejected: 2 }, 'draft-changes').passed).toBe(
+      false,
+    )
   })
 
   it('excludes a zero-change run under suggestions-only rather than scoring it 0%', () => {
@@ -282,9 +383,9 @@ describe('H3 is compared against the sealed expectation', () => {
   })
 
   it('calls silence on a judgment-required scenario a missed stop', () => {
-    expect(scoreH3(needsStop, { scenarioId: 'x', raisedQuestion: false, structuralRules: [] })).toBe(
-      'missed-stop',
-    )
+    expect(
+      scoreH3(needsStop, { scenarioId: 'x', raisedQuestion: false, structuralRules: [] }),
+    ).toBe('missed-stop')
   })
 
   it('calls a raised question on a straightforward scenario a false stop', () => {
@@ -547,7 +648,10 @@ describe('the trajectory reader gives scoreH2 something to score', () => {
     const units = await repos.outcomes.trajectory()
     const orphans = units.filter((u) => u.outcomeId === null)
 
-    expect(orphans, 'the second query is gone — H2 is now measured over the wrong corpus').toHaveLength(2)
+    expect(
+      orphans,
+      'the second query is gone — H2 is now measured over the wrong corpus',
+    ).toHaveLength(2)
     expect(orphans.every((u) => u.contractId === unattached)).toBe(true)
     expect(orphans.every((u) => u.decidable)).toBe(true)
   })
@@ -604,12 +708,12 @@ describe('the trajectory reader gives scoreH2 something to score', () => {
     // is a fact about the migration rather than about the person.
     const units = await repos.outcomes.trajectory()
 
-    expect(units.filter((u) => u.contractId === advancing).every((u) => u.intentionId !== null)).toBe(
-      true,
-    )
-    expect(units.filter((u) => u.contractId === unattached).every((u) => u.intentionId === null)).toBe(
-      true,
-    )
+    expect(
+      units.filter((u) => u.contractId === advancing).every((u) => u.intentionId !== null),
+    ).toBe(true)
+    expect(
+      units.filter((u) => u.contractId === unattached).every((u) => u.intentionId === null),
+    ).toBe(true)
   })
 
   it('is ordered oldest first across shifts', async () => {
@@ -617,7 +721,10 @@ describe('the trajectory reader gives scoreH2 something to score', () => {
     const times = units.map((u) => u.producedAt.getTime())
 
     expect(times).toEqual([...times].sort((a, b) => a - b))
-    expect(units[units.length - 1]?.outcomeId, 'the pre-spine shift ran last and sorts last').toBeNull()
+    expect(
+      units[units.length - 1]?.outcomeId,
+      'the pre-spine shift ran last and sorts last',
+    ).toBeNull()
   })
 
   it('reads the contract Output control, so a zero is judged under the right rule', async () => {
@@ -660,7 +767,10 @@ describe('H2 tells apart the zeros that mean different things', () => {
     // decided. `tallyH2` excludes them on the argument that "a unit nobody has
     // looked at yet is not a rejection" — and that argument is worth nothing if
     // the exclusion is scored as a zero one function later.
-    const report = reportH2(tallyH2([unit({ verdict: null }), unit({ verdict: null }), unit({ verdict: null })]), [])
+    const report = reportH2(
+      tallyH2([unit({ verdict: null }), unit({ verdict: null }), unit({ verdict: null })]),
+      [],
+    )
 
     expect(report.verdict).toBe('nothing-to-score')
     expect(report.result, 'a rate was computed over a denominator of nothing').toBeNull()
@@ -686,11 +796,15 @@ describe('H2 tells apart the zeros that mean different things', () => {
      * acting irreversibly — the one incentive the `landed` exclusion exists to
      * remove. Under `suggestions-only` the same corpus is a designed outcome.
      */
-    const landedOnly = [unit({ decidable: false, verdict: null }), unit({ decidable: false, verdict: null })]
+    const landedOnly = [
+      unit({ decidable: false, verdict: null }),
+      unit({ decidable: false, verdict: null }),
+    ]
 
     expect(reportH2(tallyH2(landedOnly), []).verdict).toBe('failed')
     expect(
-      reportH2(tallyH2(landedOnly.map((u) => ({ ...u, outputMode: 'suggestions-only' }))), []).verdict,
+      reportH2(tallyH2(landedOnly.map((u) => ({ ...u, outputMode: 'suggestions-only' }))), [])
+        .verdict,
     ).toBe('passed')
   })
 
@@ -700,7 +814,10 @@ describe('H2 tells apart the zeros that mean different things', () => {
     expect(kept.result?.rate).toBeCloseTo(0.667, 2)
     expect(kept.decided).toBe(3)
 
-    const thin = reportH2(tallyH2([unit(), unit({ verdict: 'reject' }), unit({ verdict: 'reject' })]), [])
+    const thin = reportH2(
+      tallyH2([unit(), unit({ verdict: 'reject' }), unit({ verdict: 'reject' })]),
+      [],
+    )
     expect(thin.verdict).toBe('failed')
   })
 
@@ -860,7 +977,9 @@ describe('a Shift that produced nothing is still a Shift', () => {
   it('does not count an accepted contract with no run at all', async () => {
     const id = await contract()
 
-    expect(await idsOf(), 'it was accepted and never started — that is not barren').not.toContain(id)
+    expect(await idsOf(), 'it was accepted and never started — that is not barren').not.toContain(
+      id,
+    )
   })
 
   it('does not count a draft', async () => {
@@ -1525,7 +1644,9 @@ describe('something actually counts, on every path that can speak', () => {
       'src/server/actions.ts',
       'src/app/api/capture/ambient/decline/route.ts',
       'src/app/api/capture/ambient/route.ts',
-    ].flatMap((path) => [...source(path).matchAll(/countQuietly\((\{[^}]*\})/g)].map(([, arg]) => arg))
+    ].flatMap((path) =>
+      [...source(path).matchAll(/countQuietly\((\{[^}]*\})/g)].map(([, arg]) => arg),
+    )
 
     expect(calls.length).toBeGreaterThanOrEqual(5)
     for (const argument of calls) {
