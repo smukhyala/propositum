@@ -1,6 +1,6 @@
 # Product principles
 
-~~Ten principles.~~ **Fifteen, as of 2026-08-16.** The header said ten while eleven were present:
+~~Ten principles.~~ **Fifteen principles, as of 2026-08-16.** The header said ten while eleven were present:
 principle 11 arrived and the count did not follow it. That is a small error in the one document that
 tells every other document to say the true thing, and it is corrected here rather than quietly
 overwritten. Four more principles arrive below from the 2026-08-16 direction update

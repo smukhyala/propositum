@@ -69,10 +69,12 @@ Beyond the guards:
   enforces this — it is a convention, and conventions are the ones that rot. If the
   word you need is not in the glossary, either you are inventing language the
   project does not use, or there is a real gap. Both are worth a sentence in the PR.
-- **Never add a count you have to maintain by hand.** The README documents five of
-  its own counts going stale, and the count of stale counts also went stale. If your
-  change moves a number some document states, fix that document in the same commit —
-  or better, delete the number and point at the thing that knows it.
+- **A count is allowed only where something checks it.** The README documented five
+  of its own counts going stale, and the count of stale counts had gone stale too.
+  `tests/counts.test.ts` now holds the rule: state a number and it must match the file
+  that knows — glossary terms, banned rows, ADRs, principles, layers. Deleting a number
+  always passes. The size of this suite has no cheap source of truth, so that one may
+  not be stated at all. If your change moves a checked number, the test says so.
 
 ---
 
