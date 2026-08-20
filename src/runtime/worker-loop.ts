@@ -117,7 +117,7 @@ import { confirmationQuestion } from '../domain/execution/confirmation-question'
 import type { ElementEvidence } from '../domain/execution/reversibility'
 import { SNAPSHOT_BUDGET_CHARS, datamark } from '../model/untrusted'
 import type { Datamarked } from '../model/untrusted'
-import type { ModelClient } from '../model/client'
+import type { BoundaryName, FailureKind, ModelClient } from '../model/client'
 import { planBoundary } from '../model/boundaries/plan'
 import { workerActionBoundary } from '../model/boundaries/worker-action'
 import type { PageForModel } from '../model/boundaries/worker-action'
@@ -434,6 +434,28 @@ export interface WorkerResult {
    *  than having to diff the ledger to find out. */
   readonly recovered: number
   /**
+   * Which boundary failed, and how, on a run that ended `failed`.
+   *
+   * Absent on every other ending. It exists because the alternative was what
+   * shipped: `finish([], 'failed')` returned a run with an empty `stoppedBy`,
+   * an undefined `terminalReason` and no other field, so a boundary failure
+   * carried NO INFORMATION AT ALL. A `worker-action` call that threw inside the
+   * SDK on every single attempt reached the caller as a run that did nothing,
+   * and the caller could not tell it from a run that chose to do nothing.
+   *
+   * A diagnosis path, not a feature. Nothing branches on it — the loop has
+   * already decided the run is over — and it is not a `terminalReason`, which
+   * is a closed code-assigned set. It is the `BoundaryResult` the loop had in
+   * its hand and used to throw away.
+   */
+  readonly boundaryFailure?:
+    | {
+        readonly boundary: BoundaryName
+        readonly failure: FailureKind
+        readonly detail: string
+      }
+    | undefined
+  /**
    * The run stopped to ask, and this is what about. Absent on every other
    * ending.
    *
@@ -542,13 +564,47 @@ export async function runWorker(job: WorkerJob, deps: WorkerDeps): Promise<Worke
   const finish = (rules: readonly StopRuleId[], status: 'succeeded' | 'failed'): WorkerResult => ({
     status,
     stoppedBy: rules,
-    terminalReason: rules.length ? STOP_RULES[rules[0]!].terminalReason : undefined,
+    /**
+     * A failed run says `boundary-failure`, which is what the glossary has
+     * always said it says.
+     *
+     * This used to be `undefined` whenever no stop rule fired, and for
+     * `status: 'failed'` that is the code contradicting CONTEXT.md's `AgentRun`
+     * entry — which partitions `terminalReason` strictly by status and gives
+     * `failed` exactly one reason. A run row written with `failed` and no
+     * reason is a row that cannot say what happened to it, and the shift report
+     * renders it through the same default branch either way. `succeeded` is
+     * untouched: an ending with no rule is a plan running out or a model
+     * declaring itself done, and neither is a terminal reason.
+     */
+    terminalReason: rules.length
+      ? STOP_RULES[rules[0]!].terminalReason
+      : status === 'failed'
+        ? 'boundary-failure'
+        : undefined,
     decisions,
     produced,
     refusals,
     actionsTaken,
     summary,
     recovered,
+  })
+
+  /**
+   * The other half of the same repair: WHICH boundary, and what it said.
+   *
+   * `finish` can name the category. Only the call site has the `failure` and
+   * the `detail`, and those are the two strings a person debugging a run
+   * actually needs — the difference between "the model refused" and "every
+   * request threw before it left the process" is invisible from
+   * `boundary-failure` alone.
+   */
+  const failedAt = (
+    boundary: BoundaryName,
+    outcome: { failure: FailureKind; detail: string },
+  ): WorkerResult => ({
+    ...finish([], 'failed'),
+    boundaryFailure: { boundary, failure: outcome.failure, detail: outcome.detail },
   })
 
   /**
@@ -581,7 +637,7 @@ export async function runWorker(job: WorkerJob, deps: WorkerDeps): Promise<Worke
     mayDraft,
   })
 
-  if (!planned.ok) return finish([], 'failed')
+  if (!planned.ok) return failedAt(planBoundary.name, planned)
 
   const steps = planned.value.steps
 
@@ -666,7 +722,7 @@ export async function runWorker(job: WorkerJob, deps: WorkerDeps): Promise<Worke
       mutatingActionsRemaining: Math.max(0, policy.maxMutatingActions - mutatingActionsTaken),
     })
 
-    if (!proposed.ok) return finish([], 'failed')
+    if (!proposed.ok) return failedAt(workerActionBoundary.name, proposed)
     const proposal = proposed.value
 
     /**

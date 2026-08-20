@@ -24,9 +24,58 @@ testable, and where the interesting decisions live.
 A **`ModelClient` is the machine** — call, classify, repair, record. One real implementation, one
 fake, neither knowing anything about any particular boundary.
 
-Structured outputs throughout: `output_format` + `betaZodOutputFormat` +
+~~Structured outputs throughout: `output_format` + `betaZodOutputFormat` +
 `client.beta.messages.parse()`. All three under the **beta** namespace — the research recorded the
-stable names and was wrong.
+stable names and was wrong.~~
+
+> **Amended 2026-08-20 — that is true of one of the two paths, and the other one had never
+> worked.** `betaZodOutputFormat` and the **beta** namespace stand; the rest is now split, and the
+> split is not a preference.
+>
+> |                             | Boundary that does not stream  | Boundary that streams                              |
+> | --------------------------- | ------------------------------ | -------------------------------------------------- |
+> | Call                        | `client.beta.messages.parse()` | `client.beta.messages.stream()` + `finalMessage()` |
+> | Field                       | `output_format`                | `output_config.format`                             |
+> | Where the object comes from | the SDK's `parsed_output`      | this repo parses the text block itself             |
+>
+> **What was wrong.** `.parse()` does not support streaming. Handed `stream: true` it pipes the
+> returned `Stream` into `parseBetaMessage`, which does `message.content.map(...)` on an object that
+> has no `content`, and throws `Cannot read properties of undefined (reading 'map')`. `worker-action`
+> is the only boundary with `stream: true` — so **every action proposal the product ever made
+> failed**, was misfiled as `transport` by the client's catch, and was then discarded entirely by
+> `runWorker`'s `finish([], 'failed')`. A live eval of all four scenarios took `0 action(s)` on all
+> four. 1,709 tests were green throughout, because every other test of this layer runs on
+> `FakeModelClient`, which never touches the SDK at all.
+>
+> **Why the two halves cannot be made to match.** Measured against `claude-opus-5` on
+> `@anthropic-ai/sdk` **0.71.2** — the version matters, because the whole trap is a version lag:
+>
+> - `.stream()` + `output_format` → HTTP 400, _"output_format: This field is deprecated. Use
+>   'output_config.format' instead."_
+> - `.stream()` + `output_config.format` → works, and `parsed_output` comes back **null**, because
+>   `maybeParseBetaMessage` decides whether to parse by testing `params.output_format` and consults
+>   nothing else.
+>
+> So the field the API has deprecated is the only field the SDK's parser knows. The non-streaming
+> path stays on `output_format` **deliberately**: moving it for symmetry would null its
+> `parsed_output` too and break the three boundaries that work today, buying tidiness with three
+> regressions. Upgrading the SDK is the real fix and is not this change; the lag is a fact to work
+> with today.
+>
+> **What did not change.** Zod still re-validates everything the grammar does not enforce — the
+> section below is untouched, and it is what makes hand-parsing the streamed text block safe rather
+> than a second place for shape to be trusted. `classifyStopReason` still runs **before** any parse,
+> which is also what lets a `JSON.parse` failure on the streaming path be read as `schema-mismatch`
+> rather than truncation: truncation has already been ruled out by then. And `schema-mismatch` is
+> what it is filed as — **a `JSON.parse` failure on a complete response is not `transport`**. Half of
+> why this defect hid for a wave is that a local TypeError was reported as a network error, which is
+> the one classification nobody investigates and the one `recoveryFor` gives no repair turn to.
+>
+> Guarded in two places, both load-bearing: `tests/architecture.test.ts` refuses a boundary
+> declaring `stream: true` reaching the `.parse()` call site, and `tests/model-boundary.live.test.ts`
+> drives the streaming boundary against the real API. The second is the only kind of test that could
+> have caught this. **Revisit when the SDK's parser learns `output_config.format`** — then both paths
+> collapse onto it and this amendment goes with them.
 
 ### Failures are values, not exceptions
 
@@ -42,12 +91,12 @@ Order matters and is easy to get wrong. The SDK's parser throws on truncated JSO
 consulting `stop_reason`**, so a parse-first design reports "schema mismatch" for what is actually
 "ran out of tokens", then repairs the wrong problem and burns a turn to be told the same thing.
 
-| Failure | Recovery | Why |
-|---|---|---|
-| `refusal` | **none** | Terminal. Retrying asks the same model the same thing. |
-| `truncation` | one doubled-budget escalation | A second would double again into a budget the boundary never sized for. |
-| `schema-mismatch` | exactly one repair turn, quoting the Zod issues | More than one rarely converges and always costs minutes. |
-| `transport` | **none** | The SDK already backs off. Stacking retries multiplies delay and hides the real error behind a timeout. |
+| Failure           | Recovery                                        | Why                                                                                                     |
+| ----------------- | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `refusal`         | **none**                                        | Terminal. Retrying asks the same model the same thing.                                                  |
+| `truncation`      | one doubled-budget escalation                   | A second would double again into a budget the boundary never sized for.                                 |
+| `schema-mismatch` | exactly one repair turn, quoting the Zod issues | More than one rarely converges and always costs minutes.                                                |
+| `transport`       | **none**                                        | The SDK already backs off. Stacking retries multiplies delay and hides the real error behind a timeout. |
 
 ## Schema design, forced by what the grammar actually enforces
 
@@ -76,7 +125,7 @@ fabrications. The prompt numbers events `E1..En` and the model cites those handl
 resolves them against the exact handle set it was shown.
 
 This is the one failure class where re-asking is rational — the model can see what it got wrong. It
-is also why `sessionReadingSchema` is built per call: a static schema could check the *shape* of a
+is also why `sessionReadingSchema` is built per call: a static schema could check the _shape_ of a
 citation but not whether it points at anything real.
 
 ## No prompt caching
@@ -92,11 +141,11 @@ Deliberately omitted rather than forgotten.
 [#3](https://github.com/smukhyala/propositum/issues/3) measured a toy call. The reference boundary
 on a realistic five-event session is substantially heavier:
 
-| | Toy call (#3) | Real session-reading |
-|---|---|---|
-| Latency | 7.8 s | **15.1 s** |
-| Tokens | 470 in / 266 out | **1,235 in / 1,053 out** |
-| Cost | $0.0090 | **$0.0325** |
+|         | Toy call (#3)    | Real session-reading     |
+| ------- | ---------------- | ------------------------ |
+| Latency | 7.8 s            | **15.1 s**               |
+| Tokens  | 470 in / 266 out | **1,235 in / 1,053 out** |
+| Cost    | $0.0090          | **$0.0325**              |
 
 **A 30-minute budget buys roughly 120 sequential calls, not 231** — before any tool latency,
 research fetches, or repair turns. Cost for a full handoff still lands around a dollar, so the
@@ -110,15 +159,22 @@ Recorded because the earlier number is quoted in `MVP.md` and would otherwise qu
 Being explicit about the gaps, because the tempting mistake is a suite of green fake-backed tests
 that would stay green through a breaking API change.
 
-| Layer | Answers | Does not answer |
-|---|---|---|
-| **1 Fakes** (`FakeModelClient`) | Is our control flow right? | Anything about the API |
-| **2 Cassettes** | Does the wire format still match? | Whether the model behaves the same |
-| **3 Schema snapshots** (`schema-transformation.test.ts`) | Has a Zod/SDK bump silently weakened the grammar? | Anything about a live call |
-| **4 Live contract** (`npm run test:live`) | Does the API still return what we expect? | Nothing — but it costs money and takes seconds |
+| Layer                                                    | Answers                                                                                                                              | Does not answer                                |
+| -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------- |
+| **1 Fakes** (`FakeModelClient`)                          | Is our control flow right?                                                                                                           | Anything about the API                         |
+| **2 Cassettes**                                          | Does the wire format still match?                                                                                                    | Whether the model behaves the same             |
+| **3 Schema snapshots** (`schema-transformation.test.ts`) | Has a Zod/SDK bump silently weakened the grammar?                                                                                    | Anything about a live call                     |
+| **4 Live contract** (`npm run test:live`)                | Does the API still return what we expect? **And, added 2026-08-20: is the request shape we send one this SDK can actually execute?** | Nothing — but it costs money and takes seconds |
 
 Layers 1 and 3 run in `npm test`. Layer 4 runs deliberately. **Layer 2 is not built yet** — noted
 here rather than left as an implicit gap.
+
+**Added 2026-08-20, after layer 4's second column turned out to be understating it.** Layer 1 does
+not touch the SDK and layer 3 inspects a transformed schema, so neither can see whether the request
+we build is one the installed SDK can execute at all. The streaming boundary was unexercised by all
+1,709 tests in `npm test` and threw on every call in production — see the amendment under
+**Decision**. The rule that follows: **every call SHAPE needs a layer 4 test, not every boundary.**
+There are two shapes now, and there are two live tests.
 
 **The fake is held to the real contract.** Scripted replies are validated against the boundary's own
 schema before being returned, so a fixture cannot drift into a shape the real client could never
@@ -143,7 +199,7 @@ reason, and repair count, and becomes one `ModelCallRecord` row.
 telemetry row that cannot say which prompt produced it is not traceability either.
 
 `ModelCallRecord` is deliberately distinct from `ActionIntent`. A model call is not an action the
-person authorized, and the ledger they *read* must not list them.
+person authorized, and the ledger they _read_ must not list them.
 
 ## Consequences
 
