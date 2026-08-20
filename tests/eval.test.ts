@@ -1421,16 +1421,41 @@ describe('the counts survive a round trip through SQLite', () => {
     }
   })
 
+  /**
+   * ── Why this does not assert the whole table ────────────────────────────
+   *
+   * The tests above post to the real route, and `countQuietly` stamps
+   * `dayBucket(Date.now())` — the REAL today, by design (see its docblock; the
+   * bucket is local precisely so an evening is not filed under tomorrow). So the
+   * table holds a row nobody here wrote, on a day nobody here can name.
+   *
+   * Asserting the complete list of days therefore passed only while the machine's
+   * local date was one of the three seeded below, which is not a property of
+   * anything under test. It went red within a day of being written: green in an
+   * afternoon at UTC-7, red an hour later on a runner where it was already
+   * tomorrow — and it would have gone red here too, on the next morning.
+   * `TZ=UTC npm test` reproduces it from this machine.
+   *
+   * What the name claims is checked in full: the days did not merge, they come
+   * back oldest first, and the sum crosses rows. Today's row is simply not
+   * something this test gets to have an opinion about.
+   */
   it('keeps days apart and returns them oldest first', async () => {
     await repos.offerTally.add('2026-08-19', { strandsSuppressed: 1 })
     await repos.offerTally.add('2026-08-17', { offersShown: 9 })
 
+    const seeded = ['2026-08-17', '2026-08-18', '2026-08-19']
     const all = await repos.offerTally.all()
+    const days = all.map((d) => d.day)
 
-    expect(all.map((d) => d.day)).toEqual(['2026-08-17', '2026-08-18', '2026-08-19'])
+    // Kept apart, and not duplicated: one row per day, however many `add`s.
+    expect(days).toEqual([...new Set(days)])
+    expect(days.filter((day) => seeded.includes(day))).toEqual(seeded)
+    // Oldest first, across every row the table holds — today's included.
+    expect([...days].sort()).toEqual(days)
     // And the whole point of the round trip: what `--report` prints is computed
     // from rows a running app wrote, not from a fixture.
-    expect(reportOfferRate(all).offersShown).toBe(11)
+    expect(reportOfferRate(all.filter((d) => seeded.includes(d.day))).offersShown).toBe(11)
   })
 })
 

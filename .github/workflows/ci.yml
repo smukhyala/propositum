@@ -1,0 +1,73 @@
+# The guards this repo already has, run by something other than memory.
+#
+# Propositum's real rulebook is executable, not prose: `tests/architecture.test.ts`
+# fails when a capability reaches the network without going through the gate,
+# `tests/reachability.test.ts` fails when something is built and wired to
+# nothing, `tests/canonical-terms.test.ts` holds the vocabulary, and
+# `tests/append-only.test.ts` holds the ledger's insert-only promise. Until this
+# file existed those guards only fired when a person remembered to run them,
+# which is a workable rule for one author and not one for two.
+#
+# WHAT THIS DOES NOT DO, stated because a green check reads as a stronger
+# promise than it is:
+#
+#   - It does not run `*.live.test.ts`. Those call the real API, cost money and
+#     fail when the network does. `vitest.config.ts` excludes them by default
+#     and this workflow holds NO `ANTHROPIC_API_KEY` — there is no credential
+#     here to leak, and a live regression is caught by `npm run test:live` on a
+#     machine with a key, never here.
+#   - It does not exercise the Chrome extension. A host grant needs a user
+#     gesture, so capture cannot be tested without a person and a browser.
+#   - It does not touch a database. `tests/support/no-real-database.ts` points
+#     `DATABASE_URL` at a path that does not exist, so a test that reaches for
+#     a real one fails rather than finding somebody's.
+#
+# Verified before this file was committed: a clone with no `.env`, no
+# `prisma db push` and nothing but `npm ci` passes all four steps below.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A second push to the same branch cancels the first. The suite is ~20 s, so
+# this is about queue noise rather than cost.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # 22 because `package.json` says `>=22` and the map records the
+      # development environment as 22.22.2. Pinning the major here and the
+      # floor there means a bump has to be made in both places on purpose.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+
+      # `ci`, not `install`: the lockfile is the input, and a run that quietly
+      # resolved a different tree would be testing something nobody has.
+      # Prisma's own postinstall generates the client, which is why no explicit
+      # `prisma generate` step appears below.
+      - run: npm ci
+
+      - run: npm run typecheck
+
+      # 1,551 tests across 52 files at the time of writing. The number is not
+      # asserted anywhere and deliberately not repeated here — see CONTRIBUTING.md
+      # on counts that live in two places.
+      - run: npm test
+
+      # The build catches what neither of the above can: a route that only
+      # fails when Next compiles it.
+      - run: npm run build
