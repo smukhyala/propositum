@@ -32,6 +32,13 @@ Two setup facts that cost people an afternoon:
   rebuilds. They are reinstalled and verified at the next app startup. Restart
   before trusting the database — a ledger without its triggers looks identical and
   is not append-only.
+- **There is no `prisma/migrations/`, and that is a decision rather than an
+  omission** (2026-08-19). `db push` means a schema change on your branch cannot be
+  replayed on somebody else's database: they push the schema themselves and rebuild
+  their local data. That is cheap while every database here is disposable and every
+  fixture is regenerated, and it is exactly wrong the first time anybody has data
+  they would mind losing. **That is the trigger to revisit it** — not a headcount,
+  and not the size of the schema.
 - **The extension's host grant needs a user gesture**, so nothing can automate it.
   [`extension/README.md`](./extension/README.md) is the authoritative order.
 
@@ -175,12 +182,26 @@ product can now do, or what it stopped claiming. `Update actions.ts` fails it.
 
 ## Style
 
-There is no formatter yet, and this is worth knowing rather than discovering:
-**match the file you are editing.** In practice that means no semicolons, single
+**Match the file you are editing.** In practice that means no semicolons, single
 quotes, two-space indent, and docblocks that explain the decision and then state
-what it does *not* cover. That last habit is the house style and the most valuable
+what they do *not* cover. That last habit is the house style and the most valuable
 thing in the codebase — a guard whose limit is unstated reads as a stronger promise
-than it is.
+than it is, and no formatter can supply it.
+
+Prettier holds the mechanical half, configured to the style already here:
+
+```bash
+npm run format          # every file you changed against main
+npm run format -- path  # or exactly these
+npm run format:check    # the same set, reported not written
+```
+
+**There is deliberately no repo-wide reformat, and no formatting check in CI.**
+Running Prettier over the whole tree rewrites 107 of 175 source files — measured
+2026-08-19, +2,390 / −877 lines, nearly all re-wrapping — which is a decision
+about `git blame` on a codebase whose docblocks are the point. Files converge as
+they are edited. `scripts/format.ts` says what would have to be true before a CI
+check earns its place.
 
 Two files are large and hot: `src/server/actions.ts` and
 `src/persistence/repositories/index.ts` are touched by roughly one commit in seven
