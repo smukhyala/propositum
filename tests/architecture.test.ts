@@ -268,6 +268,107 @@ describe('the run spine does not know what a document is', () => {
   })
 })
 
+describe('a streaming boundary never reaches the non-streaming call site', () => {
+  /**
+   * The guard for the defect that took the product's hands off.
+   *
+   * `beta.messages.parse()` does not support streaming. Handed `stream: true`
+   * it pipes the returned Stream into the SDK's own parser, which maps over a
+   * `content` array a Stream does not have, throws a TypeError, and — because
+   * the client's catch cannot tell a local TypeError from a socket — reports it
+   * as `transport`. `worker-action` is the only boundary that streams, so every
+   * action proposal in the product failed while 1,709 tests stayed green:
+   * `FakeModelClient` never touches the SDK, which is precisely what made a
+   * suite that size compatible with a worker that could not act.
+   *
+   * This is a grep, and deliberately a crude one. The property it wants — "the
+   * streaming request is not the `.parse()` request" — is a runtime fact that
+   * only a live call can confirm, and there is a live test for it
+   * (`tests/model-boundary.live.test.ts`). What a grep CAN do is refuse the
+   * revert: the two call shapes have to stay two, and `stream: true` must not
+   * appear in the one that cannot carry it.
+   *
+   * Comments are stripped first, for the same reason `execute-run.ts` is
+   * stripped above — that file's header explains the trap at length and quotes
+   * both call shapes, and a guard that failed on its own explanation would
+   * leave deleting the explanation as the only way back to green.
+   */
+  const source = () =>
+    readFileSync(join(repo, 'src/model/anthropic.ts'), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, ' ')
+      .replace(/(^|[^:])\/\/[^\n]*/g, '$1')
+
+  /** The `messages.parse({ … })` argument, or null if the call site is gone. */
+  const parseCall = () => {
+    const text = source()
+    const at = text.indexOf('messages.parse({')
+    if (at === -1) return null
+
+    // Balanced to the closing brace, so a later call cannot leak in.
+    let depth = 0
+    for (let i = text.indexOf('{', at); i < text.length; i += 1) {
+      if (text[i] === '{') depth += 1
+      else if (text[i] === '}') {
+        depth -= 1
+        if (depth === 0) return text.slice(at, i + 1)
+      }
+    }
+    return text.slice(at)
+  }
+
+  it('still has both call sites, so this test is checking something', () => {
+    // The canary, and the same one the tool regex above needed. If either call
+    // is renamed away, every assertion below passes vacuously and the guard has
+    // quietly stopped guarding.
+    expect(source()).toContain('messages.parse({')
+    expect(source()).toContain('messages.stream({')
+  })
+
+  it('never sends stream: true through messages.parse()', () => {
+    const call = parseCall()
+    expect(call).not.toBeNull()
+    expect(call).not.toMatch(/stream:\s*(true|stream)\b/)
+
+    // Pinned rather than merely absent: the argument says `stream: false` out
+    // loud, so a revert has to be a visible edit and cannot be a deletion.
+    expect(call).toMatch(/stream:\s*false\b/)
+  })
+
+  it('keeps output_format on the parse call and output_config on the stream call', () => {
+    // The asymmetry the client's header explains, checked so it cannot be
+    // tidied away by somebody who reads it as an oversight. `output_format` is
+    // deprecated on the streaming endpoint (a 400) and is the ONLY field the
+    // SDK's parser consults on the non-streaming one — so each call needs the
+    // field the other rejects, and making them match breaks one of them.
+    const call = parseCall()
+    expect(call).toMatch(/output_format:/)
+    expect(call).not.toMatch(/output_config:/)
+
+    const text = source()
+    const streamAt = text.indexOf('messages.stream({')
+    const streamCall = text.slice(streamAt, text.indexOf('})', streamAt) + 2)
+    expect(streamCall).toMatch(/output_config:\s*\{\s*format:/)
+    expect(streamCall).not.toMatch(/output_format:/)
+  })
+
+  it('routes a boundary that declares stream to the streaming call', () => {
+    // The branch itself. Flatten this ternary back to one call and the product
+    // loses its hands again, with only a live run to say so.
+    expect(source()).toMatch(/stream\s*\?\s*await this\.streamed\(/)
+    expect(source()).toMatch(/:\s*await this\.parsed\(/)
+  })
+
+  it('classifies a complete non-JSON response as a shape failure, not transport', () => {
+    // The other half of why this hid. A TypeError filed under `transport` is
+    // the one classification nobody investigates, and `recoveryFor('transport')`
+    // is `none` — so the repair turn ADR-0005 grants never fired either.
+    const text = source()
+    const decoder = text.slice(text.indexOf('function decodeStreamedOutput'))
+    expect(decoder).toContain('JSON.parse')
+    expect(decoder).not.toContain('transport')
+  })
+})
+
 describe('the domain layer stays pure', () => {
   const domainFiles = tsFilesUnder(join(repo, 'src/domain'))
 
