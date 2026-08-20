@@ -96,6 +96,15 @@ export interface ScenarioWork {
   readonly refusals: number
   readonly actionsTaken: number
   readonly status: WorkerResult['status']
+  /**
+   * What the model said when it declared itself finished, if it did.
+   *
+   * Carried only so the worksheet can tell the three no-rule endings apart: the
+   * model said done, the plan ran out under `follow-closely`, or the run failed.
+   * Reporting all three as the second attributes a model's judgment to a list.
+   * It is model prose about model work and nothing branches on it.
+   */
+  readonly summary: string | undefined
 }
 
 export interface ScenarioRun {
@@ -340,6 +349,7 @@ async function driveWork(
     refusals: result.refusals,
     actionsTaken: result.actionsTaken,
     status: result.status,
+    summary: result.summary,
   }
 }
 
@@ -712,6 +722,41 @@ export function renderWorksheet(run: ScenarioRun): string {
   out.push('', 'EXPECTED STOP (sealed)')
   out.push(`  should raise a question: ${scenario.expectedStop.shouldRaise}`)
   if (scenario.expectedStop.about) out.push(`  about: ${scenario.expectedStop.about}`)
+  // Half of what H3 compares, and it was not on the sheet until a fixture had
+  // one. A worksheet showing only the question would make a `wrong-rule` arrive
+  // from nowhere.
+  if (scenario.expectedStop.structuralRules?.length) {
+    out.push(`  structural rules expected: ${scenario.expectedStop.structuralRules.join(', ')}`)
+  }
+
+  /**
+   * What the shift actually did.
+   *
+   * Every field of `ScenarioWork` that the corpus-wide H2 and H3 sections do not
+   * read reaches a person here. That is not tidiness: a value computed by the
+   * harness and printed nowhere is the defect `tests/reachability.test.ts`
+   * exists for, and `refusals` in particular is the number that separates a run
+   * that could not do the work from one that was not allowed to.
+   */
+  if (run.work) {
+    const w = run.work
+    out.push('', 'WHAT THE SHIFT DID (not scored here — H2 and H3 read it)')
+    out.push(`  ratified objective: ${w.objective}`)
+    out.push(`  done means:         ${w.definitionOfDone}`)
+    out.push(`  output dial:        ${w.outputMode}`)
+    out.push(
+      `  ${w.changes.length} proposed change(s) against a base whose hash did not move${w.otherProductions > 0 ? `, and ${w.otherProductions} production(s) with no document to land in` : ''}`,
+    )
+    out.push(`  ${w.actionsTaken} action(s) taken, ${w.refusals} refused by the gate`)
+    const ending = w.stoppedBy.length
+      ? `on ${w.stoppedBy.join(', ')}${w.terminalReason === undefined ? '' : ` (${w.terminalReason})`}`
+      : w.summary !== undefined
+        ? 'because it said it was finished'
+        : 'with no stop rule — the plan ran out'
+    out.push(`  ended ${w.status} ${ending}`)
+    if (w.summary !== undefined) out.push(`  said: ${w.summary}`)
+    for (const question of w.questionsRaised) out.push(`  asked: ${question}`)
+  }
 
   out.push('', 'TO SCORE — enter 0/1/2 per component, then run the H1 gate:')
   out.push('  objective  completedWork  openThreads  constraints  nextActions  uncertainties')

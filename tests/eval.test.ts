@@ -666,6 +666,35 @@ describe('a run goes far enough to produce changes and a terminal reason', () =>
     expect(h3ObservationFor(run)).toBeNull()
   })
 
+  it('puts the shift on the worksheet, so nothing about it is computed and read by nobody', async () => {
+    // Every field of `ScenarioWork` is either scored, printed here, or should
+    // not exist. The corpus-wide H2 and H3 sections read four of them; this is
+    // where the rest reach a person, and where the sealed structural rule sits
+    // beside the rule that actually fired.
+    const fake = new FakeModelClient(dryReplies(lisbon))
+    const sheet = renderWorksheet(await runScenario(fake, lisbon))
+
+    expect(sheet).toMatch(/WHAT THE SHIFT DID/)
+    expect(sheet).toMatch(/fake objective for lisbon-thread/)
+    expect(sheet).toMatch(/suggestions-only/)
+    expect(sheet).toMatch(/no-progress/)
+    // The sealed expectation names a structural rule. A worksheet that showed
+    // only `should raise a question` would hide half of what H3 compares.
+    expect(sheet).toMatch(/structural rules expected/)
+  })
+
+  it('does not say the plan ran out about a run that said it was finished', async () => {
+    // Three ways a run ends with no stop rule — a stop rule fired, the model
+    // declared itself done, or `follow-closely` reached the end of the plan —
+    // and the first two are the ones a reader draws conclusions from. Reporting
+    // all three as the third would attribute a model's judgment to a list.
+    const fake = new FakeModelClient(dryReplies(monitor))
+    const sheet = renderWorksheet(await runScenario(fake, monitor))
+
+    expect(sheet).toMatch(/said it was finished/)
+    expect(sheet).not.toMatch(/the plan ran out/)
+  })
+
   it('counts every call the shift made, because the cost line is how money is decided', async () => {
     // The worksheet prints a cost. If it covered the reading and the handoff and
     // not the plan or the worker's turns, it would understate a real run by most
