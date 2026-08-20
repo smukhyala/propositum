@@ -2436,9 +2436,9 @@ export async function draftContract(readingId: string): Promise<ActionResult<Con
      * ── How it knows, and what it does when it does not ──────────────────
      *
      * From `WorkOffer.expectedKinds` for this session — the `ShiftOutcomeKind`s
-     * the offer said the work would produce. Nothing writes a `WorkOffer` yet
+     * the offer said the work would produce. ~~Nothing writes a `WorkOffer` yet
      * (`tests/reachability.test.ts` asserts exactly that), so today there is
-     * never one and the fallback runs every time. The fallback is
+     * never one and the fallback runs every time.~~ The fallback is
      * `document-changes`, which reproduces the old behaviour precisely: a
      * document is created, its first version is pinned, and every existing
      * drafting path works as it did.
@@ -2446,7 +2446,26 @@ export async function draftContract(readingId: string): Promise<ActionResult<Con
      * That is deliberate. The seam moves in this change; WHAT DECIDES at the
      * seam arrives with the accept path that composes offers. Making the
      * fallback anything else would have changed behaviour on the strength of a
-     * column no code fills.
+     * column no code fills. (Left unstruck: it is the reason, and the reason
+     * outlives the fact it was attached to.)
+     *
+     * **Re-marked 2026-08-20: the accept path arrived, and the struck sentence
+     * inverted with it.** `acceptWorkOffer` writes the row through
+     * `repos.offers.create`, on the same `sessionId` this lookup keys on, with
+     * `expectedKinds` taken from the composed offer. `tests/reachability.test.ts`
+     * now asserts the OPPOSITE of what this comment cited it for — twice, in
+     * *an accepted offer is written down* and *an accepted offer leaves a
+     * durable trace* — and no surviving pin says nothing writes one. So the
+     * column is filled, the fallback is the degraded path rather than the only
+     * path, and `expectsDocument` can be false in production.
+     *
+     * Worth the re-mark rather than a quiet edit, because `expectsDocument`
+     * gates the document LOOKUP as well as the creation, and the capability
+     * block further down this same function already says the unpinned branch is
+     * reachable and grants the browser kinds because of it. Anyone auditing
+     * that branch got two answers from one function, and the stale one was the
+     * one presenting the fallback as safe by pointing at a green test that says
+     * the reverse.
      */
     const offer = await repos.offers.forSession(reading.sessionId)
     const expectsDocument =

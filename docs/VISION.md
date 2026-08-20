@@ -21,7 +21,15 @@ decision.~~ **Struck 2026-08-20. The table landed on 2026-08-16 and this paragra
 it**, so for four days the document's own orientation sentence described a state it had left — in
 the file whose stated purpose is keeping *Now* and *Later* apart. It is struck rather than deleted
 because the drift is the point: this is the third time a `not yet` outlived the thing it qualified,
-and the other two are struck in place below for the same reason.
+~~and the other two are struck in place below for the same reason.~~ **Struck 2026-08-20, later the
+same day, by an audit that read this paragraph against the file it claimed to have finished
+correcting.** One `not yet` was struck below, not two, and four were left standing — twice under
+*Persistent work sessions*, once in the list of what persists, and once in the narrowed note under
+*Human and AI shift changes*, which also still called the re-entry gap *the full width* one section
+below the paragraph describing what `WorkSoFar` had narrowed it to. All four are struck below now.
+**A correction that miscounts the thing it is correcting is the same failure one layer up**, and it
+is kept rather than tidied away for the same reason the claim beneath it is kept: a document that
+deletes its wrong sentences can only be trusted, never checked.
 [`ARCHITECTURE.md`](./ARCHITECTURE.md) §1 still carries the one-command check, which is now the only
 version of this claim that can go stale visibly. The gap between those two paragraphs is the subject
 of every **Later** below, and it is the width of the product. Keeping a reader able to tell the two
@@ -59,13 +67,19 @@ one for longer than an afternoon.
 
 ~~**Now.** The `WorkSession` is the durable object.~~ **Amended 2026-08-16
 ([ADR-0011](./adr/0011-intention-above-worksession.md)): the `Intention` is the durable object and
-the `WorkSession` is one sitting beneath it — specified by ADR-0011 and not yet in the schema.**
+the `WorkSession` is one sitting beneath it — specified by ADR-0011 and ~~not yet in the schema~~.**
+**Re-marked 2026-08-20: `model Intention` has been in `prisma/schema.prisma` since 2026-08-16, and
+this sentence is the first of the four the top-of-file correction said were already struck.**
 Nothing about the session's own durability changed — it still survives handoffs, idle, lid close,
 sleep, a dead service worker, and revoked permissions, and only a human act ends it. What changed is
 what sits above it.
 
-**Now, and the one thing this stage is still adding.** An `Intention` is a row a person ratified —
-specified by ADR-0011 and not yet in the schema: a desired outcome, a definition of success, and a
+~~**Now, and the one thing this stage is still adding.**~~ **Now, and added — re-marked 2026-08-20.
+This was the most load-bearing *Now* claim in the file and it described a schema the repository had
+left four days earlier.** An `Intention` is a row a person ratified — specified by ADR-0011 and
+~~not yet in the schema~~ **`model Intention` in `prisma/schema.prisma` since 2026-08-16, written by
+`repos.intentions.create` in `startFromSuggestion` and only when `acceptWorkOffer` hands it words a
+person just accepted**: a desired outcome, a definition of success, and a
 lifecycle word computed from rows that already existed. It is **human-ratified only** — created and
 edited by a person, and by nothing else. No detector writes one. No model boundary writes one. What
 Propositum *infers* about a sitting stays exactly where it was:
@@ -94,7 +108,9 @@ Agents are not durable. A worker `AgentRun` is ephemeral and has no identity, no
 personality. It exists for one `Shift` and is gone. ~~What persists is the session, the
 `HandoffContract`, the `Document`, and the ledger.~~ **Amended 2026-08-16
 ([ADR-0011](./adr/0011-intention-above-worksession.md)): the `Intention` joins that list, above the
-session rather than beside it. Specified, not yet a table** — the other four persist today.
+session rather than beside it. ~~Specified, not yet a table~~** — the other four persist today.
+**Re-marked 2026-08-20: all five persist today.** The `Intention` became a table on 2026-08-16 and
+this line kept describing it as a specification, which is the drift the top of this file is about.
 
 This is the inversion the product rests on. Most AI products make the assistant the persistent
 thing and the conversation disposable. Propositum makes the *work* persistent and the assistant
@@ -164,8 +180,13 @@ someone will reasonably read that as a bug.
 *(Narrowed 2026-08-16 — [ADR-0011](./adr/0011-intention-above-worksession.md). A second session's
 **reading** still starts cold. What the person themselves wrote down — the desired outcome and the
 definition of success on the `Intention` — is **to be** carried forward and shown on screen where
-they can change it; the row is specified and not yet in the schema, so today the gap is still the
-full width. Once the table lands the gap is smaller. It is not closed either way, and the part still
+they can change it; ~~the row is specified and not yet in the schema, so today the gap is still the
+full width. Once the table lands the gap is smaller.~~ **Re-marked 2026-08-20
+([ADR-0017](./adr/0017-continuing-an-intention.md)): the table landed on 2026-08-16 and the gap is
+already the smaller one.** On a second sitting `draftContract` pre-fills both sentences from the
+`Intention` and the agreement screen prints the month they were written above them — *"In your own
+words, from March 2026"* — in editable fields, so the carry-forward, the screen and the change are
+all real rather than pending. It is not closed either way, and the part still
 missing is deliberate: what
 Propositum *thinks* you are doing is rebuilt from nothing every sitting.)*
 

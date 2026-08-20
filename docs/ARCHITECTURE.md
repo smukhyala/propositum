@@ -379,9 +379,19 @@ what the worker read.
 
 ---
 
-### 9. Outcome / Learning — **data built, nothing reads it**
+### 9. Outcome / Learning — ~~**data built, nothing reads it**~~ *re-marked 2026-08-20:* **read, and still learning nothing**
 
 *For:* recording accepted, edited, rejected, blocked and reverted outcomes as a feedback trajectory.
+
+**The re-mark this heading was owed on 2026-08-16, and got four days late.** The wave that gave this
+layer a reader corrected the status cell above and the body below and stepped over the heading
+sitting between them. The heading now carries what the cell carries, word for word, because a
+ten-layer status document is read by scanning headings — this file says so at the top, *"a blanket
+caveat is the thing a reader skips"* — and this was the only one of the ten whose heading disagreed
+with its own cell. The reader is `scripts/eval.ts --report`, reachable as `npm run eval`:
+`outcomes.trajectory()` reads every decidable unit and `contracts.barrenShifts()` reads the Shifts
+that produced none. *Still learning nothing* is the part that did not move, and §8 forbids the thing
+that would.
 
 **Built: the recording.** Three verdict tables, all append-only with triggers listed in
 `REQUIRED_GUARDS` in `src/persistence/append-only.ts` and reinstalled and verified at every startup —
@@ -532,20 +542,41 @@ anyone builds that surface.
 ## Honest limits of this document
 
 - **Propositum is one sensor, one worker, one reviewer, and — once the slice lands — one flat table
-  and a lifecycle word computed from rows that already existed.** As this document lands the table is
+  and a lifecycle word computed from rows that already existed.** ~~As this document lands the table is
   not in `prisma/schema.prisma` and the lifecycle word is not in `src/`, so that clause is a
   description of the state after the slice and not of the state now. Six of the ten layers above are
-  partial or absent. The four that are built are the four that had to be built before anything could
-  be safe.
+  partial or absent.~~ **Re-marked 2026-08-20: the slice landed, so *once the slice lands* in the
+  sentence above now describes the present rather than a plan.** The table is `model Intention` in
+  `prisma/schema.prisma` and the lifecycle word is `IntentionStateId` and `INTENTION_STATES` in
+  `src/domain/intention/state.ts`, imported by `src/server/front-door.ts`. §1 and *The lifecycle
+  word* in this same file both struck the identical sentence on 2026-08-16; this bullet kept its
+  copy, in the section offered as this file's ground truth. **Five** of the ten layers above are
+  partial or absent — the number `tests/counts.test.ts` reads off the table, and the number the
+  README was corrected to on 2026-08-19 while this bullet went on quoting the one the README had
+  retired. The four that are built are the four that had to be built before anything could be safe.
+  That is nine; the tenth is Outcome / Learning, which is read and learns nothing and belongs in
+  neither list. The arithmetic is spelled out rather than rounded, because rounding it is how this
+  bullet came to say *six*.
 - **Naming a layer is not building one.** This document names ten because the direction document names
   ten and the two should be readable side by side. The status column is the load-bearing part; the
   layer names are the part most likely to be quoted out of context.
-- **Nothing checks the status column.** No test reads this file. §1 carries a command a reader can
-  run against the schema, and **nothing runs it for them**. A layer that gets built and is not
-  re-marked here will read as unbuilt, and a layer that gets deleted will read as built. The
+- **Nothing checks the status column.** ~~No test reads this file.~~ **Re-marked 2026-08-20:
+  `tests/counts.test.ts` reads this file.** It counts the rows of the table above and the ones whose
+  Status cell matches *partial* or *unimplemented*, and holds the README's stated numbers to them. It
+  reads no other line, and it has no opinion about whether any Status cell is true — so the heading
+  of this bullet stands exactly as written, and the sentence under it did not. §1 carries a command
+  a reader can run against the schema, and **nothing runs it for them**. A layer that gets built and
+  is not re-marked here will read as unbuilt, and a layer that gets deleted will read as built. The
   reachability pins named in layers 7 to 10 are the only mechanism in the repository that goes red on
-  its own when one of these claims stops being true — and they cover six named symbols, not this
-  document.
+  its own when one of these claims stops being true — and ~~they cover six named symbols~~ **that
+  number is deleted rather than corrected, 2026-08-20** — not this document. It was exact on
+  2026-08-16, when layers 7 to 10 named `createBrowserControl`, `LANDING_ACTION_KINDS`,
+  `findings.forRun`, `confirmations.create`, `modelCallRecord.create` and `shiftReportBoundary`.
+  Three of those have since been promoted into the reachable half and struck above, and one pin
+  still in the block — the gap sweeper — is named nowhere in this file, so the number is wrong under
+  every reading and nothing here could have caught it. The *deferred, and asserted as deferred*
+  block is the only honest way to size that net. Overstating the one safeguard this column has, in
+  the bullet written to admit how thin it is, is what this correction is for.
 - **These layer names are not vocabulary.** *Progress Reasoner*, *State Reconciler* and the rest are
   organising words for this file and for reading the direction document beside it. They are not
   `CONTEXT.md` terms, and nothing should be named after one in code, schema, prompts or UI. The
