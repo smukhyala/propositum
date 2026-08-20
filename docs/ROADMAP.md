@@ -14,13 +14,25 @@ these stages come from, archived at
 
 ## Stage 1 — Guided Intention Continuation
 
-**Now, except the screen that shows the `Intention`.** An explicit `Intention` — decided in
-[ADR-0011](./adr/0011-intention-above-worksession.md) and ~~**not yet a table**~~ **a table as of
+~~**Now, except the screen that shows the `Intention`.**~~ **Now, except resumption — re-marked
+2026-08-20 ([ADR-0017](./adr/0017-continuing-an-intention.md)).** An explicit `Intention` — decided
+in [ADR-0011](./adr/0011-intention-above-worksession.md) and ~~**not yet a table**~~ **a table as of
 2026-08-16** — a `WorkSession`, a ratified `HandoffContract`, one bounded worker, one reviewer, and
 re-entry. Everything in that list except the `Intention` was built before this change; the
 `Intention` is the one thing this stage is still adding, and it is now a row that is written and
-attached but **rendered nowhere** — [`ARCHITECTURE.md`](./ARCHITECTURE.md) §1 carries the
-one-command check, and says in the same breath which half is still owed.
+attached but ~~**rendered nowhere**~~ **rendered on the front door as of 2026-08-16** —
+[`ARCHITECTURE.md`](./ARCHITECTURE.md) §1 carries the one-command check, and says in the same breath
+which half is still owed.
+
+**The half still owed is the one this stage is named after, and it took until 2026-08-20 to say so
+plainly.** *Guided Intention Continuation* is what this stage is called, and until slice 1 nothing
+continued: the row survived and **nothing resumed it**, which the last paragraph of
+[`MVP.md`](./MVP.md)'s user journey states in its own voice — *"Saying the row survives is a claim
+about storage, not about continuity."* Two documents therefore read as though the stage were one
+screen from complete while the word in its title was unimplemented. `WorkSoFar`
+([ADR-0017](./adr/0017-continuing-an-intention.md)) is what closes that, and it closes it to a
+strictly smaller extent than the stage name suggests: a person still starts every sitting, and what
+Propositum *thinks* they are doing is still rebuilt from nothing each time.
 
 **This stage is [`MVP.md`](./MVP.md), and is deliberately not restated here.** Scope, the three
 hypotheses, the pass/fail numbers, the acceptance criteria and the assumptions live there and are
@@ -104,10 +116,21 @@ the failure mode the founding brief names most sharply.
 ## What this file is not
 
 It is not a commitment, and stages 2 to 4 are not scheduled. **None of stages 2 to 4 is implemented,
-in whole or in part, and the one addition stage 1 makes is not implemented either.** Everything in
+in whole or in part**, and ~~the one addition stage 1 makes is not implemented either~~ *(struck
+2026-08-20: the `Intention` table landed on 2026-08-16 and this sentence did not follow it — the
+exact drift the file's own pointer-not-paraphrase rule exists to prevent, committed in the one
+paragraph that had no pointer)*. Everything in
 stages 2 to 4 is on direction §8's *do not build yet* list or depends on
 something that is, and [`MVP.md`](./MVP.md)'s Out of scope table is where those exclusions are recorded
 with their reasons rather than left to be re-litigated.
+
+**A second direction document arrived on 2026-08-20** and is archived at
+[`docs/superpowers/specs/2026-08-20-everyday-intelligence-direction-source.md`](./superpowers/specs/2026-08-20-everyday-intelligence-direction-source.md).
+[ADR-0016](./adr/0016-everyday-computing-direction.md) records what it changes — the first workflows
+stop being research-and-draft alone — and, at greater length, the four things it asks for that this
+repository is **not** doing: leaving Chrome, taking two free Chrome permissions before H1 has a
+number, learning an intervention threshold, and letting inference write an Intention. **§8 of the
+2026-08-16 document is unchanged and still binding**, and none of the stages above moves.
 
 The gap between stage 1 and stage 4 is large and this file does not compress it. Propositum today is
 one sensor, one worker, one reviewer, and — once this slice lands — one flat table and a lifecycle

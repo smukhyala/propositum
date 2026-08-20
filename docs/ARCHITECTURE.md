@@ -15,6 +15,22 @@ archived verbatim at
 [`docs/superpowers/specs/2026-08-16-direction-update-source.md`](./superpowers/specs/2026-08-16-direction-update-source.md).
 §8 is its *do not build yet* list, and it is binding here.
 
+**A second direction document arrived on 2026-08-20** and is archived beside it at
+[`2026-08-20-everyday-intelligence-direction-source.md`](./superpowers/specs/2026-08-20-everyday-intelligence-direction-source.md).
+It names eleven systems — Observation Engine, Semantic Activity Engine, Cortex, Intent Engine,
+Frontier, Intervention Policy, Agent Orchestrator, Computer Runtime, Verification Layer, Permission
+Layer, Learning Layer. **Nine of the eleven are the layers below under other names, and nothing is
+renamed after one**, on the same rule the *Honest limits* section states about these ten:
+organising words are not vocabulary. [ADR-0016](./adr/0016-everyday-computing-direction.md) records
+which four of its requirements slice 1 takes and which it declines.
+
+**Not one status cell below moved when those ADRs landed, and that is deliberate.** ADR-0016,
+ADR-0017 and ADR-0018 are decisions; the code they authorise is not written as this paragraph is
+added. The layer that gets built is re-marked **by the wave that builds it** — which is what the
+*Self-correcting* note under Outcome / Learning asked for and did not get on its first pass. A
+status cell moved in advance of the code is exactly the failure this column exists to prevent, and
+it would be the easiest one to commit on the day three ADRs land at once.
+
 ---
 
 ## The thesis
