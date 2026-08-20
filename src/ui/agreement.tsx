@@ -766,11 +766,13 @@ function WhereTheWordsCameFrom({ words }: { readonly words: PrefilledWords }) {
       <>
         <Styles />
         <p className="ag-from">
-          <span className="ag-from-head">In your own words, from {WROTE_ON.format(new Date(words.writtenAtEpochMs))}</span>
+          <span className="ag-from-head">
+            In your own words, from {WROTE_ON.format(new Date(words.writtenAtEpochMs))}
+          </span>
           You are picking this back up, so both sentences below are the ones you settled for this
           work rather than anything Propositum worked out this afternoon. Nothing has changed them
-          since. If the work has moved on, change them here &mdash; this agreement is settled
-          fresh every time, and nothing runs on the old wording by itself.
+          since. If the work has moved on, change them here &mdash; this agreement is settled fresh
+          every time, and nothing runs on the old wording by itself.
         </p>
       </>
     )

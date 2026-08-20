@@ -63,7 +63,7 @@ export function documentChanges(
 
   let proposed = base.content
   for (const production of productions) {
-    proposed = replaceSection(proposed, production.section, production.prose)
+    proposed = withSection(proposed, production.section, production.prose)
   }
 
   const { baseHash, changes } = diff(base.content, proposed, 'Drafted while you were away.')
@@ -128,12 +128,22 @@ export function sectionTitleFor(exact: string): string | null {
   return heading?.[1]?.trim() ?? null
 }
 
-/** Replace a named section's body with new prose, leaving its heading. Appends
- *  when the section does not exist — a worker drafting a section the document
- *  lacks is a planning error the reviewer should see, not something to drop. */
-function replaceSection(content: string, section: string, prose: string): string {
+/**
+ * Replace a named section's body with new prose, leaving its heading. Appends
+ * when the section does not exist — a worker drafting a section the document
+ * lacks is a planning error the reviewer should see, not something to drop.
+ *
+ * **Exported, and there is exactly one other caller**: `src/eval/run.ts`, which
+ * has to turn the same `section-prose` productions into the same proposed
+ * document before it can diff them. A second implementation there would be a
+ * second definition of what a drafted section does to a document, and the
+ * harness would then be measuring a fold the product does not use.
+ */
+export function withSection(content: string, section: string, prose: string): string {
   const lines = content.split('\n')
-  const start = lines.findIndex((l) => /^#{2,3}\s/.test(l.trim()) && l.replace(/^#+\s*/, '').trim() === section)
+  const start = lines.findIndex(
+    (l) => /^#{2,3}\s/.test(l.trim()) && l.replace(/^#+\s*/, '').trim() === section,
+  )
 
   if (start === -1) return `${content.trimEnd()}\n\n## ${section}\n\n${prose}\n`
 
