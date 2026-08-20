@@ -140,6 +140,21 @@ export interface AgreementProps {
     contractId: string
     deadlineAt: string
     allowedActionKinds: readonly ActionKind[]
+    /**
+     * Whether the DRAFT offered `draft-section` before the dials were read.
+     *
+     * The ratified allowlist above cannot answer this, and that is the whole
+     * reason it is passed. *"Drafting is absent"* and *"you removed drafting"*
+     * are different facts, and `allowedActionKinds` collapses them — which is
+     * how the next screen came to tell every browser shift that its person had
+     * chosen research only. See `whyDraftingIsOff` below for the same
+     * discriminant on this screen.
+     */
+    draftingWasOnOffer: boolean
+    /** Null on a shift with nothing to draft into. Also not derivable from the
+     *  allowlist, and it separates *"there is no document"* from *"drafting is
+     *  simply not part of this agreement"*. */
+    documentTitle: string | null
   }) => void
 }
 
@@ -431,6 +446,12 @@ export function Agreement({ draft, defaults, sourceLabels, onBack, onHandedOver 
         contractId: result.value.contractId,
         deadlineAt: result.value.deadlineAt,
         allowedActionKinds: result.value.allowedActionKinds,
+        // Read off the DRAFT, not off what came back. Both are facts about the
+        // shift the person just ratified, and neither survives in the ratified
+        // allowlist — which is exactly why the screen after this one could not
+        // tell a dial from a shift that never had a document.
+        draftingWasOnOffer,
+        documentTitle: draft.documentTitle,
       })
     })
   }

@@ -198,11 +198,17 @@ function originTag(origin: string): string | null {
 
 type Stage = 'reading' | 'agreement'
 
-interface Handed {
+export interface Handed {
   /** The ratified contract. The shift report hangs off this id. */
   readonly contractId: string
   readonly deadlineAt: string
   readonly allowedActionKinds: readonly ActionKind[]
+  /** Whether the draft offered `draft-section` before the dials were read. See
+   *  `AgreementProps.onHandedOver`, which argues why the ratified allowlist
+   *  cannot answer this. */
+  readonly draftingWasOnOffer: boolean
+  /** Null on a shift with nothing to draft into. */
+  readonly documentTitle: string | null
 }
 
 export function TakeOver(props: TakeOverProps) {
@@ -346,9 +352,39 @@ export function TakeOver(props: TakeOverProps) {
 
 /* ── after the handover ─────────────────────────────────────────────────── */
 
-function HandedOver({ handed }: { readonly handed: Handed }) {
+/**
+ * What is happening now that the person has let go.
+ *
+ * Exported for `tests/handover-honesty.test.ts`, which renders it directly. The
+ * sentence below is decided entirely by props, so a render with no interaction
+ * reads exactly what a person reads — and the alternative, driving `TakeOver`
+ * far enough to reach this state, would test the flow rather than the claim.
+ */
+export function HandedOver({ handed }: { readonly handed: Handed }) {
   const back = new Date(handed.deadlineAt)
   const canDraft = handed.allowedActionKinds.includes('draft-section')
+
+  /**
+   * Why no text is coming — which, like the panel one screen earlier, is not
+   * one question.
+   *
+   * This said *"You asked for research only"* whenever `draft-section` was
+   * missing. `grantableActionKinds(false)` never grants it, so on every browser
+   * shift this told a person they had chosen something at a moment when they
+   * could no longer unchoose it. `src/ui/agreement.tsx` was corrected for the
+   * same untruth and named this repeat as left undone; the branch here is the
+   * same branch, on the same two facts, carried through the handover rather
+   * than re-derived from an allowlist that cannot answer them.
+   *
+   * The third arm names no cause on purpose. A kind can be absent because a
+   * dial removed it or because the shift never offered it, and only a sentence
+   * that claims neither is true in both cases.
+   */
+  const whyNoText = handed.draftingWasOnOffer
+    ? 'You asked for research only, so it will come back with findings, questions and next steps — and no text for your document.'
+    : handed.documentTitle === null
+      ? 'This shift has no document under it, so there is nothing to draft — it will come back with what it found rather than text for a document.'
+      : 'Drafting is not part of this agreement, so it will come back with findings, questions and next steps — and no text for your document.'
 
   return (
     <Section title="You handed over" tone="attention" index={1}>
@@ -360,7 +396,7 @@ function HandedOver({ handed }: { readonly handed: Handed }) {
       <p className="tk-note">
         {canDraft
           ? 'It may propose text for your document. Nothing lands until you accept it.'
-          : 'You asked for research only, so it will come back with findings, questions and next steps — and no text for your document.'}
+          : whyNoText}
       </p>
       {/* The note is the whole point of leaving, so the way to it exists from
           the moment the handover happens — not only once the run has ended.
@@ -383,7 +419,13 @@ function clockOf(when: Date): string {
 
 /* ── no reading yet ─────────────────────────────────────────────────────── */
 
-function NoReadingYet({ sessionId, canRead }: { readonly sessionId: string; readonly canRead: boolean }) {
+function NoReadingYet({
+  sessionId,
+  canRead,
+}: {
+  readonly sessionId: string
+  readonly canRead: boolean
+}) {
   const [problem, setProblem] = useState<string | null>(null)
   const [dropped, setDropped] = useState(0)
   const [pending, start] = useTransition()
@@ -486,8 +528,8 @@ function Reading({ claims, readOnly, pending, problem, onContinue }: ReadingProp
       {constraints.length > 0 ? (
         <Section title="What the sources say" index={index++}>
           <p className="tk-note" style={{ marginTop: 0 }}>
-            Propositum found these in pages you read. They are quotations, not instructions — nothing
-            here reaches the working agreement unless you write it there yourself.
+            Propositum found these in pages you read. They are quotations, not instructions —
+            nothing here reaches the working agreement unless you write it there yourself.
           </p>
           <ul className="tk-claims">
             {constraints.map((claim) => (
@@ -701,7 +743,8 @@ function Why({ evidence }: { readonly evidence: readonly EvidenceView[] }) {
       <Styles />
       <details className="tk-why">
         <summary>
-          Why I think that — {evidence.length === 1 ? 'one thing you did' : `${evidence.length} things you did`}
+          Why I think that —{' '}
+          {evidence.length === 1 ? 'one thing you did' : `${evidence.length} things you did`}
         </summary>
         <ul className="tk-why-body">
           {evidence.map((item, i) => (
