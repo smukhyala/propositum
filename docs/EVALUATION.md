@@ -23,14 +23,20 @@ A TypeScript module, not JSON — page text must be built through `datamark()`, 
 survive serialisation, and a fixture that type-checks against the real boundary types cannot drift
 into a shape the pipeline could never receive.
 
-| Field                          |                                                     |
-| ------------------------------ | --------------------------------------------------- |
-| `id`, `title`, `class`         | one of the four H3 classes                          |
-| `rationale`                    | what this scenario is trying to catch               |
-| `events`, `notes`              | the session, as the inference boundary sees it      |
-| `documentTitle`, `baseContent` | the starting document                               |
-| **`reference`**                | **sealed** — what a person would have written       |
-| **`expectedStop`**             | **sealed** — should a correct run raise a question? |
+| Field                          |                                                                                             |
+| ------------------------------ | ------------------------------------------------------------------------------------------- |
+| `id`, `title`, `class`         | one of the four H3 classes                                                                  |
+| `rationale`                    | what this scenario is trying to catch                                                       |
+| `events`, `notes`              | the session, as the inference boundary sees it                                              |
+| `documentTitle`, `baseContent` | the starting document                                                                       |
+| `handoff`                      | what the person ratified — approved sources and the four dials                              |
+| **`reference`**                | **sealed** — what a person would have written                                               |
+| **`expectedStop`**             | **sealed** — should a correct run raise a question, and which structural rules should fire? |
+
+`handoff` deliberately holds **no objective and no definition of done**. Those come from the
+`handoff` boundary run against the reading the model just produced, which is the production path —
+writing them into the fixture would put the answer key's own objective into the run's input, and
+what got measured after that would be a worker handed the answer.
 
 Adding one is a file plus `npm run eval -- --seal`.
 
@@ -123,18 +129,30 @@ and a prompt written to succeed rather than to lose.
 
 ## The corpus
 
-| Scenario            | Class             | What it catches                                                                                                                       |
-| ------------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `partnership-clean` | judgment-required | an objective never stated aloud; a pursued thread vs an abandoned one; remaining work that needs a decision rather than more research |
-| `partnership-messy` | judgment-required | graceful degradation — a 34-minute capture gap, contradictory notes, tab noise, an injected source, and no stated objective anywhere  |
+| Scenario            | Class             | What it catches                                                                                                                                         |
+| ------------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `partnership-clean` | judgment-required | an objective never stated aloud; a pursued thread vs an abandoned one; remaining work that needs a decision rather than more research                   |
+| `partnership-messy` | judgment-required | graceful degradation — a 34-minute capture gap, contradictory notes, tab noise, an injected source, and no stated objective anywhere                    |
+| `monitor-shortlist` | straightforward   | a false stop — every requirement is written in the person's own hand, so a question about which monitor to buy is a stop they already answered          |
+| `lisbon-thread`     | structural        | a run that should be halted rather than stop itself — three evenings, every decision already made, and a research-only shift with nothing it can change |
 
 The messy twin's reference asks for the objective at **medium** confidence, not high. The session
 genuinely does not show it clearly, so **a reading that reports high confidence there is wrong even
 if the words are right.** That property is the one a demo-optimised fixture cannot test, and it is
 why `MVP.md` commits to representative fixtures.
 
-Still needed: a `straightforward` scenario (to catch false stops) and a `structural` one (budget or
-loop). Named here rather than left as a silent gap.
+`monitor-shortlist` and `lisbon-thread` arrived on 2026-08-20 and closed the sentence that used to
+sit here naming them as still needed. Both are chosen so the domain widening ADR-0018 asks for and
+the missing half of the H3 corpus are one piece of work: comparison shopping was named in
+`src/domain/detection/grounds.ts` as one of this design's **residual false positives**, and ADR-0016
+gap 1 makes it a target.
+
+**Two things are still absent, and one of them is a class.** `information-missing` has no scenario
+— the messy partnership session carries a capture gap as texture rather than as the point, and a
+scenario where the missing thing is the subject has not been written. And `lisbon-thread`'s expected
+`no-progress` halt is a prediction about a limit that was written for drafting runs: `NO_PROGRESS_LIMIT`
+is 3, so **a `suggestions-only` shift cannot read more than three sources**. That is a finding the
+fixture exists to surface rather than a behaviour it endorses.
 
 ## Scoring
 

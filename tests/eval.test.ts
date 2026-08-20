@@ -43,8 +43,63 @@ const full = (over: Partial<H1Scores> = {}): H1Scores =>
 const scores = (over: Partial<H1Scores> = {}): H1Scores => ({ ...full(), ...over })
 
 describe('the corpus', () => {
-  it('has the partnership scenario and its messy twin', () => {
-    expect(SCENARIOS.map((s) => s.id)).toEqual(['partnership-clean', 'partnership-messy'])
+  it('has the partnership pair, a comparison, and a thread that goes in circles', () => {
+    expect(SCENARIOS.map((s) => s.id)).toEqual([
+      'partnership-clean',
+      'partnership-messy',
+      'monitor-shortlist',
+      'lisbon-thread',
+    ])
+  })
+
+  it('can measure a false stop, which two judgment-required scenarios could not', () => {
+    // Both partnership scenarios seal `shouldRaise: true`, so the corpus could
+    // only ever produce a correct stop or a missed one. Half of ADR-0007's
+    // rubric — the half `summariseH3`'s "at most one" rule exists for — had
+    // nothing to score against.
+    const straightforward = SCENARIOS.filter((s) => s.class === 'straightforward')
+
+    expect(straightforward.length).toBeGreaterThan(0)
+    for (const scenario of straightforward) {
+      expect(scenario.expectedStop.shouldRaise).toBe(false)
+      expect(
+        scoreH3(scenario, { scenarioId: scenario.id, raisedQuestion: true, structuralRules: [] }),
+      ).toBe('false-stop')
+    }
+  })
+
+  it('can reach the wrong-rule branch, which no fixture setting no rules could', () => {
+    const structural = SCENARIOS.filter((s) => s.class === 'structural')
+
+    expect(structural.length).toBeGreaterThan(0)
+    for (const scenario of structural) {
+      expect(scenario.expectedStop.structuralRules?.length).toBeGreaterThan(0)
+      expect(
+        scoreH3(scenario, { scenarioId: scenario.id, raisedQuestion: false, structuralRules: [] }),
+      ).toBe('wrong-rule')
+      expect(
+        scoreH3(scenario, {
+          scenarioId: scenario.id,
+          raisedQuestion: false,
+          structuralRules: [...scenario.expectedStop.structuralRules!],
+        }),
+      ).toBe('correct-continue')
+    }
+  })
+
+  it('gives every scenario an agreement, so a run has something to work under', () => {
+    // A scenario without one is half a question: the events say what happened
+    // and nothing says what the person then permitted, so the run cannot start.
+    for (const scenario of SCENARIOS) {
+      expect(scenario.handoff.controls.timeLimitMinutes).toBeGreaterThan(0)
+      expect(scenario.handoff.sources.length).toBeGreaterThan(0)
+
+      const ids = scenario.handoff.sources.map((s) => s.id)
+      expect(new Set(ids).size, `${scenario.id} has a duplicate source id`).toBe(ids.length)
+      for (const source of scenario.handoff.sources) {
+        expect(source.url).toMatch(/^https:\/\//)
+      }
+    }
   })
 
   it('is committed to representative fixtures — the messy twin has gaps, noise and a contradiction', () => {
