@@ -21,6 +21,7 @@
 import { z } from 'zod'
 import { CLAIM_KINDS, CONFIDENCE_BANDS } from '../model/boundaries/session-reading'
 import type { PromptEvent } from '../model/boundaries/session-reading'
+import type { AutonomyControls } from '../domain/handoff/policy'
 
 /** The four classes from ADR-0007's H3 rubric. */
 export const SCENARIO_CLASSES = [
@@ -65,6 +66,53 @@ export interface ExpectedStop {
   readonly structuralRules?: readonly string[] | undefined
 }
 
+/**
+ * One page the worker may read, with the text a fetcher will serve for it.
+ *
+ * `text` is RAW. It is datamarked by the same seam the worker uses in
+ * production — `fixtureFetcher` behind `allowlisted`, exactly as
+ * `src/policy/fetcher.ts` describes — so a fixture cannot hand the worker
+ * pre-fenced text and quietly skip the one door.
+ */
+export interface ScenarioSource {
+  readonly id: string
+  readonly label: string
+  readonly url: string
+  readonly title: string
+  readonly text: string
+}
+
+/**
+ * What the person ratified, so a scenario is a whole question.
+ *
+ * ── Why this is not part of the seal ─────────────────────────────────────
+ *
+ * `sealedPayload` covers `reference` and `expectedStop` and nothing else. This
+ * is the QUESTION — the same category as the events and the document — and the
+ * rule in docs/EVALUATION.md is that a question can be corrected without
+ * breaking the seal, because changing it invalidates a scenario for a different
+ * reason and is caught by review rather than by a hash.
+ *
+ * ── What is deliberately absent ──────────────────────────────────────────
+ *
+ * No objective, no definition of done, and no guidance. Those come from the
+ * `handoff` boundary run against the reading the model just produced, which is
+ * the production path: a person ratifies what Propositum drafted. Writing them
+ * here would put the answer key's own objective into the run's input, and the
+ * measurement after that would be of a worker handed the answer.
+ *
+ * `allowedActionKinds` is absent for the reason ADR-0004 gives: what a document
+ * contract grants is `DOCUMENT_ACTION_KINDS`, derived by subtraction so a new
+ * browser capability is not granted by default. A fixture naming its own set
+ * would be the one place that derivation could be bypassed.
+ */
+export interface ScenarioHandoff {
+  readonly sources: readonly ScenarioSource[]
+  /** The human-set dials. A model may not propose these anywhere, and a fixture
+   *  standing in for a person is still not a model. */
+  readonly controls: AutonomyControls
+}
+
 export interface Scenario {
   readonly id: string
   readonly title: string
@@ -79,6 +127,9 @@ export interface Scenario {
   /** The starting document, normalised to one sentence per line. */
   readonly documentTitle: string
   readonly baseContent: string
+
+  /** The agreement the run works under. Part of the question, not the key. */
+  readonly handoff: ScenarioHandoff
 
   /** SEALED. Authored before any run. Never edited afterwards — if it was
    *  wrong, that is a finding about the fixture and becomes a new scenario. */

@@ -940,7 +940,9 @@ describe('the safety machinery is reachable from the product', () => {
     expect(
       callersOf('whereYouLeftOffIn(', server),
       'nothing loads the fold for a project — one of the two screens is assembling its own',
-    ).toEqual(expect.arrayContaining(['src/server/actions.ts', 'src/app/projects/[projectId]/page.tsx']))
+    ).toEqual(
+      expect.arrayContaining(['src/server/actions.ts', 'src/app/projects/[projectId]/page.tsx']),
+    )
   })
 
   it('the re-entry note is reachable from the front door, or it stays four clicks deep', () => {
@@ -1170,6 +1172,139 @@ describe('the lifecycle word is on a screen', () => {
   })
 })
 
+/**
+ * The three signals that were landed and read by nothing, and now are not.
+ * ADR-0018, 2026-08-20.
+ *
+ * ── What this replaces, and why it is not simply deleted ─────────────────
+ *
+ * Three `it()` blocks sat in *deferred, and asserted as deferred* below,
+ * budgeting every mention of `scrollFraction`, `exitType` and `arrival` in
+ * production code to an EXACT count, so that a consumer appearing anywhere went
+ * red. Each ended with the same line: *"If you are here because this went red:
+ * that is the system working. Move it up, and say in the commit which
+ * afternoons started qualifying."* They went red on 2026-08-20 and this is the
+ * move. The commit says which afternoons; so does the measurement section of
+ * ADR-0018, which was written empty for this wave to fill in.
+ *
+ * **The count budget could not survive the promotion and its absence is a real
+ * loss.** An exact count catches a mention appearing ANYWHERE, including in a
+ * file nobody thought to name; what replaces it is the weaker positive claim
+ * that a specific reader exists in a specific file. The thing the budget was
+ * protecting is now protected behaviourally instead, and by more than one test:
+ * `tests/detection.test.ts` holds what each signal changes and — for exit type
+ * and for four of the five arrivals — what it still does not, and
+ * `tests/grounds.test.ts` holds the bar in both directions. That is the trade,
+ * written down rather than discovered when somebody wonders where the budget
+ * went.
+ *
+ * ── The third deferral also carried an EXPIRY, and it is discharged here ─
+ *
+ * `arrival`'s block said: either the offer-rate measurement gets built and all
+ * three get judged against it, **or the honest move is to DELETE the three
+ * fields rather than keep filling them indefinitely.** All three are consumed
+ * now, which closes the branch that was worrying — a product that defends
+ * narrow watching cannot also collect indefinitely against a use nobody has
+ * argued. `npm run eval -- --report` still prints offers-per-observed-hour and
+ * still has nobody's real afternoons behind it; that is ADR-0018's *Revisit
+ * when*, and it is a different debt from this one.
+ */
+describe('the three landed signals are consulted, and each by something named', () => {
+  const detectTs = join('src', 'domain', 'detection', 'detect.ts')
+  const topicsTs = join('src', 'domain', 'detection', 'topics.ts')
+  const groundsTs = join('src', 'domain', 'detection', 'grounds.ts')
+
+  const codeOf = (name: string) =>
+    stripImports(stripComments(readFileSync(join(repo, name), 'utf8')))
+
+  /**
+   * Not vacuous, exactly as the three deferrals were not: with a field deleted,
+   * every claim below would be about something that no longer exists.
+   */
+  it('still declares all three on the observation, or these assertions are about nothing', () => {
+    const declared = stripComments(readFileSync(join(repo, detectTs), 'utf8'))
+
+    expect(declared).toMatch(/readonly scrollFraction\?/)
+    expect(declared).toMatch(/readonly exitType\?/)
+    expect(declared).toMatch(/readonly arrival\?/)
+  })
+
+  it('carries all three off the observation and onto the page a ground can see', () => {
+    /**
+     * The hop that was missing for the whole build. `AmbientObservation` had the
+     * fields, `pagesOf` projected the buffer onto `ThreadPage` by hand, and the
+     * three were dropped there — so a rule could not have read them if it wanted
+     * to. `arrival` arrives as `returnArrivals`, because the thing a ground asks
+     * is not *how was this page reached* but *how was it RETURNED to*.
+     */
+    const declared = stripComments(readFileSync(join(repo, topicsTs), 'utf8'))
+
+    expect(declared, 'ThreadPage no longer carries the scroll fraction').toMatch(
+      /readonly scrollFraction\?/,
+    )
+    expect(declared, 'ThreadPage no longer carries the exit type').toMatch(/readonly exitType\?/)
+    expect(declared, 'ThreadPage no longer carries the return arrivals').toMatch(
+      /readonly returnArrivals\?/,
+    )
+
+    const projection = codeOf(detectTs)
+    for (const fold of ['scrollByUrl(', 'exitByUrl(', 'returnArrivalsByUrl(']) {
+      expect(
+        projection,
+        `pagesOf no longer calls ${fold} — the field is declared and nothing fills it, which is the state all three spent the build in`,
+      ).toContain(fold)
+    }
+  })
+
+  it('consults the scroll fraction and the exit type where READ is claimed', () => {
+    // `heldOpenUnread` is the conjunction and it is the only reader of either.
+    // Named rather than counted, so that moving the predicate somewhere else is
+    // a decision somebody takes here.
+    const grounds = codeOf(groundsTs)
+
+    expect(grounds, 'nothing in grounds.ts reads scrollFraction').toContain('scrollFraction')
+    expect(grounds, 'nothing in grounds.ts reads exitType').toContain('exitType')
+    expect(grounds, 'heldOpenUnread is gone — the two signals have no conjunction left').toContain(
+      'heldOpenUnread(',
+    )
+    // And it gates both grounds ADR-0018 sends it to, rather than one of them.
+    expect(grounds).toContain('wasRead(page, READ_AROUND_MS)')
+  })
+
+  it('consults the arrival where a RETURN is claimed, and nowhere else', () => {
+    /**
+     * The narrowest of the three and the one the deferral argued hardest
+     * against, so what it may do is asserted rather than described. `arrival` is
+     * read by `cameFromElsewhere`, which `returnedTo` calls, and by
+     * `comparedOptions` through `COMPARISON_ARRIVAL`. It is NOT an intent ground
+     * of its own — a `'no-referrer'` arrival is produced by every omnibox search
+     * and by every newsletter link that strips its referrer, so a ground keyed
+     * on the value rather than on the return would fire on the exact afternoon
+     * `grounds.ts` exists to refuse.
+     */
+    const grounds = codeOf(groundsTs)
+
+    expect(grounds, 'nothing reads how a return was arrived at').toContain('returnArrivals')
+    expect(grounds).toContain('cameFromElsewhere(')
+    expect(grounds).toContain('RETURN_ARRIVALS')
+
+    // The offer bar is not where an arrival may be consulted. `front-door.ts`
+    // was the file the old budget could not see, and the measured mutation that
+    // proved it — suppressing every strand on a `'no-referrer'` arrival — passed
+    // the whole suite. It stays out.
+    for (const name of [
+      join('src', 'server', 'front-door.ts'),
+      join('src', 'server', 'compose-offer.ts'),
+      join('src', 'server', 'ambient-store.ts'),
+    ]) {
+      expect(
+        codeOf(name),
+        `${name} reads an arrival — the offer bar is not where that decision belongs`,
+      ).not.toMatch(/\barrival\b|\breturnArrivals\b/)
+    }
+  })
+})
+
 describe('deferred, and asserted as deferred', () => {
   it('boundary 6 is still unwired, so the narrative is a stop-rule label', () => {
     // `execute-run` stores `narrative: stopLabel` — a consumer label rendered
@@ -1283,312 +1418,6 @@ describe('deferred, and asserted as deferred', () => {
       declaration?.[1]?.trim(),
       'a kind lands now — external-effect is reachable, so move this into the section above',
     ).toBe('')
-  })
-
-  it('scroll lands on the ambient path and no ground consults it', () => {
-    /**
-     * Correct, tested, carried end to end — and deliberately called by nothing.
-     *
-     * This is the shape at the top of this file, created on purpose, so it is
-     * asserted here rather than left to be discovered. `scrollFraction` has been
-     * computed by `content.js` since the engagement report existed and dropped
-     * on arrival because `ambientSchema` had no field for it; on 2026-08-17 the
-     * field landed. Nothing in the detector reads it.
-     *
-     * ── What would consume it ────────────────────────────────────────────
-     *
-     * `readAround` in `src/domain/detection/grounds.ts`, and `READ_AROUND_MS`
-     * says so about itself: *"Twenty seconds is a floor on a glance, not a bar
-     * on skimming. Twelve newsletter links at forty-five seconds each clear it
-     * comfortably."* Scroll is the signal that separates a page read from a page
-     * held open — Claypool et al. (IUI 2001) measured time, scroll and their
-     * combination as the three things that correlated with stated interest, and
-     * `docs/research/intent-suggestion-quality.md` §10.2 names `read-around` as
-     * where it would go. `deepestRead` and `read-deeply` are the second
-     * candidate, and the same research's §10.1 argues exit type would be worth
-     * more than either.
-     *
-     * ── Why it is not consumed yet ───────────────────────────────────────
-     *
-     * Because consuming it is a different decision from carrying it, and only
-     * the first has been taken. Every one of those uses moves which afternoons
-     * clear the offer bar — ADR-0008 names the false positive as the expensive
-     * failure, and a threshold that moves as a side effect of a plumbing change
-     * is exactly the silent widening `detect.ts`'s own header refuses. The
-     * research this lands was recorded WITHOUT retuning; see the honest-limit
-     * note beside `WINDOW_MS`.
-     *
-     * ── The producer half, which is also not done ────────────────────────
-     *
-     * ~~`flushAmbient` in `extension/src/service-worker.js` projects each
-     * buffered signal onto the wire shape by hand and does not copy
-     * `scrollFraction` across, so today the field is reachable by `curl` and by
-     * nothing the extension sends. That file was out of scope for this change.
-     * It is named here rather than asserted because a red test in a file this
-     * change may not touch would be a tripwire nobody owning it agreed to.~~
-     *
-     * **Done 2026-08-17, ADR-0013.** `flushAmbient` copies it, guarded on the
-     * value already being inside `[0, 1]` so that no batch which is accepted
-     * today starts being refused. It is now ASSERTED rather than named — see
-     * *"the extension actually sends the fields the app has fields for"* at the
-     * bottom of this file — because a producer that exists is a producer that
-     * can be deleted, and this file's whole subject is code nothing reaches.
-     *
-     * The consumption half below is unchanged, which is the point of them being
-     * two decisions.
-     *
-     * If you are here because this went red: that is the system working. Move it
-     * up, and say in the commit which afternoons started qualifying.
-     */
-    const detectTs = join('src', 'domain', 'detection', 'detect.ts')
-
-    // Not vacuous. With the field deleted every count below is zero and this
-    // would pass green while deferring something that no longer exists.
-    expect(
-      stripComments(readFileSync(join(repo, detectTs), 'utf8')),
-      'AmbientObservation no longer declares scrollFraction — this deferral is about a field that is gone',
-    ).toMatch(/readonly scrollFraction\?/)
-
-    /**
-     * WIDENED 2026-08-18 from `src/domain/detection` to all of `PRODUCTION`.
-     *
-     * The old loop skipped every file outside the detector, which is where the
-     * offer bar lives. See `unallowedMentions` for the mutation that proved it.
-     *
-     * The allowance table is read as: this is the complete list of places the
-     * NAME may appear in production code, and none of them is a decision.
-     *
-     *   - `detect.ts` — one, the interface field's own declaration.
-     *   - the ambient route — four, all transport: the `z.number()` bound and
-     *     the three occurrences of the projection line that copies it into the
-     *     store. Validating a value is not consulting it.
-     *   - **`src/capture/semantics.ts` and `src/server/capture-adapter.ts` are
-     *     the SESSION path and are a different field with the same name.**
-     *     `RawSignal.scrollFraction` comes off a `content.js` engagement report
-     *     and feeds `classifyEngagement`'s `ENGAGEMENT_SCROLL_FRACTION`
-     *     threshold, which really does decide something — about session events,
-     *     which this deferral is not about. `\bscrollFraction\b` cannot tell
-     *     the two apart, so they are listed rather than filtered, because a
-     *     filter is where the next hole goes. Both were read on 2026-08-18 and
-     *     neither touches `AmbientObservation`.
-     */
-    const consumers = unallowedMentions('scrollFraction', {
-      [detectTs]: 1,
-      [join('src', 'app', 'api', 'capture', 'ambient', 'route.ts')]: 4,
-      [join('src', 'capture', 'semantics.ts')]: 4,
-      [join('src', 'server', 'capture-adapter.ts')]: 3,
-    })
-
-    expect(
-      consumers,
-      'scrollFraction is mentioned somewhere the allowance does not cover — if something now READS it, move this deferral into the section above and say which afternoons started or stopped qualifying; if the transport merely changed shape, update the count and say why it is still not a reader',
-    ).toEqual([])
-  })
-
-  it('the exit type lands on the ambient path and no ground consults it', () => {
-    /**
-     * The second signal carried and deliberately not consulted. ADR-0013.
-     *
-     * ── Why this one is deferred, which is a decision and not a backlog ──
-     *
-     * `exitType` is the best-evidenced thing this product was not collecting:
-     * `docs/research/intent-suggestion-quality.md` §2.1 quotes Fox et al. (TOIS
-     * 2005) measuring dwell **plus exit type** at 66% against 70% for all
-     * nineteen implicit signals, and §9's table calls it *"the single
-     * best-evidenced addition"*. Collecting it was the easy half.
-     *
-     * Three reasons it is not read, in the order they bind:
-     *
-     *  1. **The distinction the evidence rests on is inside a value we cannot
-     *     split.** Fox's satisfaction node is *"spent more than 58 s… and did
-     *     not go back to the results list"*; the dissatisfaction node is the
-     *     mirror of it. Both turn on separating a return from an onward
-     *     navigation — and our `'left-unloaded'` contains navigated-onward,
-     *     tab-closed, browser-quit and reloaded together, because a content
-     *     script sees one `pagehide` for all four. Splitting it needs `tabs` or
-     *     `webNavigation`, which the manifest and
-     *     `tests/extension-permissions.test.ts` both refuse. Consuming it today
-     *     would be borrowing the citation rather than applying it.
-     *  2. **Consuming it moves the offer bar**, and ADR-0008 names the false
-     *     positive as the expensive failure. The standing decision recorded
-     *     beside `WINDOW_MS` and on `scrollFraction` is to land research
-     *     without retuning.
-     *  3. **Nothing measures the offer rate** (§10.5), so there is no
-     *     before-and-after to judge a threshold move by.
-     *
-     * ── What it would feed, so the next person meets a choice ─────────────
-     *
-     * `readAround` in `src/domain/detection/grounds.ts`, as a CONJUNCTION
-     * rather than a threshold: `READ_AROUND_MS`'s own docstring concedes
-     * *"Twenty seconds is a floor on a glance, not a bar on skimming"*, and
-     * twenty seconds followed by `'left-unloaded'` is a different event from
-     * twenty seconds followed by the tab still sitting there. `deepestRead` and
-     * `read-deeply` are the second candidate. §10.1 names both.
-     *
-     * ── What would justify wiring it ─────────────────────────────────────
-     *
-     * An offer-rate measurement, plus EITHER a way to tell an onward navigation
-     * from a close — which would have to be argued as an observation rather
-     * than an inference, and today the only honest route to it is a permission
-     * this product refuses — OR a use that needs only the `'hidden'` versus
-     * `'left-*'` split, which IS honestly available now and is the cheaper
-     * thing to try first.
-     *
-     * If you are here because this went red: that is the system working. Move
-     * it up, and say in the commit which afternoons started qualifying.
-     */
-    const detectTs = join('src', 'domain', 'detection', 'detect.ts')
-
-    // Not vacuous, the same way the scroll deferral above is not.
-    expect(
-      stripComments(readFileSync(join(repo, detectTs), 'utf8')),
-      'AmbientObservation no longer declares exitType — this deferral is about a field that is gone',
-    ).toMatch(/readonly exitType\?/)
-
-    /**
-     * WAS a ceiling of 2 inside `src/domain/detection`, with the reason: 'Two in
-     * `detect.ts` — the `ExitType` declaration is matched by `\bExitType\b`
-     * rather than this pattern, so what is counted here is the interface field
-     * and the type reference on it.'
-     *
-     * CORRECTED 2026-08-17. That reason was wrong and the number it justified
-     * left a free slot. `\bexitType\b` is CASE-SENSITIVE, so neither the
-     * `export type ExitType` declaration nor the `ExitType` on the right of
-     * `readonly exitType?: ExitType | undefined` is counted — the file has
-     * exactly ONE match. Two allowed one real consumer through, and one was
-     * added and measured: projecting `engagedMs` as `(dwell.get(o.url) ?? 0) *
-     * (o.exitType === 'hidden' ? 0 : 1)` in `pagesOf` — which zeroes engagement
-     * for every page left by a tab switch — passed the whole suite, 1357/1357
-     * green.
-     *
-     * WIDENED AGAIN 2026-08-18, for the reason on `scrollFraction` above: the
-     * directory filter meant `src/server/front-door.ts` was never scanned at
-     * all, and no ceiling inside the detector says anything about a consumer on
-     * the offer bar. Four in the ambient route, all transport — the `z.enum` and
-     * the three occurrences of the projection line.
-     */
-    const consumers = unallowedMentions('exitType', {
-      [detectTs]: 1,
-      [join('src', 'app', 'api', 'capture', 'ambient', 'route.ts')]: 4,
-    })
-
-    expect(
-      consumers,
-      'exitType is mentioned somewhere the allowance does not cover — if something now READS it, move this deferral into the section above and say which afternoons started or stopped qualifying; if the transport merely changed shape, update the count and say why it is still not a reader',
-    ).toEqual([])
-  })
-
-  it('the arrival lands on the ambient path and no ground consults it', () => {
-    /**
-     * The THIRD signal carried and deliberately not consulted, 2026-08-18.
-     *
-     * ── The count is the first thing worth saying ────────────────────────
-     *
-     * `scrollFraction`, `exitType`, and now `arrival`. One deferral is the lag
-     * between landing a signal and deciding what it means. Three is a habit,
-     * and it is a habit with a cost that lands on the person rather than on us:
-     * this product's argument is that it watches narrowly, and "we collect it,
-     * nothing reads it" is the sentence every product says on the way to
-     * reading it.
-     *
-     * **So this deferral is given an expiry, which the other two were not.**
-     * All three are waiting on the same missing thing —
-     * `docs/research/intent-suggestion-quality.md` §10.5 says nothing measures
-     * the offer rate, so there is no before-and-after to judge a bar move by.
-     * Either that measurement gets built and all three get judged against it,
-     * or the honest move is to DELETE the three fields rather than keep filling
-     * them indefinitely. A fourth deferral landing here without the measurement
-     * existing is the signal that the second branch is the real answer.
-     *
-     * ── Why this one is deferred on its own merits ───────────────────────
-     *
-     * It would be the strongest available evidence for the distinction
-     * `grounds.ts` is built on — *did they pursue this, or receive it?* Its
-     * header argues that *"somebody who read four pages of a site they arrived
-     * at from a newsletter chose nothing — the subject was handed to them"*,
-     * and the only evidence of pursuit in that file today is a search.
-     *
-     * And it is weakest exactly there:
-     *
-     *  1. **The newsletter afternoon defeats it directly.** A link whose page
-     *     suppressed its referrer — `rel="noreferrer"`, `Referrer-Policy:
-     *     no-referrer`, both common in mail clients and readers — arrives as
-     *     `'no-referrer'`, the member that reads as *the person chose this*. So
-     *     the false positive `grounds.ts` spends its length refusing is the
-     *     shape most likely to present as intent.
-     *  2. **`'no-referrer'` is not rare.** An omnibox search reaches its
-     *     results page unreferred, so nearly every session containing a search
-     *     also contains one. An intent ground keyed on it would fire on
-     *     ordinary browsing, which is what `INTENT_GROUNDS` exists to exclude.
-     *  3. **Consuming it moves the offer bar**, and ADR-0008 names the false
-     *     positive as the expensive failure. The standing decision recorded
-     *     beside `WINDOW_MS`, on `scrollFraction` and on `exitType` is to land
-     *     research without retuning.
-     *
-     * ── What it would feed, so the next person meets a choice ────────────
-     *
-     * `returnedTo` in `src/domain/detection/grounds.ts`, and this is the one
-     * candidate the corpus has already argued in writing. Its docblock records
-     * Adar, Teevan & Dumais over 612,000 users: in the sub-hour band a
-     * thirty-minute `WINDOW_MS` can see, **77%** of revisits are same-domain,
-     * so `came-back` may be measuring a click home from a spoke rather than
-     * intent. The narrowing that block names — *"count a return only when the
-     * person went to a DIFFERENT origin in between"* — is exactly a
-     * `'cross-origin'` arrival on a page already seen, observed rather than
-     * inferred. That block also records that the product owner chose to write
-     * the finding down and retune nothing, which is the decision this deferral
-     * is downstream of rather than a gap in it.
-     *
-     * Wiring it needs `arrival` carried onto `ThreadPage`, which nothing does,
-     * and `came-back` is one of only three intent grounds — so narrowing it is
-     * a bar change wearing a predicate's clothes, the same thing `SUSTAINED_MS`
-     * says about lowering a span.
-     *
-     * ── What would justify wiring it ─────────────────────────────────────
-     *
-     * The offer-rate measurement, plus a use that survives point 1 — which
-     * `'cross-origin'` does and `'no-referrer'` does not, because a stripped
-     * referrer degrades toward the value that looks like intent rather than
-     * away from it.
-     *
-     * If you are here because this went red: that is the system working. Move
-     * it up, and say in the commit which afternoons started qualifying.
-     */
-    const detectTs = join('src', 'domain', 'detection', 'detect.ts')
-
-    // Not vacuous, the same way the two deferrals above are not.
-    expect(
-      stripComments(readFileSync(join(repo, detectTs), 'utf8')),
-      'AmbientObservation no longer declares arrival — this deferral is about a field that is gone',
-    ).toMatch(/readonly arrival\?/)
-
-    /**
-     * Exactly one in `detect.ts`, the interface field's own name. `\barrival\b`
-     * is case-sensitive, so neither the `export type Arrival` declaration nor
-     * the `Arrival` on the right of `readonly arrival?: Arrival | undefined` is
-     * counted — which is the correction `exitType`'s allowance above had to be
-     * given after a real consumer slipped through a spare slot. Four in the
-     * ambient route, all transport: the `z.enum` and the three occurrences of
-     * the line that copies a validated value into the store.
-     *
-     * WIDENED 2026-08-18, the day after this deferral was written, and the
-     * widening is the more useful half of the two. The guard as first written
-     * scanned only `src/domain/detection`, so the exact consumer this block
-     * argues against — a `'no-referrer'` reading intent on the offer path —
-     * could be added to `src/server/front-door.ts` with the whole suite green.
-     * It was, measured, and reverted; see `unallowedMentions`. A deferral that
-     * only holds where nobody would put the consumer is a comment with a test
-     * around it.
-     */
-    const consumers = unallowedMentions('arrival', {
-      [detectTs]: 1,
-      [join('src', 'app', 'api', 'capture', 'ambient', 'route.ts')]: 4,
-    })
-
-    expect(
-      consumers,
-      'arrival is mentioned somewhere the allowance does not cover — if something now READS it, move this deferral into the section above and say which afternoons started or stopped qualifying; if the transport merely changed shape, update the count and say why it is still not a reader',
-    ).toEqual([])
   })
 })
 
@@ -2149,7 +1978,9 @@ describe('the agreement screen says where its two sentences came from', () => {
     const slice = drafting()
     const agreement = stripComments(readFileSync(join(repo, 'src/ui/agreement.tsx'), 'utf8'))
 
-    expect(slice, 'the drafted contract carries no provenance').toMatch(/words:\s*words\.provenance/)
+    expect(slice, 'the drafted contract carries no provenance').toMatch(
+      /words:\s*words\.provenance/,
+    )
     expect(
       agreement,
       'the agreement screen no longer reads the provenance it is handed — a threaded prop nothing branches on is the discarded-result shape this file was rewritten over',

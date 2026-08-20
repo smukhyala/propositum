@@ -51,21 +51,31 @@
  *
  *     **ADR-0013 closed the extension half.** `flushAmbient` copies the scroll
  *     fraction, and carries two new fields beside it: `exitType` and
- *     `groupTitle`. So all four now arrive from a real browser. **Nothing reads
- *     scroll or exit type, deliberately** — landing a signal and consulting it
- *     are two decisions, and only the first has been taken for either. See the
- *     note on `WINDOW_MS`, and `tests/reachability.test.ts`'s deferred block,
- *     which is where both claims are enforced rather than merely written down.
+ *     `groupTitle`. So all four now arrive from a real browser. ~~**Nothing
+ *     reads scroll or exit type, deliberately** — landing a signal and
+ *     consulting it are two decisions, and only the first has been taken for
+ *     either.~~
  *
- *     **`arrival` joined them on 2026-08-18, and makes three unread signals.**
- *     Same shape as the other two — the value was already being computed and
- *     transmitted on the session path, and the ambient projection dropped it —
- *     and the same deferral, for reasons argued on the field itself. Three is
- *     worth saying out loud rather than adding quietly: at one it was a lag
- *     between landing and consuming, at three it is a habit, and a product that
- *     defends narrow watching cannot also collect indefinitely against a use
- *     nobody has argued. The deferred block carries the expiry that makes it a
- *     decision — measure the offer rate and judge all three, or take them out.
+ *     ~~**`arrival` joined them on 2026-08-18, and makes three unread
+ *     signals.**~~ Same shape as the other two — the value was already being
+ *     computed and transmitted on the session path, and the ambient projection
+ *     dropped it. **Three was worth saying out loud rather than adding quietly:
+ *     at one it was a lag between landing and consuming, at three it is a habit,
+ *     and a product that defends narrow watching cannot also collect
+ *     indefinitely against a use nobody has argued.** The deferred block carried
+ *     an expiry that made it a decision — judge all three, or take them out.
+ *
+ *     **All three are read as of 2026-08-20
+ *     ([ADR-0018](../../../docs/adr/0018-the-everyday-shapes.md)), and the
+ *     expiry is discharged.** Scroll and exit type meet as one conjunction in
+ *     `heldOpenUnread`, which refuses a page nobody scrolled that was switched
+ *     away from; scroll alone also decides whether a page was read far enough to
+ *     have been compared. `arrival` reaches `came-back` and nothing else,
+ *     answering a question that was already being asked — *they came back, from
+ *     where?* — rather than becoming an intent ground of its own, which is the
+ *     one thing its own deferral said would bite. The three deferrals in
+ *     `tests/reachability.test.ts` were promoted in the same change, and the
+ *     count of afternoons that started and stopped qualifying is in ADR-0018.
  *
  *     The group title is the one exception and its limits are exact: it reaches
  *     the NAME and nothing else. It never enters `ThreadPage.terms`, so it
@@ -295,11 +305,7 @@ export type ExitType = 'hidden' | 'left-cached' | 'left-unloaded'
  * and the extension stops sending one two gates earlier.
  */
 export type Arrival =
-  | 'no-referrer'
-  | 'same-origin'
-  | 'cross-origin'
-  | 'reloaded'
-  | 'back-or-forward'
+  'no-referrer' | 'same-origin' | 'cross-origin' | 'reloaded' | 'back-or-forward'
 
 /**
  * One ambient observation. Metadata only — there is deliberately no field that
@@ -353,14 +359,27 @@ export interface AmbientObservation {
    * 2005) had scroll among their nineteen predictors and it did **not** make the
    * top two, so this should be expected to buy less than exit type would.
    *
-   * **Nothing here decides anything with it, and that is enforced rather than
-   * intended.** `tests/reachability.test.ts` asserts, in its *deferred, and
-   * asserted as deferred* block, that no file under `src/domain/detection`
-   * consults this beyond the declaration you are reading. Consuming it would
-   * change which afternoons clear the offer bar, and the product owner chose to
-   * record the research findings without retuning — see the note on `WINDOW_MS`.
-   * Wiring it turns that test red, which is the point: the claim has to be moved
-   * up deliberately rather than slipped in.
+   * ~~**Nothing here decides anything with it, and that is enforced rather than
+   * intended.**~~ **Consumed 2026-08-20 —
+   * [ADR-0018](../../../docs/adr/0018-the-everyday-shapes.md), part 1.** The
+   * deferral said *"consuming it would change which afternoons clear the offer
+   * bar"*, and the change that consumed it owed a measurement of exactly which;
+   * that measurement is in the ADR's own section for it.
+   *
+   * **It is a veto and never a floor, and the difference is the whole design.**
+   * `heldOpenUnread` in `grounds.ts` refuses a page only when this is ZERO
+   * **and** `exitType` is `'hidden'` — a tab opened, never touched, and switched
+   * away from. A floor on its own would have re-created the defect `content.js`
+   * fixed on the session path: *"a short page read fully, or a long one read
+   * above the fold, involves no scrolling at all"*, so a bar here refuses a page
+   * somebody read every word of. The session path answers that with
+   * `interacted`; the ambient wire has no field for one and this change did not
+   * add one.
+   *
+   * The one place it IS a threshold is `compared-options`, where it decides
+   * whether a page was read far enough to have been weighed against another —
+   * and a ground being added may ask for more, because the cost of asking too
+   * much is a ground that does not fire.
    *
    * **Bounded at the door, not here.** `ambientSchema` refuses anything outside
    * `[0, 1]`, matching `rawSignalSchema`'s bound on the session path, so this
@@ -387,52 +406,53 @@ export interface AmbientObservation {
    * from that paper conditions on exit type rather than on dwell alone. §9's
    * table calls it *"the single best-evidenced addition"*.
    *
-   * ── Why it is not read, which is a decision and not a to-do ──────────────
+   * ── What is read, and the half of the deferral that survives ─────────────
    *
-   * Three reasons, in the order they bind:
+   * **Consumed 2026-08-20 — [ADR-0018](../../../docs/adr/0018-the-everyday-shapes.md),
+   * part 1 — and only through the split the deferral itself called honestly
+   * available.** The first of its three reasons is untouched and is why:
    *
-   *  1. **The distinction the evidence rests on is inside the value we cannot
-   *     split.** Fox's satisfaction node is *"spent more than 58 s… and did not
+   *  1. **The distinction Fox's evidence rests on is inside the value we cannot
+   *     split.** The satisfaction node is *"spent more than 58 s… and did not
    *     go back to the results list"*; the dissatisfaction node is *"very
    *     little time… and they did go back"*. Both turn on separating a return
    *     from an onward navigation. Our `'left-unloaded'` contains both, and
    *     separating them needs `tabs` or `webNavigation`, which ADR-0002 and the
-   *     manifest refuse. Consuming this today would be borrowing the citation,
-   *     not applying it.
-   *  2. **Consuming it moves the offer bar.** Every candidate use — a
-   *     conjunction in `readAround`, a qualifier on `deepestRead` — changes
-   *     which afternoons clear it. ADR-0008 names the false positive as the
-   *     expensive failure, and the standing decision recorded beside
-   *     `WINDOW_MS` and on `scrollFraction` is to land the research without
-   *     retuning. A third threshold moving as a side effect of a plumbing
-   *     change is exactly the silent widening this file's header refuses.
-   *  3. **Nothing measures the offer rate.** §10.5 of the same research says so.
-   *     Without it there is no before-and-after to judge a threshold move by,
-   *     which is the difference between tuning and guessing.
+   *     manifest refuse. **So the citation is still not borrowed: nothing below
+   *     distinguishes `'left-cached'` from `'left-unloaded'`, and no rule here
+   *     claims to know whether somebody went back to a results list.**
+   *  2. ~~Consuming it moves the offer bar~~ **and it did, by one afternoon.**
+   *     ADR-0008 still names the false positive as the expensive failure, so
+   *     the only thing this value can do is REFUSE, and only in conjunction
+   *     with a scroll fraction of zero — `heldOpenUnread` in `grounds.ts`. It
+   *     cannot admit anything on its own and cannot admit anything at all.
+   *  3. ~~Nothing measures the offer rate~~ — still true, and still the reason
+   *     ADR-0018's *Revisit when* points at `npm run eval -- --report`. What
+   *     replaced it for this change is a measured before-and-after over the
+   *     fixture corpus, which is narrower than an offer rate and is not nothing.
    *
-   * What would justify wiring it: an offer-rate measurement, plus either a way
-   * to tell an onward navigation from a close — which would have to be argued
-   * as an observation rather than an inference — or a use that needs only the
-   * `'hidden'`/`'left-*'` split, which is honestly available today. The
-   * deferral is asserted in `tests/reachability.test.ts` beside
-   * `scrollFraction`'s, so wiring it turns that file red on purpose.
+   * **`'hidden'` is the only value with an effect, and only alongside a zero.**
+   * The other two say a person finished with a page and moved on, which is not
+   * evidence against it having been read. A page not yet left carries no exit
+   * at all — that is the page somebody is reading right now, and it must never
+   * be the one a rule refuses.
    */
   readonly exitType?: ExitType | undefined
   /**
    * Navigation and query only. How the page was arrived at. See `Arrival`.
    *
-   * ── The third signal collected and consulted by nothing ──────────────────
+   * ── ~~The third signal collected and consulted by nothing~~ ──────────────
    *
-   * **That count is the important part of this docblock**, and it is written
-   * before the case for the field rather than after it. `scrollFraction` and
-   * `exitType` are already here, landed and unread. A third is the point at
-   * which "collect now, decide later" stops being a step and becomes a policy,
-   * and a policy of collecting signals nothing reads is not a neutral one in a
-   * product whose whole argument is that it watches narrowly. The deferral is
-   * therefore given an expiry in `tests/reachability.test.ts`: either the
-   * offer-rate measurement `docs/research/intent-suggestion-quality.md` §10.5
-   * says does not exist gets built, and these three get judged against it, or
-   * the honest move is to delete the fields rather than keep filling them.
+   * **That count was the important part of this docblock**, and it was written
+   * before the case for the field rather than after it: `scrollFraction` and
+   * `exitType` were already here, landed and unread, and a third was the point
+   * at which "collect now, decide later" stops being a step and becomes a
+   * policy. **The count is zero as of 2026-08-20
+   * ([ADR-0018](../../../docs/adr/0018-the-everyday-shapes.md)), which is the
+   * branch of the expiry `tests/reachability.test.ts` wanted taken.** The other
+   * branch was to delete all three fields rather than keep filling them, and it
+   * is worth leaving on the record that it was a live option rather than a
+   * threat.
    *
    * ── Why it is worth having anyway ────────────────────────────────────────
    *
@@ -445,10 +465,10 @@ export interface AmbientObservation {
    * it is the closest thing available to `webNavigation.transitionType`, which
    * this product refuses on capability grounds and will keep refusing.
    *
-   * ── Why it is not read, which is a decision and not a to-do ──────────────
+   * ── How it is read, and the shape the old objection forced ───────────────
    *
-   * Three reasons, in the order they bind. The first is specific to this field
-   * and is the one that would bite:
+   * The first of the three reasons for deferring it is the one that would have
+   * bitten, and it is the reason the consumption has the shape it has:
    *
    *  1. **It is weakest exactly where `grounds.ts` most needs it.** The
    *     newsletter afternoon is the false positive that file spends its length
@@ -460,21 +480,30 @@ export interface AmbientObservation {
    *     value fires constantly in ordinary browsing besides: an omnibox search
    *     reaches the results page unreferred, so almost every session that
    *     contains a search also contains a `'no-referrer'` arrival.
-   *  2. **Consuming it moves the offer bar**, and ADR-0008 names the false
-   *     positive as the expensive failure. The standing decision recorded
-   *     beside `WINDOW_MS`, on `scrollFraction` and on `exitType` is to land
-   *     research without retuning.
-   *  3. **Nothing measures the offer rate** (§10.5), so there is no
-   *     before-and-after to judge a bar move by.
    *
-   * What it would feed, so the next person meets a choice rather than a blank:
-   * `returnedTo` in `grounds.ts`, whose own docblock already names the exact
-   * narrowing — *"count a return only when the person went to a DIFFERENT
+   * **So this is not an intent ground and cannot become one by itself.** It is
+   * read only where a return was ALREADY counted, to answer *from where?* —
+   * `returnedTo` in `grounds.ts`, through `ThreadPage.returnArrivals`. An
+   * arrival at a page seen once decides nothing at all, which
+   * `tests/detection.test.ts` holds for every one of the five values.
+   *
+   *  2. ~~Consuming it moves the offer bar~~ **and it did, in both directions
+   *     on purpose.** `came-back` narrowed; `compared-options` was added.
+   *     ADR-0018 argues the trade and its measurement section counts the
+   *     afternoons.
+   *  3. ~~Nothing measures the offer rate~~ (§10.5) — still true, and still
+   *     ADR-0018's *Revisit when*.
+   *
+   * What it feeds: `returnedTo` in `grounds.ts`, whose own docblock named the
+   * exact narrowing — *"count a return only when the person went to a DIFFERENT
    * origin in between"* — as the thing Adar, Teevan & Dumais's 612,000-user
-   * revisit study points at, and records that the product owner chose not to
-   * make it. A `'cross-origin'` arrival on a page already seen IS that
-   * narrowing, observed rather than inferred. Doing it would need `arrival`
-   * carried onto `ThreadPage`, which nothing does.
+   * revisit study points at, and recorded that the product owner chose not to
+   * make it. `'same-origin'` on a page already seen IS the click home that
+   * finding is about, observed rather than inferred. Doing it needed `arrival`
+   * carried onto `ThreadPage`, ~~which nothing does~~ **which `pagesOf` now does,
+   * as `returnArrivals` — the arrivals that constituted a RETURN, rather than
+   * every arrival, because the question is about coming back and not about
+   * getting there.**
    *
    * **Bounded at the door, not here.** `ambientSchema` is a `z.enum` over the
    * same five strings, so this layer cannot be handed a sixth. The domain reads
@@ -597,6 +626,9 @@ export interface WorkDetected {
 function pagesOf(observations: readonly AmbientObservation[]): ThreadPage[] {
   const dwell = engagedByUrl(observations)
   const visits = visitsByUrl(observations)
+  const returns = returnArrivalsByUrl(observations)
+  const scroll = scrollByUrl(observations)
+  const exits = exitByUrl(observations)
   const byUrl = new Map<string, ThreadPage>()
 
   for (const o of observations) {
@@ -617,8 +649,28 @@ function pagesOf(observations: readonly AmbientObservation[]): ThreadPage[] {
       // with it the `searched-and-followed` sentence — fire on checkout pages
       // and paginated listings. `searchQueryOf` is the domain's own test and
       // the extension cannot widen it.
-      searched: (existing?.searched ?? false) || (o.kind === 'query' && searchQueryOf(o.url) !== null),
+      searched:
+        (existing?.searched ?? false) || (o.kind === 'query' && searchQueryOf(o.url) !== null),
       visits: visits.get(o.url) ?? 0,
+      /**
+       * The three signals that were landed and read by nothing until
+       * 2026-08-20, projected per page.
+       *
+       * Each is spread conditionally rather than written as `?? undefined`,
+       * because `exactOptionalPropertyTypes` makes "the key is absent" and "the
+       * key is present holding undefined" different types — and because absent
+       * has a meaning here that a default would erase. No scroll means nobody
+       * reported one; no exit means they have not left the page; no return
+       * arrivals means it was seen once, or that whatever sent it classified
+       * nothing.
+       *
+       * ADR-0018 is the decision, `grounds.ts` is where each is consulted, and
+       * the promoted assertions in `tests/reachability.test.ts` are what stop
+       * this projection from quietly going back to dropping them.
+       */
+      ...(returns.get(o.url)?.length ? { returnArrivals: returns.get(o.url) } : {}),
+      ...(scroll.has(o.url) ? { scrollFraction: scroll.get(o.url) } : {}),
+      ...(exits.has(o.url) ? { exitType: exits.get(o.url) } : {}),
       /**
        * The most recent group title seen for this page, if any.
        *
@@ -680,6 +732,95 @@ function visitsByUrl(observations: readonly AmbientObservation[]): Map<string, n
     previous = observation.url
   }
 
+  return byUrl
+}
+
+/**
+ * How each RETURN to a page was arrived at, in time order.
+ *
+ * The same walk `visitsByUrl` makes and the same rule about what counts as an
+ * arrival, so the two cannot disagree about which reports are returns. What
+ * differs is which arrivals are collected: the FIRST arrival at a URL is not a
+ * return — it is how they got there — so it is skipped, and everything after it
+ * is one.
+ *
+ * ── Why this is not folded into `visitsByUrl` ────────────────────────────
+ *
+ * It was, in the first draft, and the two answers came back as one object with
+ * a tally and a list in it. `visitsByUrl` has a docblock arguing exactly one
+ * thing — a reload is not a return — and a function that returns two facts is a
+ * function whose docblock argues for one of them and is read as arguing for
+ * both. They are two folds over one walk, and they are cheap.
+ *
+ * ── An arrival that classified nothing is not counted ────────────────────
+ *
+ * `arrival` is optional at every layer. A return whose arrival is absent
+ * produces no entry here, which means `came-back` cannot fire on it. That is
+ * `came-back` under-firing, which `visitsByUrl` already says is the direction
+ * to be wrong in, and it is now under-firing for a second reason.
+ */
+function returnArrivalsByUrl(observations: readonly AmbientObservation[]): Map<string, Arrival[]> {
+  const byUrl = new Map<string, Arrival[]>()
+  const seen = new Set<string>()
+  const arrivals = observations.filter((o) => o.kind === 'navigation' || o.kind === 'query')
+  let previous: string | null = null
+
+  for (const observation of [...arrivals].sort((a, b) => a.at - b.at)) {
+    if (observation.url !== previous) {
+      if (seen.has(observation.url)) {
+        const list = byUrl.get(observation.url) ?? []
+        if (observation.arrival !== undefined) list.push(observation.arrival)
+        byUrl.set(observation.url, list)
+      }
+      seen.add(observation.url)
+    }
+    previous = observation.url
+  }
+
+  return byUrl
+}
+
+/**
+ * How far down each page anybody got, deepest report wins.
+ *
+ * Maximum rather than latest, for the reason `engagedByUrl` takes a maximum: a
+ * report is a snapshot of the deepest point reached so far, so a person who
+ * read to the bottom and scrolled back to the top must not be recorded as
+ * having read the top. `content.js` already keeps a running `deepest` for the
+ * life of one document; this keeps it across the several reports that document
+ * sends.
+ */
+function scrollByUrl(observations: readonly AmbientObservation[]): Map<string, number> {
+  const byUrl = new Map<string, number>()
+  for (const observation of observations) {
+    if (observation.scrollFraction === undefined) continue
+    byUrl.set(
+      observation.url,
+      Math.max(byUrl.get(observation.url) ?? 0, observation.scrollFraction),
+    )
+  }
+  return byUrl
+}
+
+/**
+ * How each page was left, latest report wins.
+ *
+ * Latest and not first, because Chrome fires `visibilitychange` and then
+ * `pagehide` on an ordinary same-tab navigation — so a page navigated away from
+ * reports `'hidden'` and then `'left-cached'`, and taking the first would
+ * record every page anybody navigated away from as merely hidden.
+ * `content.js`'s own note above `reportEngagement` describes that pair.
+ *
+ * Sorted by time rather than trusting insertion order, for the reason
+ * `visitsByUrl` sorts: a service worker that woke up late can deliver two
+ * sittings out of sequence.
+ */
+function exitByUrl(observations: readonly AmbientObservation[]): Map<string, ExitType> {
+  const byUrl = new Map<string, ExitType>()
+  for (const observation of [...observations].sort((a, b) => a.at - b.at)) {
+    if (observation.exitType === undefined) continue
+    byUrl.set(observation.url, observation.exitType)
+  }
   return byUrl
 }
 
@@ -966,9 +1107,7 @@ export function detectPause(
   // With no `away` on record, every engagement report still counts: nothing has
   // said the person left, and a page being read is a page being read.
   const away = wentAwayAt
-  const activity = recent.filter(
-    (o) => o.kind !== 'engagement' || away === null || o.at <= away,
-  )
+  const activity = recent.filter((o) => o.kind !== 'engagement' || away === null || o.at <= away)
   if (activity.length === 0) return null
 
   const last = activity.reduce((latest, o) => (o.at > latest.at ? o : latest), activity[0]!)

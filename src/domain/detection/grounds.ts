@@ -172,6 +172,41 @@
  * which is a cheaper bar, and `INVESTMENT_GROUNDS` says so in as many words
  * rather than leaving it to be noticed.
  *
+ * ── The fifth investment ground, and the ledger it crosses, 2026-08-20 ──
+ *
+ * `INVESTMENT_REQUIRED`'s block below names the shopping and rent-portal
+ * afternoons as *"the residual false positive of this design"*. The direction
+ * document of 2026-08-20 makes comparison one of the first five environments
+ * and gives it the flagship example — ten monitors, twenty minutes, *"Compare
+ * these monitors?"*. **The same afternoon is the failure case in one document
+ * and the demo in the other**, and
+ * [ADR-0018](../../../docs/adr/0018-the-everyday-shapes.md) is the decision to
+ * move it. `compared-options` is that ground, on its own axis, and it is worth
+ * stating starkly because the comfortable version — *"add support for
+ * shopping"* — hides the fact that something previously refused is now
+ * admitted.
+ *
+ * It arrives with the three signals this file had never read. `scrollFraction`,
+ * `exitType` and `arrival` had all landed on `AmbientObservation` and were
+ * consulted by nothing, with three deferrals in `tests/reachability.test.ts`
+ * asserting exactly that. All three are consumed here:
+ *
+ *   - **scroll and exit type meet as one conjunction**, `heldOpenUnread`, which
+ *     takes a page nobody scrolled that was switched away from out of
+ *     `read-deeply` and `read-around`. Neither refuses on its own and the block
+ *     on that function says why each would be wrong alone;
+ *   - **scroll again, as a real threshold**, in `compared-options` only, where
+ *     the question is whether a page was read far enough to have been weighed;
+ *   - **arrival narrows `came-back`**, which is the one that moves the bar the
+ *     other way. `returnedTo`'s block carried the finding and the predicate for
+ *     three days without acting on either; it acts now.
+ *
+ * **The two moves are deliberately in opposite directions and neither pays for
+ * the other automatically.** ADR-0018's measurement section counts the
+ * afternoons, and the standing fixture of an ordinary afternoon of reading is
+ * still refused, which is the only thing that would have made this change wrong
+ * whatever else improved.
+ *
  * ── No model runs here, ever ─────────────────────────────────────────────
  *
  * Same discipline as `ObservationKind`: `GroundKind` is closed and code-owned.
@@ -190,7 +225,7 @@
  */
 
 import { FAST_DETECT } from './detect'
-import type { WorkDetected } from './detect'
+import type { Arrival, WorkDetected } from './detect'
 import { searchQueryOf } from './topics'
 import type { ThreadPage } from './topics'
 
@@ -381,6 +416,63 @@ export const PAGES_ON_ONE_ORIGIN = 3
  */
 export const READ_AROUND_MS = 20_000 / SPEED
 
+/**
+ * Distinct origins carrying a page that was read, before it counts as comparing
+ * options. `compared-options`' breadth half.
+ *
+ * **A COUNT, so it is not divided by `SPEED`**, for the reason at the top of
+ * this block.
+ *
+ * **Why three, and it is the same argument `ORIGINS_FOR_OFFER` makes.** Two is
+ * the bar a thread already had to clear to exist — `ORIGINS_FOR_THREAD` — so
+ * two here would report the thread's own entry condition back as evidence for
+ * the thread. It is deliberately NOT imported from `ORIGINS_FOR_OFFER`, on the
+ * rule this file applies twice already: two judgements that happen to agree are
+ * not one judgement wearing two names, and if either moves the other has no
+ * reason to follow.
+ *
+ * **What that costs, said here rather than found later.** At three, an
+ * afternoon that fires `compared-options` has three origins and therefore fires
+ * `followed-across` too, so ONE buffer reaches two investment axes. That is not
+ * an accident of the arithmetic — it is the bar move ADR-0018 is, stated in its
+ * own words as *"there is now one more way to reach the first number"*. What
+ * keeps it affordable is everything else this ground asks for and
+ * `followed-across` does not: a page on each of those origins held past
+ * `READ_AROUND_MS` **and** scrolled past `COMPARISON_SCROLL_FRACTION`, plus a
+ * return that `arrival` observed as `'cross-origin'`. `followed-across` counts
+ * bare origins with no engagement of any kind behind them.
+ */
+export const COMPARED_ORIGINS = 3
+
+/**
+ * How far down one of those pages somebody got before it counts as one they
+ * could have compared.
+ *
+ * **Half the page, and it is deliberately NOT `ENGAGEMENT_SCROLL_FRACTION`.**
+ * That constant is 0.25 and it answers *"was a person there"* — the capture
+ * layer's question about whether an event is worth writing down. This one
+ * answers *"did they go through this"*, which is a stronger claim and the one
+ * `compared-options` makes: somebody weighing an option reads past the picture
+ * to the specification, and somebody skimming a link does not. Claypool et al.
+ * (IUI 2001) is the evidence that scroll depth carries anything at all; it is
+ * not evidence for any particular number, and this is a guess with a reason
+ * attached, exactly like every other number in this block.
+ *
+ * **A FRACTION, so `SPEED` does not touch it.** It is neither a duration nor a
+ * count, and shortening it under fast-detect would stop testing the rule.
+ *
+ * ── The false negative, stated because it is real ────────────────────────
+ *
+ * A page short enough to read without scrolling reports zero. `content.js` says
+ * so about itself — *"a short page read fully, or a long one read above the
+ * fold, involves no scrolling at all"* — and the SESSION path answered it by
+ * adding `interacted`, a field the ambient wire has no room for and which this
+ * change does not add one for. So a comparison conducted entirely on short
+ * pages does not fire this ground. A missed ground costs an offer nobody sees;
+ * ADR-0008 names which direction is the expensive one.
+ */
+export const COMPARISON_SCROLL_FRACTION = 0.5
+
 /** Distinct queries on the subject before it counts as refining rather than
  *  asking. The second query is the evidence: it says the first answer was read
  *  and found wanting. */
@@ -408,6 +500,62 @@ export const PAGES_AFTER_QUERY_FOR_OFFER = 2
 export const INTENT_GROUNDS = ['searched-then-read', 'refined-the-search', 'came-back'] as const
 
 /**
+ * The arrivals that count as coming BACK, rather than as never having left.
+ *
+ * ── This is the narrowing `returnedTo` wrote down and declined to make ───
+ *
+ * `Arrival` has five members and this list has three of them. The one that
+ * matters is the one that is absent: **`'same-origin'` is the 77%.** Adar,
+ * Teevan & Dumais measured 612,000 users' revisits and, in the sub-hour band a
+ * thirty-minute `WINDOW_MS` can see, 77.0% came from the same domain and 2.9%
+ * were reached by a search — so the commonest thing a fast return IS, in the
+ * largest published sample, is a click home from a spoke of the site somebody
+ * never left. `returnedTo`'s block spells that out and ends *"count a return
+ * only when the person went to a DIFFERENT origin in between"*. This is that
+ * predicate, and it is a field read rather than an inference because
+ * `content.js` classified the referrer where it was observed.
+ *
+ * `'reloaded'` is absent for a different reason and a plainer one: a reload is
+ * the same page, not a different origin. `visitsByUrl` already declines to
+ * count two navigations in a row to one URL, so this list mostly restates that
+ * — but restating it here means the two rules cannot drift into disagreeing.
+ *
+ * ── The two members that are weaker than `'cross-origin'`, kept anyway ───
+ *
+ * `'no-referrer'` and `'back-or-forward'` do not SAY the previous page was
+ * elsewhere; they say it was not classified as the same site. Keeping them is
+ * ADR-0018's own split — *"arrival distinguishes `same-origin` from
+ * `cross-origin`, `no-referrer` and `back-or-forward`"* — and the reason is
+ * that the Back button and a reopened tab are the two commonest ways anybody
+ * returns to anything, and Chrome tells a content script nothing about where
+ * either came from.
+ *
+ * The cost is exactly the one `tests/reachability.test.ts` warned about: a
+ * newsletter link with `Referrer-Policy: no-referrer` arrives as the member
+ * that reads like intent. `came-back` is one intent ground and one is required,
+ * so an afternoon of stripped-referrer reading still clears the intent half on
+ * a single reopened tab. That is unchanged from before this list existed —
+ * every return cleared it then. What changed is that hub-and-spoke no longer
+ * does. `COMPARISON_ARRIVAL` below is the stricter set, used where a ground is
+ * being ADDED rather than narrowed.
+ */
+export const RETURN_ARRIVALS = ['cross-origin', 'no-referrer', 'back-or-forward'] as const
+
+/**
+ * The one arrival that OBSERVES a different origin in between, rather than
+ * merely failing to observe the same one.
+ *
+ * `compared-options` lowers the bar and `RETURN_ARRIVALS` narrows one, so they
+ * are not allowed the same permissiveness. `tests/reachability.test.ts` said
+ * what would justify wiring `arrival` at all and named this member by itself:
+ * *"a use that survives point 1 — which `'cross-origin'` does and
+ * `'no-referrer'` does not, because a stripped referrer degrades toward the
+ * value that looks like intent rather than away from it."* A new ground built
+ * on the degrading value would be a bar move nobody could bound.
+ */
+export const COMPARISON_ARRIVAL = 'cross-origin'
+
+/**
  * Evidence enough was spent that carrying on is worth offering.
  *
  * ~~Depth, span and breadth. Three different accidents, so two of them together
@@ -432,12 +580,31 @@ export const INTENT_GROUNDS = ['searched-then-read', 'refined-the-search', 'came
  * ONE of the two grounds required. What it admits that could not qualify before
  * is written out in the header, with the real shopping buffer named rather than
  * left to be found.
+ *
+ * **Five as of 2026-08-20, and the fifth is `compared-options`
+ * ([ADR-0018](../../../docs/adr/0018-the-everyday-shapes.md)).** It is not a
+ * fifth accident either: it is the shape this file's own
+ * `INVESTMENT_REQUIRED` block names as a **residual false positive** — the
+ * shopping and rent-portal afternoons — moved onto the other side of the
+ * ledger, because the direction taken on 2026-08-20 makes comparison one of
+ * the first environments and gives it the flagship example. The same afternoon
+ * is the failure case in one document and the demo in the other, and this list
+ * is where that stops being both.
+ *
+ * **It is a cheaper bar and this list is not what keeps it affordable.**
+ * `COMPARED_ORIGINS` and `COMPARISON_SCROLL_FRACTION` are, and each argues its
+ * own price where it is declared. What this list must say is the thing a
+ * counter of members hides: `INVESTMENT_REQUIRED` did not move, and there is
+ * one more way to reach it. `INVESTMENT_AXES` below is where the arithmetic
+ * that reads this list actually lives, because a count of MEMBERS has been
+ * wrong about this group once already.
  */
 export const INVESTMENT_GROUNDS = [
   'read-deeply',
   'stayed-with-it',
   'followed-across',
   'read-around',
+  'compared-options',
 ] as const
 
 /**
@@ -470,6 +637,57 @@ export const INVESTMENT_GROUNDS = [
  * counter come out right would be the wrong half to give up.
  */
 export const BREADTH_AXIS = ['followed-across', 'read-around'] as const
+
+/**
+ * `compared-options` on its own, and the *on its own* is the decision.
+ *
+ * ── Why it is not a third member of `BREADTH_AXIS` ───────────────────────
+ *
+ * Because the fold above is `every`, and appending a third member to a rule
+ * that folds only when ALL of its members fire would have made the group weaker
+ * rather than stronger: `followed-across` plus `compared-options` with no
+ * `read-around` fires two of three, `every` is false, nothing folds, and the
+ * afternoon counts two investment grounds while nominally sitting on one axis.
+ * A ground that reaches two by being added to the axis meant to stop double
+ * counting is the worst available place to put it, and it would have looked
+ * like the careful choice.
+ *
+ * ── What sitting on its own axis DOES cost, stated ───────────────────────
+ *
+ * At `COMPARED_ORIGINS = 3` this ground cannot fire without `followed-across`
+ * firing too, so an afternoon that fires it reaches two axes off one buffer.
+ * That is the bar move, not a leak in the arithmetic — ADR-0018 says in as many
+ * words that `INVESTMENT_REQUIRED` stays at 2 and there is now one more way to
+ * reach it. It is written here as well as there because this constant is what
+ * somebody counting axes will read first.
+ */
+export const COMPARISON_AXIS = ['compared-options'] as const
+
+/**
+ * The investment grounds grouped by what they MEASURE, which is what
+ * sufficiency counts.
+ *
+ * ── Why a list of axes replaced a subtraction ────────────────────────────
+ *
+ * The rule used to be `investment.length` minus a correction when both ends of
+ * `BREADTH_AXIS` fired. That is the same answer for four grounds and it is a
+ * shape that only stays correct while there is exactly one axis with more than
+ * one member on it — a second correction term would have had to be remembered,
+ * and the failure would have been silent and in the permissive direction, which
+ * is the one ADR-0008 calls expensive. Counting axes with at least one ground
+ * fired is the rule the subtraction was approximating.
+ *
+ * Every investment ground is on exactly one axis. That is asserted in
+ * `tests/grounds.test.ts` rather than promised here, because a ground added to
+ * `INVESTMENT_GROUNDS` and forgotten here would silently stop being able to
+ * count toward sufficiency at all.
+ */
+export const INVESTMENT_AXES = [
+  ['read-deeply'],
+  ['stayed-with-it'],
+  BREADTH_AXIS,
+  COMPARISON_AXIS,
+] as const
 
 /**
  * Closed, code-owned, never model output — the same discipline as
@@ -539,6 +757,31 @@ export const INTENT_REQUIRED = 1
  * seconds on each of those pages. It is a real cost of a change the product
  * owner asked for, in the direction ADR-0009's revisit list already names, and
  * it is pinned in `grounds.test.ts` rather than left to be met in use.
+ *
+ * ── A third, 2026-08-20, and it is the point of the change rather than a
+ *    cost of it ──────────────────────────────────────────────────────────
+ *
+ * **The count did not move and this constant is unchanged. What moved is the
+ * number of ways to reach it**, which the paragraph above calls, about a
+ * different change, *"the closest thing available to lowering
+ * `INVESTMENT_REQUIRED` itself"*. `compared-options` is that, taken on purpose:
+ * several pages read across several sites with a return from off-site now
+ * reaches two axes in about ten minutes with nothing held for a minute and
+ * nothing spanning a quarter of an hour.
+ *
+ * **The residual false positive that opens is one shape, and it is a real
+ * afternoon.** Three news sites covering one story, each read past halfway,
+ * with a link from one to another and back. Nothing here can tell that from
+ * three retailers, because telling them apart is what a model would be for and
+ * no model runs in this path — the same sentence `read-around` had to write
+ * about a bank portal. It is pinned in `grounds.test.ts`, on the standing
+ * newsletter fixture with its scroll raised, rather than left to be met in use.
+ *
+ * **What was taken back in the same change**, so this block is not a list of
+ * things getting cheaper: `came-back` stopped firing on a click home from a
+ * spoke of one site, which is 77% of sub-hour revisits in the largest published
+ * sample. See `returnedTo`. The afternoons that stopped qualifying are counted
+ * in ADR-0018 beside the ones that started.
  */
 export const INVESTMENT_REQUIRED = 2
 
@@ -570,6 +813,53 @@ function minutes(ms: number): string {
 /** The hostname, as a person would say it. */
 function hostOf(origin: string): string {
   return origin.replace(/^https?:\/\//, '').replace(/\/$/, '')
+}
+
+/**
+ * A page nobody read, however long it was in front of them.
+ *
+ * ── The conjunction is the whole design, 2026-08-20 ──────────────────────
+ *
+ * `scrollFraction` and `exitType` landed on the ambient path on 2026-08-17 and
+ * were consulted by nothing until now. ADR-0018 sends both into `readAround`
+ * and `read-deeply`, and this is the shape they arrive in: a VETO on dwell,
+ * never a second floor beside it. Neither field refuses anything on its own,
+ * and that is not caution — each is wrong on its own, in a way the other one
+ * corrects:
+ *
+ *   - **Scroll alone is the bug `content.js` already fixed once.** Its own
+ *     note: *"a short page read fully, or a long one read above the fold,
+ *     involves no scrolling at all"*. `deepest` starts at zero and stays there,
+ *     so a scroll floor refuses a page somebody read every word of. The session
+ *     path answered that by adding `interacted`; the ambient wire has no field
+ *     for it and this change does not add one.
+ *   - **Exit type alone refuses the page they are reading right now.** A page
+ *     not yet left reports no exit at all, and that is the strongest evidence
+ *     in the buffer, not the weakest.
+ *
+ * Together they name one thing and it is a thing a person recognises: **a tab
+ * that was opened, never touched, and switched away from.** `'hidden'` means
+ * the document is still alive and they went to another tab; zero scroll means
+ * no scroll, click, key or wheel event ever moved the counter. Twenty minutes
+ * of that is twenty minutes of a page being in the room.
+ *
+ * ── What this does NOT catch, said before somebody finds it ──────────────
+ *
+ * A skimmed page IS scrolled — twelve newsletter links at forty-five seconds
+ * each scroll like anything else — so this refuses none of them. The thing that
+ * refuses that afternoon is still `BREADTH_AXIS` and `SUSTAINED_MS`, exactly as
+ * `READ_AROUND_MS` says. And a page left by navigating onward reports
+ * `'left-cached'` whether it was read or abandoned, so the veto has nothing to
+ * say about it.
+ */
+function heldOpenUnread(page: ThreadPage): boolean {
+  return page.scrollFraction === 0 && page.exitType === 'hidden'
+}
+
+/** Held past a floor, and not merely open. The one place the two new signals
+ *  meet a duration. */
+function wasRead(page: ThreadPage, floorMs: number): boolean {
+  return page.engagedMs >= floorMs && !heldOpenUnread(page)
 }
 
 /**
@@ -644,8 +934,7 @@ function pursuitOf(
     after === null
       ? 0
       : pages.filter(
-          (page) =>
-            searchQueryOf(page.url) === null && page.at > after && page.engagedMs > 0,
+          (page) => searchQueryOf(page.url) === null && page.at > after && page.engagedMs > 0,
         ).length
 
   return { queries, readAfterQuery }
@@ -681,14 +970,18 @@ function pursuitOf(
  * already excludes reloads, and it does NOT exclude same-domain returns, which
  * is precisely the 77%.
  *
- * **Nothing here changes, deliberately.** The product owner's decision on
+ * ~~**Nothing here changes, deliberately.** The product owner's decision on
  * 2026-08-17 was to record the research as an honest limit and retune nothing,
  * so no constant moved, no predicate narrowed, and the same sessions qualify
  * today as qualified yesterday. This block is the finding, sitting where the
- * next person to touch this ground will read it.
+ * next person to touch this ground will read it.~~
  *
- * **What acting on it would look like, so it is a decision rather than a
- * rediscovery.** The narrowing the research points at is one predicate — count
+ * ~~**What acting on it would look like, so it is a decision rather than a
+ * rediscovery.**~~ **Acted on 2026-08-20, [ADR-0018](../../../docs/adr/0018-the-everyday-shapes.md),
+ * and the paragraph below is what it said the change would be. It is left
+ * standing rather than rewritten, because the predicate that landed is word for
+ * word the one it named and the costs it lists are the costs that were paid.**
+ * The narrowing the research points at is one predicate — count
  * a return only when the person went to a DIFFERENT origin in between — and it
  * is a behaviour change with an ADR-shaped cost on both sides. It would refuse
  * the shopping and rent-portal shapes `INVESTMENT_REQUIRED`'s block already
@@ -700,10 +993,45 @@ function pursuitOf(
  * thing `SUSTAINED_MS`'s comment says about lowering a span. Two of the three
  * grounds already require a search; making the third require one too would
  * leave the group measuring one thing under three names.
+ *
+ * ── What changed, and what made it affordable ────────────────────────────
+ *
+ * `arrival` is what made it affordable. On 2026-08-17 the buffer held a tally
+ * of returns and nothing about where each came from, so telling a click home
+ * from a spoke apart from a real return would have been an inference over the
+ * page order. `ThreadPage.returnArrivals` is a field read: `content.js`
+ * classified `document.referrer` where it was observed, the classification
+ * crossed the wire, and `'same-origin'` says outright that they never left the
+ * site. `RETURN_ARRIVALS` is the set that survives and argues its own members.
+ *
+ * **The shopping shape this refuses is no longer refused overall**, which is
+ * the half of the trade that is easy to lose: `compared-options` was added in
+ * the same change and admits comparison across sites deliberately. What this
+ * predicate takes away is comparison-shaped browsing on ONE site — three pages
+ * of a rent portal reached from its own menu, with a click back — and that is
+ * the shape the 77% figure is about.
+ *
+ * **And it takes the arXiv reader with it, exactly as written above.** Three
+ * abstracts on one host with a link back to the first arrives `'same-origin'`
+ * and fires nothing. If that person also searched, `searched-then-read` covers
+ * them; if they did not, they now need one of the other two intent grounds and
+ * have neither. That is a real refusal of real research, taken knowingly,
+ * because the same commit hands the intent half back to anyone whose reading
+ * crossed a site boundary.
  */
 function returnedTo(pages: readonly ThreadPage[]): ThreadPage | null {
-  const returns = [...pages].filter((page) => page.visits >= 2).sort((a, b) => b.visits - a.visits)
+  const returns = [...pages]
+    .filter((page) => page.visits >= 2 && cameFromElsewhere(page.returnArrivals))
+    .sort((a, b) => b.visits - a.visits)
   return returns[0] ?? null
+}
+
+/** At least one of these returns was arrived at from somewhere that is not this
+ *  site. Absent arrivals answer no, which is `came-back` under-firing — see
+ *  `ThreadPage.returnArrivals`. */
+function cameFromElsewhere(arrivals: readonly Arrival[] | undefined): boolean {
+  if (arrivals === undefined) return false
+  return arrivals.some((arrival) => (RETURN_ARRIVALS as readonly Arrival[]).includes(arrival))
 }
 
 /**
@@ -722,12 +1050,18 @@ function returnedTo(pages: readonly ThreadPage[]): ThreadPage | null {
  * ~~`page.engagedMs <= 0`.~~ **A real floor as of 2026-08-17.** Nonzero was
  * borrowed from `pursuitOf` and, on a path with no upstream dwell threshold, it
  * meant "was visible", not "was read" — three seconds a tab cleared it.
+ *
+ * **A third exclusion as of 2026-08-20: a page held open and never touched.**
+ * `wasRead` is the floor now, and it is the floor plus a veto — see its own
+ * block, which argues why neither new signal is allowed to refuse alone. The
+ * sentence this ground says is *"You read N pages on X"*, and a parked tab is
+ * the plainest available counter-example to it.
  */
 function readAround(pages: readonly ThreadPage[]): { origin: string; pages: number } | null {
   const byOrigin = new Map<string, Set<string>>()
 
   for (const page of pages) {
-    if (page.engagedMs < READ_AROUND_MS) continue
+    if (!wasRead(page, READ_AROUND_MS)) continue
     if (searchQueryOf(page.url) !== null) continue
     const urls = byOrigin.get(page.origin) ?? new Set<string>()
     urls.add(page.url)
@@ -752,11 +1086,94 @@ function readAround(pages: readonly ThreadPage[]): { origin: string; pages: numb
   return best === null ? null : { origin: best, pages: bestPages }
 }
 
-/** Longest single page read in the thread. */
+/**
+ * Longest single page READ in the thread.
+ *
+ * **The word doing the work is "read", as of 2026-08-20.** This used to be the
+ * longest page by dwell, full stop, which made `read-deeply` — *"You spent N
+ * minutes on a single page"* — sayable about a tab that sat in the foreground
+ * while somebody took a phone call and then switched away from it. The veto is
+ * `heldOpenUnread` and it is a conjunction of two signals, neither of which is
+ * allowed to refuse on its own; that argument is on `heldOpenUnread` itself.
+ *
+ * Zero when every page in the thread was parked, which is the honest answer and
+ * is also what an empty thread returns. `read-deeply` compares against
+ * `DEEP_READ_MS` and both cases fail it.
+ */
 function deepestRead(pages: readonly ThreadPage[]): number {
   let deepest = 0
-  for (const page of pages) deepest = Math.max(deepest, page.engagedMs)
+  for (const page of pages) {
+    if (heldOpenUnread(page)) continue
+    deepest = Math.max(deepest, page.engagedMs)
+  }
   return deepest
+}
+
+/**
+ * The options they were weighing against each other, if they were.
+ *
+ * ── Behaviour, never a domain, and that is the whole refusal ─────────────
+ *
+ * ADR-0018 rejects a `shopping` detector and a `trip` detector by name, because
+ * two domain-shaped detectors would be the first domain-specialised code in a
+ * pipeline `docs/MVP.md` keeps deliberately domain-neutral. Nothing below knows
+ * what a monitor is. It knows that several pages about one subject, on several
+ * different sites, were each read properly, and that somebody came back to one
+ * of them from off-site. Monitors, hotels, insurance plans and apartments all
+ * produce that; so does choosing between three papers, and this file could not
+ * tell those apart if it wanted to.
+ *
+ * ── The four conditions, and which one each is load-bearing against ──────
+ *
+ *  1. **Not a search.** Same exclusion `readAround` makes and the same reason:
+ *     counting result pages would make one act of intent pay twice, and would
+ *     name a search engine as one of the sites being compared.
+ *  2. **`wasRead(page, READ_AROUND_MS)`.** Held, and not a parked tab. A burst
+ *     of tabs opened from a results page is the accident every investment
+ *     ground exists to keep out of an offer.
+ *  3. **`scrollFraction >= COMPARISON_SCROLL_FRACTION`.** The condition that
+ *     separates this from an afternoon of skimming links across three sites,
+ *     which is the standing false-positive fixture and clears conditions 1, 2
+ *     and — with a reopened tab — 4. Absent scroll fails it: a sender that
+ *     reports none cannot fire this ground, which is the cheap direction.
+ *  4. **A return that `arrival` observed as `'cross-origin'`.** The strict
+ *     member, not `RETURN_ARRIVALS` — see `COMPARISON_ARRIVAL`. It must be on
+ *     one of the compared pages, because coming back to one of the things you
+ *     are weighing is the behaviour, and coming back to the search results is
+ *     not.
+ *
+ * ── What it still cannot tell apart, stated ──────────────────────────────
+ *
+ * Somebody comparing three job postings, three flats, three papers and three
+ * insurance quotes look identical here, which is the point. So do three news
+ * sites covering one story, if each was read past halfway and one was returned
+ * to from another. That last one is the residual false positive of this ground
+ * and it is a real afternoon, not a contrived one. It is accepted for
+ * ADR-0018's stated reason — comparison is a first-class environment now — and
+ * pinned in `tests/grounds.test.ts` rather than left to be met in use.
+ */
+function comparedOptions(pages: readonly ThreadPage[]): { origins: number; pages: number } | null {
+  const compared: ThreadPage[] = []
+
+  for (const page of pages) {
+    if (!wasRead(page, READ_AROUND_MS)) continue
+    if (searchQueryOf(page.url) !== null) continue
+    if (page.scrollFraction === undefined) continue
+    if (page.scrollFraction < COMPARISON_SCROLL_FRACTION) continue
+    compared.push(page)
+  }
+
+  // Distinct URLs, for the reason `readAround` counts distinct URLs: `groundsFor`
+  // is exported and counts whatever it is handed, and a sentence claiming five
+  // pages must not be satisfiable by one page reported five times.
+  const urls = new Set(compared.map((page) => page.url))
+  const origins = new Set(compared.map((page) => page.origin))
+  if (origins.size < COMPARED_ORIGINS) return null
+
+  const returned = compared.some((page) => (page.returnArrivals ?? []).includes(COMPARISON_ARRIVAL))
+  if (!returned) return null
+
+  return { origins: origins.size, pages: urls.size }
 }
 
 /**
@@ -787,6 +1204,7 @@ export function groundsFor(detected: WorkDetected, pages: readonly ThreadPage[])
   const span = spanOf(pages)
   const origins = new Set(pages.map((page) => page.origin)).size
   const around = readAround(pages)
+  const compared = comparedOptions(pages)
 
   const kinds: GroundKind[] = []
   const sentences: string[] = []
@@ -830,17 +1248,27 @@ export function groundsFor(detected: WorkDetected, pages: readonly ThreadPage[])
     fired('read-around', `You read ${around.pages} pages on ${hostOf(around.origin)}.`)
   }
 
-  const intent = kinds.filter((kind) => (INTENT_GROUNDS as readonly GroundKind[]).includes(kind))
-  const investment = kinds.filter((kind) =>
-    (INVESTMENT_GROUNDS as readonly GroundKind[]).includes(kind),
-  )
+  // Last of all, because it is the narrowest claim in the block and the newest.
+  // A person reading their way down these sentences meets depth, then span,
+  // then breadth, then depth on one site, and only then the one that says they
+  // were weighing several things against each other.
+  if (compared !== null) {
+    fired(
+      'compared-options',
+      `You read ${compared.pages} pages across ${compared.origins} sites and went back to one of them.`,
+    )
+  }
 
-  // Counted by AXIS, not by ground. `followed-across` and `read-around` are the
-  // two ends of one axis and count once between them — `BREADTH_AXIS` argues it
-  // and names what counting them twice admitted. Both stay in `kinds` and both
-  // still say their sentence; only this number folds.
-  const bothEnds = BREADTH_AXIS.every((kind) => kinds.includes(kind))
-  const axes = investment.length - (bothEnds ? BREADTH_AXIS.length - 1 : 0)
+  const intent = kinds.filter((kind) => (INTENT_GROUNDS as readonly GroundKind[]).includes(kind))
+
+  // Counted by AXIS, not by ground. `INVESTMENT_AXES` is the grouping and it
+  // argues itself; what matters here is that a ground firing twice on one axis
+  // buys one, and that every ground still stays in `kinds` and still says its
+  // sentence. Only this number folds — suppressing a true sentence to make a
+  // counter come out right would be the wrong half to give up.
+  const axes = INVESTMENT_AXES.filter((axis) =>
+    (axis as readonly GroundKind[]).some((kind) => kinds.includes(kind)),
+  ).length
 
   const last = sentences.length - 1
   if (last >= 0 && UNDER_TEST !== '') sentences[last] = `${sentences[last] ?? ''}${UNDER_TEST}`
