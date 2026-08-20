@@ -245,6 +245,73 @@ export interface IntentionStateFacts {
 }
 
 /**
+ * Everything `workSoFar()` folds, as rows. One Intention.
+ *
+ * Deliberately not a `WorkSoFarFacts` — that type lives in `src/domain`, is
+ * epoch milliseconds and counts, and the domain may not learn that Prisma
+ * exists. This is the row-shaped half, exactly as `IntentionStateFacts` is for
+ * the front door, and the conversion happens once in `src/server/work-so-far.ts`.
+ *
+ * **Every field here is a row a person wrote, approved, accepted or rejected.**
+ * That is not decoration: it is the property [ADR-0017] rests on, and the way it
+ * is held is that there is nothing to add here that a model could have written.
+ * The one row that comes close is `DecisionNeeded`, whose `question` a worker
+ * model wrote — only the COUNT of them crosses this boundary, and the questions
+ * stay on the re-entry note with the run and the evidence that produced them.
+ */
+export interface WorkSoFarRows {
+  readonly intentionId: string
+  /** Never null: an Intention with no Project has no screen to sit on. */
+  readonly projectId: string
+  /** The Intention's own words. Human-ratified, and the source of the
+   *  agreement screen's pre-fill when this work is being picked back up. */
+  readonly objective: string
+  readonly definitionOfDone: string
+  /**
+   * `Intention.updatedAt` — when a person last wrote or corrected those words.
+   *
+   * Carried because the agreement screen owes a reader the DATE whenever it
+   * pre-fills from something written before this sitting existed. ADR-0011
+   * calls *on screen wherever it is used* the softest part of its own argument,
+   * and a pre-fill with no date is precisely the failure its ruling described.
+   */
+  readonly wordsWrittenAt: Date
+  /** One entry per WorkSession on this Intention: when a human ended it, or
+   *  null while it is still open. Only a human act ends a sitting. */
+  readonly sittingsEndedAt: readonly (Date | null)[]
+  /** ApprovedSources on this Intention's Project that Chrome still grants. A
+   *  withdrawn one is not something Propositum can see. */
+  readonly approvedSources: number
+  readonly documents: number
+  /** Every ShiftOutcome under this Intention, with the OutcomeVerdict a person
+   *  wrote against it — or null while it is undecided. */
+  readonly produced: ReadonlyArray<{
+    readonly kind: string
+    readonly reversibility: string
+    readonly verdict: string | null
+  }>
+  /** One entry per ProposedChange under this Intention: the ChangeVerdict a
+   *  person wrote, or null while it is undecided. */
+  readonly changeVerdicts: readonly (string | null)[]
+  /**
+   * `DecisionNeeded` rows raised under this Intention — all of which are open,
+   * because nothing in the schema can close one.
+   *
+   * **This is where this reader and `factsForEveryProject` deliberately
+   * disagree.** `IntentionStateFacts.openDecisions` is always zero and its
+   * docblock argues why at length: a count that can only go up, ranked above
+   * every other member, pins *Needs you* onto a Project permanently. Nothing
+   * here ranks anything. It is one sentence in a paragraph a person reads once
+   * before starting, and *a question was raised and nothing has closed it* is
+   * simply true.
+   */
+  readonly openQuestions: number
+  /** The newest ended AgentRun under this Intention. Null when Propositum has
+   *  never held this work; a run still going is not reported. */
+  readonly lastStop: { readonly status: string; readonly terminalReason: string | null } | null
+}
+
+/**
  * The Intention: durable, mutable, and written only because a person said so.
  *
  * ── Narrower than `ProjectRepository`, on purpose ────────────────────────
@@ -337,6 +404,34 @@ export interface IntentionRepository {
    * screen renders it as *nothing stated yet*, which `statusWordFor` owns.
    */
   factsForProject(projectId: string): Promise<IntentionStateFacts | null>
+  /**
+   * Everything already done under one Intention, for `workSoFar()` to fold.
+   *
+   * ── Why this is not a wider `factsForProject` ────────────────────────────
+   *
+   * Because the two are read on different routes at different costs.
+   * `factsForEveryProject` runs on Home for every Project at once and its own
+   * docblock spends a paragraph on why it must stay flat in N. This reads a
+   * season of work for ONE Intention — every ProposedChange verdict under it,
+   * every ShiftOutcome — on two screens a person reaches deliberately. Widening
+   * the front door's reader to carry it would put that cost on the route whose
+   * entire content is a list of names.
+   *
+   * ── Scoped by Intention, not by Project ──────────────────────────────────
+   *
+   * Which is currently the same set, because `Intention.projectId` is `@unique`
+   * — but the scoping is the one that survives a second Intention per Project,
+   * and taking a projectId here would be a reader that quietly answers the
+   * wrong question on the day that lands. ADR-0017 says the same thing about
+   * `WorkSoFar` itself.
+   *
+   * Null when there is no such Intention. That is not an error and it is the
+   * ordinary case on every Project created before ADR-0011 and on every
+   * degraded acceptance since — nothing was composed, so nothing was on screen
+   * to ratify, so no row exists. The screens render nothing rather than a
+   * sentence saying there is nothing.
+   */
+  workSoFarFacts(intentionId: string): Promise<WorkSoFarRows | null>
 }
 
 function intentionRepository(prisma: PrismaClient): IntentionRepository {
@@ -359,6 +454,112 @@ function intentionRepository(prisma: PrismaClient): IntentionRepository {
     factsForEveryProject: () => factsWhere({ projectId: { not: null } }),
 
     factsForProject: async (projectId) => (await factsWhere({ projectId }))[0] ?? null,
+
+    workSoFarFacts: async (intentionId) => {
+      /**
+       * One nested read, plus one small ordered read for where it stopped.
+       *
+       * The second query exists because *the newest ended run under this
+       * Intention* cannot be expressed inside the nesting: `orderBy` and `take`
+       * on a nested relation are per-parent, so a nested version would have to
+       * load every run under every contract and pick the maximum in TypeScript.
+       * That is unbounded in the length of the season, on a screen whose whole
+       * job is to be read by somebody who has had a long one. A `findFirst`
+       * ordered on `endedAt` is one row.
+       *
+       * Both are reads. Nothing on this path writes anything, and nothing here
+       * decides anything — `WorkSoFar` may inform a person and may not inform a
+       * decision, which is a property of where it is CONSUMED and is stated at
+       * the fold, but it starts by there being nothing to write.
+       */
+      const row = await prisma.intention.findUnique({
+        where: { id: intentionId },
+        select: {
+          id: true,
+          projectId: true,
+          objective: true,
+          definitionOfDone: true,
+          updatedAt: true,
+          sessions: { select: { endedAt: true } },
+          project: {
+            select: {
+              // Granted only. A withdrawn source is not something Propositum
+              // can see, and counting it would promise a reader access Chrome
+              // has already taken away.
+              sources: { where: { grantState: 'granted' }, select: { id: true } },
+              documents: { select: { id: true } },
+            },
+          },
+          contracts: {
+            where: { status: 'accepted', acceptedAt: { not: null } },
+            select: {
+              runs: {
+                select: {
+                  outcomes: {
+                    select: {
+                      kind: true,
+                      reversibility: true,
+                      verdict: { select: { verdict: true } },
+                    },
+                  },
+                },
+              },
+              changesets: {
+                select: { changes: { select: { verdict: { select: { verdict: true } } } } },
+              },
+              report: { select: { decisions: { select: { id: true } } } },
+            },
+          },
+        },
+      })
+
+      // A Project is what both screens that read this are showing. An Intention
+      // with none is legal in the schema and has nowhere to render.
+      if (row === null || row.projectId === null) return null
+
+      const produced: Array<{ kind: string; reversibility: string; verdict: string | null }> = []
+      const changeVerdicts: Array<string | null> = []
+      let openQuestions = 0
+
+      for (const contract of row.contracts) {
+        for (const run of contract.runs) {
+          for (const outcome of run.outcomes) {
+            produced.push({
+              kind: outcome.kind,
+              reversibility: outcome.reversibility,
+              verdict: outcome.verdict?.verdict ?? null,
+            })
+          }
+        }
+        for (const changeset of contract.changesets) {
+          for (const change of changeset.changes) {
+            changeVerdicts.push(change.verdict?.verdict ?? null)
+          }
+        }
+        openQuestions += contract.report === null ? 0 : contract.report.decisions.length
+      }
+
+      const lastStop = await prisma.agentRun.findFirst({
+        where: { contract: { intentionId }, endedAt: { not: null } },
+        orderBy: { endedAt: 'desc' },
+        select: { status: true, terminalReason: true },
+      })
+
+      return {
+        intentionId: row.id,
+        projectId: row.projectId,
+        objective: row.objective,
+        definitionOfDone: row.definitionOfDone,
+        wordsWrittenAt: row.updatedAt,
+        sittingsEndedAt: row.sessions.map((sitting) => sitting.endedAt),
+        approvedSources: row.project?.sources.length ?? 0,
+        documents: row.project?.documents.length ?? 0,
+        produced,
+        changeVerdicts,
+        openQuestions,
+        lastStop,
+      }
+    },
   }
 
   /**

@@ -82,7 +82,7 @@ two are new: one has data and no reader, and one is not being built.
 
 | Layer | Status | Owned today by |
 |---|---|---|
-| Intention Graph | **partial** — one flat table, no graph; ~~`intentionState()` computed and unrendered~~ *re-marked 2026-08-16:* the lifecycle word is on the front door | `Intention` in `prisma/schema.prisma`, `src/domain/intention/state.ts` ([ADR-0011](./adr/0011-intention-above-worksession.md)), `src/server/front-door.ts`, `src/app/page.tsx` |
+| Intention Graph | **partial** — one flat table, no graph; ~~`intentionState()` computed and unrendered~~ *re-marked 2026-08-16:* the lifecycle word is on the front door; *re-marked 2026-08-20:* and what happened under an Intention is on two screens before the click | `Intention` in `prisma/schema.prisma`, `src/domain/intention/state.ts` ([ADR-0011](./adr/0011-intention-above-worksession.md)), `src/domain/intention/work-so-far.ts` ([ADR-0017](./adr/0017-continuing-an-intention.md)), `src/server/front-door.ts`, `src/server/work-so-far.ts`, `src/app/page.tsx` |
 | State Ingestion | **partial** — one sensor, browser only | `ledger-writer.ts`, the MV3 extension |
 | State Reconciler | **partial** — `matchProject` only | `src/domain/detection/match-project.ts` |
 | Progress Reasoner | **partial** — offer grounds, no ranking | `src/domain/detection/grounds.ts` |
@@ -130,8 +130,28 @@ model-inferred, still cold every time. Two nullable foreign keys attach work to 
 keeps working with no backfill. **At most one Intention per Project**, for now. Scope for that slice
 is [`MVP.md`](./MVP.md), which marks it *not yet built at the time of writing* in its own voice.
 
+**Re-marked again 2026-08-20, in the wave that built `WorkSoFar`
+([ADR-0017](./adr/0017-continuing-an-intention.md)) — which is what the *Self-correcting* note asks
+for, and what the paragraph at the top of this file said the ADRs themselves had not earned.** What
+landed is a **computed view and no schema at all**: `git diff --stat prisma/schema.prisma` is empty
+for that change, deliberately, because a stored version of *what has already happened under this
+Intention* is the thing ADR-0011 forbids and *computed* is therefore the property that makes it
+legal rather than a preference about where state lives. `src/domain/intention/work-so-far.ts` folds
+it from rows a person wrote, approved, accepted or rejected; `src/persistence/repositories/index.ts`
+gathers the rows; `src/server/work-so-far.ts` converts them once for every reader; and it renders on
+the accept screen **before the click that starts the sitting** and on the project screen. It also
+chooses which words the agreement screen pre-fills, and `ContractDrafted` now carries **when those
+words were written** — the one thing `CONTEXT.md`'s `IntentionState` entry still listed as owed.
+
+**What that does NOT move the marker for.** There is still no graph and still one Intention per
+Project, which are the two things *partial* names, so the cell above says *partial* still. This is
+the layer's third re-marking and none of the three has been about the word that qualifies it.
+
 **Not authorised either, and not on the way.** Subgoals, dependencies, artifacts, people and decisions
 as nodes. More than one Intention per Project. Any edge that is not one of those two foreign keys.
+`WorkSoFar` reaching `compilePolicy`, the gate, or a prompt — it **may inform a person and may not
+inform a decision**, the same posture a `BusyInterval` has under
+[ADR-0014](./adr/0014-reading-free-busy.md), and `tests/work-so-far-scope.test.ts` is the guard.
 
 **The word *graph* is aspirational here and is kept only so this document and the direction it came
 from can be read side by side.** Two nullable foreign keys pointing at one row are a table, which is

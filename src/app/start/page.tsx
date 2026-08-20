@@ -68,6 +68,7 @@ import { redirect } from 'next/navigation'
 
 import { Sheet, Masthead, Section, Button } from '@/ui/primitives'
 import { Grounds, OfferBody, OFFER_CSS, SiteChoices } from '@/ui/offer'
+import { WhereYouLeftOff } from '@/ui/work-so-far'
 import { acceptWorkOffer, offerForThread } from '@/server/actions'
 import { captureStore } from '@/server/capture-store'
 
@@ -279,6 +280,25 @@ export default async function StartPage({
                 {backOn.overlap} {backOn.overlap === 1 ? 'word' : 'words'} in common
               </p>
             </div>
+
+            {/*
+              What happened last time, BEFORE the click that starts the sitting.
+
+              The counts above answer "is this the right project" and are the
+              filing decision's own evidence. This answers "what did I decide
+              last time", which is a different question and the one ADR-0017
+              exists for: what carries forward was already carried, and it was
+              counted rather than said.
+
+              Its position is load-bearing rather than aesthetic. CONTEXT.md's
+              ruling on cross-session continuity forbids an objective inherited
+              QUIETLY, *because nothing on screen would say it had been* — and a
+              person seeing what is being carried at the moment it would be
+              carried is the answer to that word. Moving this below the button,
+              or onto the screen after it, leaves the code correct and the
+              argument gone.
+            */}
+            <WhereYouLeftOff view={backOn.workSoFar} />
           </>
         )}
 

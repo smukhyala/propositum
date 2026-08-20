@@ -40,6 +40,7 @@ import type { Database } from '../src/persistence/client'
 import { createRepositories } from '../src/persistence/repositories/index'
 import type { IntentionStateFacts, Repositories } from '../src/persistence/repositories/index'
 import { intentionState } from '../src/domain/intention/state'
+import { workSoFar } from '../src/domain/intention/work-so-far'
 
 let dir: string
 let url: string
@@ -78,6 +79,8 @@ function wordFor(facts: IntentionStateFacts): string {
 /** A project with an Intention, a sitting, and an accepted contract on it. */
 async function shiftOn(name: string): Promise<{
   projectId: string
+  intentionId: string
+  sessionId: string
   contractId: string
   runId: string
   baseVersionId: string
@@ -120,6 +123,8 @@ async function shiftOn(name: string): Promise<{
 
   return {
     projectId: project.id,
+    intentionId: intention.id,
+    sessionId: session.id,
     contractId: contract.id,
     runId: run.id,
     baseVersionId: document.versionId,
@@ -505,5 +510,155 @@ describe('the front door does not get slower as Propositum identifies things', (
     } finally {
       await logged.$disconnect()
     }
+  })
+})
+
+/**
+ * `intentions.workSoFarFacts()` — the rows behind *Where you left off*.
+ *
+ * ── Why this is a second reader and not a widening of the first ──────────
+ *
+ * `factsForEveryProject` answers one question for N projects on the most-hit
+ * route in the product, and its own docblock spends a paragraph on why it may
+ * not fan out. This one answers a different question for ONE Intention, on two
+ * screens a person reaches deliberately, and it reads rows the front door has no
+ * business loading — every ProposedChange verdict under a season of work, for
+ * instance. Folding it into the front door's reader would put that cost on Home.
+ *
+ * ── The one field where the two readers disagree, on purpose ─────────────
+ *
+ * `openQuestions` here is a real count; `IntentionStateFacts.openDecisions` is
+ * always zero. Nothing in the schema can close a `DecisionNeeded`, so a non-zero
+ * count there pins the lifecycle word `needs-you` onto a Project permanently —
+ * a status word that is always on is a status word nobody reads. Here it is one
+ * sentence in a paragraph read once before starting, and *a question was raised
+ * and nothing has closed it* is simply true. The disagreement is the design and
+ * is asserted below rather than left to look like a bug.
+ */
+describe('the rows behind where you left off', () => {
+  it('says nothing about an Intention that does not exist', async () => {
+    expect(await repos.intentions.workSoFarFacts('made-up')).toBeNull()
+  })
+
+  it('folds a season of work into sentences a person can check', async () => {
+    const shift = await shiftOn('The Northwind renewal')
+    const written = await repos.outcomes.create({
+      runId: shift.runId,
+      outcomes: [
+        {
+          kind: 'document-changes',
+          reversibility: 'held',
+          headline: 'Drafted the commercials section',
+          reason: 'The agreement asked for it',
+          citedActionIntentIds: [],
+          detail: {},
+        },
+      ],
+    })
+    const outcomeId = written[0]!.id
+    await repos.changesets.create({
+      contractId: shift.contractId,
+      baseVersionId: shift.baseVersionId,
+      baseHash: hash('# The Northwind renewal\n'),
+      outcomeId,
+      changes: [
+        {
+          startOffset: 0,
+          endOffset: 0,
+          prefix: '',
+          exact: '',
+          suffix: '',
+          replacement: 'Commercials: three tiers.',
+          reason: 'It was missing',
+        },
+        {
+          startOffset: 0,
+          endOffset: 0,
+          prefix: '',
+          exact: '',
+          suffix: '',
+          replacement: 'Term: two years.',
+          reason: 'It was missing too',
+        },
+      ],
+    })
+    const stored = await repos.changesets.forOutcome(outcomeId)
+    await repos.changesets.recordVerdict({ changeId: stored!.changes[0]!.id, verdict: 'accept' })
+    await repos.runs.complete(shift.runId, 'succeeded', new Date(NOW - 2 * 24 * 60 * 60 * 1000))
+    await repos.sessions.end(shift.sessionId, new Date(NOW - 2 * 24 * 60 * 60 * 1000))
+
+    const rows = await repos.intentions.workSoFarFacts(shift.intentionId)
+    if (rows === null) throw new Error('no facts')
+
+    expect(rows.projectId).toBe(shift.projectId)
+    expect(rows.sittingsEndedAt).toHaveLength(1)
+    expect(rows.documents).toBe(1)
+    expect(rows.produced).toEqual([
+      { kind: 'document-changes', reversibility: 'held', verdict: null },
+    ])
+    expect(rows.changeVerdicts).toHaveLength(2)
+    expect(rows.changeVerdicts.filter((v) => v === 'accept')).toHaveLength(1)
+    expect(rows.changeVerdicts.filter((v) => v === null)).toHaveLength(1)
+    expect(rows.lastStop).toEqual({ status: 'succeeded', terminalReason: null })
+
+    // ...and the fold over them, which is what a person actually reads.
+    const view = workSoFar(
+      {
+        sittingsEndedAtEpochMs: rows.sittingsEndedAt.map((at) =>
+          at === null ? null : at.getTime(),
+        ),
+        approvedSources: rows.approvedSources,
+        documents: rows.documents,
+        produced: rows.produced,
+        changeVerdicts: rows.changeVerdicts,
+        openQuestions: rows.openQuestions,
+        lastStop: rows.lastStop,
+      },
+      NOW,
+    )
+
+    expect(view.anythingToSay).toBe(true)
+    expect(view.lines.join(' ')).toContain('One sitting so far. The last one ended 2 days ago.')
+    expect(view.lines.join(' ')).toContain('Propositum has produced changes to your document.')
+    expect(view.lines.join(' ')).toContain(
+      'you accepted 1, rejected none and reworded none — 1 is still undecided',
+    )
+  })
+
+  it('counts a question the front door has to report as zero', async () => {
+    const shift = await shiftOn('A question that cannot be closed')
+    await repos.reports.create({
+      contractId: shift.contractId,
+      narrative: null,
+      decisions: [
+        {
+          question: 'Which tier should the proposal offer?',
+          whyStopped: 'This commits us to a price',
+          needs: 'Your call on the tier',
+          ordinal: 1,
+        },
+      ],
+    })
+    await repos.runs.complete(shift.runId, 'succeeded', new Date(NOW))
+
+    const rows = await repos.intentions.workSoFarFacts(shift.intentionId)
+
+    expect(rows?.openQuestions).toBe(1)
+    // The same rows, read by the front door, which must say zero. Both are
+    // right; the difference is what each number is allowed to change.
+    expect((await factsFor(shift.projectId)).openDecisions).toBe(0)
+  })
+
+  it('carries the Intention’s own words and when a person last wrote them', async () => {
+    // The agreement screen owes a person the DATE those words were written, and
+    // it cannot say it unless something carries it. Nothing model-written
+    // travels with them: this is the row a person ratified.
+    const shift = await shiftOn('Words with a date on them')
+
+    const rows = await repos.intentions.workSoFarFacts(shift.intentionId)
+
+    expect(rows?.objective).toBe('Get somewhere with Words with a date on them')
+    expect(rows?.definitionOfDone).toBe('There is something to show for it')
+    expect(rows?.wordsWrittenAt).toBeInstanceOf(Date)
   })
 })

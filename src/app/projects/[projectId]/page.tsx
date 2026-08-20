@@ -62,6 +62,8 @@ import {
 } from '@/server/actions'
 import { captureStore } from '@/server/capture-store'
 import { frontDoorRow, statusWordFor } from '@/server/front-door'
+import { whereYouLeftOffIn } from '@/server/work-so-far'
+import { WhereYouLeftOff } from '@/ui/work-so-far'
 import { appContext } from '@/server/db'
 
 // In-memory capture state and a local database file. Nothing here is cacheable,
@@ -329,6 +331,22 @@ export default async function ProjectPage({
     nowEpochMs: Date.now(),
   })
 
+  /**
+   * What has already happened under this project's Intention — ADR-0017.
+   *
+   * The same derivation the accept screen reads, from the same function, for the
+   * reason `front-door.ts` opens with: two screens each assembling one paragraph
+   * is two accounts of one season of work, and they would disagree the first
+   * time either changed. Null when nobody has stated an Intention here, which is
+   * every project created before ADR-0011 and every degraded acceptance since —
+   * the box is absent rather than empty.
+   *
+   * It informs nothing on this page. `compilePolicy` cannot receive it, the gate
+   * never sees it, and no prompt is built from it: it is read after every
+   * decision this screen makes and is rendered.
+   */
+  const leftOff = await whereYouLeftOffIn(projectId, Date.now())
+
   const bandTitle = openSession === null
     ? 'Start a session'
     : away
@@ -461,6 +479,12 @@ export default async function ProjectPage({
       </Section>
 
       <Section title="What Propositum called this" index={2}>
+        {/* Before the name and the corrections, because a person deciding
+            whether this filing is right is helped more by what was decided here
+            than by how many sittings there were. The counts stay in the
+            sentence below; this is the half that was missing. */}
+        <WhereYouLeftOff view={leftOff?.view ?? null} />
+
         <p className="pj-under" style={{ marginTop: 0 }}>
           {sessions.length > 1
             ? `Propositum named this from what you were reading, and has filed ${sessions.length} sittings under it. Change either if it got them wrong.`
