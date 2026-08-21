@@ -26,7 +26,7 @@
 
 import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vitest'
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createElement } from 'react'
@@ -68,6 +68,7 @@ import type { FenceVerdict, RunFence } from '../src/runtime/worker-process'
 import { ConfirmationScreen } from '../src/ui/confirm'
 import { createLedgerWriter } from '../src/persistence/ledger-writer'
 import { executeRun } from '../src/server/execute-run'
+import { stripComments } from './support/strip-comments'
 import { FakeModelClient } from '../src/model/fake'
 import { fixtureFetcher } from '../src/policy/fetcher'
 
@@ -1523,7 +1524,12 @@ describe('a run reaches the paused state on its own', () => {
     { kind: 'ok' as const, value: { kind: 'observe-page', reason: 'Read it.' } },
   ]
 
-  async function drive(): Promise<{ runId: string; contractId: string; dispatched: string[] }> {
+  async function drive(
+    /** The page the run sees. Defaults to the one the question is asked about;
+     *  a continuation is handed a different tree to show what happens when the
+     *  page has moved under the person's answer. */
+    observation?: Record<string, unknown>,
+  ): Promise<{ runId: string; contractId: string; dispatched: string[] }> {
     const { contractId } = await browserShift()
     const enqueued = await repos.runs.enqueue({ contractId, role: 'worker' })
 
@@ -1556,14 +1562,22 @@ describe('a run reaches the paused state on its own', () => {
     // The page the person will be shown beside the question. Written here
     // because `/api/act/report` is what writes one in production and this test
     // stands in for the route.
-    await repos.evidence.create({
+    //
+    // Through the LEDGER WRITER rather than the repository, and carrying the
+    // tree rather than only the title — because that is what the route does, and
+    // because the stored shape is now read back: `confirmedDescriptor` in
+    // `src/server/execute-run.ts` pulls the confirmed element's line out of
+    // `untrusted.text` so a re-render cannot move a yes onto another control. A
+    // fixture that wrote a title and no tree would leave that derivation testable
+    // only against a shape production never produces.
+    await createLedgerWriter(db.prisma).appendEvidence({
       runId: enqueued.id,
       kind: 'page-snapshot',
       url: OBSERVATION.url,
-      untrusted: { title: OBSERVATION.title },
+      untrustedText: OBSERVATION.tree,
     })
 
-    const { fetch, dispatched } = stubbedChannel(OBSERVATION)
+    const { fetch, dispatched } = stubbedChannel(observation ?? OBSERVATION)
 
     await executeRun(enqueued.id, {
       // The full `AppContext`, which is `ConfirmationContext` plus a ledger and
@@ -1670,5 +1684,228 @@ describe('a run reaches the paused state on its own', () => {
     // smaller lie, and marking the session observing would be the larger one —
     // it would say the work came back when it is still waiting for them.
     expect(session.phase).toBe('away')
+  })
+
+  /* ═════════════════════ 10. the yes lands on the element it was given for ══ */
+
+  /**
+   * The whole loop, once, against a real database: pause → confirm → continue.
+   *
+   * ── Why this did not exist ───────────────────────────────────────────────
+   *
+   * Section 9 drives a run INTO the paused state and stops there. Everything
+   * after the answer — the continuation claiming the work, rebuilding what the
+   * person said yes to, and the gate letting the click through on the strength of
+   * it — was only ever exercised against `FakeModelClient` in
+   * `tests/browser-loop.test.ts`, with the confirmed action handed in as a
+   * literal. Nothing checked that the row a real pause writes is a row a real
+   * continuation can read.
+   *
+   * That gap is exactly where issue #109 lived. `confirmationIdFor` matched on
+   * `ref` alone, and a ref is meaningful only against the snapshot that issued it
+   * — so a page that re-rendered between the question and the answer could move a
+   * yes about *Track shipment* onto whatever took its place. The fix compares the
+   * element's own line of the tree, and the confirmed side of that comparison is
+   * DERIVED from `ConfirmationRequest.evidenceId` — the page-snapshot the person
+   * was shown. Deriving it is what these two cases actually test; the matching
+   * itself is unit-tested next door.
+   *
+   * ── The two pages ────────────────────────────────────────────────────────
+   *
+   * Same ref, `e1`, in both. In the first it still says what it said when the
+   * person answered, and the click goes through. In the second something else has
+   * taken that position, and the run asks again rather than pressing it.
+   */
+  describe('a confirmed click lands on the element the person was shown', () => {
+    const MOVED = {
+      // The SAME snapshot id as `OBSERVATION`, deliberately. The gate refuses a
+      // stale ref (stage 8) long before it reaches confirmation (stage 11), so a
+      // different id here would refuse for a reason that has nothing to do with
+      // what this case is about — and the test would pass without the fix.
+      snapshotId: 'snap-1',
+      url: 'https://orders.example.test/orders/8812',
+      title: 'Your orders',
+      // The page re-rendered. `e1` is still a button and it is not the same one.
+      tree: 'e1 button "Cancel order"',
+      truncated: false,
+    }
+
+    /** Answer yes, then run the continuation the answer enqueued. */
+    async function continueAfterYes(seenNow?: Record<string, unknown>): Promise<{
+      intents: Array<{ kind: string; authorized: boolean; refusedRule: string | null }>
+    }> {
+      const { runId } = await drive()
+      const request = await db.prisma.confirmationRequest.findFirstOrThrow({ where: { runId } })
+
+      const answered = await confirmRequest(ctx, request.id, new Date())
+      expect(answered.ok).toBe(true)
+      const continuationId = answered.ok ? answered.continuationRunId : null
+      expect(continuationId).not.toBeNull()
+
+      // Claimed by id for the reason `drive` gives: `claim()` takes the oldest
+      // pending row, and this file leaves other continuations pending on purpose.
+      await db.prisma.agentRun.update({
+        where: { id: continuationId ?? '' },
+        data: {
+          status: 'claimed',
+          claimedBy: 'test-runner',
+          startedAt: new Date(),
+          leaseUntil: new Date(Date.now() + 60_000),
+          controlToken: 'control-token-for-the-continuation',
+        },
+      })
+
+      const { fetch } = stubbedChannel(seenNow ?? OBSERVATION)
+
+      await executeRun(continuationId ?? '', {
+        ctx: { db, repos, ledger: createLedgerWriter(db.prisma) },
+        model: new FakeModelClient(REPLIES as never),
+        fetcher: fixtureFetcher({}),
+        fence: { check: async () => ({ proceed: true as const }) },
+        now: () => Date.now(),
+        fetch,
+      })
+
+      const intents = await db.prisma.actionIntent.findMany({
+        where: { runId: continuationId ?? '' },
+        orderBy: [{ seq: 'asc' }],
+        select: { kind: true, authorized: true, refusedRule: true },
+      })
+
+      return { intents }
+    }
+
+    it('presses it when the page still says what it said', async () => {
+      const { intents } = await continueAfterYes()
+
+      const click = intents.find((intent) => intent.kind === 'click-element')
+      expect(click?.authorized).toBe(true)
+      expect(click?.refusedRule).toBeNull()
+    })
+
+    it('asks again when something else has taken that position', async () => {
+      const { intents } = await continueAfterYes(MOVED)
+
+      const click = intents.find((intent) => intent.kind === 'click-element')
+      // The yes was about "Track shipment". Pressing whatever replaced it is the
+      // failure this comparison exists to prevent, and asking twice is the cost
+      // that buys it.
+      expect(click?.authorized).toBe(false)
+      expect(click?.refusedRule).toBe('confirmation_required')
+    })
+  })
+})
+
+/* ══════════════════════════════════ 9. parking is one write or no write ══ */
+
+/**
+ * The park must be atomic, because the loop's docblock says it already is.
+ *
+ * ── The failure this exists for ──────────────────────────────────────────
+ *
+ * `ConfirmationNeeded` in `src/runtime/worker-loop.ts` explains why the loop
+ * returns the pause instead of writing it: *"parking the run is one transaction
+ * with `runs.complete(…, 'awaiting-confirmation', …)`, which clears the control
+ * token, and a loop that could write the request without ending the run could
+ * leave a question outstanding against a run still holding a credential and
+ * driving a browser."*
+ *
+ * That was the right property and it was not the one the code had. The park was
+ * two sequential awaits — `confirmations.create` then `runs.complete` — so a
+ * crash, a `SIGKILL` or a lid closing between them produced exactly the state
+ * that paragraph names as the thing the shape exists to prevent. The claim was
+ * worse than the gap: a reader of it was told the window did not exist.
+ *
+ * ── Why this is a grep and not a rollback test ───────────────────────────
+ *
+ * The behaviour is covered above and covered well: `drive()` runs `executeRun`
+ * to a real park against real SQLite, and the cases there read the request, the
+ * status and the cleared token off the rows that resulted. What none of them
+ * can show is that the two writes are ONE — a rollback test would have to
+ * induce a failure between them, and the only failure available at that seam
+ * (a bad foreign key on the request) aborts the FIRST write, which was already
+ * safe before this change and proves nothing about it.
+ *
+ * So the property asserted here is the one that is actually ours: **the two
+ * writes are inside a single `$transaction`, and neither non-transactional door
+ * is reachable from the park.** That Prisma rolls an interactive transaction
+ * back when its callback throws is Prisma's guarantee, not this repository's,
+ * and testing it here would be testing the dependency.
+ *
+ * Its limit, stated: it cannot catch a transaction that is opened and then
+ * awaited wrongly, and it cannot catch a third write being added outside it
+ * somewhere other than this block. It refuses the revert, which is what the
+ * comparable guard in `tests/architecture.test.ts` claims for itself too.
+ */
+describe('a paused run is parked in one transaction', () => {
+  const source = () =>
+    stripComments(readFileSync(new URL('../src/server/execute-run.ts', import.meta.url), 'utf8'))
+
+  /** The `if (result.awaiting !== undefined) { … }` body, balanced to its close. */
+  const parkBlock = (): string | null => {
+    const text = source()
+    const at = text.indexOf('result.awaiting !== undefined')
+    if (at === -1) return null
+
+    let depth = 0
+    for (let i = text.indexOf('{', at); i < text.length; i += 1) {
+      if (text[i] === '{') depth += 1
+      else if (text[i] === '}') {
+        depth -= 1
+        if (depth === 0) return text.slice(at, i + 1)
+      }
+    }
+    return text.slice(at)
+  }
+
+  it('still has a park block, or every assertion below is about nothing', () => {
+    expect(parkBlock()).not.toBeNull()
+  })
+
+  it('parks through the one door that is a transaction, and awaits it', () => {
+    const block = parkBlock() ?? ''
+    expect(block).toMatch(/await\s+ctx\.repos\.confirmations\.raiseAndPark\(/)
+  })
+
+  it('writes the question and the status through the same transaction', () => {
+    const repositories = stripComments(
+      readFileSync(new URL('../src/persistence/repositories/index.ts', import.meta.url), 'utf8'),
+    )
+    const at = repositories.indexOf('raiseAndPark: (')
+    expect(at).toBeGreaterThan(-1)
+
+    // Balanced from the brace that opens the TRANSACTION CALLBACK, not from the
+    // first brace after the name — that one is the destructured argument, and it
+    // closes on the same line, which is how this guard first passed vacuously
+    // against a body it had never read.
+    const arrow = repositories.indexOf('=>', at)
+    let depth = 0
+    let body = ''
+    for (let i = repositories.indexOf('{', arrow); i < repositories.length; i += 1) {
+      if (repositories[i] === '{') depth += 1
+      else if (repositories[i] === '}') {
+        depth -= 1
+        if (depth === 0) {
+          body = repositories.slice(at, i + 1)
+          break
+        }
+      }
+    }
+
+    expect(body).toContain('prisma.$transaction')
+    expect(body).toMatch(/tx\.confirmationRequest\.create\(/)
+    expect(body).toMatch(/tx\.agentRun\.update\(/)
+    // If this goes, a run parked overnight on a question is holding a credential
+    // that drives somebody's browser.
+    expect(body).toContain('controlToken: null')
+    expect(body).toContain("status: 'awaiting-confirmation'")
+  })
+
+  it('reaches neither non-transactional door', () => {
+    const block = parkBlock() ?? ''
+    // These are the two calls the park used to make, in this order, outside any
+    // transaction. Either one appearing here is the bug returning.
+    expect(block).not.toContain('repos.confirmations.create')
+    expect(block).not.toContain('repos.runs.complete')
   })
 })
