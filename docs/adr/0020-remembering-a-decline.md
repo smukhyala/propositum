@@ -221,6 +221,34 @@ reticence into `strandsSuppressed` would make an existing metric mean two things
 line needs the reticence count alone. If a single held-back total is ever wanted, it needs its own
 name and its own argument, not an addition.
 
+**A held-back strand frees its display slot, and something else takes it.** Found in review of the
+first implementation, kept rather than fixed, and written down here because it is the sort of edge a
+later reader will find on their own and assume was an oversight. The front door bounds what it shows
+by `MAX_THREADS_SHOWN`, and reticence removes a strand **before** that bound is applied. So with four
+qualifying strands and a bound of three, holding the first one back does not leave two on screen — it
+puts the fourth one there, which would otherwise have been counted in `strandsSuppressed` and never
+seen.
+
+That is inside Principle 15 rather than a breach of it, and the distinction is worth being exact
+about. **No bar was lowered for the promoted strand.** It had already cleared every gate on its own
+grounds, and nothing about the declined strand's history bought it anything. What changed is that a
+slot stopped being occupied by a strand nobody wants to see. §15 forbids history WIDENING a
+permission; vacating a queue position is not a permission, and the promoted strand is subject to
+exactly the same bar it always was — including its own reticence, if it has any.
+
+The alternative was considered and is worse for the person: checking reticence after the bound would
+make a held-back strand spend one of three slots and render nothing in it, so a decline would cost
+the person a proposal about something else. That is a real loss to buy a symmetry nobody benefits
+from.
+
+What it costs is precision in the counters, and it compounds the entry above. `strandsSuppressed`
+stays honest — the promoted strand genuinely was not cut for room. But the total number of strands
+that did not appear is now `strandsSuppressed + heldBack`, and **neither number alone answers "what
+did Propositum not show me today"** while the sum still does not answer "how much did Propositum hold
+back", for the reason the entry above gives. Both readings are wrong and the second is the tempting
+one. `tests/front-door.test.ts` pins the promotion so that a later re-ordering has to arrive through
+a failing test rather than through a tidy-up.
+
 **The visibility answer is an interface requirement, so it is only as true as its test.** §15 is
 answered by a line on the front door, and prose in an ADR cannot keep a line rendered.
 The policy ships with an assertion in

@@ -335,6 +335,34 @@ export function noticedAfternoon(
      * reaches `groundsFor` here at all — this path did not consult the grounds
      * before today, and reticence is not the change that should quietly start
      * gating the front door on them.
+     *
+     * ── A held-back strand FREES ITS SLOT, and that is deliberate ────────
+     *
+     * This `continue` fires before `seen.add` and before `MAX_THREADS_SHOWN`,
+     * so the strand behind the bound is promoted onto the screen. With four
+     * strands A, B, C, D and a bound of three: without reticence `shown` is
+     * A, B, C and `suppressed` is D; with A held back, `shown` becomes B, C, D.
+     * D is now on screen when it would not have been.
+     *
+     * **That is inside Principle 15 rather than a breach of it.** No bar was
+     * lowered for D. D had already cleared every gate on its own grounds, and
+     * the only thing that changed is that a slot stopped being occupied by a
+     * strand nobody wants to see. Nothing about A's history widened anything
+     * for D; a slot was vacated.
+     *
+     * Re-ordering the check below the bound would be worse, not safer: a
+     * held-back strand would then spend one of three slots and render nothing
+     * in it, which costs the person a proposal to protect a symmetry nobody
+     * benefits from. `tests/front-door.test.ts` pins the promotion so a later
+     * re-ordering has to come through a test rather than through a tidy-up.
+     *
+     * What this does mean for the counters: `strandsSuppressed` stays honest —
+     * D genuinely was not suppressed — but the total that did not appear is now
+     * `strandsSuppressed + heldBack`, and NEITHER number alone answers "what
+     * did Propositum not show me today". Nor does the sum answer "how much did
+     * Propositum hold back", because the two halves are different facts: one is
+     * our own room running out, the other is the person's own past answer. See
+     * ADR-0020, *Where this could still go wrong*.
      */
     const declines = reticent.get(hashSignature(signature, salt)) ?? 0
     if (declines > 0) {
