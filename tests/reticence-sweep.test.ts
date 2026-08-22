@@ -45,16 +45,21 @@ describe('the reticence sweep', () => {
   })
 
   /**
-   * `sweepDeclinedBefore` deletes rows strictly before the day it is given —
-   * that is where "strictly" is enforced. `sweepReticence` only computes the
-   * cutoff and hands it over, so this is the one place that arithmetic is
-   * pinned. The Task 2 review caught the identical gap in the evidence
-   * sweep's test: nothing asserted the boundary, so changing `lt` to `lte` in
-   * the repository would have left every test green. A row dated exactly at
-   * the cutoff must survive — that is what "strictly before" means — so the
-   * cutoff itself, not just its neighbourhood, has to be exact. The two extra
-   * cases (one day either side) exist so an off-by-one in the day arithmetic
-   * fails this test instead of shipping.
+   * What this pins, and what it deliberately does not.
+   *
+   * `sweepReticence` computes a cutoff and hands it over; the deps here are a
+   * mock, so the only thing observable from this file is the STRING that was
+   * asked for. That is what these cases assert: the exact cutoff for a given
+   * clock reading, and — from the two days either side — that the day
+   * arithmetic carries no off-by-one, so a sweep is never a day early or a day
+   * late.
+   *
+   * Whether a row dated exactly at that cutoff is kept or deleted is a fact
+   * about `sweepDeclinedBefore`'s `lt`, which no mock can demonstrate. It is
+   * pinned where it lives, against a real database, by
+   * `tests/reticence-store.test.ts` — "sweeps rows last declined strictly
+   * before a day and keeps the cutoff day itself". Claiming it here as well
+   * would be this file vouching for something it never exercises.
    */
   it('computes the cutoff as exactly thirty days back, not twenty-nine or thirty-one', async () => {
     const dayBefore = deps('2026-08-21T12:00:00')

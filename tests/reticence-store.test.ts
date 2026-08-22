@@ -39,7 +39,7 @@ afterAll(async () => {
 })
 
 describe('the reticence table', () => {
-  it('holds four columns and none of them could carry a subject', async () => {
+  it('holds three columns and none of them could carry a subject', async () => {
     const columns = await prisma.$queryRawUnsafe<Array<{ name: string }>>(
       `SELECT name FROM pragma_table_info('offer_reticence')`,
     )
@@ -69,15 +69,29 @@ describe('the reticence table', () => {
     expect(found.has('hash-cleared')).toBe(false)
   })
 
-  it('sweeps rows last declined before a day and keeps the rest', async () => {
+  /**
+   * The boundary itself, not just its neighbourhood.
+   *
+   * `sweepDeclinedBefore`'s docblock promises rows *strictly* before the day it
+   * is given, and this is the only place that word is enforced — `sweepReticence`
+   * computes the cutoff and hands it over, so its test can pin the arithmetic and
+   * nothing more. Without a row dated EXACTLY at the cutoff, changing `lt` to
+   * `lte` in the repository would leave the whole suite green while every install
+   * forgot its declines a day early. So `hash-edge` sits on the cutoff and the
+   * assertion that matters is that it SURVIVES.
+   */
+  it('sweeps rows last declined strictly before a day and keeps the cutoff day itself', async () => {
     await repos.reticence.record('hash-old', '2026-07-01')
+    await repos.reticence.record('hash-edge', '2026-08-01')
     await repos.reticence.record('hash-new', '2026-08-22')
 
     const deleted = await repos.reticence.sweepDeclinedBefore('2026-08-01')
 
     expect(deleted).toBe(1)
-    const found = await repos.reticence.declinesFor(['hash-old', 'hash-new'])
+    const found = await repos.reticence.declinesFor(['hash-old', 'hash-edge', 'hash-new'])
     expect(found.has('hash-old')).toBe(false)
+    // Dated exactly at the cutoff. "Strictly before" means this row stays.
+    expect(found.get('hash-edge')).toBe(1)
     expect(found.get('hash-new')).toBe(1)
   })
 
