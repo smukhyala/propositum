@@ -930,6 +930,40 @@ describe('the safety machinery is reachable from the product', () => {
     )
   })
 
+  it('the poll names the strands the screen shows, or a promoted strand has no subject', () => {
+    /**
+     * The other half of the same interface requirement, and it failed in a way
+     * only a grep would have caught.
+     *
+     * `/api/session/current` is the ONLY caller of `nameThread` in the product.
+     * It kept its own copy of the front door's filters, and that copy cut to
+     * `MAX_THREADS_SHOWN` before reticence rather than after — so on a
+     * four-strand afternoon with the first one declined, the poll named A, B, C
+     * and Home rendered B, C, D. D reached the screen with no subject and kept
+     * the degraded sentence until the buffer forgot it, which is up to thirty
+     * days of a held-back strand costing somebody a proposal they never saw
+     * named.
+     *
+     * The guard is that the poll derives from `noticedAfternoon` — the screen's
+     * own derivation, reticence included — and holds NO bound of its own. A
+     * `MAX_THREADS_SHOWN` back in this file's code (the comments still discuss
+     * it, hence `stripComments`) is the second spelling coming back, which is
+     * the thing that produced the defect rather than a symptom of it.
+     */
+    const poll = stripComments(
+      readFileSync(join(repo, 'src/app/api/session/current/route.ts'), 'utf8'),
+    )
+
+    expect(
+      poll,
+      'the poll no longer derives its strands from the front door — it can name a different three',
+    ).toContain('noticedAfternoon(')
+    expect(
+      poll,
+      'the poll holds its own display bound again, which is how it and the screen came apart',
+    ).not.toContain('MAX_THREADS_SHOWN')
+  })
+
   it('a run holds the browser control, or the channel has no customer', () => {
     /**
      * Moved up out of *deferred, and asserted as deferred* when the run path

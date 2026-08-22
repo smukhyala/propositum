@@ -57,7 +57,11 @@ const ctx = {
 const fetcher = await createPlaywrightFetcher({})
 
 /**
- * The ActionEvidence retention sweep, wired to something that actually runs.
+ * The retention sweeps, wired to something that actually runs.
+ *
+ * Two of them — ActionEvidence and reticence — sharing one interval and one
+ * process, and nothing else. Each has its own `try` below, for the reason
+ * `sweepStaleDeclines` argues.
  *
  * The worker process is the natural home: it is the only long-lived process
  * Propositum owns, it is already where the orphaned-lease sweep happens, and it
@@ -92,14 +96,6 @@ async function sweepEvidence(): Promise<void> {
           `${result.settled.deleted} settled, ${result.expired.deleted} past the window`,
       )
     }
-
-    const reticence = await sweepReticence({
-      reticence: ctx.repos.reticence,
-      now: () => new Date(),
-    })
-    if (reticence.deleted > 0) {
-      console.log(`[worker] forgot ${reticence.deleted} stale decline(s)`)
-    }
   } catch (error) {
     // A failed sweep is not a failed worker. Runs must keep draining, and the
     // next pass is an hour away.
@@ -109,8 +105,49 @@ async function sweepEvidence(): Promise<void> {
   }
 }
 
-await sweepEvidence()
-setInterval(() => void sweepEvidence(), SWEEP_INTERVAL_MS).unref()
+/**
+ * The reticence sweep, in its own `try` — which is the whole point of it being
+ * a second function.
+ *
+ * These two sweeps shared one `try` and it was the wrong shape. A throw from
+ * `sweepActionEvidence` jumped past `sweepReticence` entirely, so an evidence
+ * sweep that failed every hour — a locked database, a migration half-applied,
+ * anything durable — would silently stop declines decaying, and the only thing
+ * on the console would say the EVIDENCE sweep failed. ADR-0020's thirty days is
+ * a promise that a person stops paying for a "not now" eventually; converting it
+ * into permanent silence as a side effect of an unrelated failure, with no line
+ * saying so, is exactly the invisible retention failure the interval above
+ * exists to prevent.
+ *
+ * So: one `try` each, one message each, and both run on every pass whatever the
+ * other one did.
+ */
+async function sweepStaleDeclines(): Promise<void> {
+  try {
+    const reticence = await sweepReticence({
+      reticence: ctx.repos.reticence,
+      now: () => new Date(),
+    })
+    if (reticence.deleted > 0) {
+      console.log(`[worker] forgot ${reticence.deleted} stale decline(s)`)
+    }
+  } catch (error) {
+    console.error(
+      `[worker] decline sweep failed: ${error instanceof Error ? error.message : String(error)}`,
+    )
+  }
+}
+
+/** Both retention sweeps, on one clock and independent of each other. Awaited
+ *  in sequence rather than raced because they share one SQLite file and neither
+ *  is urgent. */
+async function sweepRetention(): Promise<void> {
+  await sweepEvidence()
+  await sweepStaleDeclines()
+}
+
+await sweepRetention()
+setInterval(() => void sweepRetention(), SWEEP_INTERVAL_MS).unref()
 
 const handle = startWorkerProcess(
   {
