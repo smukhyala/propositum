@@ -33,8 +33,15 @@
 import { INTENTION_STATES, intentionState } from '../domain/intention/state'
 import type { IntentionStateId } from '../domain/intention/state'
 import type { IntentionStateFacts } from '../persistence/repositories/index'
-import { EVERY_STRAND, MAX_THREADS_SHOWN, detectThreads } from '../domain/detection/detect'
+import {
+  EVERY_STRAND,
+  MAX_THREADS_SHOWN,
+  detectThreads,
+  threadPagesOf,
+} from '../domain/detection/detect'
 import type { AmbientObservation, WorkDetected } from '../domain/detection/detect'
+import { groundsFor } from '../domain/detection/grounds'
+import { hashSignature } from '../domain/detection/reticence'
 import { signatureOf } from './ambient-store'
 import type { AmbientStore } from './ambient-store'
 
@@ -82,10 +89,7 @@ export interface FrontDoorRow {
  * carries it, and the line under the name still says the sitting is open and
  * not being watched, which was the truer sentence all along.
  */
-function phasesWeCanVouchFor(
-  facts: IntentionStateFacts,
-  liveSessionId: string | null,
-): string[] {
+function phasesWeCanVouchFor(facts: IntentionStateFacts, liveSessionId: string | null): string[] {
   const phases: string[] = []
   for (const sitting of facts.openSessions) {
     if (sitting.id === liveSessionId) phases.push(sitting.phase)
@@ -258,6 +262,20 @@ export interface NoticedAfternoon {
    * `src/server/offer-tally.ts`.
    */
   readonly suppressed: NoticedStrand[]
+  /**
+   * How many strands reticence held back — ADR-0020.
+   *
+   * A count, and nothing else. There is no list here on purpose: naming which
+   * strand was held back would put a subject in front of the one mechanism in
+   * the product that deliberately stores none, and the front-door line this
+   * feeds says a number for the same reason.
+   *
+   * Deliberately NOT added to `suppressed`. That number means "good enough, and
+   * cut for room"; this one means "did not clear the bar it now has to clear".
+   * Summing them would make one metric mean two things, which is why they are
+   * two — ADR-0020's *Where this could still go wrong* carries the argument.
+   */
+  readonly heldBack: number
 }
 
 /**
@@ -277,9 +295,22 @@ export function noticedAfternoon(
   store: AmbientStore,
   observations: readonly AmbientObservation[],
   nowMs: number,
+  /**
+   * Hashes this person has declined before, and how often.
+   *
+   * Passed in rather than looked up: this function is synchronous and the
+   * front door is not, so the impure half stays with the caller. An empty map
+   * is today's behaviour exactly.
+   */
+  reticent: ReadonlyMap<string, number> = new Map(),
+  /** The install's salt, from the same caller and for the same reason. A
+   *  strand hashes to nothing anybody has declined without it, so `''` is the
+   *  empty map by another route. */
+  salt: string = '',
 ): NoticedAfternoon {
   const shown: NoticedStrand[] = []
   const suppressed: NoticedStrand[] = []
+  let heldBack = 0
   const seen = new Set<string>()
 
   for (const detected of detectThreads(observations, nowMs, EVERY_STRAND)) {
@@ -293,13 +324,34 @@ export function noticedAfternoon(
     // records that gap rather than hiding it.
     if (store.isSnoozed(detected.origins[0] ?? '', nowMs)) continue
 
+    /**
+     * A third reason a strand does not appear, counted apart from the other two.
+     *
+     * `strandsSuppressed` means "good enough, and cut for room". This means
+     * "did not clear the bar it now has to clear". Adding them together would
+     * make one number mean two things, which is why they are two.
+     *
+     * Guarded on `declines > 0` so a strand nobody has turned down never
+     * reaches `groundsFor` here at all — this path did not consult the grounds
+     * before today, and reticence is not the change that should quietly start
+     * gating the front door on them.
+     */
+    const declines = reticent.get(hashSignature(signature, salt)) ?? 0
+    if (declines > 0) {
+      const pages = threadPagesOf(observations, detected, nowMs)
+      if (!groundsFor(detected, pages, declines).sufficient) {
+        heldBack += 1
+        continue
+      }
+    }
+
     seen.add(signature)
     // The bound, spent only on strands that survived everything above it.
     if (shown.length >= MAX_THREADS_SHOWN) suppressed.push({ detected, signature })
     else shown.push({ detected, signature })
   }
 
-  return { shown, suppressed }
+  return { shown, suppressed, heldBack }
 }
 
 /**

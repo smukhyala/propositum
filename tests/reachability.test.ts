@@ -911,6 +911,25 @@ describe('the safety machinery is reachable from the product', () => {
     )
   })
 
+  it('says when reticence held something back, or the policy is invisible', () => {
+    /**
+     * §15's answer is an interface requirement, and an interface requirement
+     * with no test is the weak link ADR-0011 named. This is that test.
+     *
+     * `stripComments` because the prose above the line uses both needles, and a
+     * grep that a docblock can satisfy is not a guard — which is the failure
+     * this whole file exists to notice.
+     */
+    const home = stripComments(readFileSync(join(repo, 'src/app/page.tsx'), 'utf8'))
+
+    expect(home, 'nothing on Home reads the held-back count — the policy applies unseen').toContain(
+      'heldBack',
+    )
+    expect(home, 'the only control allowed to widen has gone from the screen').toContain(
+      'Show them anyway',
+    )
+  })
+
   it('a run holds the browser control, or the channel has no customer', () => {
     /**
      * Moved up out of *deferred, and asserted as deferred* when the run path

@@ -31,13 +31,14 @@
 
 import { NextResponse } from 'next/server'
 import { CUSTOM_HEADER, fromOurExtension } from '@/capture/transport'
-import { appContext } from '@/server/db'
+import { appContext, existingAppContext } from '@/server/db'
 import { ambientStore, captureStore, expectedOrigin } from '@/server/capture-store'
 import { describeOffer, describePause, describeWork, signatureOf } from '@/server/ambient-store'
 import type { NamedThread, WorkOffer } from '@/server/ambient-store'
 import { nameThread } from '@/server/name-thread'
 import { countQuietly } from '@/server/offer-tally'
 import { composeOffer } from '@/server/compose-offer'
+import { hashSignature } from '@/domain/detection/reticence'
 import { createModelClient } from '@/model/provider'
 import type { ModelCallSink } from '@/model/provider'
 import {
@@ -74,6 +75,45 @@ import type { WorkDetected } from '@/domain/detection/detect'
 const recordAmbientCall: ModelCallSink = async (row) => {
   const { repos } = await appContext()
   return repos.modelCalls.create(row)
+}
+
+/**
+ * How often this person has already said "not now" to this exact strand.
+ *
+ * ── Why `existingAppContext` and not `appContext` ────────────────────────
+ *
+ * Because `src/server/db.ts` has already settled this, in writing, for the
+ * counter that reached the same way: *"the ambient endpoint keeps its shape of
+ * touching no database on the request path"*, and the rule it drew is about
+ * capability rather than wiring — **a caller on this path may read a database
+ * somebody else opened, and may never open one.** `appContext()` here does open
+ * one: it builds from `DATABASE_URL`, so a poll in a process that never wanted a
+ * database gets one, and a poll in a `vitest` worker gets the developer's real
+ * file. That is the loaded gun that docblock exists to have disarmed once.
+ *
+ * ── What that costs, named rather than rounded ───────────────────────────
+ *
+ * On a process that has not yet built a context this answers zero, so a strand
+ * the person turned down last week can still be composed for and can still
+ * reach the notification channel — once, in the window before anything serves a
+ * page or a live-session poll. The front door has its own reticence gate and is
+ * unaffected either way, because rendering Home builds a context by definition.
+ *
+ * It is the safe direction and that is why it is acceptable: a missing lookup
+ * can only fail to NARROW. Nothing here can lower the bar below the published
+ * floor — `groundsFor` clamps — so no reading of this function widens anything,
+ * which is the asymmetry PRODUCT_PRINCIPLES §15 asks to be held.
+ */
+async function declinesAgainst(signature: string): Promise<number> {
+  const context = existingAppContext()
+  if (context === undefined) return 0
+
+  const { repos } = await context
+  const hash = hashSignature(signature, await repos.reticence.salt())
+
+  // Absent from the map is "never declined". A row that is not there is not a
+  // zero somebody wrote; it is a person who has not turned this down.
+  return (await repos.reticence.declinesFor([hash])).get(hash) ?? 0
 }
 
 /** An origin, or an empty string. Never throws — a malformed stored URL is a
@@ -330,12 +370,26 @@ export async function GET(request: Request) {
        * its own rather than leaving it here.
        */
       if (leads && !composed && named?.confident && apiKey) {
+        /**
+         * The bar this strand has to clear, raised by what it has already been
+         * told — ADR-0020.
+         *
+         * Looked up here rather than inside `composeOffer` because
+         * `groundsFor` is pure and takes a number, so the impure half stops at
+         * the edge. Asked only inside this branch, which is the one about to
+         * spend a fifteen-second model call: a read costs nothing beside that,
+         * and every other poll asks nothing of anybody. `declinesAgainst`
+         * carries the argument for why it will not open a database to answer.
+         */
+        const declines = await declinesAgainst(signature)
+
         void composeOffer(
           ambient,
           createModelClient({ apiKey, record: recordAmbientCall }),
           thread,
           named,
           now,
+          declines,
         )
       }
 
