@@ -52,6 +52,34 @@ Concretely:
 | **Cleared by** | accepting an offer for that strand — the row is deleted, not decremented                                                                                                   |
 | **Visible as** | one front-door line, rendered only when reticence actually held something back                                                                                             |
 
+**Corrected 2026-08-22 — _The bar_ above is the arithmetic, and the arithmetic is not the whole
+gate.** The row stays exactly as written, because it is what was decided and a later reader should
+find it; what follows is what it left out.
+
+Both halves of that row are true — the term added is `min(declines, 2)`, and `INTENT_REQUIRED` is
+genuinely untouched — and together they read as though a declined strand's only new obstacle is one
+or two extra investment axes. It is not. `src/server/front-door.ts` gates a declined strand on
+`groundsFor(...).sufficient`, which is the whole grounds bar: an intent ground **and** enough axes,
+not the axes alone. So a strand that has no intent ground at all is held back by reticence however
+many investment axes it has, and stays held back until the row decays — where the sentence above
+implies one decline leaves it showing. An eight-minute afternoon on a newsletter, followed across
+three sites and never searched for, is exactly that strand, and `detectThreads` admits it.
+
+**That is the code narrowing more than this ADR described, which is an incomplete description rather
+than a breach.** Principle 15's rule is an asymmetry: history may narrow autonomy on its own and may
+never widen it. A gate that is stricter than the text said is on the permitted side of that line —
+the direction the property test holds is unaffected, and no sequence of declines makes Propositum
+speak where it would otherwise have been quiet. The stricter reading is also defensible on its own
+terms rather than merely tolerable: a strand that never produced an intent ground is the newsletter
+afternoon the grounds bar exists to refuse, and asking for one before speaking about a subject
+somebody has already turned down is the conservative thing to want.
+
+**What was considered and not done, since it is the obvious repair.** `groundsFor` could return its
+axes count, and the front door could then compare that count against `required` alone and match the
+sentence to the character. That is a change to the shape of the one interface the offer gate and the
+front door both read, made late, to buy agreement with a sentence rather than any behaviour a person
+would notice — and the sentence is the half that was wrong. So the sentence moved.
+
 Four details are each the answer to something this repository has already argued, so they are
 settled rather than open:
 
@@ -235,6 +263,16 @@ grounds, and nothing about the declined strand's history bought it anything. Wha
 slot stopped being occupied by a strand nobody wants to see. §15 forbids history WIDENING a
 permission; vacating a queue position is not a permission, and the promoted strand is subject to
 exactly the same bar it always was — including its own reticence, if it has any.
+
+**Added 2026-08-22 — and the promoted strand arrives with a name now.** It did not at first, and the
+reason is worth keeping: `/api/session/current` applied the display bound **before** reticence while
+Home applied it after, so on the four-strand afternoon the poll named A, B, C and the screen showed
+B, C, D. D reached the front door with no subject, and kept the degraded sentence for as long as the
+buffer held it, because that poll is the only thing in the product that ever calls `nameThread`.
+Two spellings of one derivation is what produced it — the poll held its own copy of the filters and
+gained no reticence check when the screen did. The poll now takes its strands from
+`noticedAfternoon`, so what Home shows is what the poll names and pins, and there is one spelling to
+keep true.
 
 The alternative was considered and is worse for the person: checking reticence after the bound would
 make a held-back strand spend one of three slots and render nothing in it, so a decline would cost
