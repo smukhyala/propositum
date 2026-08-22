@@ -35,7 +35,7 @@ import { appContext } from './db'
 import { readableCause } from './problem'
 import { confirmRequest, haltRun, rejectRequest } from './confirmations'
 import { ambientStore, captureStore } from './capture-store'
-import { countQuietly } from './offer-tally'
+import { countQuietly, dayBucket } from './offer-tally'
 import { whereYouLeftOffIn, whereYouLeftOffOn } from './work-so-far'
 import { describeWork, signatureOf } from './ambient-store'
 // ADR-0014. Three imports, none of which can decide anything: a nullable
@@ -54,6 +54,7 @@ import { EVERY_STRAND, detectThreads, threadPagesOf } from '../domain/detection/
 import { groundsFor } from '../domain/detection/grounds'
 import { matchProject, projectTerms } from '../domain/detection/match-project'
 import type { ProjectCandidate } from '../domain/detection/match-project'
+import { hashSignature } from '../domain/detection/reticence'
 import { checkDrift, hashContent, materialise } from '../domain/document/changeset'
 import type { Decision } from '../domain/document/changeset'
 import { normalise } from '../domain/document/normalise'
@@ -1202,6 +1203,23 @@ export async function startFromSuggestion(
     captureStore().start(session.id, startedAtMs)
 
     /**
+     * Accepting forgets every decline of this strand.
+     *
+     * The only thing permitted to lower a bar is a person acting, and this is
+     * that act. It also keeps reticence from being a ratchet: a subject you
+     * turned down four times and then took up is not one Propositum should stay
+     * quiet about.
+     *
+     * `threadSignature` is optional here — the carry-on suggestion path starts
+     * work with no thread at all — so this only fires when one was actually
+     * supplied, trimmed the same way `acceptWorkOffer` trims it.
+     */
+    const declinedThread = threadSignature?.trim()
+    if (declinedThread) {
+      await repos.reticence.clear(hashSignature(declinedThread, await repos.reticence.salt()))
+    }
+
+    /**
      * What was already seen becomes the session's own record — but only the
      * pages that were part of the THREAD.
      *
@@ -1619,6 +1637,17 @@ export async function acceptWorkOffer(
     if (!started.ok) return { ok: false, problem: started.problem } as const
 
     /**
+     * Accepting forgets every decline of this strand.
+     *
+     * The only thing permitted to lower a bar is a person acting, and this is
+     * that act. It also keeps reticence from being a ratchet: a subject you
+     * turned down four times and then took up is not one Propositum should stay
+     * quiet about.
+     */
+    const { repos } = await appContext()
+    await repos.reticence.clear(hashSignature(thread, await repos.reticence.salt()))
+
+    /**
      * The offer becomes durable at the moment it is accepted, and not before.
      *
      * An offer nobody answered leaves no row, by the same rule the ambient
@@ -1971,6 +2000,22 @@ export async function declineThreadOffer(
     const urls = fresh ? fresh.urls : ambient.pagesOfThread(thread)
 
     ambient.declineThread(thread, urls, now)
+
+    /**
+     * And the durable half, which the snooze above is not.
+     *
+     * `declineThread` snoozes this signature for an hour and forgets it with
+     * the buffer, so a person who declines the same strand every evening is
+     * asked again every evening and the product learns nothing. This is that,
+     * remembered — as a salted hash, a count and a day, and never the terms.
+     *
+     * ADR-0020 carries the argument, including what the hash does not buy.
+     */
+    const { repos } = await appContext()
+    await repos.reticence.record(
+      hashSignature(thread, await repos.reticence.salt()),
+      dayBucket(now),
+    )
 
     /**
      * One "Not now", counted as a bare integer.
