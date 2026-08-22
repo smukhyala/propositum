@@ -1324,3 +1324,41 @@ model OfferTally {
   /// columns"* and listed six; it now lists five and means it.
   @@map("offer_tally")
 }
+
+/// One secret per install, made once and never rotated.
+///
+/// Exists only to salt `OfferReticence.signatureHash`. It is in the same file
+/// as the rows it salts, which bounds what the hashing can claim — see
+/// `src/domain/detection/reticence.ts` and ADR-0020, both of which say so rather than
+/// letting the word "hash" imply more.
+model InstallSecret {
+  /// Always `salt`. One row, enforced by the primary key rather than by a check.
+  name  String @id
+  value String
+
+  @@map("install_secret")
+}
+
+/// How often a strand has been turned down, without recording which strand.
+///
+/// `src/server/ambient-store.ts` refuses a durable row naming a subject nobody
+/// accepted. This is the narrowest thing that answers "have they said no to
+/// this before" without being that row: a salted hash, a count, and a day.
+///
+/// There is deliberately NO column a subject could go in — no signature, no
+/// origin, no title, no url — and `tests/reticence-store.test.ts` asserts the
+/// column list rather than trusting this comment.
+model OfferReticence {
+  /// sha256(salt + ':' + signature), hex. Never the terms themselves.
+  signatureHash String @id
+  /// How many times a strand hashing to this has been declined.
+  declines      Int    @default(0)
+  /// The local calendar day of the most recent decline, `YYYY-MM-DD`.
+  ///
+  /// A DATE, never an instant, and for the reason `OfferTally.updatedAt` was
+  /// deleted the day it landed: a millisecond timestamp here would be a durable
+  /// per-day record of roughly when this person stopped browsing.
+  lastDeclinedOn String
+
+  @@map("offer_reticence")
+}
