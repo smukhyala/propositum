@@ -22,6 +22,7 @@ import { executeRun } from '../src/server/execute-run'
 import { admitRun, expireConfirmations, sweepAbandonedIntents } from '../src/server/confirmations'
 import { createPlaywrightFetcher } from '../src/policy/playwright-fetcher'
 import { sweepActionEvidence } from '../src/server/evidence-sweep'
+import { sweepReticence } from '../src/server/reticence-sweep'
 
 try {
   process.loadEnvFile('.env')
@@ -81,17 +82,30 @@ const SWEEP_INTERVAL_MS = 60 * 60 * 1000
 
 async function sweepEvidence(): Promise<void> {
   try {
-    const result = await sweepActionEvidence({ evidence: ctx.repos.evidence, now: () => new Date() })
+    const result = await sweepActionEvidence({
+      evidence: ctx.repos.evidence,
+      now: () => new Date(),
+    })
     if (result.deleted > 0) {
       console.log(
         `[worker] swept ${result.deleted} action evidence row(s) — ` +
           `${result.settled.deleted} settled, ${result.expired.deleted} past the window`,
       )
     }
+
+    const reticence = await sweepReticence({
+      reticence: ctx.repos.reticence,
+      now: () => new Date(),
+    })
+    if (reticence.deleted > 0) {
+      console.log(`[worker] forgot ${reticence.deleted} stale decline(s)`)
+    }
   } catch (error) {
     // A failed sweep is not a failed worker. Runs must keep draining, and the
     // next pass is an hour away.
-    console.error(`[worker] evidence sweep failed: ${error instanceof Error ? error.message : String(error)}`)
+    console.error(
+      `[worker] evidence sweep failed: ${error instanceof Error ? error.message : String(error)}`,
+    )
   }
 }
 
@@ -129,7 +143,8 @@ const handle = startWorkerProcess(
        * every crash reported as `unknown` for one extra restart.
        */
       const settled = await sweepAbandonedIntents(ctx)
-      if (settled > 0) console.log(`[worker] recorded ${settled} unfinished action(s) as unverified`)
+      if (settled > 0)
+        console.log(`[worker] recorded ${settled} unfinished action(s) as unverified`)
 
       return swept
     },
