@@ -2,31 +2,119 @@
 <meta charset="utf-8" />
 <title>Propositum</title>
 <style>
-  :root { color-scheme: light dark; }
-  body {
-    font: 14px/1.6 ui-sans-serif, -apple-system, system-ui, sans-serif;
-    margin: 0; padding: 1.25rem;
+  :root {
+    color-scheme: light dark;
   }
-  h1 { font-size: 0.6875rem; letter-spacing: 0.14em; text-transform: uppercase; margin: 0 0 1rem; opacity: 0.6; }
-  h2 { font-size: 0.6875rem; letter-spacing: 0.14em; text-transform: uppercase; margin: 1.5rem 0 0.6rem; opacity: 0.6; }
-  p { margin: 0 0 0.75rem; }
-  .off { color: #9c4708; }
-  .src { display: flex; align-items: baseline; justify-content: space-between; gap: 0.75rem; padding: 0.55rem 0; border-bottom: 1px solid rgba(128,128,128,0.25); }
-  .src:last-child { border-bottom: none; }
-  .name { font-weight: 500; }
-  .origin { font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; opacity: 0.6; word-break: break-all; }
-  .yes { font-size: 12px; opacity: 0.6; white-space: nowrap; }
-  button { font: inherit; font-size: 12px; padding: 0.3rem 0.7rem; border-radius: 3px; border: 1px solid currentColor; background: transparent; color: inherit; cursor: pointer; white-space: nowrap; }
-  button:hover { opacity: 0.75; }
-  .why { font-size: 12px; opacity: 0.65; margin-top: 1rem; }
-  #offer { border: 1px solid rgba(124,108,240,0.5); border-radius: 4px; padding: 0.9rem; margin-bottom: 1.25rem; }
-  #offer h2 { margin-top: 0; }
-  #offer-what { font-size: 15px; margin-bottom: 0.35rem; }
-  .offer-acts { display: flex; gap: 0.5rem; margin-top: 0.75rem; }
-  #offer-yes { border-color: #7c6cf0; }
-  #acting { border: 1px solid rgba(124,108,240,0.5); border-radius: 4px; padding: 0.9rem; margin-bottom: 1.25rem; }
-  #acting h2 { margin-top: 0; }
-  #acting-stop { border-color: #7c6cf0; margin-top: 0.6rem; }
+  body {
+    font:
+      14px/1.6 ui-sans-serif,
+      -apple-system,
+      system-ui,
+      sans-serif;
+    margin: 0;
+    padding: 1.25rem;
+  }
+  h1 {
+    font-size: 0.6875rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    margin: 0 0 1rem;
+    opacity: 0.6;
+  }
+  h2 {
+    font-size: 0.6875rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    margin: 1.5rem 0 0.6rem;
+    opacity: 0.6;
+  }
+  p {
+    margin: 0 0 0.75rem;
+  }
+  .off {
+    color: #9c4708;
+  }
+  .src {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.55rem 0;
+    border-bottom: 1px solid rgba(128, 128, 128, 0.25);
+  }
+  .src:last-child {
+    border-bottom: none;
+  }
+  .name {
+    font-weight: 500;
+  }
+  .origin {
+    font:
+      12px/1.4 ui-monospace,
+      SFMono-Regular,
+      Menlo,
+      monospace;
+    opacity: 0.6;
+    word-break: break-all;
+  }
+  .yes {
+    font-size: 12px;
+    opacity: 0.6;
+    white-space: nowrap;
+  }
+  button {
+    font: inherit;
+    font-size: 12px;
+    padding: 0.3rem 0.7rem;
+    border-radius: 3px;
+    border: 1px solid currentColor;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  button:hover {
+    opacity: 0.75;
+  }
+  .why {
+    font-size: 12px;
+    opacity: 0.65;
+    margin-top: 1rem;
+  }
+  #offer {
+    border: 1px solid rgba(124, 108, 240, 0.5);
+    border-radius: 4px;
+    padding: 0.9rem;
+    margin-bottom: 1.25rem;
+  }
+  #offer h2 {
+    margin-top: 0;
+  }
+  #offer-what {
+    font-size: 15px;
+    margin-bottom: 0.35rem;
+  }
+  .offer-acts {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 0.75rem;
+  }
+  #offer-yes {
+    border-color: #7c6cf0;
+  }
+  #acting {
+    border: 1px solid rgba(124, 108, 240, 0.5);
+    border-radius: 4px;
+    padding: 0.9rem;
+    margin-bottom: 1.25rem;
+  }
+  #acting h2 {
+    margin-top: 0;
+  }
+  #acting-stop {
+    border-color: #7c6cf0;
+    margin-top: 0.6rem;
+  }
 </style>
 
 <h1>Propositum</h1>
@@ -58,19 +146,28 @@
     <button id="offer-yes">Start a session here</button>
     <button id="offer-no">Not now</button>
   </div>
+  <!-- Kept identical to NOTHING_RECORDED_YET in src/ui/shared-copy.ts, which
+       carries the argument for why. This build has no module graph reaching
+       that file, so the sentence is literal here and tests/shared-copy.test.ts
+       fails if the two ever drift apart. -->
   <p class="why">
-    Nothing has been recorded. What Propositum saw is held in memory for half an hour
-    and thrown away unless you say yes.
+    Nothing has been recorded. Propositum holds what it saw for half an hour and throws it away
+    unless you say yes.
   </p>
 </div>
 
 <div id="grants" hidden>
   <h2>What Propositum may see</h2>
   <div id="list"></div>
+  <!-- 40 words down to 21. All three claims survive, because each of them is
+       load-bearing and none is decoration: the grant belongs to Chrome rather
+       than to us, it is withdrawable, and withdrawing it bites immediately
+       whether or not Propositum happens to be running. What went is the clause
+       explaining that a site has to be allowed here first, which the list of
+       Allow buttons directly above already demonstrates. -->
   <p class="why">
-    Each grant is Chrome’s, not ours. Propositum can only read a site after you allow it
-    here, and you can withdraw it in Chrome at any time — it stops reading immediately,
-    whether or not Propositum is running.
+    Each grant is Chrome’s, not ours. Withdraw it in Chrome any time — Propositum stops reading
+    immediately, running or not.
   </p>
 </div>
 

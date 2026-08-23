@@ -134,6 +134,7 @@ import type { FrontDoorRow } from '@/server/front-door'
 import type { IntentionStateFacts } from '@/persistence/repositories/index'
 
 import { appContext } from '@/server/db'
+import { NOTHING_RECORDED_YET } from '@/ui/shared-copy'
 
 // The capture store is in-memory and the database is a local file. Neither is
 // cacheable, and a stale "a session is running" is exactly the lie §11 forbids.
@@ -889,10 +890,7 @@ export default async function Home({
               {/* The last line of the offer, not a section under it. Nothing is
                   recorded until the person says yes, and the moment they are
                   deciding is the moment that is worth saying. */}
-              <p className="hm-because hm-foot">
-                Nothing has been recorded. Propositum holds what it saw for half an hour and throws
-                it away unless you say yes.
-              </p>
+              <p className="hm-because hm-foot">{NOTHING_RECORDED_YET}</p>
             </div>
           ) : null}
 

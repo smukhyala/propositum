@@ -41,7 +41,7 @@
 'use client'
 
 import { motion, useReducedMotion } from 'motion/react'
-import { Button, VisuallyHidden } from './primitives'
+import { Button, Disclosure, VisuallyHidden } from './primitives'
 
 /* ── the one stylesheet ─────────────────────────────────────────────────── */
 
@@ -65,10 +65,8 @@ const CSS = `
 .pd-ins::before { content: "+"; }
 
 .pd-flag { margin: 0 0 0.55rem; font-family: var(--sans); font-size: 0.6875rem; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--attention); }
-.pd-prev { margin: 0.75rem 0 0; }
-.pd-prev summary { cursor: pointer; font-size: 0.8125rem; color: var(--muted); }
-.pd-prev summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 2px; }
-.pd-prev-text { margin: 0.5rem 0 0; color: var(--muted); text-decoration: line-through; text-decoration-thickness: 1px; white-space: pre-wrap; }
+.pd-prev-label { margin: 0.9rem 0 0; font-family: var(--mono); font-size: 0.6875rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--faint); }
+.pd-prev-text { margin: 0.35rem 0 0; color: var(--muted); text-decoration: line-through; text-decoration-thickness: 1px; white-space: pre-wrap; }
 
 .pd-findings { margin: 0.9rem 0 0; padding: 0.6rem 0 0.6rem 0.85rem; border-left: 2px solid var(--rule); }
 .pd-findings-head { margin: 0 0 0.35rem; font-size: 0.6875rem; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
@@ -170,7 +168,8 @@ function merge(pieces: readonly Piece[]): Piece[] {
   const out: Piece[] = []
   for (const piece of pieces) {
     const last = out[out.length - 1]
-    if (last && last.kind === piece.kind) out[out.length - 1] = { kind: last.kind, text: last.text + piece.text }
+    if (last && last.kind === piece.kind)
+      out[out.length - 1] = { kind: last.kind, text: last.text + piece.text }
     else out.push(piece)
   }
   // Whitespace-only runs marked added or removed are noise; fold them into the
@@ -292,10 +291,25 @@ export function ChangeCard({ change, index, busy = false, onDecide }: ChangeCard
           <span className="pd-scale">{change.scaleLabel}</span>
         </div>
 
-        <div className="pd-body">
-          <Body change={change} />
-        </div>
+        {/*
+          The summary leads and the diff is what you open.
 
+          `docs/research/markdown-diff-review.md` §0.3 measured this and put it
+          plainly: "The diff is not what delivers the one-minute promise. A
+          summary list is… the ranked list of *what changed and why* is the
+          interface; the diff is the evidence you expand into." Google Docs,
+          GitHub and the accessible-redlining literature all lead with narrative
+          and put the diff behind it.
+
+          So a person now reads three things in the order that lets them decide
+          — where it is, how big it is, and why it was proposed — and opens the
+          text only when the reason is not enough. Re-entry finding 7 is the
+          same result from the other side: "Change-scale labels do more work
+          than the diff… which is most of the one-minute budget."
+
+          The diff is still in the DOM, not fetched on open, so find-in-page and
+          a screen reader's browse mode still reach it.
+        */}
         <p className="pd-reason">{change.reason}</p>
 
         {change.findings && change.findings.length > 0 ? (
@@ -309,23 +323,35 @@ export function ChangeCard({ change, index, busy = false, onDecide }: ChangeCard
           </div>
         ) : null}
 
+        <Disclosure summary={`What changed — ${change.scaleLabel}`}>
+          <div className="pd-body">
+            <Body change={change} />
+          </div>
+        </Disclosure>
+
         <div className="pd-verdicts">
           {decided ? (
             <p className="pd-decided">{DECIDED[change.verdict!]}</p>
           ) : (
             <>
-              <Button
-                onClick={() => onDecide(change.id, 'accept')}
-                disabled={busy}
-                {...(busy ? { title: 'Just a moment — the last decision is still being recorded.' } : {})}
-              >
+              {/*
+                Both controls carried a `title` reading "Just a moment — the
+                last decision is still being recorded" while `busy`. It was the
+                same sentence five times across this file and `outcome.tsx`, and
+                re-entry finding 9 had already measured the delivery mechanism:
+                a `title` is not reliably reachable by keyboard or screen
+                reader. So it was text that read as thorough and was received by
+                some people and not others, for a state that resolves in under a
+                second and is already visible in the disabled control.
+
+                Deleted rather than promoted to visible text: a live region
+                announcing this would fire on every single decision, which is a
+                worse trade for exactly the people the tooltip was failing.
+              */}
+              <Button onClick={() => onDecide(change.id, 'accept')} disabled={busy}>
                 Accept
               </Button>
-              <Button
-                onClick={() => onDecide(change.id, 'reject')}
-                disabled={busy}
-                {...(busy ? { title: 'Just a moment — the last decision is still being recorded.' } : {})}
-              >
+              <Button onClick={() => onDecide(change.id, 'reject')} disabled={busy}>
                 Reject
               </Button>
               <p className="pd-aside">To reword it, open the document.</p>
@@ -348,13 +374,23 @@ function Body({ change }: { readonly change: ChangeView }) {
       <>
         <p className="pd-flag">Rewritten — new text, not an edit</p>
         <p className="pd-text">{change.after}</p>
-        <details className="pd-prev">
-          <summary>What was there before</summary>
-          <p className="pd-prev-text">
-            <VisuallyHidden>removed: </VisuallyHidden>
-            {change.before}
-          </p>
-        </details>
+        {/*
+          The version you left, shown inline rather than behind a second
+          `<details>`.
+
+          It had one of its own until the card was inverted and the whole body
+          moved behind "What changed". Two nested disclosures put the old text
+          two gestures deep on the one change shape where comparing is the only
+          way to judge it — a rewrite "has nothing useful to interleave", which
+          is exactly why the before-text carries the weight here. Opening the
+          body is already the opt-in; charging twice for it is not a reveal, it
+          is a hiding place.
+        */}
+        <p className="pd-prev-label">What was there before</p>
+        <p className="pd-prev-text">
+          <VisuallyHidden>removed: </VisuallyHidden>
+          {change.before}
+        </p>
       </>
     )
   }

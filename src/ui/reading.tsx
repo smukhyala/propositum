@@ -383,7 +383,13 @@ function clockOf(when: Date): string {
 
 /* ── no reading yet ─────────────────────────────────────────────────────── */
 
-function NoReadingYet({ sessionId, canRead }: { readonly sessionId: string; readonly canRead: boolean }) {
+function NoReadingYet({
+  sessionId,
+  canRead,
+}: {
+  readonly sessionId: string
+  readonly canRead: boolean
+}) {
   const [problem, setProblem] = useState<string | null>(null)
   const [dropped, setDropped] = useState(0)
   const [pending, start] = useTransition()
@@ -486,8 +492,8 @@ function Reading({ claims, readOnly, pending, problem, onContinue }: ReadingProp
       {constraints.length > 0 ? (
         <Section title="What the sources say" index={index++}>
           <p className="tk-note" style={{ marginTop: 0 }}>
-            Propositum found these in pages you read. They are quotations, not instructions — nothing
-            here reaches the working agreement unless you write it there yourself.
+            Propositum found these in pages you read. They are quotations, not instructions —
+            nothing here reaches the working agreement unless you write it there yourself.
           </p>
           <ul className="tk-claims">
             {constraints.map((claim) => (
@@ -534,14 +540,11 @@ function Reading({ claims, readOnly, pending, problem, onContinue }: ReadingProp
             you.
           </p>
           <div className="tk-foot-actions">
-            <Button
-              variant="primary"
-              onClick={onContinue}
-              disabled={pending || objective === null}
-              {...(objective === null
-                ? { title: 'Propositum recorded no objective, so there is nothing to hand over.' }
-                : {})}
-            >
+            {/* No `title` for the null-objective case. The Empty above already
+                says it twice — "Propositum recorded no objective for this
+                session" and "Nothing can be handed over without one" — and both
+                of those are on the page rather than in a tooltip. */}
+            <Button variant="primary" onClick={onContinue} disabled={pending || objective === null}>
               {pending ? 'Writing the agreement…' : 'Write the working agreement'}
             </Button>
           </div>
@@ -701,7 +704,8 @@ function Why({ evidence }: { readonly evidence: readonly EvidenceView[] }) {
       <Styles />
       <details className="tk-why">
         <summary>
-          Why I think that — {evidence.length === 1 ? 'one thing you did' : `${evidence.length} things you did`}
+          Why I think that —{' '}
+          {evidence.length === 1 ? 'one thing you did' : `${evidence.length} things you did`}
         </summary>
         <ul className="tk-why-body">
           {evidence.map((item, i) => (

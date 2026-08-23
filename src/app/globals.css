@@ -13,9 +13,9 @@
   --accent-soft: #eeedfa;
   --attention: #9c4708;
 
-  --serif: ui-serif, "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
-  --sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  --serif: ui-serif, 'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, serif;
+  --sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  --mono: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -32,21 +32,27 @@
   }
 }
 
-:root[data-theme="light"] {
-  --ground: #fafaf8; --raised: #f3f3ef; --ink: #1c1d21; --muted: #6e7076;
-  --faint: #9a9ca2; --rule: #e2e2de; --accent: #5b54c9; --accent-soft: #eeedfa;
-  --attention: #9c4708;
+/* There were two more palette blocks here, `[data-theme="light"]` and
+   `[data-theme="dark"]`, holding a third and a fourth copy of the same nine
+   values. Nothing in `src/` or `extension/` has ever set `data-theme`, so
+   neither block could match and no screen has ever rendered from one — they
+   were a palette maintained in triplicate where only one copy could be wrong
+   without anybody noticing.
+
+   Deleted 2026-08-22 rather than kept against a toggle that does not exist. If
+   one is added, it belongs back here as an override of THIS block and not as a
+   restatement of it: the light values are already on `:root`, so a light theme
+   needs no block at all, and a dark one needs only the nine that differ. */
+
+* {
+  box-sizing: border-box;
 }
 
-:root[data-theme="dark"] {
-  --ground: #16171a; --raised: #1e1f23; --ink: #e8e8e4; --muted: #9698a0;
-  --faint: #6b6d75; --rule: #2a2b30; --accent: #9d97f0; --accent-soft: #23233a;
-  --attention: #dfa066;
+html,
+body {
+  margin: 0;
+  padding: 0;
 }
-
-* { box-sizing: border-box; }
-
-html, body { margin: 0; padding: 0; }
 
 body {
   background: var(--ground);
@@ -57,11 +63,21 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-a { color: var(--accent); text-underline-offset: 2px; text-decoration-thickness: 1px; }
-a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 2px; }
+a {
+  color: var(--accent);
+  text-underline-offset: 2px;
+  text-decoration-thickness: 1px;
+}
+a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 2px;
+}
 
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after {
+  *,
+  *::before,
+  *::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;

@@ -91,6 +91,17 @@ const CSS = `
 .pp-back { display: inline-block; font-family: var(--mono); font-size: 0.6875rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); text-decoration: none; margin-bottom: 1.5rem; }
 .pp-back:hover { color: var(--accent); }
 .pp-back:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 2px; }
+
+/* The one way anything is revealed. Generalised from the per-claim evidence
+   disclosure in reading.tsx, which had this shape first and proved it. */
+.pp-more { margin: 0.5rem 0 0; }
+.pp-more > summary { font-family: var(--mono); font-size: 0.6875rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); cursor: pointer; padding: 0.15rem 0; list-style: none; }
+.pp-more > summary::-webkit-details-marker { display: none; }
+.pp-more > summary::before { content: "▸ "; color: var(--faint); }
+.pp-more[open] > summary::before { content: "▾ "; }
+.pp-more > summary:hover { color: var(--accent); }
+.pp-more > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.pp-more-body { margin: 0.75rem 0 0; padding: 0 0 0 1rem; border-left: 1px solid var(--rule); }
 `
 
 /** Hoisted and de-duplicated by React on `href`. Rendered by every primitive so
@@ -364,6 +375,57 @@ export function Narrative({ children, index }: NarrativeProps) {
   )
 }
 
+/* ── Disclosure ─────────────────────────────────────────────────────────── */
+
+export interface DisclosureProps {
+  /** What is behind it, said so a person can decide whether to open it.
+   *  "Why I think that — 3 things you did", "Adjust", "What was there before". */
+  readonly summary: string
+  readonly children: ReactNode
+}
+
+/**
+ * The one way anything on a screen is revealed.
+ *
+ * ── Why `<details>` and not client state ─────────────────────────────────
+ *
+ * Every screen in this product is a Server Component by default, and a reveal
+ * implemented with `useState` makes the thing it hides unreachable until React
+ * has hydrated. `<details>` costs no JavaScript, works before hydration and
+ * with it broken, is keyboard-operable and announced as an expandable by every
+ * screen reader — and the browser owns the open state, so nothing here has to.
+ *
+ * ── Why this exists rather than another `title` ──────────────────────────
+ *
+ * Re-entry finding 9 measured the alternative: "a `title` tooltip is not
+ * reliably reachable by keyboard or screen reader… the explanation needs to be
+ * inline text or a real disclosure, not a tooltip." Text that only exists in a
+ * `title` is text that some people simply never receive, which makes it a worse
+ * answer than deleting it — a tooltip reads as thorough while being absent.
+ *
+ * So: text worth keeping goes in here or on the page. Text not worth that is
+ * cut. There is no third option, and `title` is not one.
+ *
+ * ── What does NOT belong behind one ──────────────────────────────────────
+ *
+ * Anything a person needs in order to make the decision the screen is asking
+ * for. A disclosure is for evidence and detail underneath a decision, never for
+ * the terms of the decision itself: the objective on the agreement screen is
+ * the prompt-injection catch (ADR-0006 §5) and stays on the page, and an
+ * offer's *will not do* list is required to be visible by ADR-0009.
+ */
+export function Disclosure({ summary, children }: DisclosureProps) {
+  return (
+    <>
+      <Styles />
+      <details className="pp-more">
+        <summary>{summary}</summary>
+        <div className="pp-more-body">{children}</div>
+      </details>
+    </>
+  )
+}
+
 /* ── Empty ──────────────────────────────────────────────────────────────── */
 
 export interface EmptyProps {
@@ -407,7 +469,13 @@ export function Empty({ title, next, action, index }: EmptyProps) {
  * the href is here) so the browser's own affordances work: middle-click, the
  * back button, and the keyboard.
  */
-export function BackLink({ href, children }: { readonly href: string; readonly children: ReactNode }) {
+export function BackLink({
+  href,
+  children,
+}: {
+  readonly href: string
+  readonly children: ReactNode
+}) {
   return (
     <>
       <Styles />

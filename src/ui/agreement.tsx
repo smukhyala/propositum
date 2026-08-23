@@ -111,7 +111,7 @@ import { useEffect, useRef, useState, useTransition } from 'react'
 import { motion, useReducedMotion } from 'motion/react'
 import type { ReactNode, RefObject } from 'react'
 
-import { Button, Section, VisuallyHidden } from './primitives'
+import { Button, Disclosure, Section, VisuallyHidden } from './primitives'
 import { Done, Refused } from './sprites'
 import { Quotation } from './reading'
 import { acceptContract } from '../server/actions'
@@ -476,37 +476,83 @@ export function Agreement({ draft, defaults, sourceLabels, onBack, onHandedOver 
         </div>
       </Section>
 
-      <Section title="What I can look at" index={2}>
-        <ul className="ag-perms ag-allowed">
-          {/* From the compiled allowlist, not from the draft — this list and the
-              gate's list are the same object, so they cannot disagree. */}
-          {[...policy.sourceAllowlist].map((id) => (
-            <li className="ag-perm" key={id}>
-              <span className="ag-perm-mark">
-                <Done size={16} title="Allowed" />
-              </span>
-              <span>{sourceLabels[id] ?? 'A source you approved'}</span>
-            </li>
-          ))}
-        </ul>
-        <p className="ag-hint" style={{ marginTop: 0 }}>
-          These are the sources you approved and Propositum actually used this session.{' '}
-          {mayFollowLinks ? (
-            <>
-              It can open other pages on these sites. If a link goes anywhere else, it cannot follow
-              it — it will tell you it didn&rsquo;t.
-            </>
-          ) : (
-            <>
-              If a page it reads links somewhere else, it cannot follow the link — it will tell you
-              it didn&rsquo;t.
-            </>
-          )}
-        </p>
-      </Section>
+      {/*
+        ── Everything from here to the foot is behind one disclosure ────────
 
-      <Section title="What I can change" index={3}>
-        {/* A Shift that pins no document has to say so rather than name a place
+        This screen rendered ~700–850 words across fourteen blocks of
+        explanatory copy and offered twenty-odd controls, on the way to a
+        decision most people make the same way every time. It was three times
+        the next-heaviest screen in the product.
+
+        WHAT STAYS ON THE PAGE, AND WHY IT IS THAT AND NOT SOMETHING ELSE
+
+        The objective and "Done means…" stay above, always. They are not kept
+        for symmetry — they are the prompt-injection catch. ADR-0006 §5: the
+        session-reading boundary is inside the blast radius, so "a successful
+        injection there rewrites the objective BEFORE the human ever sees the
+        handoff screen. The human review is the only thing that catches it…
+        The interface should make that hard, not merely possible." Folding the
+        objective away would fold away the review, and the review is the
+        boundary. Nothing about density is worth that.
+
+        The dials fold, because a person can only ever NARROW them from here
+        and their defaults are the cautious ones — with the single documented
+        exception of Output, which the `Summary` below says out loud in
+        whichever position it is in.
+
+        WHAT ANSWERS PRINCIPLE 15
+
+        §15 forbids "a recommendation rendered so that accepting it is
+        indistinguishable from not reading it". A bare [Agree] over a folded
+        panel is precisely that. What sits above the button instead is
+        `Summary` — one generated sentence naming how long, what it will work
+        on, whether it may write, and when it stops, computed from the same
+        values `compilePolicy` hands the gate. It is not a label for the
+        defaults; it changes when the dials change. So the thing being
+        confirmed is a statement of what will happen, and reading it is the
+        cheapest way to confirm — which is the opposite of the failure §15
+        names.
+
+        (§15 is scoped to LEARNED trust — "Enforced by nothing, because nothing
+        learns yet" — and `DEFAULT_CONTROLS` is static, so the clause is
+        arguable here rather than binding. ADR-0019 makes the argument instead
+        of resting on the ambiguity.)
+
+        The permission panel still renders from `compilePolicy`, folded or not.
+        Nothing here changes what is granted; it changes where it is read.
+      */}
+      <Disclosure summary="Adjust — what I can look at, what I can change, how far to go">
+        <Section title="What I can look at" index={2}>
+          <ul className="ag-perms ag-allowed">
+            {/* From the compiled allowlist, not from the draft — this list and the
+              gate's list are the same object, so they cannot disagree. */}
+            {[...policy.sourceAllowlist].map((id) => (
+              <li className="ag-perm" key={id}>
+                <span className="ag-perm-mark">
+                  <Done size={16} title="Allowed" />
+                </span>
+                <span>{sourceLabels[id] ?? 'A source you approved'}</span>
+              </li>
+            ))}
+          </ul>
+          <p className="ag-hint" style={{ marginTop: 0 }}>
+            These are the sources you approved and Propositum actually used this session.{' '}
+            {mayFollowLinks ? (
+              <>
+                It can open other pages on these sites. If a link goes anywhere else, it cannot
+                follow it — it will tell you it didn&rsquo;t.
+              </>
+            ) : (
+              <>
+                If a page it reads links somewhere else, it cannot follow the link — it will tell
+                you it didn&rsquo;t.
+              </>
+            )}
+          </p>
+        </Section>
+
+        <Section title="What I can change" index={3}>
+          {/* A Shift that pins no document has to say so rather than name a place
             that does not exist.
 
             The second sentence used to survive either way — "nothing lands
@@ -515,221 +561,223 @@ export function Agreement({ draft, defaults, sourceLabels, onBack, onHandedOver 
             waiting for a decision; it happens as it is pressed. So the sentence
             splits, and the version a person reads is decided by the compiled
             allowlist rather than by which one reads better. */}
-        <p className="ag-hint-tight">
-          {draft.documentTitle === null ? (
-            <>Nothing yet — this shift has no document under it. </>
-          ) : (
-            <>
-              In <strong>{draft.documentTitle}</strong>, and nowhere else.{' '}
-            </>
-          )}
-          {mayOperate ? (
-            <>
-              Anything Propositum writes is a proposal you decide on when you get back. Pressing and
-              typing are different: they happen on the page as they happen, so before anything it
-              might not be able to take back, Propositum stops and asks you about that one thing.
-            </>
-          ) : (
-            <>
-              Nothing lands anywhere on its own — Propositum proposes and you decide on each one
-              when you get back.
-            </>
-          )}
-        </p>
+          <p className="ag-hint-tight">
+            {draft.documentTitle === null ? (
+              <>Nothing yet — this shift has no document under it. </>
+            ) : (
+              <>
+                In <strong>{draft.documentTitle}</strong>, and nowhere else.{' '}
+              </>
+            )}
+            {mayOperate ? (
+              <>
+                Anything Propositum writes is a proposal you decide on when you get back. Pressing
+                and typing are different: they happen on the page as they happen, so before anything
+                it might not be able to take back, Propositum stops and asks you about that one
+                thing.
+              </>
+            ) : (
+              <>
+                Nothing lands anywhere on its own — Propositum proposes and you decide on each one
+                when you get back.
+              </>
+            )}
+          </p>
 
-        <h3 className="ag-group-head">What Propositum may do</h3>
-        <ul className="ag-perms ag-allowed">
-          {allowed.map((kind) => (
-            <li className="ag-perm" key={kind}>
-              <span className="ag-perm-mark">
-                <Done size={16} title="Allowed" />
-              </span>
-              <span>{ACTION_LABEL[kind]}</span>
-            </li>
-          ))}
-        </ul>
-
-        {switchedOff.length > 0 ? (
-          <div className="ag-off">
-            <h3 className="ag-group-head">What you&rsquo;ve switched off</h3>
-            <ul className="ag-perms">
-              {switchedOff.map((kind) => (
-                <li className="ag-perm" key={kind}>
-                  <span className="ag-perm-mark">
-                    <Refused size={16} title="Switched off" />
-                  </span>
-                  <span>
-                    {ACTION_LABEL[kind]}
-                    <span className="ag-perm-why">
-                      {kind === 'draft-section' ? whyDraftingIsOff : NOT_IN_THIS_AGREEMENT}
-                    </span>
-                  </span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        ) : null}
-
-        <div className="ag-absent">
-          <h3 className="ag-group-head">
-            {mayOperate
-              ? 'What Propositum has no way to do itself'
-              : 'What Propositum cannot do at all'}
-          </h3>
-          <ul className="ag-perms">
-            {ABSENT.map((thing) => (
-              <li className="ag-perm" key={thing}>
+          <h3 className="ag-group-head">What Propositum may do</h3>
+          <ul className="ag-perms ag-allowed">
+            {allowed.map((kind) => (
+              <li className="ag-perm" key={kind}>
                 <span className="ag-perm-mark">
-                  <Refused size={16} title="Not possible" />
+                  <Done size={16} title="Allowed" />
                 </span>
-                <span>{thing}</span>
+                <span>{ACTION_LABEL[kind]}</span>
               </li>
             ))}
           </ul>
-          {mayOperate ? (
-            <p className="ag-hint" style={{ marginTop: 0 }}>
-              These aren&rsquo;t switched off, and there is nothing in Propositum that does any of
-              them. What it can do is press a button on a page — and a page&rsquo;s own button might
-              be one of these. So before it presses anything it can&rsquo;t be sure it could take
-              back, it stops and asks you about that one thing. That isn&rsquo;t a setting: nothing
-              on this page turns it off, and time running out never counts as a yes.
-            </p>
-          ) : (
-            <p className="ag-hint" style={{ marginTop: 0 }}>
-              These aren&rsquo;t switched off. Propositum has no way to do them, and no setting on
-              this page turns one on.
-            </p>
-          )}
-        </div>
-      </Section>
 
-      <Section title="How Propositum should work" index={4}>
-        <Dial
-          legend="How far should I go?"
-          hint="Whether Propositum may act on something it wasn't planning to do."
-          name="initiative"
-          value={initiative}
-          onChange={setInitiative}
-          options={[
-            { value: 'follow-closely', label: 'Stick to the plan' },
-            { value: 'use-judgment', label: 'Use your judgment' },
-          ]}
-        />
+          {switchedOff.length > 0 ? (
+            <div className="ag-off">
+              <h3 className="ag-group-head">What you&rsquo;ve switched off</h3>
+              <ul className="ag-perms">
+                {switchedOff.map((kind) => (
+                  <li className="ag-perm" key={kind}>
+                    <span className="ag-perm-mark">
+                      <Refused size={16} title="Switched off" />
+                    </span>
+                    <span>
+                      {ACTION_LABEL[kind]}
+                      <span className="ag-perm-why">
+                        {kind === 'draft-section' ? whyDraftingIsOff : NOT_IN_THIS_AGREEMENT}
+                      </span>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
 
-        <Dial
-          legend="How much should I get through?"
-          hint="Whether Propositum may go past the step it is on, or stop at the end of it."
-          name="progress"
-          value={progress}
-          onChange={setProgress}
-          options={[
-            { value: 'current-step-only', label: 'Just the step you’re on' },
-            { value: 'remaining-plan', label: 'As much of the plan as you can' },
-          ]}
-        />
+          <div className="ag-absent">
+            <h3 className="ag-group-head">
+              {mayOperate
+                ? 'What Propositum has no way to do itself'
+                : 'What Propositum cannot do at all'}
+            </h3>
+            <ul className="ag-perms">
+              {ABSENT.map((thing) => (
+                <li className="ag-perm" key={thing}>
+                  <span className="ag-perm-mark">
+                    <Refused size={16} title="Not possible" />
+                  </span>
+                  <span>{thing}</span>
+                </li>
+              ))}
+            </ul>
+            {mayOperate ? (
+              <p className="ag-hint" style={{ marginTop: 0 }}>
+                These aren&rsquo;t switched off, and there is nothing in Propositum that does any of
+                them. What it can do is press a button on a page — and a page&rsquo;s own button
+                might be one of these. So before it presses anything it can&rsquo;t be sure it could
+                take back, it stops and asks you about that one thing. That isn&rsquo;t a setting:
+                nothing on this page turns it off, and time running out never counts as a yes.
+              </p>
+            ) : (
+              <p className="ag-hint" style={{ marginTop: 0 }}>
+                These aren&rsquo;t switched off. Propositum has no way to do them, and no setting on
+                this page turns one on.
+              </p>
+            )}
+          </div>
+        </Section>
 
-        <Dial
-          legend="What can I change?"
-          hint="This is a permission, not a preference. Research only removes the ability to propose document text at all — look at what it does to the list above."
-          name="output"
-          value={output}
-          onChange={setOutput}
-          options={[
-            { value: 'suggestions-only', label: 'Research only — don’t write' },
-            { value: 'draft-changes', label: 'Draft the changes' },
-          ]}
-        />
+        <Section title="How Propositum should work" index={4}>
+          <Dial
+            legend="How far should I go?"
+            hint="Whether Propositum may act on something it wasn't planning to do."
+            name="initiative"
+            value={initiative}
+            onChange={setInitiative}
+            options={[
+              { value: 'follow-closely', label: 'Stick to the plan' },
+              { value: 'use-judgment', label: 'Use your judgment' },
+            ]}
+          />
 
-        <Dial
-          legend="Stop and ask me when…"
-          hint="Propositum always stops when it runs out of time, or when something falls outside this agreement. This adds one more reason."
-          name="interruption"
-          value={interruption}
-          onChange={setInterruption}
-          options={[
-            { value: 'stop-when-uncertain', label: '…you’re unsure about anything' },
-            { value: 'stop-only-when-blocked', label: '…you’re completely stuck' },
-          ]}
-        />
+          <Dial
+            legend="How much should I get through?"
+            hint="Whether Propositum may go past the step it is on, or stop at the end of it."
+            name="progress"
+            value={progress}
+            onChange={setProgress}
+            options={[
+              { value: 'current-step-only', label: 'Just the step you’re on' },
+              { value: 'remaining-plan', label: 'As much of the plan as you can' },
+            ]}
+          />
 
-        {/* The calendar suggestion is passed to the CONTROL, never to the
+          <Dial
+            legend="What can I change?"
+            hint="This is a permission, not a preference. Research only removes the ability to propose document text at all — look at what it does to the list above."
+            name="output"
+            value={output}
+            onChange={setOutput}
+            options={[
+              { value: 'suggestions-only', label: 'Research only — don’t write' },
+              { value: 'draft-changes', label: 'Draft the changes' },
+            ]}
+          />
+
+          <Dial
+            legend="Stop and ask me when…"
+            hint="Propositum always stops when it runs out of time, or when something falls outside this agreement. This adds one more reason."
+            name="interruption"
+            value={interruption}
+            onChange={setInterruption}
+            options={[
+              { value: 'stop-when-uncertain', label: '…you’re unsure about anything' },
+              { value: 'stop-only-when-blocked', label: '…you’re completely stuck' },
+            ]}
+          />
+
+          {/* The calendar suggestion is passed to the CONTROL, never to the
             state. `timeLimitMinutes` above is initialised from the model's
             proposal and from nothing else, exactly as it was before ADR-0014;
             the only path from a calendar to that number runs through the button
             `TimeLimit` renders, which calls the same `onChange` a radio calls.
             Read `draft.calendarSuggestion` anywhere near a `useState` initial
             value and the guarantee is gone. */}
-        <TimeLimit
-          minutes={timeLimitMinutes}
-          onChange={setTimeLimitMinutes}
-          {...(draft.calendarSuggestion === undefined
-            ? {}
-            : { suggestion: draft.calendarSuggestion })}
-        />
-      </Section>
-
-      <Section title="Guidance — not a hard limit" index={5}>
-        <p className="ag-hint-tight">
-          Propositum will try to follow these. It cannot be made to: they are sentences, not
-          permissions, and a run that ignores one is bad work rather than a broken rule. Anything
-          that must hold belongs in what Propositum can look at and change, above.
-        </p>
-
-        <ul className="ag-guidance">
-          {guidance.map((line, i) => (
-            <li key={`${line}-${i}`}>
-              <p>{line}</p>
-              <Button onClick={() => setGuidance(guidance.filter((_, j) => j !== i))}>
-                Remove
-                <VisuallyHidden> the guidance: {line}</VisuallyHidden>
-              </Button>
-            </li>
-          ))}
-        </ul>
-
-        {inView === undefined ? null : (
-          <PinnedForReference
-            text={inView.text}
-            said={inView.sourceLabel}
-            onClear={() => setPinned(null)}
+          <TimeLimit
+            minutes={timeLimitMinutes}
+            onChange={setTimeLimitMinutes}
+            {...(draft.calendarSuggestion === undefined
+              ? {}
+              : { suggestion: draft.calendarSuggestion })}
           />
-        )}
+        </Section>
 
-        <GuidanceEntry field={guidanceField} onAdd={(line) => setGuidance([...guidance, line])} />
+        <Section title="Guidance — not a hard limit" index={5}>
+          <p className="ag-hint-tight">
+            Propositum will try to follow these. It cannot be made to: they are sentences, not
+            permissions, and a run that ignores one is bad work rather than a broken rule. Anything
+            that must hold belongs in what Propositum can look at and change, above.
+          </p>
 
-        {draft.quotedConstraints.length > 0 ? (
-          <aside className="ag-aside">
-            <h3 className="ag-aside-head">What the pages said</h3>
-            <p className="ag-hint-tight">
-              Propositum found these in what you read. They are quotations from pages, not
-              instructions from you, and none of them is part of this agreement. Where Propositum
-              could not verify the exact words, it says so rather than quoting. If one matters,
-              write it above in your own words — Propositum won&rsquo;t put a page&rsquo;s sentence
-              in your mouth.
-            </p>
-            {draft.quotedConstraints.map((constraint, i) => (
-              <Quotation
-                key={`${constraint.text}-${i}`}
-                text={constraint.text}
-                said={constraint.sourceLabel}
-                verbatim={constraint.verbatim}
-              >
-                <span className="ag-tools">
-                  <Button
-                    onClick={() => {
-                      setPinned(i)
-                      guidanceField.current?.focus()
-                    }}
-                    pressed={pinned === i}
-                  >
-                    Keep this in view while I write
-                  </Button>
-                </span>
-              </Quotation>
+          <ul className="ag-guidance">
+            {guidance.map((line, i) => (
+              <li key={`${line}-${i}`}>
+                <p>{line}</p>
+                <Button onClick={() => setGuidance(guidance.filter((_, j) => j !== i))}>
+                  Remove
+                  <VisuallyHidden> the guidance: {line}</VisuallyHidden>
+                </Button>
+              </li>
             ))}
-          </aside>
-        ) : null}
-      </Section>
+          </ul>
+
+          {inView === undefined ? null : (
+            <PinnedForReference
+              text={inView.text}
+              said={inView.sourceLabel}
+              onClear={() => setPinned(null)}
+            />
+          )}
+
+          <GuidanceEntry field={guidanceField} onAdd={(line) => setGuidance([...guidance, line])} />
+
+          {draft.quotedConstraints.length > 0 ? (
+            <aside className="ag-aside">
+              <h3 className="ag-aside-head">What the pages said</h3>
+              <p className="ag-hint-tight">
+                Propositum found these in what you read. They are quotations from pages, not
+                instructions from you, and none of them is part of this agreement. Where Propositum
+                could not verify the exact words, it says so rather than quoting. If one matters,
+                write it above in your own words — Propositum won&rsquo;t put a page&rsquo;s
+                sentence in your mouth.
+              </p>
+              {draft.quotedConstraints.map((constraint, i) => (
+                <Quotation
+                  key={`${constraint.text}-${i}`}
+                  text={constraint.text}
+                  said={constraint.sourceLabel}
+                  verbatim={constraint.verbatim}
+                >
+                  <span className="ag-tools">
+                    <Button
+                      onClick={() => {
+                        setPinned(i)
+                        guidanceField.current?.focus()
+                      }}
+                      pressed={pinned === i}
+                    >
+                      Keep this in view while I write
+                    </Button>
+                  </span>
+                </Quotation>
+              ))}
+            </aside>
+          ) : null}
+        </Section>
+      </Disclosure>
 
       <div className="ag-foot">
         <Summary
@@ -1064,7 +1112,6 @@ function GuidanceEntry({
             setText('')
           }}
           disabled={clean.length === 0}
-          {...(clean.length === 0 ? { title: 'Write a sentence first.' } : {})}
         >
           Add this
         </Button>

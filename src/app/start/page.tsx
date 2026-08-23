@@ -66,7 +66,7 @@
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
 
-import { Sheet, Masthead, Section, Button } from '@/ui/primitives'
+import { Sheet, Masthead, Section, Button, Disclosure } from '@/ui/primitives'
 import { Grounds, OfferBody, OFFER_CSS, SiteChoices } from '@/ui/offer'
 import { WhereYouLeftOff } from '@/ui/work-so-far'
 import { acceptWorkOffer, offerForThread } from '@/server/actions'
@@ -166,15 +166,12 @@ export default async function StartPage({
         <style href="propositum-start" precedence="default">
           {CSS}
         </style>
-        <Masthead
-          kicker="Propositum"
-          title={live ? 'That already happened' : 'Nothing to start'}
-        />
+        <Masthead kicker="Propositum" title={live ? 'That already happened' : 'Nothing to start'} />
         {live ? (
           <Section title="A session is already running" index={1}>
             <p className="st-under">
-              You said yes to this once already, and Propositum is watching. End that session
-              before starting another one.
+              You said yes to this once already, and Propositum is watching. End that session before
+              starting another one.
             </p>
             <p className="st-under">
               <Link href={`/sessions/${live.sessionId}`}>Open the session</Link>
@@ -194,7 +191,6 @@ export default async function StartPage({
   }
 
   const { backOn, offer, origins, subject } = screen
-
 
   return (
     <Sheet>
@@ -245,10 +241,9 @@ export default async function StartPage({
               while they read it. The button below still works.
             */}
             <p className="st-under">
-              {screen.because}{' '}
-              <strong>Propositum has not worked out what to do about it</strong>, and this screen
-              will not fill itself in. Starting the session loses nothing: what it has already seen
-              comes with you.
+              {screen.because} <strong>Propositum has not worked out what to do about it</strong>,
+              and this screen will not fill itself in. Starting the session loses nothing: what it
+              has already seen comes with you.
             </p>
           </>
         ) : (
@@ -303,14 +298,44 @@ export default async function StartPage({
         )}
 
         <form action={go}>
+          {/*
+            The sites fold, and this is the one control on the screen where
+            folding takes nothing away.
+
+            Every box arrives ticked and the server intersects whatever comes
+            back with what it actually observed, so this control can only ever
+            NARROW what Propositum may see. A person who never opens it gets
+            exactly the sites named in the sentence above; a person who opens it
+            can only give it less. That asymmetry is what makes it safe to fold
+            and would make the opposite — an unticked list a person has to opt
+            into — unsafe to.
+
+            What does NOT fold on this screen: the outline and the *will not do*
+            list, which ADR-0009 requires an offer to show rather than just its
+            title, and `WhereYouLeftOff`, which ADR-0017 puts before the click
+            on purpose. Both are above.
+          */}
+          {/* The sites are NAMED on the page, not counted behind the fold.
+              What Propositum may look at is a permission, and "all 3 sites" is
+              not one a person can check — the fold is over the tickboxes, which
+              only narrow, never over which sites they are. */}
           <p className="of-h3">What Propositum would watch</p>
           <p className="st-under">
+            {origins.map((site) => site.host).join(', ')}.{' '}
             {origins.length === 1
-              ? 'This is the site it saw this on. Untick it and it watches nothing.'
-              : `These are the ${origins.length} sites it saw this on. Untick any it should leave alone.`}
+              ? 'This is the site it saw this on.'
+              : `These are the ${origins.length} sites it saw this on.`}
           </p>
 
-          <SiteChoices sites={origins} {...(backOn ? { joinedProject: backOn.name } : {})} />
+          <Disclosure summary="Leave one of them alone">
+            <p className="st-under" style={{ marginTop: 0 }}>
+              {origins.length === 1
+                ? 'Untick it and Propositum watches nothing.'
+                : 'Untick any it should leave alone. Everything ticked stays as it is.'}
+            </p>
+
+            <SiteChoices sites={origins} {...(backOn ? { joinedProject: backOn.name } : {})} />
+          </Disclosure>
 
           <p className="of-h3">{backOn === null ? 'And it sets up' : 'And it carries on'}</p>
           <ul className="st-list">

@@ -65,10 +65,7 @@ const DEFAULTS: AutonomyControls = {
   timeLimitMinutes: 30,
 }
 
-function draftWith(
-  proposal: number,
-  suggestion: CalendarTimeSuggestion | null,
-): ContractDrafted {
+function draftWith(proposal: number, suggestion: CalendarTimeSuggestion | null): ContractDrafted {
   const base = {
     contractId: 'contract-1',
     objective: 'Work out which of the three quotes to accept',
@@ -172,7 +169,22 @@ describe('the number carries where it came from', () => {
     // title to render and no field that could carry one. This is the render-time
     // half of `tests/calendar-scope.test.ts`'s source-level refusal.
     expect(said).toMatch(/busy from <strong>\d{1,2}:\d{2} (am|pm)<\/strong>/)
-    expect(said).not.toMatch(/summary|organiser|organizer|attendee/i)
+
+    // The negative runs over the TEXT, not the markup, and the difference is
+    // new: this screen now has a real `<summary>` element on it — the control
+    // that opens Adjust — so the raw-markup version of this assertion started
+    // failing on the page's own structure rather than on anything the calendar
+    // returned. An element name is not event data.
+    //
+    // The guard is unchanged in what it guards. `summary`, `organiser` and
+    // `attendee` are still refused everywhere a person could read them, which
+    // is where they would do the harm: `calendar.freebusy` returns `start` and
+    // `end`, there is no field that could carry a title, and this is the
+    // render-time half of `tests/calendar-scope.test.ts`'s source-level
+    // refusal. Narrowing it to visible text keeps that and drops only the
+    // coincidence.
+    const readable = said.replace(/<[^>]*>/g, ' ')
+    expect(readable).not.toMatch(/summary|organiser|organizer|attendee/i)
   })
 })
 
