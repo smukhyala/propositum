@@ -715,12 +715,38 @@ export async function executeRun(runId: string, deps: ExecuteDeps): Promise<void
 
   const stopLabel = result.stoppedBy.length ? STOP_RULES[result.stoppedBy[0]!].consumerLabel : null
 
+  /**
+   * The boundary that failed, said out loud.
+   *
+   * `runWorker` assembles `boundaryFailure` — which boundary, the failure kind
+   * and the detail — and its own docblock explains why those two strings exist:
+   * *"the difference between 'the model refused' and 'every request threw
+   * before it left the process' is invisible from `boundary-failure` alone."*
+   *
+   * NOTHING READ IT. It was built on every failed run and dropped here, so a
+   * `failed` run wrote a report with a null narrative and the reason existed
+   * only in memory in a process that had already moved on. That is the exact
+   * shape this file names three times — *"the software knew something was lost
+   * and told no one"* — and the one place it was still true.
+   *
+   * Found 2026-08-22 by a run that failed with an empty terminalReason, a null
+   * narrative, no ledger rows and nothing on stdout. There was no way to tell
+   * what had happened to it from anything the product had written down.
+   *
+   * The crash path below already routes its message through `failureDetail`;
+   * this gives the boundary path the same treatment rather than a second one.
+   */
+  const boundaryDetail =
+    result.boundaryFailure === undefined
+      ? undefined
+      : `${result.boundaryFailure.boundary}: ${result.boundaryFailure.failure} — ${result.boundaryFailure.detail}`
+
   await writeReport(
     ctx,
     contract.id,
     stopLabel,
     result.decisions,
-    undefined,
+    boundaryDetail,
     recorded.dropped,
     result.summary,
   )

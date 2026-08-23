@@ -10,7 +10,12 @@ import { MAX_PLAN_STEPS } from '../src/domain/handoff/policy'
 /* ── harness ───────────────────────────────────────────────────────────── */
 
 interface Recorded {
-  intents: Array<{ kind: string; authorized: boolean; refusedRule?: string | undefined; seq: number }>
+  intents: Array<{
+    kind: string
+    authorized: boolean
+    refusedRule?: string | undefined
+    seq: number
+  }>
   outcomes: Array<{ intentId: string; result: string; detail?: string | undefined }>
   order: string[]
 }
@@ -36,7 +41,11 @@ function ledger(): { ledger: RunLedger; recorded: Recorded } {
         return id
       },
       async recordOutcome(input) {
-        recorded.outcomes.push({ intentId: input.intentId, result: input.result, detail: input.detail })
+        recorded.outcomes.push({
+          intentId: input.intentId,
+          result: input.result,
+          detail: input.detail,
+        })
         recorded.order.push(`outcome:${input.result}`)
       },
       async recordSteps(_runId, steps) {
@@ -110,7 +119,12 @@ function deps(replies: ScriptedReply<unknown>[], nowMs = 0): MutableDeps {
         // `documentId` used to read `ver-1` here — the fixture had been bent to
         // match the bug, which is why a suite this size never noticed that
         // `read-document` had not once succeeded.
-        byId: async () => ({ id: 'ver-1', documentId: 'doc-1', content: 'Base.', contentHash: 'h' }),
+        byId: async () => ({
+          id: 'ver-1',
+          documentId: 'doc-1',
+          content: 'Base.',
+          contentHash: 'h',
+        }),
       },
       baseVersionId: 'ver-1',
     },
@@ -266,7 +280,10 @@ describe('a raised question is not an action', () => {
   it('never reaches the gate, and is always recorded', async () => {
     const d = deps([
       plan('decide the tier'),
-      act({ kind: 'draft-section', decisionNeeded: { question: 'Which tier?', whyItMatters: 'the close depends on it' } }),
+      act({
+        kind: 'draft-section',
+        decisionNeeded: { question: 'Which tier?', whyItMatters: 'the close depends on it' },
+      }),
     ])
 
     const result = await runWorker(job(), d)
@@ -278,7 +295,10 @@ describe('a raised question is not an action', () => {
   it('halts the run under stop-when-uncertain', async () => {
     const d = deps([
       plan('decide the tier', 'draft commercials'),
-      act({ kind: 'draft-section', decisionNeeded: { question: 'Which tier?', whyItMatters: 'x' } }),
+      act({
+        kind: 'draft-section',
+        decisionNeeded: { question: 'Which tier?', whyItMatters: 'x' },
+      }),
     ])
 
     const result = await runWorker(
@@ -294,8 +314,15 @@ describe('a raised question is not an action', () => {
     // strategic decision.
     const d = deps([
       plan('decide the tier', 'draft commercials'),
-      act({ kind: 'draft-section', decisionNeeded: { question: 'Which tier?', whyItMatters: 'x' } }),
-      act({ kind: 'draft-section', targetSection: 'Commercials', prose: 'We propose the standard tier.' }),
+      act({
+        kind: 'draft-section',
+        decisionNeeded: { question: 'Which tier?', whyItMatters: 'x' },
+      }),
+      act({
+        kind: 'draft-section',
+        targetSection: 'Commercials',
+        prose: 'We propose the standard tier.',
+      }),
     ])
 
     const result = await runWorker(job(), d)
@@ -452,6 +479,41 @@ describe('page text is datamarked before it can reach another prompt', () => {
     const secondProposal = (d.model as FakeModelClient).calls[2]
     expect(secondProposal?.user).toContain('<<<UNTRUSTED_PAGE_TEXT>>>')
     expect(secondProposal?.user).toContain('15% revenue share')
+  })
+
+  /**
+   * The sibling of the test above, and it was missing for as long as the bug was.
+   *
+   * `read-approved-source` pushed its text into `gathered`; `read-document`
+   * fetched the version, took `versionId` for the summary sentence and dropped
+   * `content` on the floor. `gathered` is the only channel by which anything a
+   * run reads reaches the next prompt, so the worker could read the document
+   * and never see a word of it.
+   *
+   * Nothing failed. The intent was authorized, the outcome was `succeeded` and
+   * `within_scope`, and the ledger showed a capability working perfectly. What
+   * happened in production on 2026-08-22 was that the model read the document,
+   * was handed nothing, read it again, said *"I have not yet seen any of the
+   * note's contents in this session"*, and `no-progress` correctly ended a run
+   * that had produced nothing. Every route to a `Changeset` runs through a
+   * model that has read the document, so the application database held zero of
+   * them — with the gate, the ledger and the stop rules all working exactly as
+   * designed.
+   *
+   * The assertion is on the CONTENT reaching the next prompt, not on the call
+   * succeeding, because the call always succeeded. That is the whole lesson.
+   */
+  it('hands the document text to the next proposal, not just a summary of it', async () => {
+    const d = deps([
+      plan('read what is already written', 'draft from it'),
+      act({ kind: 'read-document' }),
+      act({ kind: 'draft-section', targetSection: 'Commercials', prose: 'We propose 15%.' }),
+    ])
+
+    await runWorker(job(), d)
+
+    const secondProposal = (d.model as FakeModelClient).calls[2]
+    expect(secondProposal?.user).toContain('Base.')
   })
 })
 

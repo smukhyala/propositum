@@ -1246,6 +1246,43 @@ async function perform(
 
     case 'read-document': {
       const doc = await readDocument(action as AuthorizedAction<'read-document'>, deps.readDoc)
+
+      /**
+       * The text the read returned, handed to the next turn.
+       *
+       * ── The bug this closes ──────────────────────────────────────────
+       *
+       * `readDocument` returns `content` and this case DISCARDED it, returning
+       * only a summary sentence. `read-approved-source` two cases above pushes
+       * its text into `gathered`; this one did not, and `gathered` is the only
+       * channel by which anything a run reads reaches the next prompt.
+       *
+       * So the worker could read the document and never see a word of it. What
+       * that looks like in production, from a real run on 2026-08-22:
+       *
+       *     seq 1  read-document  succeeded  within_scope
+       *     seq 2  read-document  succeeded  within_scope
+       *       "I have not yet seen any of the note's contents in this session,
+       *        so I need the document text before I can reorganise anything
+       *        without inventing facts."
+       *
+       * Then `no-progress` fired — correctly, because nothing WAS changing —
+       * and the run ended having produced nothing. Every path to a `Changeset`
+       * runs through a model that has read the document, so this is why the
+       * application database held zero of them: not a drafting failure, a
+       * plumbing one. The gate, the ledger and the stop rules were all working.
+       *
+       * ── Why it is datamarked like page text ──────────────────────────
+       *
+       * A `DocumentVersion` is the person's own writing, so this is NOT the
+       * untrusted-content boundary ADR-0006 draws. It is marked anyway, for one
+       * reason: a document accumulates text the person pasted out of pages, and
+       * nothing distinguishes those bytes from the ones they typed. Marking
+       * costs a wrapper and says the true thing either way — this is data to
+       * work on, never instructions to follow.
+       */
+      gathered.push({ label: 'the document you are working in', content: datamark(doc.content) })
+
       return { summary: `read the document (v${doc.versionId})`, changedSomething: false }
     }
 
