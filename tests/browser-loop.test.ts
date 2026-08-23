@@ -116,7 +116,12 @@ function observed(n: number): PageObservation {
     snapshotId: `snap-${n}`,
     url: `https://orders.example.com/page/${n}`,
     title: `Orders — page ${n}`,
-    tree: `button "Show more" ref=r${n}\nlink "Next" ref=n${n}`,
+    // The real shape `flattenAXTree` writes in `extension/src/cdp.js`:
+    // `${ref} ${role} "${name}"`, one node per line. It used to be written
+    // ref-last, which was a shape only a test could produce — and it stopped
+    // being harmless the moment `descriptorFor` began reading these lines to
+    // decide whether a confirmation still covers the element it was given for.
+    tree: `r${n} button "Show more"\nn${n} link "Next"`,
     truncated: false,
   }
 }
@@ -1098,6 +1103,10 @@ describe('a confirmed action is not asked about twice', () => {
     intentId: 'i-refused',
     kind: 'click-element',
     params: { ref: 'r1', snapshotId: 'snap-OLD' },
+    // The element as it stood in the snapshot the person was shown. `observed(1)`
+    // still writes this line, so a yes given about it still covers it — and the
+    // cases below move it to show what happens when the page does.
+    descriptor: 'r1 button "Show more"',
     ...over,
   })
 
@@ -1162,6 +1171,78 @@ describe('a confirmed action is not asked about twice', () => {
     await runWorker(job(), d)
 
     expect(d.recorded.intents[1]?.authorized).toBe(true)
+  })
+
+  /**
+   * The retarget, which is what issue #109 was about.
+   *
+   * A `ref` is meaningful only against the snapshot that issued it, and a
+   * continuation is a new run looking at a new one. So ref-equality alone let a
+   * page that re-rendered between the question and the answer move a yes about
+   * one control onto whatever took its place. The element's own line of the tree
+   * is the identity; the ref is a coordinate, and coordinates move.
+   */
+  it('does not carry a yes onto an element that has changed under the same ref', async () => {
+    const d = deps(
+      proposeClick(),
+      [
+        { ok: true, observation: observed(1) },
+        { ok: true, observation: observed(2) },
+      ],
+      {
+        elementEvidence: undefined,
+        // The person said yes about "Track shipment" at `r1`. The page now has
+        // something else there, and `observed(1)` says so.
+        history: readerWith([confirmed({ descriptor: 'r1 button "Track shipment"' })]),
+      },
+    )
+
+    await runWorker(job(), d)
+
+    expect(d.recorded.intents[1]?.refusedRule).toBe('confirmation_required')
+    expect(d.recorded.intents[1]?.params.confirmationId).toBeUndefined()
+  })
+
+  it('asks again rather than guessing when the confirmed element was never recorded', async () => {
+    // No descriptor on the confirmed side — an old row, or a request raised with
+    // no page-snapshot beside it. There is nothing to agree, so the answer is no.
+    // One extra question is the only direction worth failing in.
+    const d = deps(proposeClick(), [{ ok: true, observation: observed(1) }], {
+      elementEvidence: undefined,
+      history: readerWith([confirmed({ descriptor: null })]),
+    })
+
+    await runWorker(job(), d)
+
+    expect(d.recorded.intents[1]?.refusedRule).toBe('confirmation_required')
+  })
+
+  it('still covers a confirmed action that never named an element', async () => {
+    // A `press-key` is identified by its key and the page it was asked about.
+    // Demanding a descriptor of one would refuse every one of them forever.
+    const d = deps(
+      [
+        plan('press it'),
+        act({ kind: 'observe-page' }),
+        act({ kind: 'press-key', key: 'Enter', snapshotId: 'snap-1' }),
+        done(),
+      ],
+      [
+        { ok: true, observation: observed(1) },
+        { ok: true, observation: observed(2) },
+      ],
+      {
+        elementEvidence: undefined,
+        history: readerWith([
+          confirmed({ kind: 'press-key', params: { key: 'Enter' }, descriptor: null }),
+        ]),
+      },
+    )
+
+    await runWorker(job(), d)
+
+    expect(d.recorded.intents[1]).toMatchObject({ kind: 'press-key', authorized: true })
+    expect(d.recorded.intents[1]?.params.confirmationId).toBe('confreq-1')
   })
 
   it('rebuilds the id set the gate checks membership of', async () => {

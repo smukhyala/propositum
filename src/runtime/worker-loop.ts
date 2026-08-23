@@ -102,7 +102,12 @@ import {
   typeText,
 } from '../policy/tools'
 import type { BrowserDeps, NavigateDeps, ReadDocumentDeps, ReadSourceDeps } from '../policy/tools'
-import { confirmationIdFor, historyForContract, recoverOrphanedIntents } from './history'
+import {
+  confirmationIdFor,
+  descriptorFor,
+  historyForContract,
+  recoverOrphanedIntents,
+} from './history'
 import type { ConfirmedAction, HistoryReader, HistoryTurn } from './history'
 import { BrowserControlError, UNVERIFIED_FAILURES } from './browser-control'
 import type { PageObservation, ScreenCapture } from './browser-control'
@@ -824,8 +829,37 @@ export async function runWorker(job: WorkerJob, deps: WorkerDeps): Promise<Worke
      * is empty and no proposal ever carries an id. It fails safe, and it reads
      * to the person as *Propositum ignored my answer*, which costs more trust
      * than a refusal does.
+     *
+     * ── The element has to be the same element, not the same coordinate ─────
+     *
+     * A `ref` is meaningful only against the snapshot that issued it, and the
+     * continuation is a new run looking at a new snapshot — so `ref` equality
+     * alone let a page that re-rendered between the question and the answer move
+     * a yes about *Track shipment* onto whatever took its place (issue #109).
+     * The DESCRIPTOR is the identity: the element's own line of the tree. This
+     * computes it from the tree in hand, and `confirmationIdFor` requires it to
+     * equal the line the person was looking at.
+     *
+     * Sanitised through `datamark` first, because the stored side was: the
+     * comparison is between what this app made of two trees, not between a page
+     * and a row. Raw against sanitised would differ on a stripped zero-width
+     * character and cost somebody the same question twice.
+     *
+     * Only computed when there IS something to match. On the overwhelming
+     * majority of turns `confirmations` is empty, and datamarking a whole
+     * snapshot to compare it against nothing is work with no question behind it.
      */
-    const confirmationId = confirmationIdFor(proposal.kind, params, rebuilt.confirmations)
+    const proposedDescriptor =
+      rebuilt.confirmations.length === 0 || page === null
+        ? null
+        : descriptorFor(datamark(page.tree, { budget: 'snapshot' }).sanitized, params['ref'])
+
+    const confirmationId = confirmationIdFor(
+      proposal.kind,
+      params,
+      rebuilt.confirmations,
+      proposedDescriptor,
+    )
     if (confirmationId !== undefined) params.confirmationId = confirmationId
 
     const toolProposal: ToolProposal = {

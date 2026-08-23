@@ -43,6 +43,7 @@
 
 import { runWorker } from '../runtime/worker-loop'
 import type { RunLedger, WorkerJob, WorkerResult } from '../runtime/worker-loop'
+import { descriptorFor } from '../runtime/history'
 import type { ConfirmedAction, HistoryReader } from '../runtime/history'
 import { STOP_RULES } from '../domain/execution/stop-conditions'
 import { allowlisted } from '../policy/fetcher'
@@ -300,6 +301,58 @@ function ledgerFor(ctx: AppContext, runId: string, fence: RunFence): RunLedger {
 }
 
 /**
+ * The element as it stood on the page the person was looking at.
+ *
+ * ── Derived, not stored, and that is the whole reason this is cheap ─────
+ *
+ * `confirmationIdFor` needs the confirmed element's own line of the
+ * accessibility tree so a re-render cannot move a yes onto a different
+ * control (issue #109). Its docblock used to say that closing this needed
+ * *"the request carrying the element's attested identity"* — a column, a
+ * migration and a new schema word. It does not.
+ * `ConfirmationRequest.evidenceId` has always pointed at the page-snapshot
+ * the person was shown, and `ActionEvidence.untrusted.text` is that tree.
+ * So the line is read back out of the row that already exists.
+ *
+ * ── Sanitised against sanitised ────────────────────────────────────────
+ *
+ * The stored tree is what `datamark` made of what the extension sent, not
+ * what the extension sent. The live tree the continuation holds is raw. So
+ * the caller sanitises the live one through the same door before extracting
+ * from it — see `worker-loop.ts` — and the two sides are then the same
+ * function of the same kind of input. Comparing a sanitised line against a
+ * raw one would fail on nothing more than a stripped zero-width character,
+ * and would fail in the direction that asks a person the same question
+ * twice.
+ *
+ * ── Null is an answer and it means no ──────────────────────────────────
+ *
+ * A request with no evidence, a screen-capture rather than a tree, an
+ * `untrusted` shape this cannot read: each returns null, and null on either
+ * side of the comparison refuses the match. That costs one extra question on
+ * a state the gate already makes unreachable for a confirmable kind, and it
+ * is the only direction worth failing in.
+ */
+async function confirmedDescriptor(
+  ctx: AppContext,
+  requestId: string,
+  ref: unknown,
+): Promise<string | null> {
+  if (typeof ref !== 'string' || ref === '') return null
+
+  const request = await ctx.db.prisma.confirmationRequest.findUnique({
+    where: { id: requestId },
+    select: { evidence: { select: { kind: true, untrusted: true } } },
+  })
+
+  const evidence = request?.evidence
+  if (!evidence || evidence.kind !== 'page-snapshot') return null
+
+  const untrusted = evidence.untrusted as { text?: unknown } | null
+  return descriptorFor(untrusted?.text, ref)
+}
+
+/**
  * Everything this contract's runs have already committed, oldest first.
  *
  * ── Why it is a query here rather than a repository method ───────────────
@@ -395,11 +448,14 @@ function historyReaderFor(ctx: AppContext): HistoryReader {
         const requestId = await confirmationForIntent(ctx, intent.id)
         if (requestId === null || !confirmedIds.has(requestId)) continue
 
+        const params = (intent.params ?? {}) as Record<string, unknown>
+
         covered.push({
           requestId,
           intentId: intent.id,
           kind: intent.kind,
-          params: (intent.params ?? {}) as Record<string, unknown>,
+          params,
+          descriptor: await confirmedDescriptor(ctx, requestId, params['ref']),
         })
       }
       return covered
@@ -683,16 +739,45 @@ export async function executeRun(runId: string, deps: ExecuteDeps): Promise<void
    * managed to do before it needed permission.
    */
   if (result.awaiting !== undefined) {
+    // Hoisted out of the closure below, because narrowing does not survive one
+    // and a `!` inside a transaction that parks a run is the wrong place to be
+    // asserting anything.
+    const awaiting = result.awaiting
     const evidenceId = await lastPageSnapshot(ctx, runId)
 
-    await ctx.repos.confirmations.create({
+    /**
+     * Both writes or neither, because the loop's docblock promises exactly that.
+     *
+     * `ConfirmationNeeded` in `src/runtime/worker-loop.ts` says why the loop
+     * returns this instead of writing it: *"parking the run is one transaction
+     * with `runs.complete(…, 'awaiting-confirmation', …)`, which clears the
+     * control token, and a loop that could write the request without ending the
+     * run could leave a question outstanding against a run still holding a
+     * credential and driving a browser."*
+     *
+     * That was the right property and it was not the one the code had. These
+     * were two sequential awaits — `confirmations.create` then `runs.complete` —
+     * so a crash, a `SIGKILL` or a lid closing between them produced precisely
+     * the state that paragraph names. The claim was worse than the gap: a reader
+     * of it was told the window did not exist.
+     *
+     * The transaction is `raiseAndPark`'s, in the repository, rather than a
+     * `$transaction` opened here. `src/persistence/` is the only Prisma
+     * consumer, and a park written at this level would have reached around
+     * `runs.complete` to write a run status — the one write whose docblock
+     * explains why the control token goes with it.
+     *
+     * `lastPageSnapshot` stays outside, deliberately: it reads an append-only
+     * table nothing in the transaction writes to, and pulling it in would hold a
+     * write transaction open across a query for no property gained.
+     */
+    await ctx.repos.confirmations.raiseAndPark({
       runId,
-      intentId: result.awaiting.intentId,
-      summary: result.awaiting.question,
+      intentId: awaiting.intentId,
+      summary: awaiting.question,
       ...(evidenceId === null ? {} : { evidenceId }),
+      endedAt: new Date(deps.now()),
     })
-
-    await ctx.repos.runs.complete(runId, 'awaiting-confirmation', new Date(deps.now()))
     return
   }
 

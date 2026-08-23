@@ -79,7 +79,61 @@ try {
   /* --dry and --seal need no key */
 }
 
+/**
+ * Every flag this file answers to, and the usage a person gets for asking.
+ *
+ * ── Why an unknown flag is an error and not a shrug ──────────────────────
+ *
+ * Every branch below is `args.has('--known-flag')`, so anything else used to
+ * fall through to the LIVE path — the one that calls the real API for the whole
+ * corpus. `--dry-run`, `--dryrun`, `-d` and `--reprot` all ran the paid
+ * corpus, and on a machine with a key set they did it without saying anything
+ * first. That is a footgun in the one script `AGENTS.md` singles out for costing
+ * money, and the near-miss is likely rather than exotic: the invocation is
+ * `npm run eval -- --flag`, so the `--` already invites a mistake about where
+ * the flag boundary is.
+ *
+ * Checked BEFORE the key is read, so the message is about the typo rather than
+ * about credentials — a person who mistypes on a machine with no key was
+ * previously told to use `--dry`, which is advice about a different problem.
+ */
+const KNOWN_FLAGS = [
+  '--seal',
+  '--check',
+  '--dry',
+  '--baseline',
+  '--worksheet',
+  '--report',
+  '--help',
+] as const
+
+/** The header's own usage block, kept as one string so the two cannot drift. */
+const USAGE = [
+  '  npm run eval -- --seal            seal any unsealed references',
+  '  npm run eval -- --check           verify every seal, run nothing',
+  '  npm run eval -- --dry             run against a fake model (no cost)',
+  '  npm run eval                      run against the real model, and SPEND MONEY',
+  '  npm run eval -- --baseline        also run the raw-log baseline',
+  '  npm run eval -- --worksheet       create blank score slots in eval-scores.json',
+  '  npm run eval -- --report          apply the H1 gates to what you have scored,',
+  '                                    compute H2 from the database, and print the',
+  '                                    offer rate beside it',
+  '  npm run eval -- --dry --report    the same, with H3 from a free run',
+].join('\n')
+
 const args = new Set(process.argv.slice(2))
+
+const unknown = [...args].filter((flag) => !(KNOWN_FLAGS as readonly string[]).includes(flag))
+if (unknown.length > 0) {
+  console.error(`Unrecognised: ${unknown.join(' ')}\n\n${USAGE}`)
+  process.exit(1)
+}
+
+if (args.has('--help')) {
+  console.log(USAGE)
+  process.exit(0)
+}
+
 const wantsBaseline = args.has('--baseline')
 
 /* ── --check ────────────────────────────────────────────────────────────── */
