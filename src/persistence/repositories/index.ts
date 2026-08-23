@@ -2368,6 +2368,50 @@ export interface ConfirmationRepository {
     summary: string
     evidenceId?: string
   }): Promise<{ id: string }>
+  /**
+   * Raise the question and park the run, in ONE transaction.
+   *
+   * ── Why the two writes cannot be two ─────────────────────────────────────
+   *
+   * `ConfirmationNeeded` in `src/runtime/worker-loop.ts` says why the loop
+   * returns the pause rather than writing it: *"parking the run is one
+   * transaction with `runs.complete(…, 'awaiting-confirmation', …)`, which
+   * clears the control token, and a loop that could write the request without
+   * ending the run could leave a question outstanding against a run still
+   * holding a credential and driving a browser."*
+   *
+   * That was the right property and it was not the one the code had. The park
+   * was `create` followed by `runs.complete`, two sequential awaits, so a crash
+   * or a lid closing between them produced exactly the state that paragraph
+   * names as the thing the shape exists to prevent. The claim was worse than the
+   * gap: a reader of it was told the window did not exist.
+   *
+   * ── Why it is here and not at the call site ──────────────────────────────
+   *
+   * `src/persistence/` is the only Prisma consumer, and a park written as a
+   * `$transaction` in `src/server/` would have been a second writer of a table
+   * that already has a repository — with the run-status write reaching around
+   * `complete` and its docblock about the control token. One method, one
+   * transaction, and the two rows that must agree cannot be separated by a
+   * caller that forgets.
+   *
+   * ── What it does NOT do ──────────────────────────────────────────────────
+   *
+   * Anything about whether the question may be ANSWERED later. `confirmRequest`
+   * checks that the request exists, has no verdict and has not expired, and
+   * still does not read the parent run's status — so a question raised by a run
+   * that was later reaped can still be answered. That is a decision about what
+   * the confirm screen should say rather than a repair, and issue #108 carries
+   * it.
+   */
+  raiseAndPark(input: {
+    runId: string
+    intentId: string
+    /** Code-generated from attested facts. Never model prose. */
+    summary: string
+    evidenceId?: string
+    endedAt: Date
+  }): Promise<{ id: string }>
   /** Requests this run raised that nobody has answered yet. */
   pendingForRun(runId: string): Promise<
     Array<{
@@ -2413,6 +2457,34 @@ function confirmationRepository(prisma: PrismaClient): ConfirmationRepository {
           ...(evidenceId === undefined ? {} : { evidenceId }),
         },
         select: { id: true },
+      }),
+
+    raiseAndPark: ({ runId, intentId, summary, evidenceId, endedAt }) =>
+      prisma.$transaction(async (tx) => {
+        const request = await tx.confirmationRequest.create({
+          data: {
+            runId,
+            intentId,
+            summary,
+            ...(evidenceId === undefined ? {} : { evidenceId }),
+          },
+          select: { id: true },
+        })
+
+        await tx.agentRun.update({
+          where: { id: runId },
+          data: {
+            status: 'awaiting-confirmation',
+            endedAt,
+            // The same clearing `complete` does above, spelled out because a
+            // repository method cannot join a transaction it takes no client
+            // for. `awaiting-confirmation` takes no `terminalReason`: there is
+            // nothing terminal to explain, and the question is the explanation.
+            controlToken: null,
+          },
+        })
+
+        return request
       }),
 
     pendingForRun: (runId) =>

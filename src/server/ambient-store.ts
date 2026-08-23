@@ -78,8 +78,13 @@
  *     the typecheck. ~~The guards now cover every file under `src` and `scripts`,
  *     with an explicit allowance naming each transport site and its exact
  *     count.~~ **Re-marked 2026-08-20: that mechanism is gone.** An exact-count
- *     budget cannot survive the promotion above, and `unallowedMentions` in
- *     `tests/reachability.test.ts` now has no caller at all. What replaced it is
+ *     budget cannot survive the promotion above, and ~~`unallowedMentions` in
+ *     `tests/reachability.test.ts` now has no caller at all~~ **— corrected
+ *     2026-08-20: `unallowedMentions` is not uncalled, it is DELETED, and this
+ *     sentence pointed a reader at a helper they could have handed a caller back
+ *     to. It kept its declaration for one merge after its last caller went and
+ *     was removed then; `tests/reachability.test.ts` records why it was not
+ *     handed a fresh one instead.** What replaced it is
  *     the weaker positive claim that a named reader exists in a named file —
  *     which cannot catch a mention appearing somewhere nobody thought to name,
  *     and that loss is recorded in the test file rather than hidden. The
@@ -881,7 +886,9 @@ export type Suggestion =
 
 /** Said out loud, because a suggestion produced under shortened test thresholds
  *  must not read like one produced by real work. */
-const UNDER_TEST = FAST_DETECT ? ' (fast-detect is on — thresholds are 20× shorter than normal.)' : ''
+const UNDER_TEST = FAST_DETECT
+  ? ' (fast-detect is on — thresholds are 20× shorter than normal.)'
+  : ''
 
 function minutes(ms: number): string {
   const m = Math.max(1, Math.round(ms / 60_000))

@@ -1026,7 +1026,7 @@ describe('the safety machinery is reachable from the product', () => {
      * end that was missing.
      */
     expect(
-      callersOf('confirmations.create', 'src/persistence/repositories/index.ts'),
+      callersOf('confirmations.raiseAndPark', 'src/persistence/repositories/index.ts'),
       'nothing raises a confirmation — the pause is a rule that never fires',
     ).toContain('src/server/execute-run.ts')
   })
@@ -1052,8 +1052,11 @@ describe('the safety machinery is reachable from the product', () => {
     const executeRun = stripImports(
       stripComments(readFileSync(join(repo, 'src/server/execute-run.ts'), 'utf8')),
     )
+    // `awaiting` is `result.awaiting`, hoisted at the top of the park because
+    // narrowing does not survive into the argument object. Either spelling is
+    // the same value, and its only producer is `confirmationQuestion`.
     expect(executeRun, 'the confirmation summary is not the code-generated question').toMatch(
-      /summary:\s*result\.awaiting\.question/,
+      /summary:\s*(result\.)?awaiting\.question/,
     )
   })
 

@@ -93,6 +93,21 @@ export interface ConfirmedAction {
   readonly intentId: string
   readonly kind: string
   readonly params: Record<string, unknown>
+  /**
+   * The element as it stood in the snapshot the PERSON WAS SHOWN — one line of
+   * the accessibility tree, `e47 button "Track shipment"`.
+   *
+   * PAGE-AUTHORED, and it is only ever compared, never rendered and never sent
+   * anywhere. See `confirmationIdFor` for what the comparison buys and why
+   * comparing untrusted text is safe in this one direction: a mismatch can only
+   * ever REFUSE, and a match adds a condition to a permission a human already
+   * gave rather than creating one.
+   *
+   * Null when the request has no page-snapshot beside it, which the gate makes
+   * unreachable for a confirmable kind — `stale_snapshot` refuses a ref against
+   * no snapshot — and which is handled anyway, in the direction that asks again.
+   */
+  readonly descriptor: string | null
 }
 
 export interface HistoryReader {
@@ -324,7 +339,8 @@ export async function recoverOrphanedIntents(
       intentId,
       result: 'failed',
       scopeVerdict: 'unverified',
-      detail: 'The run stopped before it could record what happened. Whether this landed is unknown.',
+      detail:
+        'The run stopped before it could record what happened. Whether this landed is unknown.',
       observedBy: 'recovery',
     })
   }
@@ -352,30 +368,104 @@ export async function recoverOrphanedIntents(
  * the page again, so its snapshot is necessarily different, and requiring
  * equality would mean no confirmation ever applied to anything.
  *
- * **That exclusion is a real residual risk and is not closed here.** A page
+ * ~~**That exclusion is a real residual risk and is not closed here.** A page
  * that re-rendered between the question and the answer can move `ref` onto a
  * different control, so a yes given about *Track shipment* could attach to
- * whatever took its place. ADR-0010 §5 designs this flow — the continuation
- * proposes the action again and is allowed — and it records the adjacent hazard
- * ("re-clicking after approval may double-fire") without closing this one. What
- * bounds it today is that the gate still refuses a stale snapshot, still runs
- * the classifier against the NEW element's evidence, and still counts the
- * action against the mutating cap. What would close it is the request carrying
- * the element's attested identity and this function requiring that to match
- * too; that needs the evidence the confirmation was raised with, which is
- * another unit's to plumb.
+ * whatever took its place. … What would close it is the request carrying the
+ * element's attested identity and this function requiring that to match too;
+ * that needs the evidence the confirmation was raised with, which is another
+ * unit's to plumb.~~
+ *
+ * **Closed 2026-08-20 (issue #109), the way the struck paragraph named.** A ref
+ * is only meaningful relative to the snapshot that produced it, so a ref on its
+ * own was never an identity — it was a coordinate, and coordinates move. The
+ * DESCRIPTOR is the identity: the element's own line of the tree, `e47 button
+ * "Track shipment"`, as it stood in the snapshot the person was looking at when
+ * they said yes. The continuation computes the same line from the tree it is
+ * looking at now, and the two must agree.
+ *
+ * The evidence turned out not to need plumbing. `ConfirmationRequest.evidenceId`
+ * has always pointed at the page-snapshot the person was shown, and its
+ * `untrusted.text` is that tree — so the confirmed descriptor is DERIVED where
+ * `ConfirmedAction` is built rather than stored, and no column, no migration and
+ * no new schema word was added for it.
+ *
+ * ── This can only ever refuse, which is what makes it safe ───────────────
+ *
+ * A descriptor is page-authored, and page-authored text may not influence a
+ * decision. It does not: the check is strictly ADDITIVE over the match that was
+ * already required, so every proposal this permits was already permitted and
+ * some that were permitted now are not. A page that rewrites its own tree can
+ * cost the person a second question. It cannot buy itself a first yes.
+ *
+ * The same asymmetry decides the missing cases. If either side has no
+ * descriptor, there is nothing to agree and the answer is no — the person is
+ * asked again, which is the failure this whole mechanism prefers. Under-matching
+ * costs a question; over-matching spends somebody's yes on something they never
+ * saw.
+ *
+ * ── What is still not closed ─────────────────────────────────────────────
+ *
+ * Two elements with the same role and the same accessible name are the same
+ * descriptor, so a page with two identical *Track shipment* buttons can still
+ * swap one for the other at the same ref. Both were on the page the person read,
+ * which is a weaker thing to be wrong about than the control they were shown
+ * being replaced by a different one — but it is not nothing, and the honest way
+ * past it is the attested identity the extension does not currently send.
+ *
+ * ADR-0010 §5's adjacent hazard — *"re-clicking after approval may double-fire"*
+ * — is untouched by this and still open.
  */
 export function confirmationIdFor(
   kind: string,
   params: Record<string, unknown>,
   confirmations: readonly ConfirmedAction[],
+  /** The proposed element's line in the tree the continuation is looking at NOW.
+   *  Null when the proposal names no element, or when there is no current tree. */
+  proposedDescriptor: string | null = null,
 ): string | undefined {
   for (const confirmed of confirmations) {
     if (confirmed.kind !== kind) continue
     if (!identifyingParamsMatch(confirmed.params, params)) continue
+
+    // Only where an element is what was confirmed. A `press-key` with no ref is
+    // identified by its key and the page it was asked about, and demanding a
+    // descriptor of it would refuse every one of them forever.
+    if (typeof confirmed.params['ref'] === 'string') {
+      if (confirmed.descriptor === null || proposedDescriptor === null) continue
+      if (confirmed.descriptor !== proposedDescriptor) continue
+    }
+
     return confirmed.requestId
   }
   return undefined
+}
+
+/**
+ * One element's line out of an accessibility tree, or null.
+ *
+ * The format is the extension's and is one line per node —
+ * `e47 button "Track shipment"`, optionally followed by ` value:"…"` — joined
+ * by newlines. `flattenAXTree` in `extension/src/cdp.js` is what writes it.
+ *
+ * Matched on `${ref} ` with the trailing space, so `e4` cannot match the line
+ * belonging to `e42`. A ref appearing twice would be the extension emitting a
+ * duplicate, which it cannot: refs are handed out by a counter. The first is
+ * taken anyway rather than scanning for a second, because a tree that did
+ * contain two is a tree nothing here can reason about and the safe reading is
+ * the earliest one.
+ *
+ * Total, and returns null on anything it cannot read — a caller that got an
+ * exception here would lose the pause, and losing the pause is the one failure
+ * this mechanism cannot survive.
+ */
+export function descriptorFor(tree: unknown, ref: unknown): string | null {
+  if (typeof tree !== 'string' || typeof ref !== 'string' || ref === '') return null
+  const prefix = `${ref} `
+  for (const line of tree.split('\n')) {
+    if (line.startsWith(prefix)) return line
+  }
+  return null
 }
 
 /**
