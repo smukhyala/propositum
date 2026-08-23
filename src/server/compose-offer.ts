@@ -251,6 +251,9 @@ export async function composeOffer(
    * exactly the point it matters most.
    */
   nowMs: number = Date.now(),
+  /** Declines already recorded against this strand. The caller looks it up;
+   *  this function stays a pure consumer of the number. */
+  declines = 0,
 ): Promise<void> {
   const signature = signatureOf(detected.terms)
 
@@ -264,7 +267,7 @@ export async function composeOffer(
    * actually made of, so the two views cannot disagree.
    */
   const pages = threadPagesOf(store.since(nowMs), detected, nowMs)
-  const grounds = groundsFor(detected, pages)
+  const grounds = groundsFor(detected, pages, declines)
 
   // The bar, before the memory. See the header: recording an attempt here would
   // silence a thread that has not yet earned an offer but is about to.

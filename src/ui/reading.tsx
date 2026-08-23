@@ -576,14 +576,11 @@ function Reading({ claims, readOnly, pending, problem, onContinue }: ReadingProp
             you.
           </p>
           <div className="tk-foot-actions">
-            <Button
-              variant="primary"
-              onClick={onContinue}
-              disabled={pending || objective === null}
-              {...(objective === null
-                ? { title: 'Propositum recorded no objective, so there is nothing to hand over.' }
-                : {})}
-            >
+            {/* No `title` for the null-objective case. The Empty above already
+                says it twice — "Propositum recorded no objective for this
+                session" and "Nothing can be handed over without one" — and both
+                of those are on the page rather than in a tooltip. */}
+            <Button variant="primary" onClick={onContinue} disabled={pending || objective === null}>
               {pending ? 'Writing the agreement…' : 'Write the working agreement'}
             </Button>
           </div>

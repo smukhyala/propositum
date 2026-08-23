@@ -26,12 +26,18 @@
 
 import { describe, it, expect } from 'vitest'
 
-import { frontDoorRow, noticedAfternoon, noticedStrands, statusWordFor } from '../src/server/front-door'
+import {
+  frontDoorRow,
+  noticedAfternoon,
+  noticedStrands,
+  statusWordFor,
+} from '../src/server/front-door'
 import { INTENTION_STATES } from '../src/domain/intention/state'
 import type { IntentionStateFacts } from '../src/persistence/repositories/index'
 import { MAX_THREADS_SHOWN } from '../src/domain/detection/detect'
 import type { AmbientObservation } from '../src/domain/detection/detect'
 import { createAmbientStore } from '../src/server/ambient-store'
+import { hashSignature } from '../src/domain/detection/reticence'
 
 const NOW = Date.UTC(2026, 7, 16, 12, 0, 0)
 
@@ -332,5 +338,98 @@ describe('the strands a screen finds and does not show', () => {
     ]
 
     expect(noticedAfternoon(store, three, AT).suppressed).toEqual([])
+  })
+
+  /* ── and the third reason, which is the person's own ─────────────────── */
+
+  /**
+   * What reticence does to this screen — ADR-0020.
+   *
+   * The ADR stakes its Principle 15 defence on one line on the front door, and
+   * `tests/reachability.test.ts` can only pin that the line EXISTS. Whether it
+   * ever has anything to say is decided here, in three behaviours that all fail
+   * silently: the guard that spares a strand nobody has turned down, the count
+   * that is deliberately not `suppressed`, and the display slot a held-back
+   * strand gives up.
+   *
+   * The salt is a literal because `hashSignature` is what keys the map and the
+   * install's real salt is a database row. What is being tested is the policy,
+   * not the hashing — `tests/reticence-store.test.ts` owns that.
+   */
+  describe('and the ones it holds back because they were turned down before', () => {
+    const SALT = 'a-salt-that-belongs-to-this-file-only'
+
+    /** The map `page.tsx` builds, in the one shape `noticedAfternoon` reads.
+     *  Keyed by hash, because the front door never sees a signature it stored. */
+    function declined(entries: ReadonlyArray<readonly [string, number]>) {
+      return new Map(entries.map(([signature, count]) => [hashSignature(signature, SALT), count]))
+    }
+
+    it('leaves a strand with no declines on precisely the path it took before', () => {
+      const store = createAmbientStore()
+      const before = noticedAfternoon(store, AFTERNOON, AT)
+
+      // Two ways of saying nobody has turned this down, and both must be
+      // yesterday's screen. `declinesFor` OMITS a hash nobody has declined, so
+      // the empty map is the ordinary case; the explicit zero is the guard on
+      // `declines > 0` doing its job for a caller who hands one over anyway.
+      expect(before.heldBack).toBe(0)
+
+      const zeroed = noticedAfternoon(
+        store,
+        AFTERNOON,
+        AT,
+        declined([[before.shown[0]!.signature, 0]]),
+        SALT,
+      )
+
+      expect(zeroed.shown).toEqual(before.shown)
+      expect(zeroed.suppressed).toEqual(before.suppressed)
+      expect(zeroed.heldBack).toBe(0)
+    })
+
+    it('holds back a strand that no longer clears its raised bar, and counts it apart', () => {
+      const store = createAmbientStore()
+      const before = noticedAfternoon(store, AFTERNOON, AT)
+      const leading = before.shown[0]!
+
+      const after = noticedAfternoon(store, AFTERNOON, AT, declined([[leading.signature, 1]]), SALT)
+
+      // In NEITHER half, which is the whole reason `heldBack` is a third number.
+      // `suppressed` means "good enough, and cut for room" and this strand was
+      // not good enough any more; putting it there would make one metric mean
+      // two things.
+      expect(after.heldBack).toBe(1)
+      expect(after.shown.map((s) => s.signature)).not.toContain(leading.signature)
+      expect(after.suppressed.map((s) => s.signature)).not.toContain(leading.signature)
+    })
+
+    /**
+     * The awkward edge, pinned deliberately so a re-ordering has to come
+     * through this test.
+     *
+     * The `continue` fires before `seen.add` and before the display bound, so
+     * the strand behind the bound is promoted onto the screen. That is inside
+     * §15 rather than a breach of it: no bar was lowered for the promoted
+     * strand — it had already cleared every gate on its own grounds — and what
+     * changed is that a slot stopped being occupied by something nobody wants
+     * to see. The alternative is strictly worse for the person: a held-back
+     * strand consuming one of three slots and rendering nothing in it.
+     */
+    it('gives up the slot it was holding, which puts the cut strand on screen', () => {
+      const store = createAmbientStore()
+      const before = noticedAfternoon(store, AFTERNOON, AT)
+      const leading = before.shown[0]!
+      const cut = before.suppressed[0]!
+
+      const after = noticedAfternoon(store, AFTERNOON, AT, declined([[leading.signature, 1]]), SALT)
+
+      expect(after.shown).toHaveLength(MAX_THREADS_SHOWN)
+      expect(after.suppressed).toEqual([])
+      expect(after.shown.map((s) => s.signature)).toContain(cut.signature)
+      // And the two counts stay disjoint across the promotion: nothing was cut
+      // for room this time, and exactly one strand was held back.
+      expect(after.heldBack).toBe(1)
+    })
   })
 })

@@ -46,7 +46,7 @@
 import Link from 'next/link'
 import { notFound, redirect } from 'next/navigation'
 
-import { BackLink, Button, Empty, Masthead, Section, Sheet } from '@/ui/primitives'
+import { BackLink, Button, Disclosure, Empty, Masthead, Section, Sheet } from '@/ui/primitives'
 import { Away, Handover, Watching } from '@/ui/sprites'
 import { Timeline } from '@/ui/timeline'
 import type { TimelineEvent } from '@/ui/timeline'
@@ -198,7 +198,7 @@ export default async function ProjectPage({
       untrustedText: typeof stored === 'string' && stored.trim().length > 0 ? stored : null,
       adversarial: untrusted['adversarial'] === true,
       sourceLabel:
-        event.approvedSourceId === null ? null : labelById.get(event.approvedSourceId) ?? null,
+        event.approvedSourceId === null ? null : (labelById.get(event.approvedSourceId) ?? null),
     }
   })
 
@@ -347,13 +347,14 @@ export default async function ProjectPage({
    */
   const leftOff = await whereYouLeftOffIn(projectId, Date.now())
 
-  const bandTitle = openSession === null
-    ? 'Start a session'
-    : away
-      ? 'Propositum is working while you are away'
-      : stranded
-        ? 'This session is open, but nothing is being recorded'
-        : 'This session'
+  const bandTitle =
+    openSession === null
+      ? 'Start a session'
+      : away
+        ? 'Propositum is working while you are away'
+        : stranded
+          ? 'This session is open, but nothing is being recorded'
+          : 'This session'
 
   return (
     <Sheet>
@@ -408,7 +409,8 @@ export default async function ProjectPage({
             ) : stranded ? (
               <>
                 <p className="pj-lede">
-                  This session is still open, but Propositum stopped watching when the app restarted.
+                  This session is still open, but Propositum stopped watching when the app
+                  restarted.
                 </p>
                 <p className="pj-under">
                   Nothing new is reaching the timeline, and anything the extension has tried to send
@@ -447,13 +449,19 @@ export default async function ProjectPage({
                     While you were away
                   </Link>
                 ) : null}
-                <Button
-                  type="button"
-                  disabled
-                  title="Propositum is working under the agreement you accepted. You can take the work back once you have read what it did."
-                >
+                <Button type="button" disabled>
                   End session
                 </Button>
+                {/* The reason this control is inert, on the page rather than in
+                    a `title`. It is the one tooltip on this screen that said
+                    something nothing else said, so it is the one that had to
+                    become text instead of being deleted: a control that is
+                    merely grey tells the person it is broken rather than that
+                    it is waiting. */}
+                <p className="pj-hint">
+                  Propositum is working under the agreement you accepted. Read what it did to take
+                  the work back.
+                </p>
               </>
             ) : (
               <>
@@ -491,33 +499,26 @@ export default async function ProjectPage({
             : 'Propositum named this from what you were reading. You did not have to make it, and you can change what it is called.'}
         </p>
 
-        <form className="pj-form" action={rename}>
-          <label className="pj-field">
-            <span className="pj-label">Call it</span>
-            <input
-              className="pj-input"
-              name="name"
-              type="text"
-              required
-              maxLength={120}
-              autoComplete="off"
-              defaultValue={project.name}
-            />
-          </label>
-          <button className="pj-submit" type="submit">
-            Save the name
-          </button>
-        </form>
+        {/*
+          Three corrections behind one disclosure.
 
-        {/* The way out of a filing decision nobody made deliberately. Shown
-            only when there is something to leave: a project holding one sitting
-            already belongs to it alone, and offering to split it would be
-            offering to do nothing. */}
-        {shownSession !== null && sessions.length > 1 ? (
-          <form className="pj-form" action={splitOut}>
-            <input type="hidden" name="sessionId" value={shownSession.id} />
+          Renaming, splitting a sitting out, and refiling it elsewhere are three
+          answers to the same question — "this got filed wrong" — and the screen
+          asked it three times, in three forms, with two text inputs and a
+          select, to a person who had not said anything was wrong. The default
+          case is that the filing is right, and this section now reads as that
+          case with a way out of it rather than as an interrogation.
+
+          `WhereYouLeftOff` and the sentence under it stay OUTSIDE this. What
+          was decided in earlier sittings is the thing a person is here to see,
+          and ADR-0017 is explicit that it renders "before anybody clicks
+          anything" — folding it would be the quietness the ADR exists to
+          refuse. Only the corrections fold.
+        */}
+        <Disclosure summary="Filed wrong? Rename it, or move this sitting">
+          <form className="pj-form" action={rename}>
             <label className="pj-field">
-              <span className="pj-label">This sitting is about something else</span>
+              <span className="pj-label">Call it</span>
               <input
                 className="pj-input"
                 name="name"
@@ -525,39 +526,64 @@ export default async function ProjectPage({
                 required
                 maxLength={120}
                 autoComplete="off"
-                placeholder="What it is actually about"
+                defaultValue={project.name}
               />
             </label>
             <button className="pj-submit" type="submit">
-              No &mdash; this is new work
+              Save the name
             </button>
-            <p className="pj-hint">
-              The sitting on {DAY.format(shownSession.startedAt)} moves out on its own. The sites it
-              was recorded against are approved there too, so Propositum can still see them, and
-              they stay approved here. Nothing already in its timeline changes, and this project
-              keeps its document.
-            </p>
           </form>
-        ) : null}
 
-        {shownSession !== null && elsewhere.length > 0 ? (
-          <form className="pj-form" action={moveElsewhere}>
-            <input type="hidden" name="sessionId" value={shownSession.id} />
-            <label className="pj-field">
-              <span className="pj-label">Or it belongs with</span>
-              <select className="pj-input" name="projectId" defaultValue={elsewhere[0]?.id}>
-                {elsewhere.map((other) => (
-                  <option key={other.id} value={other.id}>
-                    {other.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <button className="pj-submit" type="submit">
-              Carry on with that
-            </button>
-          </form>
-        ) : null}
+          {/* The way out of a filing decision nobody made deliberately. Shown
+            only when there is something to leave: a project holding one sitting
+            already belongs to it alone, and offering to split it would be
+            offering to do nothing. */}
+          {shownSession !== null && sessions.length > 1 ? (
+            <form className="pj-form" action={splitOut}>
+              <input type="hidden" name="sessionId" value={shownSession.id} />
+              <label className="pj-field">
+                <span className="pj-label">This sitting is about something else</span>
+                <input
+                  className="pj-input"
+                  name="name"
+                  type="text"
+                  required
+                  maxLength={120}
+                  autoComplete="off"
+                  placeholder="What it is actually about"
+                />
+              </label>
+              <button className="pj-submit" type="submit">
+                No &mdash; this is new work
+              </button>
+              <p className="pj-hint">
+                The sitting on {DAY.format(shownSession.startedAt)} moves out on its own. The sites
+                it was recorded against are approved there too, so Propositum can still see them,
+                and they stay approved here. Nothing already in its timeline changes, and this
+                project keeps its document.
+              </p>
+            </form>
+          ) : null}
+
+          {shownSession !== null && elsewhere.length > 0 ? (
+            <form className="pj-form" action={moveElsewhere}>
+              <input type="hidden" name="sessionId" value={shownSession.id} />
+              <label className="pj-field">
+                <span className="pj-label">Or it belongs with</span>
+                <select className="pj-input" name="projectId" defaultValue={elsewhere[0]?.id}>
+                  {elsewhere.map((other) => (
+                    <option key={other.id} value={other.id}>
+                      {other.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <button className="pj-submit" type="submit">
+                Carry on with that
+              </button>
+            </form>
+          ) : null}
+        </Disclosure>
       </Section>
 
       <Section title="What Propositum can see" index={3}>
@@ -721,7 +747,13 @@ export default async function ProjectPage({
               <Link className="pj-quiet" href={`/sessions/${shownSession.id}`}>
                 What Propositum thinks you&rsquo;re working on
               </Link>
-              {shift ? (
+              {/* ...but not when the band above is already showing it. While
+                  the session is `away` both rendered, so one screen offered the
+                  same destination under the same words twice, a few centimetres
+                  apart — which reads as two different places until you have
+                  been to both. Everywhere else this is still the only route,
+                  which is what the note above is about. */}
+              {shift && !away ? (
                 <Link className="pj-quiet" href={`/shifts/${shift.id}`}>
                   While you were away
                 </Link>

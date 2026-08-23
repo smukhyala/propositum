@@ -127,12 +127,14 @@ import { ambientStore, captureStore } from '@/server/capture-store'
 import { describeWork, signatureOf } from '@/server/ambient-store'
 import type { NamedThread } from '@/server/ambient-store'
 import type { WorkDetected } from '@/domain/detection/detect'
+import { hashSignature } from '@/domain/detection/reticence'
 import { frontDoorRow, noticedAfternoon, strandBySignature } from '@/server/front-door'
 import { countQuietly } from '@/server/offer-tally'
 import type { FrontDoorRow } from '@/server/front-door'
 import type { IntentionStateFacts } from '@/persistence/repositories/index'
 
 import { appContext } from '@/server/db'
+import { NOTHING_RECORDED_YET } from '@/ui/shared-copy'
 
 // The capture store is in-memory and the database is a local file. Neither is
 // cacheable, and a stale "a session is running" is exactly the lie §11 forbids.
@@ -535,10 +537,53 @@ export default async function Home({
   // `nowMs` is the instant the lifecycle words above were computed from, rather
   // than a second reading of the clock. Two "now"s on one render is two answers
   // to one question, and this screen puts both answers on the same page.
-  const afternoon = live
-    ? { shown: [], suppressed: [] }
-    : noticedAfternoon(ambient, ambient.since(nowMs), nowMs)
+  const observations = live ? [] : ambient.since(nowMs)
+
+  /**
+   * The same afternoon, asked twice: once to learn which strands exist, and
+   * once knowing what this person has already turned down — ADR-0020.
+   *
+   * ── Why twice, and why not a second walk of the same filters ────────────
+   *
+   * `noticedAfternoon` is synchronous by design and the decline counts are keyed
+   * by a HASH of a signature, so nothing can be looked up before the signatures
+   * are known. The alternative is a second function that walks the strands to
+   * collect them — which is exactly the shape `front-door.ts` opens by refusing,
+   * because two spellings of the three filters is how the screen and the count
+   * come to disagree about which strands existed. Asking the one function twice
+   * costs a walk of an in-memory buffer and keeps one spelling.
+   *
+   * `shown` plus `suppressed` is the whole candidate set: everything that
+   * cleared the detector, was not snoozed and was not a duplicate. A strand
+   * reticence has nothing to say about is in there too and its lookup simply
+   * misses, which is the only direction this can be wrong in.
+   *
+   * ── `showHeld` is the person, which is the only thing allowed to widen ──
+   *
+   * §15 lets trust history narrow on its own and never widen. "Show them
+   * anyway" is a human act, so it passes the empty map and gets exactly the
+   * first pass. It widens for this render and writes nothing: the rows are
+   * still there, and only accepting an offer deletes one.
+   */
+  const showHeld = params['showHeld'] !== undefined
+  const candidates = live
+    ? { shown: [], suppressed: [], heldBack: 0 }
+    : noticedAfternoon(ambient, observations, nowMs)
+
+  const salt = live || showHeld ? '' : await repos.reticence.salt()
+  const declined =
+    live || showHeld
+      ? new Map<string, number>()
+      : await repos.reticence.declinesFor(
+          [...candidates.shown, ...candidates.suppressed].map((strand) =>
+            hashSignature(strand.signature, salt),
+          ),
+        )
+
+  const afternoon =
+    live || showHeld ? candidates : noticedAfternoon(ambient, observations, nowMs, declined, salt)
   const noticed = afternoon.shown
+  const heldBack = afternoon.heldBack
 
   /**
    * What this screen showed, and what it found and cut, counted once each.
@@ -711,10 +756,9 @@ export default async function Home({
               </span>
               <h1 className="hm-say">Nothing new.</h1>
               <p className="hm-then">
-                {countWordCapped(waiting.length)}{' '}
-                {waiting.length === 1 ? 'shift' : 'shifts'} finished while you were away, just
-                below. Propositum will offer again when the same subject turns up across a few
-                sites.
+                {countWordCapped(waiting.length)} {waiting.length === 1 ? 'shift' : 'shifts'}{' '}
+                finished while you were away, just below. Propositum will offer again when the same
+                subject turns up across a few sites.
               </p>
             </>
           ) : null}
@@ -755,11 +799,7 @@ export default async function Home({
                 </>
               ) : (
                 <span className="hm-mark">
-                  <Handover
-                    size={MARK_SIZE}
-                    pen={MARK_PEN}
-                    title="Propositum can take this on"
-                  />
+                  <Handover size={MARK_SIZE} pen={MARK_PEN} title="Propositum can take this on" />
                 </span>
               )}
 
@@ -818,8 +858,8 @@ export default async function Home({
                       <p className="hm-because">
                         {strand.backOn.sittings}{' '}
                         {strand.backOn.sittings === 1 ? 'sitting' : 'sittings'} so far,{' '}
-                        {strand.backOn.overlap}{' '}
-                        {strand.backOn.overlap === 1 ? 'word' : 'words'} in common.
+                        {strand.backOn.overlap} {strand.backOn.overlap === 1 ? 'word' : 'words'} in
+                        common.
                       </p>
 
                       <div className="hm-acts">
@@ -850,11 +890,37 @@ export default async function Home({
               {/* The last line of the offer, not a section under it. Nothing is
                   recorded until the person says yes, and the moment they are
                   deciding is the moment that is worth saying. */}
-              <p className="hm-because hm-foot">
-                Nothing has been recorded. Propositum holds what it saw for half an hour and throws
-                it away unless you say yes.
-              </p>
+              <p className="hm-because hm-foot">{NOTHING_RECORDED_YET}</p>
             </div>
+          ) : null}
+
+          {/*
+           * §15 forbids "a default computed from past behaviour and applied
+           * without being shown", and a suppressed offer is invisible by
+           * construction — there is no screen for the thing that did not
+           * happen. This is that screen, and it is one line.
+           *
+           * It names no subject. A count is what the counters already say;
+           * naming which strand was held back would put on screen exactly the
+           * subject `offer_reticence` refuses to store.
+           *
+           * "Show them anyway" is the human act, and therefore the only control
+           * here allowed to widen anything. It shows them for this poll; it
+           * deletes no rows. Accepting one does that.
+           *
+           * Outside the offer block rather than inside it, because reticence
+           * can hold back every strand there was — and the screen that then
+           * says "Nothing yet." is the one that most needs this line under it.
+           */}
+          {heldBack > 0 ? (
+            <p className="hm-because hm-foot">
+              {heldBack === 1
+                ? 'One thing was held back because you’ve said not now to it before.'
+                : `${heldBack} things were held back because you’ve said not now to them before.`}{' '}
+              <Link className="hm-link" href="/?showHeld=1">
+                Show them anyway
+              </Link>
+            </p>
           ) : null}
 
           {/* The only thing below the offer, and only when something is
@@ -884,11 +950,7 @@ export default async function Home({
           {waiting.length > 0 ? (
             <div className="hm-waits">
               {waiting.map((work) => (
-                <Link
-                  className="hm-wait"
-                  key={work.id}
-                  href={`/shifts/${work.waitingContractId}`}
-                >
+                <Link className="hm-wait" key={work.id} href={`/shifts/${work.waitingContractId}`}>
                   <span>{work.name}</span>
                   <span className="hm-wait-go">While you were away</span>
                 </Link>

@@ -1197,7 +1197,19 @@ function spanOf(pages: readonly ThreadPage[]): number {
  * needs is already on a page — so the same buffer produces the same grounds
  * whenever it is asked, which is what makes an offer explainable afterwards.
  */
-export function groundsFor(detected: WorkDetected, pages: readonly ThreadPage[]): OfferGrounds {
+export function groundsFor(
+  detected: WorkDetected,
+  pages: readonly ThreadPage[],
+  /**
+   * How many times this strand has been declined before.
+   *
+   * Optional and last, so every existing caller keeps today's behaviour and a
+   * caller that forgets it gets the floor rather than a silent widening. The
+   * lookup is impure and belongs at the edge; this function stays pure and
+   * takes a number.
+   */
+  declines = 0,
+): OfferGrounds {
   const { queries, readAfterQuery } = pursuitOf(detected, pages)
   const back = returnedTo(pages)
   const deepest = deepestRead(pages)
@@ -1273,9 +1285,22 @@ export function groundsFor(detected: WorkDetected, pages: readonly ThreadPage[])
   const last = sentences.length - 1
   if (last >= 0 && UNDER_TEST !== '') sentences[last] = `${sentences[last] ?? ''}${UNDER_TEST}`
 
+  /**
+   * The bar, plus whatever the person has already said no to.
+   *
+   * `Math.max(declines, 0)` is not defensive tidiness — it is the only thing
+   * standing between this expression and a caller that widens the bar by
+   * passing a negative. §15 permits narrowing and forbids widening, and a
+   * clamp is how that becomes a property of the code rather than of every
+   * caller. `Math.min(…, 2)` bounds how quiet reticence can make Propositum:
+   * four axes is already a high bar and there is no honest reading of "they
+   * said no eleven times" that should mean silence forever.
+   */
+  const required = INVESTMENT_REQUIRED + Math.min(Math.max(declines, 0), 2)
+
   return {
     kinds,
-    sufficient: intent.length >= INTENT_REQUIRED && axes >= INVESTMENT_REQUIRED,
+    sufficient: intent.length >= INTENT_REQUIRED && axes >= required,
     sentences,
   }
 }

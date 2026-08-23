@@ -49,7 +49,16 @@
 import { useMemo, useState, useTransition } from 'react'
 import { motion, useReducedMotion } from 'motion/react'
 
-import { BackLink, Button, Empty, LogEntry, Masthead, Narrative, Section, Sheet } from './primitives'
+import {
+  BackLink,
+  Button,
+  Empty,
+  LogEntry,
+  Masthead,
+  Narrative,
+  Section,
+  Sheet,
+} from './primitives'
 import { ChangeCard } from './diff'
 import type { ChangeVerdict, ChangeView } from './diff'
 import { WhatIMade } from './outcome'
@@ -270,7 +279,9 @@ function Top({
         className="ps-narrative-wrap"
         initial={still ? false : { opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={still ? { duration: 0 } : { duration: 0.45, delay: 0.1, ease: [0.16, 1, 0.3, 1] }}
+        transition={
+          still ? { duration: 0 } : { duration: 0.45, delay: 0.1, ease: [0.16, 1, 0.3, 1] }
+        }
       >
         {narrative === null ? (
           <p className="ps-no-narrative">
@@ -383,7 +394,9 @@ function Decisions({
 
 export function ShiftReport(props: ShiftReportProps) {
   const [recorded, setRecorded] = useState<Readonly<Record<string, ChangeVerdict>>>({})
-  const [decidedOutcomes, setDecidedOutcomes] = useState<Readonly<Record<string, OutcomeVerdict>>>({})
+  const [decidedOutcomes, setDecidedOutcomes] = useState<Readonly<Record<string, OutcomeVerdict>>>(
+    {},
+  )
   const [settled, setSettled] = useState<ReadonlySet<string>>(new Set())
   const [problem, setProblem] = useState<string | null>(null)
   const [finished, setFinished] = useState<
@@ -567,7 +580,12 @@ export function ShiftReport(props: ShiftReportProps) {
       <BackLink href={props.up.href}>&larr; {props.up.label}</BackLink>
 
       {/* Fixed order — see the note at the top of this file. */}
-      <Top kicker={props.kicker} narrative={props.narrative} window={props.window} tally={props.tally} />
+      <Top
+        kicker={props.kicker}
+        narrative={props.narrative}
+        window={props.window}
+        tally={props.tally}
+      />
 
       <Decisions decisions={props.decisions} settled={settled} onSettle={settle} />
 
@@ -610,16 +628,16 @@ export function ShiftReport(props: ShiftReportProps) {
             <div className="ps-actions">
               {changes.length === 0 ? null : (
                 <>
+                  {/* No `title`. Every reason this control could be blocked is
+                      already on the page as text: `.ps-blocked` carries the
+                      open-question reason verbatim, and the `role="status"`
+                      count below says how many are undecided. Saying it a second
+                      time in a tooltip added no information and put it somewhere
+                      re-entry finding 9 measured as unreachable by keyboard and
+                      screen reader — thorough-looking and absent. */}
                   <Button
                     disabled={blocked || busy || undecided.length === 0}
                     onClick={() => decideAll('accept')}
-                    title={
-                      blocked
-                        ? blockedWhy
-                        : undecided.length === 0
-                          ? 'Every change already has a decision on it.'
-                          : 'Records an acceptance against every change still undecided.'
-                    }
                   >
                     Accept all
                   </Button>
@@ -630,11 +648,6 @@ export function ShiftReport(props: ShiftReportProps) {
                   <Button
                     disabled={busy || undecided.length === 0}
                     onClick={() => decideAll('reject')}
-                    title={
-                      undecided.length === 0
-                        ? 'Every change already has a decision on it.'
-                        : 'Records a rejection against every change still undecided. Nothing in your document changes.'
-                    }
                   >
                     Discard all of this
                   </Button>
@@ -654,18 +667,7 @@ export function ShiftReport(props: ShiftReportProps) {
                 over a Shift that produced no document text would be naming an
                 act that cannot happen.
               */}
-              <Button
-                variant="primary"
-                disabled={busy || stillWaiting > 0}
-                onClick={finish}
-                title={
-                  stillWaiting > 0
-                    ? `Decide on ${count(stillWaiting, waitingNoun)} first.`
-                    : changes.length > 0
-                      ? 'Writes a new version of your document containing the changes you kept. Your current text is not overwritten — it stays as an earlier version.'
-                      : 'Closes this off. Nothing is written — your decisions above are already on the record.'
-                }
-              >
+              <Button variant="primary" disabled={busy || stillWaiting > 0} onClick={finish}>
                 {changes.length > 0 ? 'Put these into your document' : "I'm done here"}
               </Button>
             </div>
@@ -746,7 +748,9 @@ export interface DriftedShiftProps {
  * happened, why none of it can be applied, and a way to hand over again.
  */
 export function DriftedShift(props: DriftedShiftProps) {
-  const [decidedOutcomes, setDecidedOutcomes] = useState<Readonly<Record<string, OutcomeVerdict>>>({})
+  const [decidedOutcomes, setDecidedOutcomes] = useState<Readonly<Record<string, OutcomeVerdict>>>(
+    {},
+  )
   const [problem, setProblem] = useState<string | null>(null)
   const [busy, startWriting] = useTransition()
 
@@ -769,7 +773,12 @@ export function DriftedShift(props: DriftedShiftProps) {
       <Styles />
       <BackLink href={props.up.href}>&larr; {props.up.label}</BackLink>
 
-      <Top kicker={props.kicker} narrative={props.narrative} window={props.window} tally={props.tally} />
+      <Top
+        kicker={props.kicker}
+        narrative={props.narrative}
+        window={props.window}
+        tally={props.tally}
+      />
 
       <Section title="Why there is nothing to review" tone="attention">
         <p className="ps-drift">
@@ -778,10 +787,10 @@ export function DriftedShift(props: DriftedShiftProps) {
         </p>
         <p className="ps-drift-detail">{props.driftDetail}</p>
         <p className="ps-drift-detail">
-          Your version is the one that stands. I set {count(props.setAside, 'proposal')} aside rather
-          than fold {props.setAside === 1 ? 'it' : 'them'} into text that has moved underneath{' '}
-          {props.setAside === 1 ? 'it' : 'them'} — a half-applied draft is worse than none. Nothing
-          in your document was changed.
+          Your version is the one that stands. I set {count(props.setAside, 'proposal')} aside
+          rather than fold {props.setAside === 1 ? 'it' : 'them'} into text that has moved
+          underneath {props.setAside === 1 ? 'it' : 'them'} — a half-applied draft is worse than
+          none. Nothing in your document was changed.
         </p>
 
         <div className="ps-settle">

@@ -199,7 +199,11 @@ export function OutcomeCard({ outcome, index, busy = false, onDecide }: OutcomeC
         <div className="po-head">
           <span className="po-kind">
             <span className="po-mark">
-              {outcome.landed ? <Away size={14} title="Already happened" /> : <Wrote size={14} title="Made" />}
+              {outcome.landed ? (
+                <Away size={14} title="Already happened" />
+              ) : (
+                <Wrote size={14} title="Made" />
+              )}
             </span>{' '}
             {label}
           </span>
@@ -209,12 +213,16 @@ export function OutcomeCard({ outcome, index, busy = false, onDecide }: OutcomeC
         </div>
 
         <div className="po-body">
-          {outcome.landed ? <p className="po-landed">This already happened, outside Propositum</p> : null}
+          {outcome.landed ? (
+            <p className="po-landed">This already happened, outside Propositum</p>
+          ) : null}
 
           <p className="po-headline">{outcome.headline}</p>
 
           {outcome.where === null ? null : <p className="po-to">Where: {outcome.where}</p>}
-          {outcome.addressedTo === null ? null : <p className="po-to">Written for {outcome.addressedTo}</p>}
+          {outcome.addressedTo === null ? null : (
+            <p className="po-to">Written for {outcome.addressedTo}</p>
+          )}
 
           {outcome.items.length === 0 ? null : (
             <>
@@ -260,18 +268,10 @@ export function OutcomeCard({ outcome, index, busy = false, onDecide }: OutcomeC
                 <p className="po-aside">Write what it should say instead, then save it.</p>
               ) : (
                 <>
-                  <Button
-                    onClick={() => onDecide(outcome.id, 'accept')}
-                    disabled={busy}
-                    {...(busy ? { title: 'Just a moment — the last decision is still being recorded.' } : {})}
-                  >
+                  <Button onClick={() => onDecide(outcome.id, 'accept')} disabled={busy}>
                     Accept
                   </Button>
-                  <Button
-                    onClick={() => onDecide(outcome.id, 'reject')}
-                    disabled={busy}
-                    {...(busy ? { title: 'Just a moment — the last decision is still being recorded.' } : {})}
-                  >
+                  <Button onClick={() => onDecide(outcome.id, 'reject')} disabled={busy}>
                     Reject
                   </Button>
                   <Button
@@ -280,7 +280,6 @@ export function OutcomeCard({ outcome, index, busy = false, onDecide }: OutcomeC
                       setEditing(true)
                     }}
                     disabled={busy}
-                    {...(busy ? { title: 'Just a moment — the last decision is still being recorded.' } : {})}
                   >
                     Edit
                   </Button>
@@ -305,7 +304,10 @@ export function OutcomeCard({ outcome, index, busy = false, onDecide }: OutcomeC
                     disabled={busy || draft.trim() === ''}
                     onClick={() => onDecide(outcome.id, 'edit', draft)}
                     {...(draft.trim() === ''
-                      ? { title: 'Write what it should say instead — an empty box cannot stand in for it.' }
+                      ? {
+                          title:
+                            'Write what it should say instead — an empty box cannot stand in for it.',
+                        }
                       : {})}
                   >
                     Save your wording
@@ -351,7 +353,9 @@ export function WhatIMade({ outcomes, busy, onDecide }: WhatIMadeProps) {
 
   return (
     <Section
-      title={landed === 0 ? 'What I made' : `What I made — ${count(landed, 'thing')} already out there`}
+      title={
+        landed === 0 ? 'What I made' : `What I made — ${count(landed, 'thing')} already out there`
+      }
     >
       {outcomes.map((outcome, i) => (
         <OutcomeCard

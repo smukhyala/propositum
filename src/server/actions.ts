@@ -31,11 +31,11 @@
 
 import { revalidatePath } from 'next/cache'
 
-import { appContext } from './db'
+import { appContext, existingAppContext } from './db'
 import { readableCause } from './problem'
 import { confirmRequest, haltRun, rejectRequest } from './confirmations'
 import { ambientStore, captureStore } from './capture-store'
-import { countQuietly } from './offer-tally'
+import { countQuietly, dayBucket } from './offer-tally'
 import { whereYouLeftOffIn, whereYouLeftOffOn } from './work-so-far'
 import { describeWork, signatureOf } from './ambient-store'
 // ADR-0014. Three imports, none of which can decide anything: a nullable
@@ -54,6 +54,7 @@ import { EVERY_STRAND, detectThreads, threadPagesOf } from '../domain/detection/
 import { groundsFor } from '../domain/detection/grounds'
 import { matchProject, projectTerms } from '../domain/detection/match-project'
 import type { ProjectCandidate } from '../domain/detection/match-project'
+import { hashSignature } from '../domain/detection/reticence'
 import { checkDrift, hashContent, materialise } from '../domain/document/changeset'
 import type { Decision } from '../domain/document/changeset'
 import { normalise } from '../domain/document/normalise'
@@ -1202,6 +1203,23 @@ export async function startFromSuggestion(
     captureStore().start(session.id, startedAtMs)
 
     /**
+     * Accepting forgets every decline of this strand.
+     *
+     * The only thing permitted to lower a bar is a person acting, and this is
+     * that act. It also keeps reticence from being a ratchet: a subject you
+     * turned down four times and then took up is not one Propositum should stay
+     * quiet about.
+     *
+     * `threadSignature` is optional here — the carry-on suggestion path starts
+     * work with no thread at all — so this only fires when one was actually
+     * supplied, trimmed the same way `acceptWorkOffer` trims it.
+     */
+    const declinedThread = threadSignature?.trim()
+    if (declinedThread) {
+      await repos.reticence.clear(hashSignature(declinedThread, await repos.reticence.salt()))
+    }
+
+    /**
      * What was already seen becomes the session's own record — but only the
      * pages that were part of the THREAD.
      *
@@ -1619,6 +1637,17 @@ export async function acceptWorkOffer(
     if (!started.ok) return { ok: false, problem: started.problem } as const
 
     /**
+     * Accepting forgets every decline of this strand.
+     *
+     * The only thing permitted to lower a bar is a person acting, and this is
+     * that act. It also keeps reticence from being a ratchet: a subject you
+     * turned down four times and then took up is not one Propositum should stay
+     * quiet about.
+     */
+    const { repos } = await appContext()
+    await repos.reticence.clear(hashSignature(thread, await repos.reticence.salt()))
+
+    /**
      * The offer becomes durable at the moment it is accepted, and not before.
      *
      * An offer nobody answered leaves no row, by the same rule the ambient
@@ -1971,6 +2000,52 @@ export async function declineThreadOffer(
     const urls = fresh ? fresh.urls : ambient.pagesOfThread(thread)
 
     ambient.declineThread(thread, urls, now)
+
+    /**
+     * And the durable half, which the snooze above is not — best-effort, and
+     * structurally incapable of being the reason a database opens.
+     *
+     * `declineThread` snoozes this signature for an hour and forgets it with
+     * the buffer, so a person who declines the same strand every evening is
+     * asked again every evening and the product learns nothing. This is that,
+     * remembered — as a salted hash, a count and a day, and never the terms.
+     * ADR-0020 carries the argument, including what the hash does not buy.
+     *
+     * ── Why `existingAppContext()`, and not `appContext()` ────────────────
+     *
+     * `declineThreadOffer` touched no database at all before this write
+     * existed. Reaching for `appContext()` here would have made it the SECOND
+     * function to make the mistake `tests/support/no-real-database.ts`
+     * documents in full: `countQuietly` in `src/server/offer-tally.ts` used to
+     * call `appContext()`, which builds a handle from `.env`'s `DATABASE_URL`
+     * if none exists yet — and in a `vitest` worker that is the developer's
+     * real `propositum.db`. `tests/multiple-threads.test.ts` declines a strand
+     * with no database of its own, on the strength of `declineThreadOffer`
+     * never having needed one, and wrote real rows into it. `countQuietly` was
+     * fixed by switching to `existingAppContext()`, which returns a handle
+     * only when something else already opened one and `undefined` otherwise —
+     * so the counter can be reached from a process that has no database and do
+     * nothing, rather than open one to find out. This write repeats that fix
+     * rather than reinventing it, for the same reason.
+     *
+     * A person's "not now" must never fail because this row could not be
+     * written: the click already worked — `ambient.declineThread` above holds
+     * the hour-long snooze regardless — so a missing context or a failed write
+     * here is a lost count, not a lost decline. Both are swallowed, the same
+     * shape `countQuietly` swallows its own.
+     */
+    const context = existingAppContext()
+    if (context !== undefined) {
+      try {
+        const { repos } = await context
+        await repos.reticence.record(
+          hashSignature(thread, await repos.reticence.salt()),
+          dayBucket(now),
+        )
+      } catch {
+        /* A lost count. See above: never a lost observation, offer or render. */
+      }
+    }
 
     /**
      * One "Not now", counted as a bare integer.

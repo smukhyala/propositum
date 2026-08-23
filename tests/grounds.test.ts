@@ -1996,3 +1996,66 @@ describe('an offer produced under fast-detect must not read like a real one', ()
     }
   })
 })
+
+describe('reticence only ever narrows', () => {
+  /** The strand from "one intent ground and two investment grounds is enough" —
+   *  sufficient at exactly the bar, so one decline is visible. */
+  function onTheBar() {
+    const pages = [
+      page({
+        url: 'https://a.example/1',
+        engagedMs: DEEP_READ_MS,
+        ...returnedFromElsewhere(),
+        at: T0,
+      }),
+      page({ url: 'https://b.example/1', at: T0 + MINUTE }),
+      page({ url: 'https://c.example/1', at: T0 + 2 * MINUTE }),
+    ]
+    return { detected: detected(SUBJECT, pages), pages }
+  }
+
+  function sufficientAt(declines: number): boolean {
+    const { detected: d, pages } = onTheBar()
+    return groundsFor(d, pages, declines).sufficient
+  }
+
+  it('admits a strand nobody has declined', () => {
+    expect(sufficientAt(0)).toBe(true)
+  })
+
+  it('refuses the same strand once it has been declined', () => {
+    // Two axes was enough; three is now required. This is the policy, in one
+    // assertion, on the smallest strand that can show it.
+    expect(sufficientAt(1)).toBe(false)
+  })
+
+  it('never admits at a higher decline count what it refused at a lower one', () => {
+    let previous = true
+
+    for (const declines of [0, 1, 2, 3, 10, 100]) {
+      const now = sufficientAt(declines)
+      // Monotonic: more declines can only ever take admission away.
+      if (!previous) expect(now).toBe(false)
+      previous = now
+    }
+  })
+
+  it('cannot be widened by a negative or absurd count', () => {
+    // A caller passing -5 must not buy a LOWER bar than one passing 0. The
+    // clamp in `groundsFor` is the only thing making this true, and this is
+    // what fails if somebody simplifies it away.
+    expect(sufficientAt(-5)).toBe(sufficientAt(0))
+    expect(sufficientAt(Number.NEGATIVE_INFINITY)).toBe(sufficientAt(0))
+  })
+
+  it('defaults to today’s behaviour when the caller says nothing', () => {
+    const { detected: d, pages } = onTheBar()
+
+    expect(groundsFor(d, pages).sufficient).toBe(groundsFor(d, pages, 0).sufficient)
+  })
+
+  it('leaves the published floor where it is', () => {
+    // Cited by name in grounds.ts's own prose and in ADR-0018.
+    expect(INVESTMENT_REQUIRED).toBe(2)
+  })
+})

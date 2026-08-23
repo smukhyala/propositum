@@ -40,6 +40,7 @@ import { guarded } from '../errors'
 // is whether a row enters the MVP's headline denominator. A second copy of the
 // string here is how the two would eventually disagree about that.
 import { isDecidable } from '../../domain/outcome/shift-outcome'
+import { installSalt } from '../../domain/detection/reticence'
 
 export interface Repositories {
   readonly intentions: IntentionRepository
@@ -81,6 +82,7 @@ export interface Repositories {
    * docblock for the argument against ADR-0008's refused row.
    */
   readonly offerTally: OfferTallyRepository
+  readonly reticence: OfferReticenceRepository
 }
 
 export function createRepositories(prisma: PrismaClient): Repositories {
@@ -104,6 +106,7 @@ export function createRepositories(prisma: PrismaClient): Repositories {
     dispatches: actionDispatchRepository(prisma),
     calendar: calendarConnectionRepository(prisma),
     offerTally: offerTallyRepository(prisma),
+    reticence: offerReticenceRepository(prisma),
   }
 }
 
@@ -449,7 +452,8 @@ function intentionRepository(prisma: PrismaClient): IntentionRepository {
         data: { projectId, objective, definitionOfDone },
         select: SELECT,
       }),
-    forProject: (projectId) => prisma.intention.findUnique({ where: { projectId }, select: SELECT }),
+    forProject: (projectId) =>
+      prisma.intention.findUnique({ where: { projectId }, select: SELECT }),
 
     factsForEveryProject: () => factsWhere({ projectId: { not: null } }),
 
@@ -692,7 +696,9 @@ export interface ProjectRepository {
     originPattern: string
     label: string
   }): Promise<{ id: string }>
-  approvedSources(projectId: string): Promise<Array<{ id: string; originPattern: string; label: string; grantState: string }>>
+  approvedSources(
+    projectId: string,
+  ): Promise<Array<{ id: string; originPattern: string; label: string; grantState: string }>>
   /**
    * Chrome is authoritative about grants; this mirrors a withdrawal.
    *
@@ -713,7 +719,8 @@ function projectRepository(prisma: PrismaClient): ProjectRepository {
       await prisma.project.update({ where: { id }, data: { name } })
     },
     byId: (id) => prisma.project.findUnique({ where: { id }, select: { id: true, name: true } }),
-    list: () => prisma.project.findMany({ select: { id: true, name: true }, orderBy: { createdAt: 'desc' } }),
+    list: () =>
+      prisma.project.findMany({ select: { id: true, name: true }, orderBy: { createdAt: 'desc' } }),
     approveSource: ({ projectId, originPattern, label }) =>
       prisma.approvedSource.upsert({
         where: { projectId_originPattern: { projectId, originPattern } },
@@ -1054,7 +1061,10 @@ export interface HandoffContractRepository {
   /** The one legal transition. `acceptedAt` is the shift start AND the origin of
    *  the deadline, so a crash-restart cannot reset the budget. */
   accept(id: string, acceptedAt: Date): Promise<void>
-  editDraft(id: string, patch: Partial<Pick<ContractInput, 'objective' | 'definitionOfDone' | 'timeLimitMinutes'>>): Promise<void>
+  editDraft(
+    id: string,
+    patch: Partial<Pick<ContractInput, 'objective' | 'definitionOfDone' | 'timeLimitMinutes'>>,
+  ): Promise<void>
   /**
    * Shifts that are over and produced nothing a person could decide on.
    *
@@ -1184,7 +1194,11 @@ function handoffContractRepository(prisma: PrismaClient): HandoffContractReposit
         }
         if (produced > 0) continue
 
-        barren.push({ contractId: contract.id, outputMode: contract.output, ranToACleanStop: clean })
+        barren.push({
+          contractId: contract.id,
+          outputMode: contract.output,
+          ranToACleanStop: clean,
+        })
       }
 
       return barren
@@ -1400,7 +1414,10 @@ function agentRunRepository(prisma: PrismaClient): AgentRunRepository {
       }),
 
     advanceProgress: async (id, step) => {
-      await prisma.agentRun.update({ where: { id }, data: { progressStep: step, status: 'running' } })
+      await prisma.agentRun.update({
+        where: { id },
+        data: { progressStep: step, status: 'running' },
+      })
     },
 
     requestCancel: async (id) => {
@@ -1503,7 +1520,12 @@ function modelCallRecordRepository(prisma: PrismaClient): ModelCallRecordReposit
 /* ── Document ──────────────────────────────────────────────────────────── */
 
 export interface DocumentRepository {
-  create(input: { projectId: string; title: string; content: string; contentHash: string }): Promise<{ id: string; versionId: string }>
+  create(input: {
+    projectId: string
+    title: string
+    content: string
+    contentHash: string
+  }): Promise<{ id: string; versionId: string }>
   /** `projectId` is included because an edit has to prove the document belongs
    *  to the project whose session is live before it writes a ledger row. */
   byId(id: string): Promise<{ id: string; title: string; projectId: string } | null>
@@ -1522,8 +1544,18 @@ export interface DocumentRepository {
   /** `documentId` is included because a version alone does not say which
    *  document it belongs to, and both `executeRun` and `finishReview` need to
    *  get from the pinned base back to the document it is a version of. */
-  version(id: string): Promise<{ id: string; documentId: string; content: string; contentHash: string; ordinal: number } | null>
-  latestVersion(documentId: string): Promise<{ id: string; content: string; contentHash: string; ordinal: number } | null>
+  version(
+    id: string,
+  ): Promise<{
+    id: string
+    documentId: string
+    content: string
+    contentHash: string
+    ordinal: number
+  } | null>
+  latestVersion(
+    documentId: string,
+  ): Promise<{ id: string; content: string; contentHash: string; ordinal: number } | null>
 }
 
 function documentRepository(prisma: PrismaClient): DocumentRepository {
@@ -1546,7 +1578,10 @@ function documentRepository(prisma: PrismaClient): DocumentRepository {
       return { id: doc.id, versionId: version.id }
     },
     byId: (id) =>
-      prisma.document.findUnique({ where: { id }, select: { id: true, title: true, projectId: true } }),
+      prisma.document.findUnique({
+        where: { id },
+        select: { id: true, title: true, projectId: true },
+      }),
     forProject: (projectId) =>
       prisma.document.findMany({ where: { projectId }, select: { id: true, title: true } }),
     addVersion: async ({ documentId, content, contentHash, origin, committedFromChangesetId }) =>
@@ -1628,11 +1663,20 @@ export interface ChangesetRepository {
      *  review. Its absence is what "still open" means — there is no separate
      *  status column that could disagree with the foreign key. */
     settledAsVersionId: string | null
-    changes: Array<ProposedChangeInput & { id: string; verdict: { verdict: string; editedText: string | null } | null }>
+    changes: Array<
+      ProposedChangeInput & {
+        id: string
+        verdict: { verdict: string; editedText: string | null } | null
+      }
+    >
   } | null>
   /** Append-only: a verdict is recorded once. Changing your mind means the UI
    *  has to say so explicitly rather than overwriting the record. */
-  recordVerdict(input: { changeId: string; verdict: 'accept' | 'reject' | 'edit'; editedText?: string }): Promise<void>
+  recordVerdict(input: {
+    changeId: string
+    verdict: 'accept' | 'reject' | 'edit'
+    editedText?: string
+  }): Promise<void>
   /** Has the review this change belongs to already been folded into a version?
    *  Asked from the change rather than the changeset, because that is what the
    *  verdict controls have in hand. */
@@ -1751,8 +1795,12 @@ export interface ReviewFindingInput {
 
 export interface ReviewFindingRepository {
   create(input: { runId: string; findings: readonly ReviewFindingInput[] }): Promise<number>
-  forChangeset(changesetId: string): Promise<Array<{ changeId: string | null; kind: string; detail: string }>>
-  forRun(runId: string): Promise<
+  forChangeset(
+    changesetId: string,
+  ): Promise<Array<{ changeId: string | null; kind: string; detail: string }>>
+  forRun(
+    runId: string,
+  ): Promise<
     Array<{ changeId: string | null; outcomeId: string | null; kind: string; detail: string }>
   >
 }
@@ -1794,7 +1842,12 @@ export interface ShiftReportRepository {
   create(input: {
     contractId: string
     narrative: string | null
-    decisions: ReadonlyArray<{ question: string; whyStopped: string; needs: string; ordinal: number }>
+    decisions: ReadonlyArray<{
+      question: string
+      whyStopped: string
+      needs: string
+      ordinal: number
+    }>
   }): Promise<{ id: string }>
   forContract(contractId: string): Promise<{
     id: string
@@ -2369,17 +2422,14 @@ export interface ConfirmationRepository {
       createdAt: Date
     }>
   >
-  byId(id: string): Promise<
-    | {
-        id: string
-        runId: string
-        intentId: string
-        summary: string
-        evidenceId: string | null
-        verdict: string | null
-      }
-    | null
-  >
+  byId(id: string): Promise<{
+    id: string
+    runId: string
+    intentId: string
+    summary: string
+    evidenceId: string | null
+    verdict: string | null
+  } | null>
   /**
    * ONLY A HUMAN CALLS THIS. No model, worker run or reviewer run may.
    *
@@ -2538,20 +2588,17 @@ export interface ActionEvidenceRepository {
   >
   /** The whole row, image included — for rendering the one thing the person
    *  asked to look at. */
-  byId(id: string): Promise<
-    | {
-        id: string
-        runId: string
-        intentId: string | null
-        kind: string
-        url: string
-        untrusted: unknown
-        image: Uint8Array | null
-        truncated: boolean
-        createdAt: Date
-      }
-    | null
-  >
+  byId(id: string): Promise<{
+    id: string
+    runId: string
+    intentId: string | null
+    kind: string
+    url: string
+    untrusted: unknown
+    image: Uint8Array | null
+    truncated: boolean
+    createdAt: Date
+  } | null>
   /**
    * Delete rows created before `createdBefore`. The unconditional half of the
    * retention promise.
@@ -3086,5 +3133,81 @@ function offerTallyRepository(prisma: PrismaClient): OfferTallyRepository {
     // Lexicographic order on `YYYY-MM-DD` is chronological order, which is the
     // one thing that format is for.
     all: () => prisma.offerTally.findMany({ select: COUNTS, orderBy: { day: 'asc' } }),
+  }
+}
+
+/* ── OfferReticence ────────────────────────────────────────────────────── */
+
+/**
+ * Declines, per hashed strand.
+ *
+ * `declinesFor` takes a batch because the caller has a page of strands and one
+ * query is one round trip. A hash that has never been declined is ABSENT from
+ * the map rather than present as zero: the difference is what lets the caller
+ * treat "no row" and "a row reading 0" as the same thing without either of them
+ * meaning something it does not.
+ */
+export interface OfferReticenceRepository {
+  /** This install's salt, made on first call. */
+  salt(): Promise<string>
+  declinesFor(hashes: readonly string[]): Promise<ReadonlyMap<string, number>>
+  record(hash: string, day: string): Promise<void>
+  clear(hash: string): Promise<void>
+  /** Rows whose last decline is strictly before `day`. Returns how many went. */
+  sweepDeclinedBefore(day: string): Promise<number>
+}
+
+function offerReticenceRepository(prisma: PrismaClient): OfferReticenceRepository {
+  return {
+    salt: () =>
+      installSalt({
+        read: async () => {
+          const row = await prisma.installSecret.findUnique({ where: { name: 'salt' } })
+          return row?.value ?? null
+        },
+        write: async (value) => {
+          // `create` would throw on the second caller in a race. One local user
+          // makes that unlikely and an upsert makes it impossible, and the cost
+          // is a word.
+          await prisma.installSecret.upsert({
+            where: { name: 'salt' },
+            create: { name: 'salt', value },
+            update: {},
+          })
+        },
+      }),
+
+    declinesFor: async (hashes) => {
+      if (hashes.length === 0) return new Map()
+
+      const rows = await prisma.offerReticence.findMany({
+        where: { signatureHash: { in: [...hashes] } },
+        select: { signatureHash: true, declines: true },
+      })
+
+      return new Map(rows.map((row) => [row.signatureHash, row.declines]))
+    },
+
+    record: async (hash, day) => {
+      await prisma.offerReticence.upsert({
+        where: { signatureHash: hash },
+        create: { signatureHash: hash, declines: 1, lastDeclinedOn: day },
+        update: { declines: { increment: 1 }, lastDeclinedOn: day },
+      })
+    },
+
+    clear: async (hash) => {
+      await prisma.offerReticence.deleteMany({ where: { signatureHash: hash } })
+    },
+
+    sweepDeclinedBefore: async (day) => {
+      // `YYYY-MM-DD` sorts lexicographically in the same order it sorts
+      // chronologically, which is the whole reason the column is that shape and
+      // not an epoch. A string comparison IS a date comparison here.
+      const result = await prisma.offerReticence.deleteMany({
+        where: { lastDeclinedOn: { lt: day } },
+      })
+      return result.count
+    },
   }
 }

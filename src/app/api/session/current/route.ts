@@ -31,21 +31,18 @@
 
 import { NextResponse } from 'next/server'
 import { CUSTOM_HEADER, fromOurExtension } from '@/capture/transport'
-import { appContext } from '@/server/db'
+import { appContext, existingAppContext } from '@/server/db'
 import { ambientStore, captureStore, expectedOrigin } from '@/server/capture-store'
-import { describeOffer, describePause, describeWork, signatureOf } from '@/server/ambient-store'
+import { describeOffer, describePause, describeWork } from '@/server/ambient-store'
 import type { NamedThread, WorkOffer } from '@/server/ambient-store'
 import { nameThread } from '@/server/name-thread'
 import { countQuietly } from '@/server/offer-tally'
 import { composeOffer } from '@/server/compose-offer'
+import { hashSignature } from '@/domain/detection/reticence'
 import { createModelClient } from '@/model/provider'
 import type { ModelCallSink } from '@/model/provider'
-import {
-  EVERY_STRAND,
-  MAX_THREADS_SHOWN,
-  detectPause,
-  detectThreads,
-} from '@/domain/detection/detect'
+import { noticedAfternoon } from '@/server/front-door'
+import { detectPause } from '@/domain/detection/detect'
 import type { WorkDetected } from '@/domain/detection/detect'
 
 /**
@@ -74,6 +71,70 @@ import type { WorkDetected } from '@/domain/detection/detect'
 const recordAmbientCall: ModelCallSink = async (row) => {
   const { repos } = await appContext()
   return repos.modelCalls.create(row)
+}
+
+/**
+ * How often this person has already said "not now" to each of these strands.
+ *
+ * ── One lookup for the whole pass, added 2026-08-22 ──────────────────────
+ *
+ * This asked about ONE signature — the leading strand's, at the moment it was
+ * about to be composed for. That was enough for the offer gate and not enough
+ * for the screen: the strands were cut to `MAX_THREADS_SHOWN` BEFORE reticence
+ * was applied, so this pass named A, B, C while Home showed B, C, D, and D — the
+ * one strand promoted onto the screen by a decline — reached the front door with
+ * no subject and kept the degraded sentence for as long as the buffer lived.
+ * `nameThread` runs nowhere else in the product, so nothing was going to fix
+ * that later.
+ *
+ * So the batch is the whole candidate set, taken once, and the map is then read
+ * synchronously for whichever strand leads. One read, one hashing spelling, and
+ * the screen and the pass that names for it agree about which three exist —
+ * which is the property `front-door.ts` opens by arguing for.
+ *
+ * ── Why `existingAppContext` and not `appContext` ────────────────────────
+ *
+ * Because `src/server/db.ts` has already settled this, in writing, for the
+ * counter that reached the same way: *"the ambient endpoint keeps its shape of
+ * touching no database on the request path"*, and the rule it drew is about
+ * capability rather than wiring — **a caller on this path may read a database
+ * somebody else opened, and may never open one.** `appContext()` here does open
+ * one: it builds from `DATABASE_URL`, so a poll in a process that never wanted a
+ * database gets one, and a poll in a `vitest` worker gets the developer's real
+ * file. That is the loaded gun that docblock exists to have disarmed once.
+ *
+ * ── What that costs, named rather than rounded ───────────────────────────
+ *
+ * On a process that has not yet built a context this answers an empty map and an
+ * empty salt, so a strand the person turned down last week can still be named,
+ * composed for and can still reach the notification channel — once, in the
+ * window before anything serves a page or a live-session poll. The front door
+ * has its own reticence gate and is unaffected either way, because rendering
+ * Home builds a context by definition.
+ *
+ * It is the safe direction and that is why it is acceptable: a missing lookup
+ * can only fail to NARROW. Nothing here can lower the bar below the published
+ * floor — `groundsFor` clamps, and an empty salt hashes to something nobody has
+ * declined — so no reading of this function widens anything, which is the
+ * asymmetry PRODUCT_PRINCIPLES §15 asks to be held.
+ */
+async function reticenceAgainst(
+  signatures: readonly string[],
+): Promise<{ salt: string; declined: ReadonlyMap<string, number> }> {
+  const context = existingAppContext()
+  if (context === undefined) return { salt: '', declined: new Map() }
+
+  const { repos } = await context
+  const salt = await repos.reticence.salt()
+
+  // Absent from the map is "never declined". A row that is not there is not a
+  // zero somebody wrote; it is a person who has not turned this down.
+  return {
+    salt,
+    declined: await repos.reticence.declinesFor(
+      signatures.map((signature) => hashSignature(signature, salt)),
+    ),
+  }
 }
 
 /** An origin, or an empty string. Never throws — a malformed stored URL is a
@@ -191,23 +252,43 @@ export async function GET(request: Request) {
      * the expensive failure — three strands is more information for a screen
      * somebody opened, never three notifications.
      *
-     * ── Filter first, then cut ───────────────────────────────────────────
+     * ── Filter first, then cut — and the screen's own derivation does it ─
      *
-     * `EVERY_STRAND` and a `slice` at the end, rather than the bound handed to
+     * ~~`EVERY_STRAND` and a `slice` at the end, rather than the bound handed to
      * the detector. Cutting first spent a slot on a strand the person had said
      * "not now" to and dropped a qualifying one off the end — off this pass as
      * well as off the screen, so it was never named and never `rememberThread`-
      * pinned either, and accepting it would have been refused for having no
      * pages. `noticedStrands` does the same thing in the same order, which is
-     * what keeps the screen and this pass agreeing about which three exist.
+     * what keeps the screen and this pass agreeing about which three exist.~~
+     *
+     * **Amended 2026-08-22 — "the same thing in the same order" stopped being
+     * true the day reticence landed.** The screen gained a third reason a strand
+     * does not appear and this copy of the filters did not, so the `slice` here
+     * happened BEFORE reticence while `noticedAfternoon` applied it before its
+     * own bound. With four strands and the first one declined, this pass named
+     * A, B, C and Home showed B, C, D. D is the promoted strand — the one a
+     * decline puts on screen — and it arrived with no subject and kept the
+     * degraded sentence for as long as the buffer held it, because this poll is
+     * the only thing in the product that ever calls `nameThread`.
+     *
+     * The fix is not a fourth filter written here. Two spellings of one
+     * derivation is what produced the defect, so this now calls the screen's
+     * function and takes its `shown` half: whatever Home will render is exactly
+     * what this pass names and pins. `front-door.ts` opens by arguing for that
+     * and this is the second time it has been the answer.
+     *
+     * Asked twice, exactly as `page.tsx` asks it twice, and for the same reason:
+     * the decline counts are keyed by a HASH of a signature, so nothing can be
+     * looked up until the signatures are known. The first pass is what the
+     * candidates are; the second is what they are worth knowing what this person
+     * has already turned down. A walk of an in-memory buffer is the whole cost.
      */
-    const detected = detectThreads(observations, now, EVERY_STRAND)
-      .filter(
-        (thread) =>
-          !ambient.isThreadSnoozed(signatureOf(thread.terms), now) &&
-          !ambient.isSnoozed(thread.origins[0] ?? '', now),
-      )
-      .slice(0, MAX_THREADS_SHOWN)
+    const candidates = noticedAfternoon(ambient, observations, now)
+    const { salt, declined } = await reticenceAgainst(
+      [...candidates.shown, ...candidates.suppressed].map((strand) => strand.signature),
+    )
+    const detected = noticedAfternoon(ambient, observations, now, declined, salt).shown
 
     if (detected.length === 0) {
       return NextResponse.json({ ok: true, session: null, suggestion: null })
@@ -230,7 +311,8 @@ export async function GET(request: Request) {
     }[] = []
 
     /**
-     * A signature is an identity, so two strands must not share one.
+     * A signature is an identity, so two strands must not share one — and the
+     * drop that enforces it now happens one layer down.
      *
      * `signatureOf` keys the offer cache, the name cache, `rememberThread`, the
      * notification id and the durable `WorkOffer.threadSignature`. Threads are
@@ -238,20 +320,17 @@ export async function GET(request: Request) {
      * thread over both, so a collision should not be constructible — but "should
      * not" is not a guard, and the failure if one happened is the expensive one:
      * the second `rememberThread` would overwrite the first, and somebody
-     * accepting one subject would get the other's sources approved. So the later
-     * strand is dropped rather than allowed to overwrite, and the strongest one
-     * keeps the signature.
+     * accepting one subject would get the other's sources approved.
+     *
+     * `noticedAfternoon` keeps its own `seen` set and drops the later strand for
+     * exactly that reason, so `detected` is already deduped and this loop no
+     * longer holds a second copy of the rule. The guard did not go away; it went
+     * to the one place both the screen and this pass read it from.
      */
-    const seen = new Set<string>()
-
-    for (const thread of detected) {
-      const signature = signatureOf(thread.terms)
-      if (seen.has(signature)) continue
-      seen.add(signature)
-
+    for (const { detected: thread, signature } of detected) {
       /** Whether this is the strand the `suggestion` below will be about. The
-       *  first one to survive the dedupe, because `detected` is in strength
-       *  order and `strands[0]` is what `leading` reads. */
+       *  first one, because `detected` is in strength order and `strands[0]` is
+       *  what `leading` reads. */
       const leads = strands.length === 0
 
       // Pin which pages this thread was made of, so accepting later carries the
@@ -330,12 +409,28 @@ export async function GET(request: Request) {
        * its own rather than leaving it here.
        */
       if (leads && !composed && named?.confident && apiKey) {
+        /**
+         * The bar this strand has to clear, raised by what it has already been
+         * told — ADR-0020.
+         *
+         * Read from the map this pass already holds rather than looked up
+         * again: one question was asked of the database at the top, for every
+         * candidate, and asking a second time here would be a second answer to
+         * one question — and the two could differ, because a decline can land
+         * between them. `groundsFor` is pure and takes a number, so the impure
+         * half stopped at the edge; this is the pure half reading what it was
+         * handed. `reticenceAgainst` carries the argument for why none of it
+         * will open a database.
+         */
+        const declines = declined.get(hashSignature(signature, salt)) ?? 0
+
         void composeOffer(
           ambient,
           createModelClient({ apiKey, record: recordAmbientCall }),
           thread,
           named,
           now,
+          declines,
         )
       }
 
