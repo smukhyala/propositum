@@ -1,6 +1,10 @@
 # ADR-0023 — A menu-bar app that owns the runtime, and the warning it makes come true
 
-**Status:** accepted · 2026-08-26
+**Status:** accepted · 2026-08-26 · **amended 2026-08-26**
+**Amended by:** [ADR-0025](0025-computer-use-beyond-the-browser.md) — prohibitions 1 and 4, reversed
+two days after acceptance · [ADR-0026](0026-reading-a-one-time-code.md) — Full Disk Access. What it
+supervises, configures, pairs and shows is unchanged; what it may never do is now three things rather
+than five
 **Depends on:** [ADR-0001](0001-worker-runtime.md) — the worker as a separate OS process, which is
 what makes two terminals necessary and therefore what this supervises
 **Beside:** [ADR-0012](0012-screen-capture-refused.md) and [ADR-0014](0014-reading-free-busy.md) —
@@ -63,12 +67,33 @@ filesystem outside its own configuration, and adds no sensor.**
 
 ### What it may never do
 
-Five prohibitions, and the first is the one the rest exist to protect.
+~~Five prohibitions, and the first is the one the rest exist to protect.~~
 
-**1. It requests no TCC permission.** No Screen Recording, no Accessibility, no Full Disk Access, no
+**Three, as of 2026-08-26.** Prohibitions 1 and 4 are reversed by
+[ADR-0025](0025-computer-use-beyond-the-browser.md), two days after this ADR was accepted. The
+struck text is left in place because it contains the argument, and the argument is the thing worth
+having when somebody proposes going further. Prohibitions 2, 3 and 5 stand unchanged and are now
+carrying more weight than they were written to carry.
+
+~~**1. It requests no TCC permission.** No Screen Recording, no Accessibility, no Full Disk Access, no
 Contacts, no Automation. Not "none yet" — none. The moment this binary holds a TCC grant it has
 stopped being what this ADR describes, and ADR-0012's cost argument has been spent rather than
-merely made cheaper.
+merely made cheaper.~~
+
+**Reversed 2026-08-26 ([ADR-0025](0025-computer-use-beyond-the-browser.md),
+[ADR-0026](0026-reading-a-one-time-code.md)).** It requests three: Accessibility, Screen Recording,
+and Full Disk Access. Every word of the struck paragraph was correct and its prediction came true on
+schedule — this binary now holds TCC grants, it has stopped being what this ADR describes, and
+ADR-0012's cost argument has been spent rather than made cheaper. That is recorded here rather than
+only in the ADR that did it, because *"the moment this binary holds a TCC grant"* was written as a
+warning and a warning that fires is worth reading beside the thing it warned about.
+
+What is left of the intent: **the permissions are taken for named callers, not for the binary's
+general use.** Full Disk Access has exactly one reader ([ADR-0026](0026-reading-a-one-time-code.md)
+§1), Accessibility is bounded by an application allowlist checked before every mutating action
+([ADR-0025](0025-computer-use-beyond-the-browser.md) §1), and Screen Recording produces evidence that
+is swept. Those are mechanisms where this was an absence, and the difference is the whole of what was
+lost.
 
 **2. It is not a native-messaging host.** No host manifest, no `nativeMessaging` permission in
 `extension/manifest.json`. `tests/extension-permissions.test.ts` pins the permission array and pins
@@ -81,11 +106,22 @@ and cannot be, precisely because there is no signed helper. **There is now a bin
 still no Keychain access**, and that gap is deliberate: taking it would be a decision about
 credential storage and belongs in an ADR about credential storage.
 
-**4. It observes nothing.** No window titles, no foreground app, no idle detection, no filesystem
+~~**4. It observes nothing.** No window titles, no foreground app, no idle detection, no filesystem
 watching. The one sensor is the Chrome extension and this does not become a second one. An
 `ObservationEvent` cannot originate here because `sessionId` is required and `ledger-writer.ts` is
 the single door — but that is a happy accident of the schema and not the reason. The reason is that
-watching the desktop is a different product.
+watching the desktop is a different product.~~
+
+**Partly reversed 2026-08-26 ([ADR-0025](0025-computer-use-beyond-the-browser.md)).** It reads the
+foreground application and the accessibility tree — but only **while acting under a ratified
+contract**, never ambiently. The final sentence was right and is the reason the reversal is partial:
+watching the desktop *is* a different product, and this is not that. The two ledgers stay disjoint,
+`ActionEvidence` is still never read by inference or joined to an `ObservationEvent`, and
+[ADR-0012](0012-screen-capture-refused.md)'s refusal of an ambient screenshot buffer is untouched and
+still binding.
+
+The happy accident named above is now the enforcement: an `ObservationEvent` still cannot originate
+here, because `sessionId` is required and `ledger-writer.ts` is still the single door.
 
 **5. It decides nothing.** No verdict, no confirmation, no ratification, no dial. Every control is a
 link. [ADR-0019](0019-disclosure-and-what-may-never-fold.md)'s closed list of what may never be

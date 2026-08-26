@@ -320,9 +320,17 @@ it names one person, it is issued to them, and it is theirs to revoke. Putting p
 configuration file is a category error that a later reader would copy, and it puts a live credential
 somewhere people paste into issues and screen-share without thinking, because *"it's just env vars"*.
 
-**Not the macOS Keychain**, which is where it would ideally live, and this is a limitation rather
+**Not the macOS Keychain**, which is where it would ideally live, and ~~this is a limitation rather
 than a preference: reaching the Keychain properly needs the signed native helper that
-[ADR-0012](0012-screen-capture-refused.md) established does not exist and is not being built.
+[ADR-0012](0012-screen-capture-refused.md) established does not exist and is not being built.~~
+
+**Corrected 2026-08-26 — it is a preference now, not a limitation, and that is the harder position to
+hold.** [ADR-0023](0023-the-tray-app-owns-the-runtime.md) ships a signed binary and
+[ADR-0025](0025-computer-use-beyond-the-browser.md) gives it Accessibility, Screen Recording and Full
+Disk Access. The helper this ADR said did not exist now exists and holds more than a Keychain
+entitlement would have required. So the token sits on disk because moving it is a credential-storage
+decision nobody has taken — see ADR-0023's prohibition 3, which is the only copy of this claim worth
+citing from now on.
 
 **So: the local database, in its own table.** The requirements on it:
 

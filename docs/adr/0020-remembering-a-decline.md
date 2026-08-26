@@ -167,9 +167,15 @@ in the same words, deliberately, so that neither is the only place a reader coul
 The salt is 32 random bytes, made once on first use, never rotated — rotating it would silently
 orphan every row, every count would read as zero, and nothing would fail — and stored in a one-row
 `install_secret` table **in the same SQLite file as the rows it salts**. There is no keychain here;
-reaching the macOS Keychain needs a signed native helper this product does not have and is not
-building ([ADR-0012](0012-screen-capture-refused.md)), and moving the salt to an env var the app
-also reads would buy nothing while looking like it bought something.
+~~reaching the macOS Keychain needs a signed native helper this product does not have and is not
+building ([ADR-0012](0012-screen-capture-refused.md))~~ **— corrected 2026-08-26: the helper exists
+and the Keychain is refused, which is a different sentence.**
+[ADR-0023](0023-the-tray-app-owns-the-runtime.md) is a signed binary and
+[ADR-0025](0025-computer-use-beyond-the-browser.md) gives it three TCC grants; reaching the Keychain
+from it is a credential-storage decision nobody has taken, and ADR-0023's prohibition 3 is the file
+that knows. **Nothing about this table changes** — the salt is still beside the rows it salts and
+that is still not anonymity. And moving it to an env var the app also reads would buy nothing while
+looking like it bought something.
 
 What that means, plainly:
 

@@ -78,6 +78,21 @@ Three things carry the weight now:
   Stop"* chip; the side panel has the same Stop. All three detach first and
   tell the app afterwards, so stopping works with the app closed.
 
+  **All three are true of this extension and 2026-08-26 decided they will stop
+  being the whole story.** [ADR-0025](../docs/adr/0025-computer-use-beyond-the-browser.md)
+  takes Propositum out of the browser, and none of these three stops a
+  synthesised keystroke going to a native application: Chrome's Cancel covers a
+  debugger attachment that is no longer how it works, and the chip and the panel
+  both live in a tab there may not be. The replacement is a global hotkey and a
+  menu-bar item handled in the signed Tauri process, so it works when the app is
+  wedged — verified by `kill -STOP` on the Node processes and then pressing it.
+
+  **The thing being lost is worth naming.** ADR-0010 leaned on Chrome's infobar
+  *precisely because it was not ours to break* — it cannot be suppressed, cannot
+  be styled, and does not depend on our code being correct. Its replacement is
+  ours, and a kill switch you wrote yourself is a kill switch that can have a bug
+  in it. Not built as this is written.
+
 `tests/extension-cdp.test.ts` is the enforcement: the extension has no build
 step, so the file under review is the file Chrome runs, and a grep over it is a
 real guard rather than a proxy for one.

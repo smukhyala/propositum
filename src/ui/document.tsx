@@ -25,11 +25,23 @@
  * own promise on the empty state literally true — *"it never reads a file you
  * did not hand it."*
  *
- * `docs/SECURITY_AND_PRIVACY.md` says Propositum has no capability outside your
- * browser, your filesystem included, and that is still exactly true: this adds
- * no tool, nothing here can enumerate or open anything, and the only file that
- * is ever read is the one chosen in the operating system's own dialog. What
- * changed is that a person can hand over a file instead of retyping it.
+ * ~~`docs/SECURITY_AND_PRIVACY.md` says Propositum has no capability outside your
+ * browser, your filesystem included, and that is still exactly true~~ —
+ * **corrected 2026-08-26: it no longer says that, and the sentence it says
+ * instead is struck.** ADR-0025 takes Accessibility, Screen Recording and Full
+ * Disk Access; ADR-0026 puts one reader over `~/Library/Messages/chat.db`.
+ * Neither is built as this is written, and the citation is wrong either way,
+ * because a docblock that leans on another document's wording goes stale when
+ * that wording moves and nothing connects the two.
+ *
+ * **What this paragraph was actually claiming is unchanged and is the claim
+ * worth keeping:** THIS control adds no tool, nothing here can enumerate or
+ * open anything, and the only file it ever reads is the one chosen in the
+ * operating system's own dialog — read by the browser, into a textarea a person
+ * sees before Propositum does. That is true independently of what capabilities
+ * exist elsewhere, which is why it is now stated on its own rather than
+ * borrowed. What changed is that a person can hand over a file instead of
+ * retyping it.
  *
  * ── Why export is the version in front of you, not the stored one ────────
  *

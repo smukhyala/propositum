@@ -14,6 +14,7 @@ import { describe, it, expect } from 'vitest'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join, relative } from 'node:path'
+import { stripComments } from './support/strip-comments'
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -101,6 +102,197 @@ describe('capabilities the brief excludes do not exist', () => {
     for (const forbidden of ['sendMessage', 'sendEmail', 'purchase', 'publish', 'deleteFile']) {
       expect(tools).not.toContain(`export function ${forbidden}`)
     }
+  })
+})
+
+/**
+ * Propositum holds no password of the person's, and there is nowhere to put one.
+ *
+ * ── The decision this enforces ───────────────────────────────────────────
+ *
+ * [ADR-0025](../docs/adr/0025-computer-use-beyond-the-browser.md) §4 signs in
+ * by clicking Chrome's own saved-password prompt. The credential goes from
+ * Chrome's encrypted store into Chrome's own form; Propositum never reads it,
+ * stores it, prompts with it or logs it. The safety property is not *"the vault
+ * is well built"* — it is *"there is no vault"*, which is the pattern `AGENTS.md`
+ * asks for: prefer absence to a rule, and a type to a convention.
+ *
+ * An absence needs something to notice when it stops being one. These are that.
+ *
+ * ── Why each of the three ────────────────────────────────────────────────
+ *
+ * A vault does not arrive as a pull request titled "add a vault". It arrives as
+ * a field, a helper, or a checkbox that makes a confirmation stop happening.
+ * Each assertion below closes one of those three doors, and ADR-0025 §5 records
+ * that the vault was argued for at its strongest and declined.
+ *
+ * ── What this does NOT cover ─────────────────────────────────────────────
+ *
+ * A secret in a field whose name is innocuous — `value`, `data`, `blob`. Naming
+ * is the guard here and naming is a convention, so this is weaker than the
+ * brand-based guarantees elsewhere in this file. It is worth having because the
+ * honest name is what a person reaches for first, and having to pick a dishonest
+ * one is a moment where somebody notices.
+ */
+describe('there is no credential of the person’s, and nowhere to put one', () => {
+  it('has no schema field that could hold one, beyond the four already argued for', () => {
+    const schema = stripComments(readFileSync(join(repo, 'prisma/schema.prisma'), 'utf8'))
+
+    const fields = [...schema.matchAll(/^\s{2}(\w+)\s+\w/gm)]
+      .map((m) => m[1] ?? '')
+      .filter((name) => /password|passphrase|credential|vault|wallet|card|secret|token/i.test(name))
+
+    /**
+     * The four that exist, each with the ADR that argued for it:
+     *
+     *  - `controlToken`   per-run browser control (ADR-0010). Not a person's.
+     *  - `inputTokens`,
+     *    `outputTokens`   model call accounting. Not a credential at all, and
+     *                     kept in the list rather than excluded by a cleverer
+     *                     regex — a narrower pattern is a pattern with more
+     *                     places to hide.
+     *  - `refreshToken`   the Google calendar grant (ADR-0014)
+     *  - `botToken`       the person's own Telegram bot (ADR-0021)
+     *
+     * A fifth means somebody is storing something new. That is an ADR, not a
+     * migration.
+     */
+    expect(
+      [...new Set(fields)].sort(),
+      'a new secret-shaped column appeared — ADR-0025 says Propositum holds no credential of the ' +
+        "person's, so this is either a decision that needs its own ADR or a field that needs a different name",
+    ).toEqual(['botToken', 'controlToken', 'inputTokens', 'outputTokens', 'refreshToken'])
+  })
+
+  it('has no action kind that carries one', () => {
+    const tools = stripComments(readFileSync(join(repo, 'src/policy/tools.ts'), 'utf8'))
+    const policy = stripComments(readFileSync(join(repo, 'src/domain/handoff/policy.ts'), 'utf8'))
+
+    // `fill-credential` is the shape an earlier draft of ADR-0025 proposed, and
+    // the reason the words are banned in CONTEXT.md: a name is how a field
+    // arrives. Typing a password is `type-text` with a model-authored string,
+    // which is exactly what `password_field` below refuses.
+    for (const forbidden of ['fill-credential', 'fillCredential', 'enterPassword', 'signInWith']) {
+      expect(
+        `${tools}\n${policy}`,
+        `${forbidden} means an action kind now carries a secret — see ADR-0025 §4`,
+      ).not.toContain(forbidden)
+    }
+  })
+
+  it('refuses a credential form outright, and never by confirmation', () => {
+    const gate = stripComments(readFileSync(join(repo, 'src/policy/gate.ts'), 'utf8'))
+    const classifier = stripComments(
+      readFileSync(join(repo, 'src/domain/execution/reversibility.ts'), 'utf8'),
+    )
+
+    /**
+     * The gate's own comment is the specification:
+     *
+     *   > A confirmation screen here would be a prompt asking someone to approve
+     *   > an agent entering their credentials, and the right answer to that
+     *   > question is not "let them decide": it is a capability we do not offer.
+     *
+     * The failure this guards is not deletion — it is *downgrade*. Moving this
+     * from the gate into the classifier would turn a refusal into a question a
+     * tired person can answer yes to, and the diff would read like a
+     * simplification.
+     */
+    expect(gate, 'the password_field refusal is gone').toContain("deny('password_field')")
+    expect(
+      classifier,
+      'password_field appears in the reversibility classifier — a credential form must be REFUSED, ' +
+        'not escalated to a confirmation somebody can click through',
+    ).not.toContain('password_field')
+  })
+
+  it('has no remembered yes', () => {
+    /**
+     * `src/policy/tools.ts` already argues this — *"a remembered yes is a
+     * confirmation that outlives the thing it was about, granted at a moment
+     * when the person was looking at something else"* — and this makes the
+     * argument executable.
+     *
+     * It is the guard most likely to be tripped by a well-meaning change, because
+     * "stop asking me this" is the most reasonable-sounding feature request in
+     * the product. What answers it is ADR-0024's `PurchaseAuthorization`: a
+     * NARROWER permission, ratified deliberately, that expires — not a
+     * remembered click.
+     */
+    const surfaces = ['src/policy/tools.ts', 'src/policy/gate.ts', 'src/server/actions.ts'].map(
+      (path) => ({ path, code: stripComments(readFileSync(join(repo, path), 'utf8')) }),
+    )
+
+    for (const forbidden of ['alwaysAllow', 'rememberThisAnswer', 'trustThisSite', 'dontAskAgain']) {
+      const offenders = surfaces.filter(({ code }) => code.includes(forbidden)).map((s) => s.path)
+      expect(
+        offenders,
+        `${forbidden} is a remembered yes — ADR-0024 grants a scoped, expiring PurchaseAuthorization instead`,
+      ).toEqual([])
+    }
+  })
+})
+
+/**
+ * The screen stops saying *"Buy anything"* on the day it stops being true.
+ *
+ * ── The failure this exists for, which has not happened yet ──────────────
+ *
+ * `src/ui/agreement.tsx` renders an `ABSENT` list — *"Send an email or a
+ * message · Publish anything · Buy anything · Delete a file"* — under a heading
+ * that tells a person these things cannot happen. Today that is accurate for
+ * buying, and not because of a policy: `extension/src/cdp.js` fails every
+ * non-`GET` request unconditionally, so a checkout never leaves the machine.
+ *
+ * [ADR-0024](../docs/adr/0024-purchases-within-a-ratified-authorisation.md)
+ * spends that block. When it is implemented, the extension will allow a
+ * non-`GET` covered by a ratified `PurchaseAuthorization` — and the sentence on
+ * the screen becomes a false statement about money, shown to somebody deciding
+ * whether to leave their desk. That is the worst class of stale claim this
+ * repository has, because `docs/PRODUCT_PRINCIPLES.md` §11 is about exactly this
+ * and the interface is where it costs the most.
+ *
+ * So the two are coupled here rather than trusted to move together. The
+ * unconditional block and the sentence live in different files, different
+ * languages and different layers, and nothing else connects them.
+ *
+ * ── Why the assertion is shaped this way ─────────────────────────────────
+ *
+ * It does not check that buying is impossible — `tests/extension-cdp.test.ts`
+ * covers the mechanism. It checks that the CLAIM and the MECHANISM agree. Either
+ * both change or the suite goes red, and the person doing the ADR-0024 work is
+ * told, in the same run, that there is a screen to fix.
+ *
+ * ── What this does NOT cover ─────────────────────────────────────────────
+ *
+ * The other three entries. `sendMessage`, `publish` and `deleteFile` are absent
+ * as functions and reachable as effects via `click-element`, which ADR-0010
+ * already records — the copy above the list carries that correction in prose,
+ * and prose is what holds it.
+ */
+describe('what the agreement screen promises about money matches the transport', () => {
+  it('says “Buy anything” only while every non-GET is blocked', () => {
+    const cdp = stripComments(readFileSync(join(repo, 'extension/src/cdp.js'), 'utf8'))
+    const screen = readFileSync(join(repo, 'src/ui/agreement.tsx'), 'utf8')
+
+    const blocksEveryNonGet = /method\s*!==\s*'GET'\)\s*return\s*'blocked-request'/.test(cdp)
+    const promisesNoBuying = /'Buy anything'/.test(screen)
+
+    // The canary. If either side is renamed or restructured, both booleans go
+    // false together and the equality below passes while checking nothing.
+    expect(
+      blocksEveryNonGet || promisesNoBuying,
+      'neither the non-GET block nor the “Buy anything” promise was found — this guard is reading nothing',
+    ).toBe(true)
+
+    expect(
+      promisesNoBuying,
+      blocksEveryNonGet
+        ? 'the transport still blocks every non-GET, so the agreement screen should still say so'
+        : 'the non-GET block is gone (ADR-0024) and src/ui/agreement.tsx still tells people ' +
+          'Propositum cannot buy anything — that sentence is now false, on the screen where ' +
+          'somebody decides whether to leave their desk',
+    ).toBe(blocksEveryNonGet)
   })
 })
 

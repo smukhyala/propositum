@@ -138,9 +138,13 @@ guessed signature and comparing it is a thing they can do — and the space of p
 small enough for a candidate list to be worth trying. What the hashing buys is that **no process, no
 log line and no backup ever contains the terms in readable form**, and that one install's rows cannot
 be correlated against another's. That is a real improvement over storing the words and **it is not
-anonymity**. Where the salt ought to live is the macOS Keychain, which needs a signed native helper
-this product does not have ([ADR-0012](./adr/0012-screen-capture-refused.md)) — the same gap the
-calendar token is stuck in, one section below.
+anonymity**. Where the salt ought to live is the macOS Keychain, which ~~needs a signed native helper
+this product does not have ([ADR-0012](./adr/0012-screen-capture-refused.md))~~ **is refused rather
+than unreachable — corrected 2026-08-26.** The signed binary exists and holds three TCC grants
+([ADR-0023](./adr/0023-the-tray-app-owns-the-runtime.md) as amended by
+[ADR-0025](./adr/0025-computer-use-beyond-the-browser.md)); reaching the Keychain from it is a
+credential-storage decision nobody has taken. Still the same gap the calendar token is stuck in, one
+section below, and now for a different reason.
 
 **The cost, named rather than rounded past.** `src/server/ambient-store.ts` says in writing that
 _"declining has to cost nothing and leave nothing behind"_, and that is no longer true of the
@@ -399,11 +403,21 @@ merely unimplemented.
   already stopped refusing it on the day that amendment was written.**)_
 
 - **Keystrokes.** No key logging anywhere.
-- **Your screen.** No screen recording, no video, and no screenshot of anything you are doing. The
+- ~~**Your screen.** No screen recording, no video, and no screenshot of anything you are doing. The
   only images Propositum ever takes are of the tab it opened itself, while acting under an agreement
-  you ratified, when the accessibility tree was not enough to act on — and those are swept.
+  you ratified, when the accessibility tree was not enough to act on — and those are swept.~~
   _(Amended 2026-08-11. This bullet said "no screenshots" flatly, and that stopped being true with
   [ADR-0010](./adr/0010-acting-in-the-browser.md).)_
+  **Struck in two of three, 2026-08-26 — [ADR-0025](./adr/0025-computer-use-beyond-the-browser.md),
+  which reverses [ADR-0012](./adr/0012-screen-capture-refused.md) for acting.** Screen Recording is
+  taken, and a screenshot of **the whole screen** — not the tab — will be captured per turn while
+  acting under a ratified agreement. That is a different privacy claim from *whatever was in the
+  tab*: notifications, other windows, a message preview. **No video** is unchanged. So is the
+  absence of any ambient buffer: observation gets no screenshots, the two ledgers stay disjoint, and
+  ADR-0012's argument against a rolling cache is untouched and still binding. Retention is unchanged
+  — `ACTION_EVIDENCE_RETENTION_DAYS`, except the one image a `ConfirmationRequest` points at, which
+  is permanent and now more likely to hold more. **Decided, not built:** no desktop code exists as
+  this is struck, and today the only images are still of the tab.
 - **Anything on your calendar except when you are busy.** No event titles, descriptions,
   attendees, organisers, locations, meeting links or attachments — the scope Propositum asks for
   cannot return any of them, which is why it is the scope it asks for. The wider scope that _would_
@@ -413,8 +427,15 @@ merely unimplemented.
   trade is argued in full in [ADR-0014](./adr/0014-reading-free-busy.md).
   **No list of your calendars.** No calendar but your main one. No calendar belonging to anybody
   else. _(Added 2026-08-18.)_
-- **Other applications.** Chrome only. _(A connected calendar is read over the network from Google,
-  not from an application on your machine. Propositum still reads nothing on this Mac but Chrome.)_
+- ~~**Other applications.** Chrome only. _(A connected calendar is read over the network from Google,
+  not from an application on your machine. Propositum still reads nothing on this Mac but Chrome.)_~~
+  **Struck 2026-08-26 — [ADR-0025](./adr/0025-computer-use-beyond-the-browser.md) and
+  [ADR-0026](./adr/0026-reading-a-one-time-code.md).** Propositum will read the accessibility tree of
+  any application on an allowlist you ratified, while acting, and will read
+  `~/Library/Messages/chat.db` for a one-time code — one caller, a five-minute window, digits only,
+  nothing stored. The calendar parenthetical is unchanged and still true. **Decided, not built.**
+  What stays absent by decision, per ADR-0025 §3: no shell, no `osascript`, no AppleScript, no
+  filesystem read outside that one reader, no keychain read, and no way to ask what is running.
 - **Passwords, form contents, or clipboard contents** not deliberately selected in an approved
   source.
 - **Telemetry, analytics, or crash reports.** There is no server to send them to.
@@ -583,9 +604,25 @@ of thing, which is why they live in different places:
 
 The token is not in `.env`, deliberately: configuration is where the software's own credentials go,
 and a per-person credential in there is the sort of file people paste into an issue without thinking.
-It is not in the macOS Keychain either, which is where it ought to live — reaching the Keychain needs
-a signed native helper this product does not have and is not building
-([ADR-0012](./adr/0012-screen-capture-refused.md)).
+It is not in the macOS Keychain either, which is where it ought to live — ~~reaching the Keychain
+needs a signed native helper this product does not have and is not building
+([ADR-0012](./adr/0012-screen-capture-refused.md))~~.
+
+**Corrected 2026-08-26: the helper exists and the Keychain is still refused, which is a different and
+more deliberate sentence.** [ADR-0023](./adr/0023-the-tray-app-owns-the-runtime.md) is a signed Tauri
+app and [ADR-0025](./adr/0025-computer-use-beyond-the-browser.md) gives it Accessibility, Screen
+Recording and Full Disk Access. So *no keychain read* has stopped being a missing capability and
+become a decision: ADR-0023's prohibition 3 and ADR-0025 §3 both name it, and ADR-0025 §5 refuses a
+credential vault at its strongest — it would create a secret that does not exist, on a machine whose
+database is not encrypted, to solve a problem Chrome has already solved.
+
+The token stays in the database and the reason is no longer *we cannot*. **That is weaker, and this
+document is not going to round it up.** This sentence has now been overtaken by three ADRs in a row;
+the version that will not go stale is *"ADR-0023's prohibition 3 is the file that knows"*, and the
+same correction is applied the same day to the three other places this claim appears —
+`docs/SECURITY_AND_PRIVACY.md` §Ambient (the salt),
+[ADR-0020](./adr/0020-remembering-a-decline.md) and
+[ADR-0014](./adr/0014-reading-free-busy.md).
 
 Both are **never logged, never rendered, never put in a prompt, and never in an error message.**
 Neither is ever sent anywhere but to the service it belongs to.
@@ -753,6 +790,28 @@ decision.
 
 ### Capabilities that do not exist
 
+> **Read this before the table. 2026-08-26.**
+>
+> **Three decisions were accepted today that spend most of this section, and none of them is built
+> yet.** Everything below is true of the code as it stands. It is not true of the product that has
+> been decided on, and the gap between those two things is the most important sentence on this page:
+>
+> | Decision | What it spends | Built? |
+> |---|---|---|
+> | [ADR-0024](./adr/0024-purchases-within-a-ratified-authorisation.md) | the unconditional non-`GET` block. **Propositum will buy things**, within a `PurchaseAuthorization` you ratified — bounded by an origin, a ceiling, a count and an expiry | **no** |
+> | [ADR-0025](./adr/0025-computer-use-beyond-the-browser.md) | rows 1 and 3 of the table below. It will act on the whole machine, inside an allowlist of applications you ratified, and it will sign in by clicking Chrome's own saved-password prompt | **no** |
+> | [ADR-0026](./adr/0026-reading-a-one-time-code.md) | the filesystem qualification below. It will read `~/Library/Messages/chat.db` for a one-time code — one caller, a five-minute window, digits only, nothing stored | **no** |
+>
+> This block exists rather than a rewrite because rewriting now would describe a product that does
+> not exist, and this document's job is to be true today. `tests/architecture.test.ts` couples the
+> agreement screen's *"Buy anything"* promise to the transport that makes it true, so the day the
+> first of these lands the suite says which sentences have to move.
+>
+> **What does not change, and is worth stating in the same breath as the losses:** Propositum still
+> holds no password of yours. ADR-0025 signs in by clicking a prompt Chrome already fills, so the
+> credential never leaves Chrome's own store — there is no vault, no keychain read, and no schema
+> field a secret could sit in. Four assertions in `tests/architecture.test.ts` hold that.
+
 _(Rewritten 2026-08-11 — [ADR-0010](./adr/0010-acting-in-the-browser.md). The previous version of
 this section said Propositum "cannot send a message or email, purchase or book anything, publish a
 document, delete a file, or control your computer". That is no longer true, and the honest version
@@ -876,6 +935,27 @@ to, whereas silent resistance looks identical to not having been attacked.
 - Chrome extensions are currently exempt from Local Network Access restrictions. That is documented
   only in an unversioned Google document that says _"currently"_, so the extension performs a
   **startup self-check that fails loudly** rather than assuming it holds.
+- **The app listens on `127.0.0.1` and nowhere else.** _(Added 2026-08-26, because this section
+  listed four controls on the transport and never said what the app binds — and until today the
+  answer was **every interface**.)_ Every start script read `next dev -p 3117` with no `-H`, so Next
+  bound `::`, while `next.config.ts`, the extension's `APP_ORIGIN` and every sentence a person reads
+  all said `127.0.0.1`. The one place the discrepancy was written down was a docblock in
+  `scripts/dev.ts` about probing for a taken port, which is not where anybody looks for a bind
+  address.
+
+  It matters most for `/api/act/next`, `/api/act/report` and `/api/act/halt`. Those are guarded by
+  `admitControl({ from: 'extension' })`, which proves a **class** of caller and never an identity —
+  a content type, a custom header, and an origin check that also accepts `Sec-Fetch-Site: none`.
+  `src/act/channel.ts` accepts that deliberately, as a bound on a *local* process: *"a local process
+  that can lie to the worker is a local process that can choose what the worker clicks next."*
+  Binding every interface turned *a local process* into *anything on the same network*, which is not
+  the risk that argument accepted. It is a reachability bug rather than an authentication one, and it
+  had been true for the life of the project.
+
+  The scripts now pass `-H 127.0.0.1`; `tests/capture.test.ts` asserts all three and asserts
+  `scripts/dev.ts` forwards it. **What that test does not cover:** that the process bound what it was
+  told to. `lsof -nP -iTCP:3117 -sTCP:LISTEN` proves it and needs a running server, so it stays a
+  manual check.
 
 ## Auditability
 

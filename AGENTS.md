@@ -121,11 +121,31 @@ rather than relying on care.
 Binding, from `docs/superpowers/specs/2026-08-16-direction-update-source.md` §8 by way of
 `docs/ARCHITECTURE.md`: a full graph database · automatic Gmail/Slack/Calendar/GitHub/Notion ingestion
 · continuous autonomous background scheduling · learned trust models · multi-provider quality or cost
-routing · large multi-agent swarms · unrestricted computer use · automatic multi-intention compute
+routing · large multi-agent swarms · ~~unrestricted computer use~~ · automatic multi-intention compute
 allocation · cross-device continuity · proactive consequential action without an established
 permission policy.
 
 A clean interface is permitted; a router is not.
+
+**One entry struck, 2026-08-26 — [ADR-0025](docs/adr/0025-computer-use-beyond-the-browser.md).**
+Computer use is the product: Propositum **will** drive macOS rather than one Chrome tab. **Decided,
+not built** — `grep -rn 'approvedApplications' src/` finds nothing today, and the same is true of
+ADR-0024's `PurchaseAuthorization` and ADR-0026's `chat.db` reader. Read the ADRs for what was
+decided and the code for what runs; where this file and the code disagree, the code is right and this
+line is the one to fix. It is the only entry ever removed from this list and it is struck rather than
+deleted, so the next person proposing a removal has to argue against something. **What stays forbidden is `unrestricted`**, and the
+restrictions are ADR-0025 §3, not this file: no shell · no `osascript` or AppleScript · no filesystem
+read outside the one `chat.db` reader ([ADR-0026](docs/adr/0026-reading-a-one-time-code.md)) · no
+keychain · no enumeration of what is running · every mutating action checked against an application
+allowlist the person ratified.
+
+**Two invariants below moved with it and are restated because they are the ones most likely to be
+read as still true.** *"No cloud, no telemetry, no server of ours"* is unchanged. *"Observation never
+executes actions"* is unchanged. But *"no dial, default, timeout or model may pre-approve an
+irreversible action"* now sits beside a `PurchaseAuthorization`
+([ADR-0024](docs/adr/0024-purchases-within-a-ratified-authorisation.md)) — which is not a dial, not a
+default and not a model: it is a structured object a person ratified, per purchase scope, with a
+ceiling nothing may relax.
 
 ## What "done" means
 
@@ -134,7 +154,7 @@ rulebook, and they fail on the class of mistake prose cannot prevent.
 
 | Guard | What it refuses |
 |---|---|
-| `tests/architecture.test.ts` | A capability that reaches the network without going through the gate; a tool for sending, purchasing, publishing or deleting; a `src/domain` file that reads a clock or imports a layer above it. |
+| `tests/architecture.test.ts` | A capability that reaches the network without going through the gate; a tool for sending, purchasing, publishing or deleting *(**read the test's own comment before trusting that clause** — since [ADR-0010](docs/adr/0010-acting-in-the-browser.md) it is a statement about our function names and not about reachable effects, and since [ADR-0024](docs/adr/0024-purchases-within-a-ratified-authorisation.md) buying is a thing Propositum does)*; a `src/domain` file that reads a clock or imports a layer above it. |
 | `tests/reachability.test.ts` | Something built, tested, and called by nothing. |
 | `tests/append-only.test.ts` | A ledger table that can take an `UPDATE` or a `DELETE`. |
 | `tests/boundaries.test.ts` | A model boundary that could grant a permission, launder page text into an instruction, or widen a closed set of kinds. |

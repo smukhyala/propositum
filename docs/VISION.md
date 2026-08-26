@@ -314,8 +314,32 @@ recorded at all.** That absence is why `IntentionState` ships with five members 
 it is the whole content of the repository's **Stage 2 — Event-Driven Understanding**
 ([`ROADMAP.md`](./ROADMAP.md)).
 
-**Not planned, at any horizon.** Full-screen recording. Keystroke logging. Automatic access to
-every application. These are not sequencing decisions.
+~~**Not planned, at any horizon.** Full-screen recording. Keystroke logging. Automatic access to
+every application. These are not sequencing decisions.~~
+
+**Struck in two of three, 2026-08-26 — [ADR-0025](./adr/0025-computer-use-beyond-the-browser.md).**
+Taken clause by clause, because they were never one claim:
+
+- ~~Full-screen recording.~~ **Screen Recording is taken.** Propositum sees the whole screen, per
+  turn, while acting under a ratified contract — notifications, other windows, a message preview.
+  What survives is [ADR-0012](./adr/0012-screen-capture-refused.md)'s actual subject: there is still
+  no ambient rolling screenshot buffer, observation still gets no screenshots, and the two ledgers
+  stay disjoint.
+- **Keystroke logging. Unchanged and still true.** Propositum synthesises input; it does not read
+  yours. There is no capability, and no ADR proposing one.
+- ~~Automatic access to every application.~~ **Access to an allowlist of applications you ratified**,
+  checked against the frontmost app's bundle identifier before every mutating action. The word doing
+  the work was *automatic* and it still holds — nothing derives the allowlist, a person ratifies it.
+  But *"at any horizon"* was wrong, and the honest reading of this clause for a person is that it is
+  gone.
+
+*"These are not sequencing decisions"* was the strongest sentence in this document, and one of the
+three turned out to be a sequencing decision after all. Recorded rather than smoothed, per
+[principle 11](./PRODUCT_PRINCIPLES.md).
+
+**Decided, not built.** No desktop code exists as this is struck; `grep -rn 'approvedApplications'
+src/` returns nothing. The bullet is struck anyway, because what a reader of a promise is entitled to
+know is that the promise has been withdrawn — not that the withdrawal has shipped.
 
 *(Argued rather than amended, 2026-08-17
 ([ADR-0012](./adr/0012-screen-capture-refused.md)). A rolling screenshot cache of the person's own

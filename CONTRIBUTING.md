@@ -53,7 +53,7 @@ prose could not prevent:
 
 | Guard | What it refuses |
 |---|---|
-| `tests/architecture.test.ts` | A capability that reaches the network without going through the gate. Also: any tool for sending, purchasing, publishing or deleting — the brief's exclusions, asserted as absent. |
+| `tests/architecture.test.ts` | A capability that reaches the network without going through the gate. Also: any tool for sending, purchasing, publishing or deleting — ~~the brief's exclusions, asserted as absent~~ **read that test's own comment before trusting the clause, corrected 2026-08-26.** It greps `src/policy/tools.ts` for five function names, so since [ADR-0010](./docs/adr/0010-acting-in-the-browser.md) it is a statement about what we ship and not about reachable effects — `click-element` presses the page's own Send button. Since [ADR-0024](./docs/adr/0024-purchases-within-a-ratified-authorisation.md), buying is a thing Propositum is decided to do. The same row was corrected in `AGENTS.md` the same day; this copy is why the strike-and-date convention exists. **What this file's table now also refuses:** a schema field that could hold a credential, an action kind that carries one, a downgrade of the `password_field` refusal to a confirmation, and a remembered yes. |
 | `tests/reachability.test.ts` | Something built, tested, and called by nothing. Read this one before you start; see below. |
 | `tests/append-only.test.ts` | A ledger table that can take an `UPDATE` or a `DELETE`. |
 | `tests/boundaries.test.ts` | A model boundary that could grant a permission, launder page text into an instruction, or widen a closed set of kinds. All eight boundaries, asserted distinct. |

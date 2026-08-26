@@ -90,9 +90,24 @@ also be wrong about how much there is to do.
 - **Cloud execution.** It fixes *"leave your desk, not leave the building"* and
   it is a different product with a different privacy argument. It needs an ADR
   before it needs a todo.
-- **A landing `ActionKind`.** Making Propositum able to send, buy or publish is
+- ~~**A landing `ActionKind`.** Making Propositum able to send, buy or publish is
   not a line in a set — `extension/src/cdp.js` fails every non-`GET` request
   unconditionally, and spending that mechanism needs its own ADR the way
-  `Runtime.evaluate` does.
+  `Runtime.evaluate` does.~~
+
+  **Struck 2026-08-26 — the ADR arrived, and this bullet asked for exactly the
+  argument it got.** [ADR-0024](../adr/0024-purchases-within-a-ratified-authorisation.md)
+  spends the block. It moves out of *deliberately not in this folder* and becomes
+  work nobody has written: the `PurchaseAuthorization` on `ContractScope`, the
+  line on the ratification screen, the amount parse at `Fetch.requestPaused`, the
+  charge count off the ledger, and `tests/purchase-authorisation.test.ts` with
+  the *"Find me food for dinner"* fixture that must never start passing.
+  [ADR-0025](../adr/0025-computer-use-beyond-the-browser.md) and
+  [ADR-0026](../adr/0026-reading-a-one-time-code.md) are two more files this
+  folder does not have — and ADR-0025 is the largest single piece of work in the
+  project, larger than [`01`](./01-menu-bar-app.md), which it also depends on.
+
+  **The `Runtime.evaluate` half of the comparison is unspent** and ADR-0025 §3
+  carries it to the desktop unchanged: no shell, no `osascript`, no AppleScript.
 - **Accounts, billing, teams.** `docs/FOUNDING_BRIEF.md` excludes them and is
   right to.

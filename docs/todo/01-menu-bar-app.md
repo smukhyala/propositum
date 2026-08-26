@@ -167,6 +167,19 @@ resisting a fifth.
   corpus — [ADR-0012](../adr/0012-screen-capture-refused.md) and
   [ADR-0014](../adr/0014-reading-free-busy.md) — were argued partly on *"the
   proposal is not X; it is become a desktop product"*. This builds the native
-  binary both were watching for. Neither refusal is reversed, and both are now
+  binary both were watching for. ~~Neither refusal is reversed, and both are now
   cheaper to reverse. Re-read them before the first thing that wants a native
-  capability arrives.
+  capability arrives.~~
+
+  **Corrected 2026-08-26, hours later — one of them is reversed, and the last
+  sentence is why this correction exists.**
+  [ADR-0025](../adr/0025-computer-use-beyond-the-browser.md) reverses ADR-0012's
+  refusal of screen capture, for acting, and takes Screen Recording,
+  Accessibility and Full Disk Access. ADR-0012's actual subject — an *ambient*
+  rolling screenshot buffer — is untouched and still binding, so this is struck
+  as two claims rather than one. ADR-0014's account argument is unreversed.
+
+  *"Re-read them before the first thing that wants a native capability arrives"*
+  needed no correction: it was written the morning the thing arrived, and *"both
+  are now cheaper to reverse"* turned out to mean **the same day**. That is worth
+  leaving on the page beside the reversal.

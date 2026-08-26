@@ -3,12 +3,24 @@
 **Status:** accepted · 2026-08-17 — **and what it accepts is a refusal.** Ten ADRs in this series
 adopt something and [ADR-0010](0010-acting-in-the-browser.md) reverses a refusal. This is the first
 one whose whole content is a *no*.
+**Reversed in part:** 2026-08-26 by [ADR-0025](0025-computer-use-beyond-the-browser.md) — the refusal
+of screen capture, **for acting only**. Screen Recording is taken and a screenshot of the whole
+screen is captured per turn under a ratified contract. **The refusal this ADR is actually about
+survives untouched:** there is no ambient rolling screenshot cache, observation gets no screenshots,
+and the two ledgers stay disjoint (ADR-0025 §5). The cost argument is spent, exactly as
+[ADR-0023](0023-the-tray-app-owns-the-runtime.md)'s prohibition 1 predicted — nine days after this
+was written.
 **Affirms:** [`docs/VISION.md`](../VISION.md) — *"**Not planned, at any horizon.** Full-screen
 recording. Keystroke logging. Automatic access to every application. These are not sequencing
 decisions."* · [`docs/SECURITY_AND_PRIVACY.md`](../SECURITY_AND_PRIVACY.md) — *"**Your screen.** No
 screen recording, no video, and no screenshot of anything you are doing."*
-**Amends:** nothing. **Both sentences above keep their wording exactly.** This ADR is the argument
-they never had, not a change to what they say.
+~~**Amends:** nothing. **Both sentences above keep their wording exactly.** This ADR is the argument
+they never had, not a change to what they say.~~ **Struck 2026-08-26: both are being struck in
+place.** `VISION.md`'s bullet loses two of its three clauses — full-screen recording, and automatic
+access to every application — and keeps *keystroke logging*, which is unchanged and still true.
+`SECURITY_AND_PRIVACY.md`'s bullet loses two of its three and keeps *no video*. That this header
+promised their wording would never change, and that the promise lasted nine days, is left on the page
+rather than edited away.
 **Bounded by:** [ADR-0010](0010-acting-in-the-browser.md) — the one screenshot exception that exists,
 and which stays the only one
 **Depends on:** [ADR-0008](0008-ambient-detection.md) — what ambient capture is permitted to hold,
