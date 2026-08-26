@@ -99,7 +99,7 @@ describe('a browser shift is not told it chose something', () => {
   })
 
   it('says why there is nothing to draft instead', () => {
-    expect(words(screen({}))).toContain('This shift has no document under it')
+    expect(words(screen({}))).toContain('There is no document under this agreement')
   })
 
   /**
@@ -110,7 +110,7 @@ describe('a browser shift is not told it chose something', () => {
   it('names no cause when there is a document and drafting was never offered', () => {
     const html = words(screen({ documentTitle: 'Trip notes' }))
     expect(html).not.toContain('You asked for research only')
-    expect(html).not.toContain('This shift has no document under it')
+    expect(html).not.toContain('There is no document under this agreement')
     expect(html).toContain('no text for your document')
   })
 })

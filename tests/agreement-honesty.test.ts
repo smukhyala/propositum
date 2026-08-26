@@ -233,7 +233,7 @@ describe('the panel says why drafting is off, and never invents the reason', () 
 
   it('says the true reason, which is that there is no document to draft into', () => {
     expect(words(screen(BROWSER))).toContain(
-      'This shift has no document under it, so there is nothing to draft',
+      'There is no document under this agreement, so there is nothing to draft',
     )
   })
 
@@ -245,6 +245,6 @@ describe('the panel says why drafting is off, and never invents the reason', () 
     expect(said).toContain(
       'You chose research only, so Propositum will come back with findings, questions and next steps',
     )
-    expect(said).not.toContain('This shift has no document under it, so there is nothing to draft')
+    expect(said).not.toContain('There is no document under this agreement, so there is nothing to draft')
   })
 })
