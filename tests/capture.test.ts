@@ -226,8 +226,20 @@ describe('the manifest asks for nothing frightening', () => {
       string
     >
 
-    const devPort = /-p\s+(\d+)/.exec(scripts['dev'] ?? '')?.[1]
-    const startPort = /-p\s+(\d+)/.exec(scripts['start'] ?? '')?.[1]
+    const portIn = (script: string | undefined) => /-p\s+(\d+)/.exec(script ?? '')?.[1]
+
+    const devPort = portIn(scripts['dev'])
+    const startPort = portIn(scripts['start'])
+    /**
+     * Added 2026-08-26 with the one-terminal `dev` script.
+     *
+     * `dev` now reads `tsx scripts/dev.ts -p 3117` and the supervisor hands the
+     * port to Next — so the port is written in a THIRD place, and a third place
+     * a number is written gets an assertion in the same change. `dev:web` runs
+     * the web half alone and would otherwise be free to drift to 3000, which is
+     * precisely the drift the comment above records having already happened.
+     */
+    const webPort = portIn(scripts['dev:web'])
     const workerOrigin = /const APP_ORIGIN = '([^']+)'/.exec(
       readFileSync(join(repo, 'extension/src/service-worker.js'), 'utf8'),
     )?.[1]
@@ -235,6 +247,38 @@ describe('the manifest asks for nothing frightening', () => {
     expect(devPort, 'the dev script must pin a port the extension can be told about').toBeDefined()
     expect(workerOrigin).toBe(`http://127.0.0.1:${devPort}`)
     expect(startPort, 'start and dev must agree, or a built app is unreachable').toBe(devPort)
+    expect(webPort, 'dev:web serves a different port from dev — capture would be off').toBe(devPort)
+  })
+
+  /**
+   * The supervisor refuses BEFORE it starts anything, and the order is the rule.
+   *
+   * ── The failure this exists for ──────────────────────────────────────────
+   *
+   * A dev server left running from earlier makes `next dev` exit 1 with
+   * `EADDRINUSE`. The supervisor read that as a crash worth retrying, printed
+   * the same Node stack three times, then gave up saying *"the message above it
+   * is the one to read"* — which was a stack trace, not an instruction. Worse,
+   * the worker started fine beside it and kept draining runs against an app that
+   * was never there.
+   *
+   * The port is knowable in advance and the answer does not change on retry, so
+   * it is a precondition. Moving the check below the spawns would restore every
+   * word of the paragraph above while leaving both greps here satisfied — which
+   * is why this asserts the ORDER rather than the presence.
+   */
+  it('checks the port before it starts anything', () => {
+    const supervisor = readFileSync(join(repo, 'scripts/dev.ts'), 'utf8')
+
+    const checked = supervisor.indexOf('await inUse(')
+    const spawned = supervisor.indexOf("running.push(start('the app'")
+
+    expect(checked, 'the supervisor no longer checks whether the port is free').toBeGreaterThan(-1)
+    expect(spawned, 'the supervisor no longer starts the app').toBeGreaterThan(-1)
+    expect(
+      checked,
+      'the port check moved below the spawns — a taken port would crash-loop again, and the worker would run against an app that is not there',
+    ).toBeLessThan(spawned)
   })
 })
 

@@ -110,8 +110,9 @@ and ADR-0018 refuses both in favour of one ground describing a *behaviour*.
 2. **Start session** — still a human act, and still the only thing that turns capture on. It is now
    reached by accepting an offer rather than by remembering in advance.
 3. Work normally — read approved sources, edit the `Document`, leave notes.
-4. **Take over.** Propositum shows *what I think you're working on*: a `SessionReading` with
-   `Evidence` behind every claim, editable.
+4. ~~**Take over.**~~ **Struck 2026-08-26 — the verb is *hand over*** (`CONTEXT.md`, banned
+   words). Propositum shows *what I think you're working on*: a `SessionReading` with `Evidence`
+   behind every claim, editable. The step is unchanged; only the word for it is.
 5. Ratify a `HandoffContract` — objective, definition of done, what it may look at, what it may
    change, and the four dials. No `AgentRun` starts from an unratified contract, and nothing in
    the dials can switch that off.

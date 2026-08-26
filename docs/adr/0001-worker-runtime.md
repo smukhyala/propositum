@@ -16,8 +16,37 @@ it is a slow request.
 
 ## Decision
 
-**A separate long-lived Node worker process, started as its own npm script, draining a `Run` table
-in the application's SQLite database.**
+~~**A separate long-lived Node worker process, started as its own npm script, draining a `Run` table
+in the application's SQLite database.**~~
+
+**Amended 2026-08-26 — one clause moved, and nothing else.** *"Started as its own npm script"* is now
+*started as its own **process**, beside the app rather than under it.* `npm run dev` runs
+`scripts/dev.ts`, which spawns `next dev` and `scripts/worker.ts` as **siblings**; `npm run worker`
+still starts one on its own and is unchanged.
+
+**Why this is not the thing this ADR refused.** The reason below for a separate process is that
+everything else *"ties the run to something that can go away for reasons unrelated to the work: a
+tab, a dev-server reload, a deploy."* A worker spawned BY Next would be exactly that. A worker
+spawned BESIDE it is not — the dev server can reload, crash or be rebuilt and the worker never
+notices, because its parent is the supervisor. The diagram below still holds: two boxes, two
+lifetimes, and the supervisor appears in neither because it owns no run.
+
+**What it cost.** One thing, stated because it is a real property this ADR had and now has a
+mechanism for instead: *"the worker is running"* used to be something a person had verified by typing
+it. It is now something a script asserts, and a script can be wrong. `tests/reachability.test.ts`
+pins that `dev` starts one and that the supervisor names `scripts/worker.ts`, which is weaker than a
+person's own terminal and stronger than a ~~README~~ **docblock** sentence — and that sentence is
+what was actually protecting it, badly: *"pressing Take over enqueues a run nobody drains and the
+session stays `away` for ever."*
+
+**Corrected 2026-08-26: that sentence has never been in `README.md`.** It is at
+[`scripts/worker.ts:11`](../../scripts/worker.ts), and `scripts/dev.ts:9` carries the same warning.
+The attribution is left struck rather than overwritten because
+[ADR-0023](./0023-the-tray-app-owns-the-runtime.md) repeated it, and a reader who went looking in the
+README and found nothing is owed the reason. It matters more than a citation usually would: the
+argument here is about **where** the protection lived, and a sentence in a docblock is read by
+somebody already editing the worker, while a sentence in the README is read by somebody setting up.
+Those are different people, and the second was never warned at all.
 
 ```
 next dev / next start          npm run worker

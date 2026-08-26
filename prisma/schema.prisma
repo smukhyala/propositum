@@ -1090,10 +1090,59 @@ model DecisionNeeded {
   needs      String
   ordinal    Int
 
-  report ShiftReport @relation(fields: [reportId], references: [id])
+  report  ShiftReport      @relation(fields: [reportId], references: [id])
+  /// At most one, and only ever written by a person. ADR-0022.
+  verdict DecisionVerdict?
 
   @@index([reportId])
   @@map("decision_needed")
+}
+
+/// APPEND-ONLY. One human answer to one DecisionNeeded. ADR-0022.
+///
+/// The fifth verb, and the only one of the five that GRANTS NOTHING. The gate
+/// refuses, the human rejects, the model declines, the human confirms — and the
+/// human ANSWERS. An answer is a fact the worker did not have, not a permission
+/// for anything, which is the entire reason this is the one verdict a person may
+/// give from a phone while a ConfirmationVerdict may not (ADR-0021).
+///
+/// Concretely: no AuthorizedAction is minted, no ContractScope widens, no
+/// ActionKind becomes allowed, no budget moves. `compilePolicy` cannot receive
+/// one, for the same structural reason it cannot receive a StatedIntent. It
+/// enters the product on the footing `guidance` already has.
+///
+/// ── What this row is NOT read by, and why that is the design ─────────────
+///
+/// No worker reads it. Carrying an answer forward into the next Shift's
+/// StatedIntent would be a path from a worker's own question to the next
+/// agreement's text with no human ratification in between, which is exactly
+/// what ADR-0006 §5 exists to refuse. The carry-forward is a separate decision
+/// and it starts a new Shift with an agreement a person reads.
+///
+/// `answer` is prose and the control is a text field, never a pair of buttons.
+/// A DecisionNeeded exists precisely because the worker could not reduce the
+/// question to a choice; reducing it at the interface would be the model's
+/// failure to enumerate, papered over by ours.
+model DecisionVerdict {
+  id String @id @default(cuid())
+
+  /// UNIQUE — one answer per question, enforced by the database rather than by
+  /// a check somebody remembers to write.
+  decisionNeededId String @unique
+
+  /// The person's own words. Never a model's, never an enum.
+  answer String
+
+  decidedAt DateTime @default(now())
+
+  /// screen | thread. Recorded because ADR-0021 permits exactly one of the
+  /// verdict tables to be written from a message channel, and a row that cannot
+  /// say where it came from cannot show that the rule held.
+  source String
+
+  decision DecisionNeeded @relation(fields: [decisionNeededId], references: [id])
+
+  @@map("decision_verdict")
 }
 
 /// The re-entry artifact for one Shift. Written IN THE APP PROCESS when the
@@ -1209,6 +1258,104 @@ model CalendarConnection {
   updatedAt DateTime @updatedAt
 
   @@map("calendar_connection")
+}
+
+/// One paired message channel. ADR-0021.
+///
+/// `provider` is UNIQUE, so at most one connection exists — the same
+/// deferral-held-as-a-shape CalendarConnection uses, and the same statement it
+/// makes: this is a single-person product, structurally rather than by
+/// convention. There is one member today, `telegram`.
+///
+/// ── The bot is the person's own, and that is load-bearing ────────────────
+///
+/// They create it through Telegram's own BotFather; we never see it, never hold
+/// it, never route through it, and there is no account of ours that could be
+/// compelled to produce it. There is NO shared Propositum bot and there must
+/// never be one — a shared bot is a server of ours wearing a different hat, and
+/// "no server of ours" is the one clause ADR-0021 did not spend.
+///
+/// ── What this row does not hold ──────────────────────────────────────────
+///
+/// No message history. Propositum keeps what it sent only as `lastSentKey`, an
+/// idempotency marker so an offer is not sent twice across a restart — not a
+/// log. The thread itself lives on the person's phone and on Telegram's
+/// servers, and ADR-0021 says plainly that the second half is the cost.
+model ThreadConnection {
+  id String @id @default(cuid())
+
+  /// telegram. A second member is a schema change, not a row.
+  provider String @unique
+
+  /// The bot's own credential, created by the person. Never logged, never
+  /// rendered, never in a model prompt — the same one-door shape
+  /// CalendarConnection.refreshToken has, for the same reason.
+  botToken String
+
+  /// Which conversation to send to. Names a person's account on that service.
+  chatId String
+
+  pairedAt DateTime @default(now())
+
+  /// The newest update this connection has consumed, so a restart does not
+  /// re-read replies it already acted on. The transport's own cursor, held here
+  /// because there is nowhere else for it to live.
+  lastUpdateId Int?
+
+  sent ThreadMessageSent[]
+
+  @@map("thread_connection")
+}
+
+/// One message Propositum has already said, so it does not say it twice.
+///
+/// ── Why this is a table and not a field ──────────────────────────────────
+///
+/// It began as `ThreadConnection.lastSentKey`, a single value, and that was
+/// wrong in a way worth recording because it looked right: dedupe is per
+/// MESSAGE, not per connection. Sending an offer and then a shift report
+/// overwrites the offer's key, so a restart re-announces an offer the person
+/// already declined — the exact defect the field existed to prevent. The
+/// extension's notification path got this right first by keying on the request
+/// id, and this is that, one process out.
+///
+/// `key` is UNIQUE, so "have I said this" is an insert that either succeeds or
+/// conflicts, rather than a read followed by a write with a gap in between. Two
+/// feeds write here — the app process for offers, the worker for durable events
+/// — and the gap is where a double-send lives.
+///
+/// ── The second job, which is what made it a table ────────────────────────
+///
+/// `providerMessageId` is how a REPLY finds its question. A person answering a
+/// decision replies to a specific message, and the transport reports which one;
+/// without this row the answer would have to be bound to whatever was most
+/// recent, which is how an answer about one thing lands on another. The
+/// confirmation path solves the same problem by matching an element's
+/// descriptor rather than its position, and for the same reason.
+///
+/// It holds no message text. What was said is derivable from `key` and the rows
+/// it names, and a copy of the sentence here would be a log of what Propositum
+/// told somebody about their own work — which is the thing ADR-0021 says lives
+/// on their phone and on the provider's servers, and not here.
+model ThreadMessageSent {
+  id String @id @default(cuid())
+
+  provider String
+
+  /// `offer:<signature>` · `confirmation:<id>` · `decision:<id>` ·
+  /// `report:<contractId>` · `gap:<contractId>`. Opaque here; named in
+  /// `src/domain/conversation/messages.ts`.
+  key String @unique
+
+  /// The transport's own id for the message, for binding a reply to it.
+  providerMessageId String?
+
+  sentAt DateTime @default(now())
+
+  connection ThreadConnection @relation(fields: [provider], references: [provider])
+
+  @@index([provider])
+  @@map("thread_message_sent")
 }
 
 // ═══════════════════════════════════════ 8. What Propositum measures about itself
@@ -1339,6 +1486,42 @@ model InstallSecret {
   @@map("install_secret")
 }
 
+/// The extension this install accepts events from, once a person has said so.
+///
+/// ── Why this is a row and not only an environment variable ───────────────
+///
+/// `src/server/calendar.ts` draws the line this follows: the application's own
+/// credentials live in `.env`, and per-person, per-install data lives in the
+/// database. An unpacked extension mints a NEW id every time somebody loads it
+/// from a different path, so this is not a fact about Propositum — it is a fact
+/// about one machine, on one afternoon.
+///
+/// `PROPOSITUM_EXTENSION_ID` still wins when it is set. Nothing about an
+/// existing `.env` changes, and a clone with one behaves exactly as before.
+///
+/// ── What this is NOT ─────────────────────────────────────────────────────
+///
+/// **Not a credential and not an authentication.** Anything running on this
+/// machine can call the app claiming to be an extension; the origin check has
+/// always been a check that the caller is THE extension the person meant, never
+/// proof of who they are. What this row adds is that the person got to say which
+/// one, on a screen, instead of copying an id into a file — and the welcome
+/// screen says exactly that rather than implying a check that is not there.
+///
+/// There is at most one, and the primary key is what enforces it. A second
+/// browser profile is a second install with its own database.
+model ExtensionPairing {
+  /// Always `chrome`. One row, enforced by the primary key.
+  browser String @id
+
+  /// The unpacked extension's id, as Chrome minted it.
+  extensionId String
+
+  pairedAt DateTime @default(now())
+
+  @@map("extension_pairing")
+}
+
 /// How often a strand has been turned down, without recording which strand.
 ///
 /// `src/server/ambient-store.ts` refuses a durable row naming a subject nobody
@@ -1350,9 +1533,9 @@ model InstallSecret {
 /// column list rather than trusting this comment.
 model OfferReticence {
   /// sha256(salt + ':' + signature), hex. Never the terms themselves.
-  signatureHash String @id
+  signatureHash  String @id
   /// How many times a strand hashing to this has been declined.
-  declines      Int    @default(0)
+  declines       Int    @default(0)
   /// The local calendar day of the most recent decline, `YYYY-MM-DD`.
   ///
   /// A DATE, never an instant, and for the reason `OfferTally.updatedAt` was

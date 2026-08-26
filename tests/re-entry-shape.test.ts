@@ -107,7 +107,12 @@ const DECISION = {
   question: 'Which shore did you mean?',
   whyStopped: 'The page covers four of them.',
   needs: 'Say which one and I can finish.',
+  /** Open. ADR-0022 — `null` is what "still waiting on you" looks like now. */
+  answer: null,
 }
+
+/** The same question, answered. What the note shows on a second visit. */
+const ANSWERED_DECISION = { ...DECISION, answer: 'The north one, the one with the ferry.' }
 
 /** `renderToStaticMarkup` gives the first paint: no interaction, and every
  *  `useState` at its initial value. That is exactly the arrival state a person
@@ -184,6 +189,72 @@ describe('accept all stays inert while a question is open', () => {
     /* "Per-change Accept stays live throughout: deciding one change at a time
      * is exactly the deliberate act the batch button skips." */
     expect(occurrences(markup, '>Accept<')).toBeGreaterThan(0)
+  })
+})
+
+/* ── what I need from you, once it can be answered ───────────────────────── */
+
+describe('a question can be answered, and the answer is kept', () => {
+  /**
+   * The regression this exists for is the one the OLD copy admitted to.
+   *
+   * Until 2026-08-26 this section carried a toggle under the sentence
+   * *"Propositum doesn't keep your answer — settling this only unlocks accepting
+   * the changes together. Write the answer into the document yourself."* That was
+   * client state and nothing was written anywhere. ADR-0022 gave the row a
+   * verdict; these assert the screen stopped saying otherwise.
+   */
+  it('offers a field to answer in, not a pair of buttons', () => {
+    const markup = html(report({ decisions: [DECISION], changes: [change()] }))
+
+    expect(markup).toContain('Tell it')
+    expect(markup).toContain('textarea')
+    /* A Yes and a No here would be a confirmation control one heading away from
+     * the real one, and a DecisionNeeded exists precisely because the worker
+     * could not reduce the question to a choice. */
+    expect(markup).not.toContain('Go ahead')
+  })
+
+  it('no longer tells the person their answer goes nowhere', () => {
+    const markup = html(report({ decisions: [DECISION], changes: [change()] }))
+    expect(markup).not.toContain('doesn&#x27;t keep your answer')
+    expect(markup).not.toContain('Write the answer into the document yourself')
+    expect(markup).not.toContain("I've settled this")
+  })
+
+  it('reads the answer back when there is one', () => {
+    const markup = html(report({ decisions: [ANSWERED_DECISION], changes: [change()] }))
+
+    expect(markup).toContain('The north one, the one with the ferry.')
+    expect(markup).toContain('You said:')
+    /* Answered means settled. The field is gone rather than disabled — there is
+     * nothing left to type. */
+    expect(markup).not.toContain('Tell it')
+  })
+
+  /**
+   * The gate ADR-0019 keeps, now cleared by saying something rather than by
+   * pressing a toggle that recorded nothing.
+   */
+  it('unblocks accept all once every question has an answer', () => {
+    const open = html(report({ decisions: [DECISION], changes: [change(), change({ id: 'c2' })] }))
+    const openButton = open.slice(open.indexOf('Accept all') - 400, open.indexOf('Accept all'))
+    expect(openButton).toContain('disabled')
+
+    const answered = html(
+      report({ decisions: [ANSWERED_DECISION], changes: [change(), change({ id: 'c2' })] }),
+    )
+    const answeredButton = answered.slice(
+      answered.indexOf('Accept all') - 400,
+      answered.indexOf('Accept all'),
+    )
+    expect(answeredButton).not.toContain('disabled')
+  })
+
+  /** Principle 11: it says what it will not do with the answer. */
+  it('says the answer acts on nothing by itself', () => {
+    const markup = html(report({ decisions: [ANSWERED_DECISION], changes: [change()] }))
+    expect(markup).toContain('Nothing acts on it on its own')
   })
 })
 

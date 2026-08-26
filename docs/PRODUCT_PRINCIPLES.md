@@ -416,9 +416,17 @@ The interface says what a person would say.
 | copy, working copy | *(nothing is copied — the `Changeset` is the copy)* |
 | task | *(banned outright)* |
 | approve / authorise (for an irreversible action) | *"Yes, do it"* — the human **confirms** |
+| take over | *(added 2026-08-26)* **hand over** — the person is always the subject |
+| shift, claim | *(added 2026-08-26)* *"While you were away"* · the sentences themselves |
 
-**Four verbs, never interchangeable:** the gate **refuses** · the human **rejects** · the model
-**declines** · the human **confirms**. Rejecting is a decision about work already held; confirming is
-permission for something that has not happened and cannot be undone once it has.
+~~**Four verbs, never interchangeable:**~~ **Five, 2026-08-26** ([ADR-0022](./adr/0022-the-fourth-verdict.md)):
+the gate **refuses** · the human **rejects** · the model **declines** · the human **confirms** · the
+human **answers**. Rejecting is a decision about work already held; confirming is permission for
+something that has not happened and cannot be undone once it has; **answering** is prose in reply to
+a `DecisionNeeded` and grants nothing at all — it is the only one of the five that is not a
+permission, which is why its control is a text field and never a pair of buttons.
+
+Struck rather than renumbered, because source comments cite this section and `CONTEXT.md` had already
+moved to five while this table still said four.
 
 Full list in [`CONTEXT.md`](../CONTEXT.md).

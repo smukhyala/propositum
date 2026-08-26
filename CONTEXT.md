@@ -172,7 +172,7 @@ already a durable row.
 |---|---|
 | `working` | a live WorkSession on this Intention, phase `observing` |
 | `delegated` | an accepted HandoffContract on it whose Shift has not ended |
-| `needs-you` | an unanswered ConfirmationRequest, ~~a DecisionNeeded,~~ or a held ShiftOutcome with undecided proposals |
+| `needs-you` | an unanswered ConfirmationRequest, ~~a DecisionNeeded,~~ **a DecisionNeeded with no DecisionVerdict — un-struck 2026-08-26,** or a held ShiftOutcome with undecided proposals |
 | `sleeping` | none of the above, and `completedAt` is null |
 | `done` | `completedAt` is set — by a person, and only by a person |
 
@@ -203,6 +203,13 @@ produced nothing else now reads `sleeping` — and ADR-0011 is explicit that a m
 expensive direction. It is taken because the alternative was a word that is never right again after
 the first question. The unblock is a durable human act on the note: `ShiftReport.finishedAt`, or the
 fourth `*Verdict` this vocabulary already has three of.
+
+**Amended 2026-08-26 — the second of those two, and the paragraph above is left whole because it is
+the argument that earned it.** [ADR-0022](docs/adr/0022-the-fourth-verdict.md) adds `DecisionVerdict`,
+so `openDecisions` counts DecisionNeeded rows with no verdict, the count can go **down**, and
+`needs-you` stops being a word that is never right again after the first question. What the struck
+version got right and this one keeps: the rule was always the right rule for the row. It was
+unreachable, not wrong.
 
 ~~**Computed by `src/domain/intention/state.ts` as of 2026-08-16, and rendered by nothing yet.** The
 function and the five consumer labels exist and are tested; no screen calls either, and
@@ -1798,6 +1805,55 @@ model self-report here, and the results must say so.
 requiresHumanDecision · blocker · escalation.
 **Consumer:** What I need from you.
 
+**Amended 2026-08-26 ([ADR-0022](docs/adr/0022-the-fourth-verdict.md)): it can be answered now.** The
+entry above described a row nothing could act on, which was true for ten days and was the reason
+`openDecisions` was hardcoded to zero.
+
+### DecisionVerdict — *table, append-only*
+One human answer to one DecisionNeeded: `decisionNeededId` (UNIQUE), `answer`, `decidedAt`, `source`.
+**Only a human writes one**, and the answer is prose, because the question exists precisely because
+the worker could not reduce it to a choice. A Yes/No control here would be a ConfirmationVerdict with
+the safety filed off.
+
+**It grants nothing.** No AuthorizedAction is minted, no ContractScope widens, no ActionKind becomes
+allowed. `compilePolicy` cannot receive one, for the same structural reason it cannot receive a
+StatedIntent. It enters the product on the footing `guidance` already has — human prose that informs
+work and authorises none of it — which is why this is the one verdict that may be given from a phone
+and a ConfirmationVerdict may not ([ADR-0021](docs/adr/0021-a-thread-on-the-persons-phone.md)).
+
+**It is read by no worker in this slice**, and that is the design and not an omission. Carrying an
+answer into the next Shift's StatedIntent is a path from a worker's own question to the next
+agreement's text with no human ratification between, which is what ADR-0006 §5 exists to refuse.
+*Displaces:* resolution · answer flag · decisionResolved · settled.
+**Consumer:** Tell it · answered <date>.
+
+### ThreadConnection — *table*
+One paired message channel: `provider` (UNIQUE), the chat identifier, `pairedAt`. The UNIQUE on
+`provider` is what makes this single-person structurally rather than by convention — the same device
+CalendarConnection uses, for the same reason.
+
+**The bot is the person's own.** They create it; there is no shared bot, no operator, and nothing of
+ours in the path. A shared bot would be a server of ours wearing a different hat.
+*Displaces:* messenger · notification channel · Notifier · push target · subscriber.
+**Consumer:** Your phone · Paired.
+
+### ThreadMessage — *value object*
+One thing Propositum says on a paired channel. A **closed** union, rendered from durable rows by
+`src/domain/conversation/messages.ts` the way STOP_RULES are — **no model composes one.** Where it
+carries model prose (an offer's rationale, a shift headline) it quotes a stored row and does not
+generate a phone-shaped variant of it.
+
+**Every member carries a decision**, because Principle 13 forbids a notification with no decision
+attached and names notifications as the place that rule erodes first. Five members: an offer · a
+raised ConfirmationRequest (a link, and no verb) · a raised DecisionNeeded · a run reaching a terminal
+status · a CaptureGap while away. A sixth is a diff to that list and to `tests/conversation.test.ts`.
+
+**What it may never contain:** page-authored text, a quotation, an element's accessible name, a tab
+title, typed text, a screenshot, or any URL but a loopback deep link. **Anything that has crossed
+`Datamarked` may not leave the machine.**
+*Displaces:* notification · alert · push · ping · digest.
+**Consumer:** none — a ThreadMessage IS consumer copy.
+
 ### ShiftReport — *table*
 The re-entry artifact for one Shift, written once **in the app process when the human returns** —
 never by an AgentRun. A report producible only by a live Runner cannot exist on `interrupted`, the
@@ -1856,6 +1912,17 @@ threshold · context window · tool call · execution trace.
 | `IntentionStatus`, a stored lifecycle column | `IntentionState` (a computed view) |
 | copy, patch, hunk, diff chunk, changeset, anchor, offset, fold, materialise, base version, commit, merge | *(UI copy)* changes · this change · the version you left · Preview · Accept · Reject · Edit |
 | ledger entry, agent run, job, orchestration, allowlist | *(UI copy)* what I did · Propositum · what Propositum can see |
+| `take over` *(UI copy only — added 2026-08-26)* | **"hand over"**. The person is always the subject, as they are in every one of the five verbs below. Both spellings were live on adjacent screens pointing opposite ways: the project screen said *Hand this over*, the agreement's own button said *Take over*, and nothing on either said who was taking over what. The type name followed — `TakeOver` in `src/ui/reading.tsx` is now `HandOver` |
+| `shift` *(UI copy only — added 2026-08-26)* | *"While you were away"*, which is this document's own consumer wording for a Shift; or make Propositum the subject and drop the noun, which is what the front door's count sentence does. The word is **correct** as a type, an identifier, a route and a docblock — the ban is on something a person reads |
+| `claim`, `claims` *(UI copy only — added 2026-08-26)* | the sentences themselves, under their kind's heading — this document's own consumer wording for a SessionClaim is *internal* |
+
+**Three of those rows are executable, from 2026-08-26.** `tests/consumer-vocabulary.test.ts`
+extracts what a person can read out of `src/ui`, `src/app` and `extension/src/panel.html` — JSX text
+with its interpolations rewritten, the literals inside those interpolations, prose-carrying
+attributes, and free-standing sentences — and fails on *take over*, *shift*, *claim* and *task*. It
+was written because this table had never been run and four of its bans had leaked onto twelve
+screens. What it cannot see is stated in its own docblock: a sentence assembled at runtime, and a
+component that computes the right words and renders others.
 
 **The `outcome` ban is on a column named `outcome`**, which is ambiguous between `disposition` (what
 happened to one action) and `terminalReason` (why a run ended). It is **not** a ban on a foreign key
@@ -1863,13 +1930,21 @@ named for the table it points at: `outcomeId`, `shiftOutcomeId` and `outcomeProp
 and say exactly what they hold. The rule is about a column whose name does not tell you which of two
 things it contains, not about the letters.
 
-**Four verbs that must not be confused:** the gate **refuses** · the human **rejects** · the model
-**declines** · the human **confirms**.
+~~**Four verbs that must not be confused:**~~ **Five, 2026-08-26:** the gate **refuses** · the human
+**rejects** · the model **declines** · the human **confirms** · the human **answers**.
 
 The fourth is new, and it is a different act from the third human verb: **rejecting** is a decision
 about work already produced and held, and **confirming** is permission for something that has not
 happened yet and cannot be undone once it has. A UI that used one word for both would be asking
 someone to authorise an irreversible action with the same control they use to bin a paragraph.
+
+**The fifth arrived 2026-08-26 ([ADR-0022](docs/adr/0022-the-fourth-verdict.md)), and it is the only
+one of the five that grants nothing.** **Answering** is writing prose in reply to a DecisionNeeded —
+a fact the worker did not have, not a permission. It is deliberately *not* **deciding** (too close to
+the noun, and it reads as authorisation) and *not* **resolving** (which describes the question's state
+rather than the person's act, and invites a button that closes a question without saying anything).
+The control is a text field. It is never a pair of buttons, because the question exists precisely
+because the worker could not reduce it to a choice.
 
 ---
 
@@ -1925,6 +2000,16 @@ say that it does.
     inferred: a `WorkSession` is unchanged in every field but one nullable foreign key, the
     handoff → worker → reviewer → re-entry slice is untouched, and everything Propositum *infers* is
     still per-sitting and still cold. What moved above the session is one sentence a person typed.
+
+12. **The handover verb is *hand over*, not *take over*.** `docs/FOUNDING_BRIEF.md` lists *Take
+    over* among the words the interface may use. Two spellings for one act shipped anyway, on
+    adjacent screens, with the direction reversed between them — *Hand this over* on the project
+    screen, *Take over* on the agreement's own button. The brief's word loses because the person is
+    the subject of every other consumer verb this document ratifies (they **reject**, they
+    **confirm**, they **answer**), and a verb that alternates its subject is the one thing a
+    first-timer cannot resolve from context. Recorded here rather than absorbed quietly, per the
+    brief's own rule that the later document wins and should say that it does.
+    *(2026-08-26. Enforced by `tests/consumer-vocabulary.test.ts`, not by discipline.)*
 
 ---
 

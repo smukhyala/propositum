@@ -110,6 +110,9 @@ export const REQUIRED_GUARDS: ReadonlyArray<readonly [string, string]> = [
   ['confirmation_verdict_no_update', 'confirmation_verdict'],
   ['confirmation_verdict_no_delete', 'confirmation_verdict'],
   ['confirmation_verdict_no_replace', 'confirmation_verdict'],
+  ['decision_verdict_no_update', 'decision_verdict'],
+  ['decision_verdict_no_delete', 'decision_verdict'],
+  ['decision_verdict_no_replace', 'decision_verdict'],
   /**
    * `action_evidence` has TWO guards, not three, and `action_evidence_no_delete`
    * is absent on purpose.
@@ -146,6 +149,59 @@ export class AppendOnlyGuardError extends Error {
     )
     this.name = 'AppendOnlyGuardError'
   }
+}
+
+/**
+ * The schema on disk is older than the code. A different fault, said differently.
+ *
+ * ── Why this is not an `AppendOnlyGuardError` ────────────────────────────
+ *
+ * That one means *"the ledger is unprotected, do not proceed"* — a table exists
+ * and its triggers do not. This means the table does not exist at all, so
+ * nothing can be written to it and nothing is unprotected. It is a setup step
+ * somebody has not run, and telling them the ledger is compromised would send
+ * them looking for a data problem they do not have.
+ *
+ * ── Why it exists at all ─────────────────────────────────────────────────
+ *
+ * Because of what it replaced. A `CREATE TRIGGER` on a missing table throws a
+ * `PrismaClientKnownRequestError` whose stack is preceded by roughly five
+ * thousand characters of minified client, and the one useful line — *"no such
+ * table: main.decision_verdict"* — is at the bottom of it. Measured on a real
+ * run: the worker crash-looped three times, printed that wall three times, and
+ * the actual fix was one command that appeared nowhere in the output.
+ *
+ * So this names the table, names the command, and says what it is not.
+ */
+export class SchemaBehindError extends Error {
+  constructor(public readonly table: string) {
+    super(
+      `The database has no \`${table}\` table, so its append-only guards cannot be installed.\n\n` +
+        'The schema on disk is older than this code. Run:\n\n' +
+        '  npx prisma db push\n\n' +
+        'and start again. Nothing is wrong with the data that is already there — ' +
+        'this is a table that has not been created yet, not a ledger that has lost ' +
+        'its protection.',
+    )
+    this.name = 'SchemaBehindError'
+  }
+}
+
+/**
+ * The table SQLite says is missing, out of whatever the driver threw.
+ *
+ * Read off the message rather than a code, because there is no code for it:
+ * every DDL failure here arrives as P2010 with the real reason nested in
+ * `meta.message`. Returns null for anything else, so an unrecognised failure
+ * still throws its original error rather than being relabelled as a setup step
+ * somebody can fix by running one command.
+ */
+function missingTableIn(error: unknown): string | null {
+  const text =
+    error instanceof Error
+      ? `${error.message} ${JSON.stringify((error as { meta?: unknown }).meta ?? {})}`
+      : String(error)
+  return /no such table:\s*(?:main\.)?([A-Za-z0-9_]+)/.exec(text)?.[1] ?? null
 }
 
 function triggersSqlPath(): string {
@@ -236,13 +292,23 @@ export async function ensureAppendOnlyGuards(db: TransactionalExecutor): Promise
   // wrote it. On a pooled one it could read a connection that had not caught up
   // and refuse to start a database that is in fact guarded — the same disagreement
   // as the install, pointed the other way.
-  const missing = await db.$transaction(
-    async (tx) => {
-      await runStatements(tx, statements)
-      return findMissingGuards(tx)
-    },
-    { timeout: INSTALL_TIMEOUT_MS },
-  )
+  let missing: string[]
+  try {
+    missing = await db.$transaction(
+      async (tx) => {
+        await runStatements(tx, statements)
+        return findMissingGuards(tx)
+      },
+      { timeout: INSTALL_TIMEOUT_MS },
+    )
+  } catch (error) {
+    // A missing table is a setup step, not a compromised ledger. Anything else
+    // is rethrown untouched — relabelling an unknown failure as "run db push"
+    // would send somebody to the wrong place with confidence.
+    const table = missingTableIn(error)
+    if (table !== null) throw new SchemaBehindError(table)
+    throw error
+  }
 
   if (missing.length > 0) throw new AppendOnlyGuardError(missing)
 }

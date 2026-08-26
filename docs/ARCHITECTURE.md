@@ -464,6 +464,22 @@ the field where model prose belongs. Pinned in the deferred block.
 
 **One shift per session.** Re-entry ends at accept or reject. No *keep going*, no *redirect*.
 
+**The word `shift` is not on any of those screens, from 2026-08-26.** It is a layer-level and
+schema-level term; `CONTEXT.md` fixes its consumer wording as *"While you were away"*, and it had
+leaked into consumer copy in twelve places — including the front door's count sentence and the
+agreement's permission panel. `tests/consumer-vocabulary.test.ts` is the guard, and it is the sixth
+one: it extracts what a person can read out of `src/ui`, `src/app` and `extension/src/panel.html`
+and fails on `take over`, `shift`, `claim` and `task`. It is worth knowing what it does **not** do —
+it reads source text, so a sentence assembled at runtime and a component that computes the right
+words while rendering others both pass.
+
+**Two route boundaries landed the same day** — `src/app/loading.tsx` and `src/app/not-found.tsx`,
+beside the existing `src/app/error.tsx`. Every page here is `force-dynamic` and awaits the database,
+so before these a cold start painted nothing and a stale id got the framework's own 404.
+`notFound()` already had three callers, so the second is reached by the product rather than only by
+mistyped URLs. `tests/route-boundaries.test.ts` renders all three and asserts those callers still
+exist.
+
 ---
 
 ## Where computer use sits
@@ -513,12 +529,26 @@ a green suite cannot be read as a wired one.~~ **Amended 2026-08-16, in the wave
 caller: something calls it, and the five consumer labels below are on the front door.**
 `src/server/front-door.ts` derives each row and `src/app/page.tsx` renders the label, with the
 re-entry link on `needs-you`; the reachability claim moved into the reachable section and now names
-`front-door.ts`. **One of the three routes into `needs-you` is unreachable from production data:**
+`front-door.ts`. ~~**One of the three routes into `needs-you` is unreachable from production data:**
 nothing supplies a non-zero `openDecisions`, because a `DecisionNeeded` cannot be cleared and a count
 that can only go up would pin the word on permanently — see `CONTEXT.md`'s `IntentionState` entry,
-where the cost of that decision is written down rather than talked down. The argument
-for five members below is unchanged, and it was written down before the union was rather than after
-somebody had already typed six.
+where the cost of that decision is written down rather than talked down.~~
+**Struck 2026-08-26 by [ADR-0022](./adr/0022-the-fourth-verdict.md), which is the day that entry
+predicted in its own text.** `CONTEXT.md`'s struck `DecisionNeeded` row said the rule *"becomes
+reachable the day the row can be answered"*; a `DecisionVerdict` is that answer, the shift report
+carries a field to type it into, and `factsForEveryProject` now counts only questions with no answer
+— so **answering the last one takes *Needs you* back off, and the third route is reachable.** It was
+unreachable for ten days, during which a person could enter that state and never leave it beside a
+button whose own copy said *"Propositum doesn't keep your answer."*
+
+The argument for five members below is unchanged, and it was written down before the union was rather
+than after somebody had already typed six.
+
+**Two docblocks in `src/` still carry the struck claim** and are not corrected here because this is
+not their file: `src/persistence/repositories/index.ts` (*"`IntentionStateFacts.openDecisions` is
+always zero"*, on the `openQuestions` reader) and `src/domain/intention/work-so-far.ts` (*"reports
+zero"*). Both describe the reader they sit on rather than the schema, and both read as stronger than
+they are now. Fix them in the next change that touches those files.
 
 Computed, not stored, following unanimous precedent — `EnforcedPolicy`, `Shift` and `ActionStatus` are
 all computed views on the argument that **two stores for one truth is exactly how a UI comes to

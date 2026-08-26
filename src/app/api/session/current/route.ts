@@ -33,10 +33,12 @@ import { NextResponse } from 'next/server'
 import { CUSTOM_HEADER, fromOurExtension } from '@/capture/transport'
 import { appContext, existingAppContext } from '@/server/db'
 import { ambientStore, captureStore, expectedOrigin } from '@/server/capture-store'
+import { noteKnock } from '@/server/extension-pairing'
 import { describeOffer, describePause, describeWork } from '@/server/ambient-store'
 import type { NamedThread, WorkOffer } from '@/server/ambient-store'
 import { nameThread } from '@/server/name-thread'
 import { countQuietly } from '@/server/offer-tally'
+import { sayOffer } from '@/server/thread'
 import { composeOffer } from '@/server/compose-offer'
 import { hashSignature } from '@/domain/detection/reticence'
 import { createModelClient } from '@/model/provider'
@@ -170,15 +172,30 @@ export async function GET(request: Request) {
   // The same check event submission uses, from one definition. Chrome sends NO
   // Origin for a host-permitted loopback fetch, so this accepts either our
   // origin or a browser-attested non-page caller — see `fromOurExtension`.
-  if (!fromOurExtension((name) => request.headers.get(name) ?? undefined, expectedOrigin())) {
+  if (!fromOurExtension((name) => request.headers.get(name) ?? undefined, await expectedOrigin())) {
+    /**
+     * Remember who knocked, so `/welcome` can offer to pair with it.
+     *
+     * This route is the right and only place for it: the extension's heartbeat
+     * alarm polls here every thirty seconds from `wake()`, unconditionally and
+     * before anything else, so a freshly loaded extension announces itself
+     * within half a minute of being loaded and keeps announcing itself for as
+     * long as it is there. Adding this to the other nine refusal branches would
+     * buy nothing but nine more places to keep in step.
+     *
+     * It records and never admits. The next line still refuses.
+     */
+    noteKnock(request.headers.get('origin') ?? undefined)
+
     return NextResponse.json(
       {
         ok: false,
         reason: 'bad-origin',
-        // Said out loud because the most likely cause is a missing
-        // PROPOSITUM_EXTENSION_ID, and a silent 403 sends people hunting the
-        // wrong thing entirely.
-        hint: `Expected ${expectedOrigin()}. Set PROPOSITUM_EXTENSION_ID in .env to your unpacked extension's id.`,
+        // Said out loud because the most likely cause is an unpaired extension,
+        // and a silent 403 sends people hunting the wrong thing entirely.
+        // ~~Set PROPOSITUM_EXTENSION_ID in .env~~ — still works, and is no
+        // longer the only way: /welcome offers whatever has just knocked.
+        hint: `Expected ${await expectedOrigin()}. Open http://127.0.0.1:3117/welcome to pair this extension, or set PROPOSITUM_EXTENSION_ID in .env.`,
       },
       { status: 403 },
     )
@@ -486,7 +503,44 @@ export async function GET(request: Request) {
      * signature, not the subject, not the origins — see `src/server/offer-tally.ts`,
      * which argues that against ADR-0008's refused row.
      */
-    if (ambient.newlyShown(leading.signature)) countQuietly({ offersShown: 1 }, now)
+    if (ambient.newlyShown(leading.signature)) {
+      countQuietly({ offersShown: 1 }, now)
+
+      /**
+       * And say it on the phone, on the same gate. ADR-0021.
+       *
+       * Deliberately inside this `if` rather than beside it. The paragraph above
+       * argues that a count watching only Home would be blind to the half
+       * Principle 13 warns about; a channel that SPOKE without landing in the
+       * count is the same blindness with the smoke alarm disconnected. One gate,
+       * both effects, and `tests/reachability.test.ts` asserts they stay in one
+       * function rather than trusting this comment.
+       *
+       * `void`, and the callee swallows everything. This is the extension's
+       * heartbeat: a paired thread that cannot be reached must not turn a poll
+       * answering "nothing yet" into a 500.
+       *
+       * Only a composed offer is said. `describeWork`'s degraded sentence is
+       * four states wearing one face — the grounds bar unmet, a call in flight,
+       * a call that came back empty, no key — and a message carrying half an
+       * offer is worse than waiting for the whole one.
+       */
+      if (leading.composed && leading.named) {
+        const composed = leading.composed
+        void existingAppContext()?.then((ctx) =>
+          sayOffer(ctx, {
+            threadSignature: leading.signature,
+            title: composed.title,
+            rationale: composed.rationale,
+            outline: composed.outline,
+            // `excludes` here, `willNotDo` in the message — CONTEXT.md's word
+            // is the second one, and `WorkOffer` says why it keeps the first:
+            // the column that stores it on acceptance is already `excludes`.
+            willNotDo: composed.excludes,
+          }),
+        )
+      }
+    }
 
     return NextResponse.json({ ok: true, session: null, suggestion })
   }

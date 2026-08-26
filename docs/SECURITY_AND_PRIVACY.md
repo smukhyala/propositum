@@ -496,9 +496,10 @@ exists not to use.
 
 |                                                      |                                                                                                                                                                                                                                                                                                        |
 | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Your work stays local**                            | SQLite on your machine. No cloud, no sync, no server of ours, no telemetry, no analytics, no crash reports. Nothing about what you read, wrote or handed over is stored anywhere but here. **This half is unchanged**                                                                                  |
+| **Your work stays local**                            | SQLite on your machine. No cloud, no sync, no server of ours, no telemetry, no analytics, no crash reports. ~~Nothing about what you read, wrote or handed over is stored anywhere but here.~~ ~~**This half is unchanged**~~ — **struck 2026-08-26, [ADR-0021](./adr/0021-a-thread-on-the-persons-phone.md). It was the unchanged half for eight days. See the row below** |
+| **A thread on your phone, optional, off unless you connect it** | If you pair one, Propositum sends you **derived prose about your own work** — a subject, why it is offering, why it stopped, what it needs decided. That is the point of the channel and it is also a sentence about your life on somebody else's server. The bot is **yours**: you create it, we never see it, and there is no shared bot and no operator. The messages are **not end-to-end encrypted** |
 | **One account, optional, off unless you connect it** | a Google calendar, for one question: how long you will be away. Nothing is created if you never connect one                                                                                                                                                                                            |
-| **Two things leave the machine**                     | **prompts to the Anthropic API**, which carry the observation events and document text a boundary needs — and, if you connected a calendar, **one request to Google** asking whether you are busy between two moments. That request carries no page, no title, no subject and nothing off your session |
+| ~~**Two things leave the machine**~~ **Three, 2026-08-26** | **prompts to the Anthropic API**, which carry the observation events and document text a boundary needs — and, if you connected a calendar, **one request to Google** asking whether you are busy between two moments. That request carries no page, no title, no subject and nothing off your session — and, if you paired a phone thread, **messages to Telegram's Bot API**. Unlike the other two, that one carries the *subject* of your work in readable prose, which is why the row above is struck ([ADR-0021](./adr/0021-a-thread-on-the-persons-phone.md)) |
 
 This is still a privacy property today and a limitation tomorrow — it is also why a run stops when
 your Mac sleeps, and answering the question that limit implies is the whole reason the calendar read
@@ -765,10 +766,25 @@ What still does not exist, and what replaced what did:
 
 |                                |                                                                                                                                                                                                                         |
 | ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Still absent entirely**      | any capability outside your browser — your filesystem, your other applications, your computer. There is no tool, and an architecture test asserts none exists                                                           |
+| **Still absent entirely**      | any capability outside your browser — your filesystem, your other applications, your computer. There is no tool, and an architecture test asserts none exists. *(Qualified 2026-08-26 — see the note under this table. Propositum still cannot reach your filesystem; you can now hand it one file at a time.)*                                                           |
 | **Still absent entirely**      | any way for Propositum to run its own JavaScript in a page you are signed into. No `Runtime.evaluate`, no `element.click()`. Clicks are synthesised input at coordinates                                                |
 | **Still absent entirely**      | any way to learn that another tab exists, or to act in one                                                                                                                                                              |
 | **Replaced by a confirmation** | sending, submitting, buying, publishing, deleting. These used to be absent from the `ActionKind` enum. They are now reachable by a click, and every action the browser attests as irreversible stops and asks you first |
+
+**About that first row, and a file you choose yourself** *(2026-08-26)*. The project screen now has
+an *Open a file…* control beside the document. It changes nothing this table says and it is worth
+being precise about why, because *"your filesystem"* is the kind of phrase somebody quotes:
+
+- **Propositum has no filesystem capability.** No tool, no path, no directory, nothing it can
+  enumerate or open. `tests/architecture.test.ts` greps `src/policy/tools.ts` and that check is
+  untouched, because nothing was added to it.
+- **The only file ever read is the one you pick in your operating system's own dialog**, and the only
+  thing that reads it is your browser. Its text goes into the box on the screen, where you read it
+  before Propositum does, and it is stored only if you then press Save. There is no upload endpoint
+  and no second parser — a `tests/document-import.test.ts` assertion pins that the file input has no
+  `name`, so the browser cannot submit the file even if a route for it ever appeared.
+- **What actually changed** is that you can hand Propositum a document without retyping it. That is
+  the same act as pasting, with fewer steps.
 
 **A confirmation is weaker than an absence, and this document is not going to pretend otherwise.** An
 absence cannot be misconfigured or clicked through; a question can be. What holds it up:

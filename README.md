@@ -12,9 +12,16 @@ while you're gone. You come back to what changed, why, and what it couldn't deci
 
 > **Status: pre-alpha. The slice runs end to end; no hypothesis has a number yet.** Capture,
 > reading, handoff, the gated worker, the changeset, the shift report, review and the fold into a
-> new document version are all built and wired. What is missing is evidence: `eval-scores.json` is
-> still the blank worksheet, and H1, H2 and H3 are unscored. This README says plainly where the
-> gaps are rather than rounding them up.
+> new document version are all built and wired — and, since 2026-08-26, so are a setup screen, an
+> optional phone thread, and an answer to a raised decision that is kept rather than discarded.
+> What is missing is evidence: `eval-scores.json` is still the blank worksheet, and H1, H2 and H3
+> are unscored. This README says plainly where the gaps are rather than rounding them up.
+>
+> **The gap that shrank and the one that did not.** Setup is no longer the reason a second person
+> cannot run this — `/welcome` pairs the extension and explains the key. Two terminals still are,
+> and [ADR-0023](./docs/adr/0023-the-tray-app-owns-the-runtime.md) decides the menu-bar app that
+> would end them without building a line of it. `docs/todo/` carries what is left, with the
+> external, non-software parts named.
 
 ---
 
@@ -22,7 +29,7 @@ while you're gone. You come back to what changed, why, and what it couldn't deci
 
 | | |
 |---|---|
-| [`CONTEXT.md`](./CONTEXT.md) | The ubiquitous language, and the only glossary — there is no `UBIQUITOUS_LANGUAGE.md`. ~~38 terms, 28 banned.~~ ~~Corrected 2026-08-16: 54 terms.~~ ~~56 terms, and 21 rows in the banned table, one of them struck — corrected 2026-08-19.~~ **57 terms, and 21 rows in the banned table, one of them struck — `WorkSoFar` added 2026-08-20 ([ADR-0017](./docs/adr/0017-continuing-an-intention.md)).** ~~CONTEXT.md's own closing line carries the term count and is the authority on it~~ — **it does not and never did, so the authority this cell named did not exist.** The count now lives here and `tests/counts.test.ts` checks it against the glossary, which is the only version of this cell that has ever been able to stay true. Every schema, prompt, table and UI string uses these words. |
+| [`CONTEXT.md`](./CONTEXT.md) | The ubiquitous language, and the only glossary — there is no `UBIQUITOUS_LANGUAGE.md`. ~~38 terms, 28 banned.~~ ~~Corrected 2026-08-16: 54 terms.~~ ~~56 terms, and 21 rows in the banned table, one of them struck — corrected 2026-08-19.~~ ~~57 terms, and 21 rows in the banned table, one of them struck — `WorkSoFar` added 2026-08-20 ([ADR-0017](./docs/adr/0017-continuing-an-intention.md)).~~ ~~60 terms, and 21 rows in the banned table, one of them struck — `DecisionVerdict`, `ThreadConnection` and `ThreadMessage` added 2026-08-26 ([ADR-0021](./docs/adr/0021-a-thread-on-the-persons-phone.md), [ADR-0022](./docs/adr/0022-the-fourth-verdict.md)).~~ **60 terms, and 24 rows in the banned table, one of them struck — `take over`, `shift` and `claim` added 2026-08-26, and the first three rows anything actually runs: `tests/consumer-vocabulary.test.ts`.** ~~CONTEXT.md's own closing line carries the term count and is the authority on it~~ — **it does not and never did, so the authority this cell named did not exist.** The count now lives here and `tests/counts.test.ts` checks it against the glossary, which is the only version of this cell that has ever been able to stay true. Every schema, prompt, table and UI string uses these words. |
 | [`docs/MVP.md`](./docs/MVP.md) | What slice 0 is, the three hypotheses, and the pass/fail numbers — fixed before any result existed. |
 | [`docs/VISION.md`](./docs/VISION.md) | Where this goes, with **now** and **later** kept strictly apart. |
 | [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) | Ten layers, each marked with what is built and what would have to exist first. Five layers are partial or absent — ~~six~~, corrected 2026-08-19 and now counted by a test. |
@@ -30,9 +37,9 @@ while you're gone. You come back to what changed, why, and what it couldn't deci
 | [`docs/PRODUCT_PRINCIPLES.md`](./docs/PRODUCT_PRINCIPLES.md) | ~~Ten principles~~ **15 principles, corrected 2026-08-16**, each stating what it concretely forbids. PRODUCT_PRINCIPLES.md's own header carries the count and is the authority on it — and says the header had been wrong since principle 11 arrived. Fourth stale count in this table, in the document that tells the others to say the true thing. |
 | [`docs/research/`](./docs/research/) | The long answers to the questions the architecture waited on. ~~\~4,900 lines~~ **The number is deleted rather than corrected, 2026-08-20.** It was right on the day it was written, 2026-08-06, and was a little over half the truth by 2026-08-18 — `intent-signals.md` arrived and `intent-suggestion-quality.md` grew, and neither moved this cell. `tests/counts.test.ts` has no rule for the noun *lines*, so this is the one count in this table nothing checks, and the row two below says the ADR count went stale *"because nothing counted them. Something counts them now"* — true of that row and never true of this one. `wc -l docs/research/*.md` is the only version of this figure that stays true. |
 | [`docs/FOUNDING_BRIEF.md`](./docs/FOUNDING_BRIEF.md) | The originating brief, kept as history. |
-| [`docs/adr/`](./docs/adr/) | ~~Seven decisions~~ ~~eleven, corrected 2026-08-16~~ ~~15 decisions, corrected 2026-08-19~~ ~~18 decisions — three landed 2026-08-20 with the everyday-computing direction~~ ~~19 decisions — [ADR-0019](./docs/adr/0019-disclosure-and-what-may-never-fold.md) landed 2026-08-22 with the interface simplification and is the newest~~ **20 decisions — [ADR-0020](./docs/adr/0020-remembering-a-decline.md) landed 2026-08-22 with offer reticence and is the newest**, each with the option it rejected and why. The number went stale four ADRs ago, was corrected, and went stale again by four within three days — because nothing counted them. Something counts them now, which is why this correction was made in the same commit as the ADR rather than three days after it. |
+| [`docs/adr/`](./docs/adr/) | ~~Seven decisions~~ ~~eleven, corrected 2026-08-16~~ ~~15 decisions, corrected 2026-08-19~~ ~~18 decisions — three landed 2026-08-20 with the everyday-computing direction~~ ~~19 decisions — [ADR-0019](./docs/adr/0019-disclosure-and-what-may-never-fold.md) landed 2026-08-22 with the interface simplification and is the newest~~ ~~20 decisions — [ADR-0020](./docs/adr/0020-remembering-a-decline.md) landed 2026-08-22 with offer reticence and is the newest~~ **23 decisions — three landed together 2026-08-26 with the phone thread and the menu-bar app: [ADR-0021](./docs/adr/0021-a-thread-on-the-persons-phone.md), [ADR-0022](./docs/adr/0022-the-fourth-verdict.md) and [ADR-0023](./docs/adr/0023-the-tray-app-owns-the-runtime.md), the last of which is the newest**, each with the option it rejected and why. The number went stale four ADRs ago, was corrected, and went stale again by four within three days — because nothing counted them. Something counts them now, which is why this correction was made in the same commit as the ADR rather than three days after it. |
 | Runtime | Next 16, TypeScript strict, Prisma + SQLite, Zod 4, Vitest. ~~336 tests.~~ ~~1,028 across 40 files, measured 2026-08-16.~~ ~~1,124 across 44 files, measured 2026-08-16 after the Intention slice.~~ **The number is gone, 2026-08-19.** It was stale by a factor of three, then stale within the day, then stale again — three corrections making the same argument, which this cell has finally taken: `npm test` prints it, nothing here can check it, so nothing here says it. `tests/counts.test.ts` fails if it comes back. |
-| The product | Chrome MV3 capture, the reading with per-claim evidence, the editable agreement, the unbypassable gate, the worker and reviewer, the diff, the shift report, per-change accept/reject, and the fold into a new version. |
+| The product | Chrome MV3 capture, the reading with per-claim evidence, the editable agreement, the unbypassable gate, the worker and reviewer, the diff, the shift report, per-change accept/reject, and the fold into a new version. **Added 2026-08-26:** the `/welcome` setup screen, the optional phone thread ([ADR-0021](./docs/adr/0021-a-thread-on-the-persons-phone.md)), and **an answer to a `DecisionNeeded` that is actually kept** ([ADR-0022](./docs/adr/0022-the-fourth-verdict.md)) — the screen used to offer a button beside the words *"Propositum doesn't keep your answer"*, so `needs-you` could be entered and never left. **Later the same day: a document can be opened from a `.md` or `.txt` file, copied, and downloaded**, and the editor is prose rather than monospace. The file is read in your browser and lands in the box on screen before anything is stored — there is no upload endpoint, and `tests/document-import.test.ts` pins that as an absence rather than a promise. |
 | [`extension/`](./extension/) | The capture extension. See its README — the host grant is a step only you can do, from the side panel. |
 
 **Built but not yet wired**, and asserted as such in `tests/reachability.test.ts` so it cannot be
@@ -61,9 +68,21 @@ always passes, which is the outcome the README argues for in its own prose."*
 `createBrowserControl`, `confirmations.create` and `controlLost` are all reachable now
 ([#91](https://github.com/smukhyala/propositum/issues/91)): a run drives the browser, the gate stops
 to ask a person, and a lost tab is reported. `scrollFraction`, exit type and arrival are read by the
-offer grounds ([ADR-0018](./docs/adr/0018-the-everyday-shapes.md)). What is still pinned as deferred
+offer grounds ([ADR-0018](./docs/adr/0018-the-everyday-shapes.md)). ~~What is still pinned as deferred
 is the shift-report narrative boundary, the gap sweeper, outcome-scoped review findings, and
-`LANDING_ACTION_KINDS` — **still empty, so no irreversible outcome can occur**, which
+`LANDING_ACTION_KINDS`~~ **Amended 2026-08-26 — two pins added and one spent.** Still deferred: the
+shift-report narrative boundary, the gap sweeper, outcome-scoped review findings,
+`LANDING_ACTION_KINDS`, and — ~~new with [ADR-0021](./docs/adr/0021-a-thread-on-the-persons-phone.md) —
+**the message set, which is built and which no transport sends**, outbound and inbound pinned
+separately because they go live in different commits.~~ **Struck 2026-08-26, later the same day, by
+the commit that built the transport.** Both pins went red exactly as that block intends and have
+moved up: `tests/reachability.test.ts` now asserts the opposite — that every message goes through
+`src/server/thread.ts` and no second sender exists, that `parseReply` has one caller, and that
+`api.telegram.org` appears in `src/runtime/thread-channel.ts` and nowhere else. **This cell was
+written in the morning and outlived the claim by an afternoon**, which is the shortest half-life in
+this file since the Stage 1 row. What was spent: `DecisionVerdict` sat in the
+deferred block for one commit and moved up when something wrote one, which is that block working
+rather than a claim about it. `LANDING_ACTION_KINDS` — **still empty, so no irreversible outcome can occur**, which
 [ADR-0010](./docs/adr/0010-acting-in-the-browser.md) now records as a decision about the transport
 rather than caution: the extension fails every non-`GET` request unconditionally, so a landing kind
 would be a claim the channel cannot honour. [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) marks
@@ -97,10 +116,21 @@ Work is tracked on the [wayfinder map](https://github.com/smukhyala/propositum/i
 
 ## The demo workflow
 
-1. Create a project and approve the sources Propositum may see.
+1. ~~Create a project and approve the sources Propositum may see.~~ **Struck 2026-08-26.** Nothing
+   in the product creates a project: `createProject` is private and reached only by accepting an
+   offer, on the owner's instruction that *"the user shouldn't have to create it."* Propositum
+   watches, notices a subject, offers, and the project is made in your name when you say yes.
+   Approving sources is still yours to do, on the project screen and in the extension's side panel.
+   **First run starts at [`/welcome`](http://127.0.0.1:3117/welcome)**, which reads what is actually
+   true — key, paired extension, approved source, pages arriving, phone — and shows the first step
+   whose answer is no.
 2. **Start session.** You research and draft normally.
-3. **Take over.** Propositum shows *what I think you're working on*, with the evidence behind each
-   claim. You correct it.
+3. ~~**Take over.**~~ **Struck 2026-08-26 — the verb is *hand over*.** Propositum shows *what I
+   think you're working on*, with the evidence behind each claim. You correct it. Two words for one
+   act had the direction pointing opposite ways on adjacent screens: the project page said *Hand
+   this over*, the agreement's own button said *Take over*, and a first-timer could not tell who was
+   taking over what. `CONTEXT.md` settles it — the person is always the subject, as they are in
+   every other consumer verb here.
 4. Set the working agreement — what it may look at, what it may change, how far to go, how long.
 5. Leave.
 6. Come back to *while you were away*: what changed, why, what it couldn't verify, and what it
@@ -118,9 +148,20 @@ npm install
 cp .env.example .env          # add ANTHROPIC_API_KEY from console.anthropic.com
                               # the Google calendar variables are optional — see below
 npx prisma db push            # creates the file and installs the append-only guards
-npm run dev                   # serves on 3117 — the port the extension is pinned to
-npm run worker                # a second terminal; runs are drained here, not in the app
+npm run dev                   # serves on 3117, and starts the worker beside it
 ```
+
+**Then open [`/welcome`](http://127.0.0.1:3117/welcome), added 2026-08-26.** Five steps, each
+reading what is actually true rather than tracking a cursor — the key, a paired extension, an
+approved source, whether pages are arriving, and the phone — so refreshing, arriving by a link and
+coming back tomorrow all land in the same place. There is no progress row to get out of step with
+the truth. It is the first onboarding this product has had; before it, a new person's entire
+introduction was the front door saying *"Go and read about something for a while."*
+
+Two of the steps above stop being manual there. The extension id is **paired from the screen** and
+no longer copied out of `chrome://extensions` into `.env`, and the key is **detected and explained
+rather than collected** — no product a person buys asks them for an API key, so that step says out
+loud that it is scaffolding for whoever is running the software.
 
 ~~`ANTHROPIC_API_KEY` is the only credential needed. SQLite is a local file; there is no cloud, no
 account, and no telemetry.~~
@@ -132,16 +173,40 @@ which is why it could not stand here.
 
 `ANTHROPIC_API_KEY` is still the only credential **needed** — everything in the block above runs on
 it alone, and that is the state of a fresh clone. There is still no cloud, no telemetry and no
-server of ours. **But "no account" is gone**: connecting a Google calendar is optional, off unless
+server of ours — **and as of 2026-08-26 that clause is doing more work than it used to.**
+[ADR-0021](./docs/adr/0021-a-thread-on-the-persons-phone.md) adds an optional phone thread, and what
+it sends is *derived prose about your own work*: what Propositum thinks you are on, why it stopped,
+what it needs you to decide. The worker long-polls Telegram, so there is genuinely no host of ours —
+and the sentences still sit on Telegram's servers, unencrypted end to end. The bot is one you create
+yourself and we never see it. Leave it unpaired and the feature is **absent**. **But "no account" is
+gone**: connecting a Google calendar is optional, off unless
 you do it, and it adds `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET` to `.env` plus one
 OAuth refresh token in the local database. The scope is `calendar.freebusy` and nothing else —
 *"View your availability in your calendars"*, which returns busy start/end times and cannot return a
 title, an attendee or a description. Leave the two variables blank and the feature is **absent**:
 nothing is read and no request leaves the machine. ADR-0014 opens on what it costs.
 
-**For real capture** you also need the extension loaded and its id in `.env`, and you have to grant
-each source from the side panel — a host grant needs a user gesture, so nothing else can do it.
-[`extension/README.md`](./extension/README.md) is the authoritative six-step order.
+~~**For real capture** you also need the extension loaded and its id in `.env`~~ **Amended
+2026-08-26 — there is a setup screen now.** Open **`/welcome`** and it walks the rest: it says whether
+the key is there, offers to pair whichever extension has just knocked (no copying an id into a file),
+counts the sites you have allowed, says what it is waiting for, and — once there is a real offer —
+pairs your phone. `PROPOSITUM_EXTENSION_ID` still wins over anything paired there, so a clone that
+sets it behaves exactly as it did.
+
+What has **not** changed: you still have to grant each source from the side panel, because a host
+grant needs a user gesture and nothing else can do it.
+[`extension/README.md`](./extension/README.md) is still the authoritative order for loading it.
+
+**To see any of this without waiting for an afternoon**, two development seeds:
+
+```bash
+npm run seed:shift    # a finished shift with one open question — no model, no network
+npm run seed:offer    # replays an afternoon at the real ambient endpoint, so the real detector runs
+```
+
+`seed:shift` is the one worth having: it produces a `DecisionNeeded` nobody has answered, which is
+the thing a paired phone can answer ([ADR-0022](./docs/adr/0022-the-fourth-verdict.md)). Both refuse
+to run under `NODE_ENV=production`.
 
 Whenever the schema changes, `prisma db push` rebuilds the affected table and **silently drops its
 append-only triggers**. They are reinstalled and verified at the next app startup; restart before
@@ -152,6 +217,34 @@ npm test              # unit + schema snapshot tests
 npm run typecheck
 npm run verify:model  # offline SDK checks, plus a live round-trip if a key is present
 ```
+
+**Two seed commands, added 2026-08-26, for testing the half of the product a person touches without
+waiting for an afternoon.**
+
+```bash
+npm run seed:shift    # a finished shift with an open question, in under a second
+npm run seed:offer    # replays a real afternoon through the real detector
+```
+
+`seed:shift` writes the rows an afternoon would have produced — no model, no network. It
+deliberately fakes neither an offer nor capture: a composed offer has no row to write
+([ADR-0008](./docs/adr/0008-ambient-detection.md)), and inventing browsing history would put a
+fabricated afternoon in the one ledger a person is told is a record of their own.
+
+`seed:offer` writes nothing directly. It posts pages at `POST /api/capture/ambient` exactly as the
+extension does, so everything after that is real — the real detector, the real grounds, the real
+subject and offer boundaries, and the real message on a paired thread. It costs a model call or two,
+and that is the point: *"A fabricated offer would prove that a screen can render a fixture; it would
+prove nothing about whether Propositum notices an afternoon."*
+
+Its docblock is worth reading for what happened first. The afternoon was taken from
+`src/fixtures/scenarios/lisbon-thread.ts` and **the detector refused it — correctly.** An eval
+scenario's pages are shaped for the *worker*: long source text to read, and titles that only have to
+identify a source. The detector reads titles, and *"Casa Alfama — rooms and rates"* and *"Miradouro
+Rooms — rates"* do not share enough vocabulary to be one subject. Nothing was broken; the two are
+answering different questions. The pages were written fresh rather than borrowed and quietly
+re-titled, because that would have been **a seed claiming fidelity to a sealed scenario while not
+having it**.
 
 ---
 
@@ -192,6 +285,15 @@ These are properties of the design, not a to-do list.
   30-minute budget buys roughly 120 calls for about a dollar — latency binds long before cost does.
 - **Injection can change what the worker attempts, never what it can touch.** But it also reaches
   the session reading, so your review of the agreement is load-bearing rather than a formality.
+- **A document comes in as Markdown or plain text, and nothing else** *(2026-08-26)*. Paste it, or
+  open a `.md` / `.txt` file. There is no URL import, no Google Docs, no Word and no Notion, and the
+  first of those is a capability rather than a convenience — text fetched from a host is untrusted
+  in a way a file you picked yourself is not, and it needs an ADR before it needs a button.
+- **One sentence per line is the addressable unit, and the split is imperfect** *(measured
+  2026-08-26)*. `Intl.Segmenter` is decisively better than splitting on every full stop, and it
+  still ends a sentence at `Dr. Alves` and `No. 7`. The failure makes the unit smaller, which is the
+  safe direction — a paragraph-sized unit is what turns a four-word edit into a wall of red — and
+  no text is ever lost or altered.
 
 ---
 

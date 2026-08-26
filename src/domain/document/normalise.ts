@@ -15,8 +15,28 @@
  * mid-sentence, which shreds the diff exactly where prose gets specific —
  * which in a partnership proposal is the commercially important part.
  *
- * `Intl.Segmenter` knows about abbreviations and decimals, ships with Node, and
- * costs nothing.
+ * ~~`Intl.Segmenter` knows about abbreviations and decimals, ships with Node, and
+ * costs nothing.~~ **Narrowed 2026-08-26, measured rather than assumed.** It
+ * ships with Node and costs nothing, and it is decisively better than the naive
+ * rule — but it knows about *some* abbreviations, not all, and which ones
+ * depends on what follows them:
+ *
+ *     "See section No. 4 for detail"        one segment
+ *     "$1,250. No. 7 Rua da Boavista."      splits after "No."
+ *     "Acme Inc. on this"                   one segment
+ *     "the 4th. Dr. Alves confirmed"        splits after "Dr."
+ *
+ * A title or an abbreviation followed by a capitalised word or a bare numeral
+ * reads to it as a sentence end. Found by importing a real document; the
+ * existing test happened to use the spellings that survive.
+ *
+ * **Left as it is, deliberately, and this is not a shrug.** The failure is in
+ * the safe direction — the unit gets *smaller*, and the paragraph-sized unit
+ * this function exists to avoid is the one that shreds a diff. Nothing is lost
+ * or altered: the lines rejoin to the same text. And changing the split is not
+ * a local decision, because `linesOf` hands out offsets that live changesets
+ * already point at. `tests/document-engine.test.ts` pins the real behaviour so
+ * nobody reads the stronger claim off this docblock again.
  */
 
 /** Lines that are structure rather than prose, and must never be split or
@@ -51,6 +71,24 @@ function sentencesOf(text: string): string[] {
  * Idempotent: normalising a normalised document changes nothing, which the
  * tests assert because a non-idempotent normaliser silently rewrites the base
  * on every save and invalidates every offset pointing at it.
+ *
+ * ── Line endings, added 2026-08-26 ───────────────────────────────────────
+ *
+ * `\r\n` and a lone `\r` both become `\n` before anything else happens.
+ *
+ * This was found by the file import, and it was already reachable by pasting
+ * from a Windows editor. A prose line survived it by accident — `\s+` collapses
+ * a stray `\r` on the way into a paragraph — but a heading, a list item, a table
+ * row and every line inside a fence are pushed through verbatim, so they kept
+ * theirs. The result was a document that looked identical on screen, hashed
+ * differently, and therefore drifted against a Shift that had pinned the other
+ * spelling of the same words.
+ *
+ * **What it costs**, stated because this function's whole promise is that it
+ * does not alter content: a fenced block that genuinely needed carriage returns
+ * cannot have them. That is a fair trade and barely a trade at all — the lines
+ * are rejoined with `\n` on the way out regardless, so a surviving `\r` was
+ * never fidelity, only an inconsistency that happened to be invisible.
  */
 export function normalise(markdown: string): string {
   const out: string[] = []
@@ -67,7 +105,7 @@ export function normalise(markdown: string): string {
     paragraph = []
   }
 
-  for (const line of markdown.split('\n')) {
+  for (const line of markdown.replace(/\r\n?/g, '\n').split('\n')) {
     if (line.trimStart().startsWith('```')) {
       flush()
       inFence = !inFence

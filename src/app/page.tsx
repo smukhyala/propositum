@@ -123,6 +123,7 @@ import {
 } from '@/server/actions'
 import type { CarriedProject } from '@/server/actions'
 import { calendarRow } from '@/server/calendar'
+import { welcomeState } from '@/server/welcome'
 import { ambientStore, captureStore } from '@/server/capture-store'
 import { describeWork, signatureOf } from '@/server/ambient-store'
 import type { NamedThread } from '@/server/ambient-store'
@@ -287,20 +288,19 @@ const MARK_PEN = 1
 /**
  * A small count, in words.
  *
- * Prose, not a table: *Two shifts finished while you were away* is a sentence
- * and *2 shifts finished* is a readout. Past nine it gives up and uses the
- * digits, because spelling out fourteen is worse than either.
+ * Prose, not a table: *Propositum noticed two subjects* is a sentence and
+ * *2 subjects* is a readout. Past nine it gives up and uses the digits, because
+ * spelling out fourteen is worse than either.
+ *
+ * ~~A capitalised variant sat beside this one~~ **— deleted 2026-08-26.** It
+ * existed for *Two shifts finished while you were away*, and that sentence went
+ * when `shift` left consumer copy: Propositum is the subject now, so the count
+ * never starts a sentence and the variant had no caller.
  */
 const COUNT_WORDS = ['no', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine']
 
 function countWord(n: number): string {
   return COUNT_WORDS[n] ?? String(n)
-}
-
-/** The same word, starting a sentence. */
-function countWordCapped(n: number): string {
-  const word = countWord(n)
-  return word.charAt(0).toUpperCase() + word.slice(1)
 }
 
 interface RunningSession {
@@ -465,6 +465,18 @@ export default async function Home({
    * is not drawn.
    */
   const calendar = await calendarRow()
+
+  /**
+   * Whether the setup screen still has something to say.
+   *
+   * Swallowed, like `calendarRow` swallows its own failure and for the same
+   * reason it gives: *"This is the front door… A calendar that cannot be read
+   * renders no row."* A setup check that threw would take the whole front door
+   * with it, which is a worse outcome than not offering a link.
+   */
+  const setupUnfinished = await welcomeState()
+    .then((state) => state.at !== null)
+    .catch(() => false)
 
   /**
    * Where every Intention is, in one read.
@@ -756,9 +768,9 @@ export default async function Home({
               </span>
               <h1 className="hm-say">Nothing new.</h1>
               <p className="hm-then">
-                {countWordCapped(waiting.length)} {waiting.length === 1 ? 'shift' : 'shifts'}{' '}
-                finished while you were away, just below. Propositum will offer again when the same
-                subject turns up across a few sites.
+                Propositum finished work on {countWord(waiting.length)}{' '}
+                {waiting.length === 1 ? 'project' : 'projects'} while you were away, just below. It
+                will offer again when the same subject turns up across a few sites.
               </p>
             </>
           ) : null}
@@ -1019,6 +1031,26 @@ export default async function Home({
               </span>
             </div>
           )}
+
+          {/* The way to the setup screen, and only while it is unfinished.
+              A permanent "set up Propositum" link on a working install is a
+              standing suggestion that something is wrong — the same reason
+              `calendarRow` renders NOTHING rather than a greyed control when
+              there is nothing to offer. `setupUnfinished` is a boolean off
+              `welcomeState`, computed in `src/server/welcome.ts` where a test
+              can reach it. */}
+          {setupUnfinished ? (
+            <div className="hm-cal">
+              <span className="hm-cal-said">
+                Propositum is not set up yet, so it cannot see anything you do.
+              </span>
+              <span className="hm-cal-acts">
+                <Link className="hm-cal-go" href="/welcome">
+                  Finish setting it up
+                </Link>
+              </span>
+            </div>
+          ) : null}
         </div>
       </div>
     </Sheet>

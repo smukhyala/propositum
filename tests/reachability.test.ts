@@ -69,6 +69,33 @@ function stripComments(source: string): string {
 }
 
 /**
+ * Known limit, found the hard way a second time on 2026-08-26.
+ *
+ * The stripper above cannot tell a comment from the two characters `/` and `*`
+ * sitting next to each other in JSX text. `src/app/projects/[projectId]/page.tsx`
+ * rendered an accurate example of a stored origin pattern — a host followed by
+ * a slash and a star — and that opened a block comment which ran to the next
+ * real close marker twenty-five lines later. A whole component render vanished,
+ * and `callersOf` reported it had no callers while the screen rendered it
+ * happily.
+ *
+ * This is the same class as the bug `tests/support/strip-comments.ts` was
+ * extracted for: it *"treated the code-level string opening a block comment as
+ * one, and deleted the thirty-three executable lines that followed it."*
+ * That module's scanner tracks string state and is right about `.js` and
+ * `.html`. It is **not** a fix here — JSX text is not a string, so it opens a
+ * comment there too, and measured on the same file it lost more lines than this
+ * one did, because an apostrophe in prose desynchronises its string tracking.
+ *
+ * So the limit stands, and `nothing a stripper eats is a component render`
+ * below is what makes it loud instead of silent. The fix at a call site is an
+ * entity — `&#42;` — with a comment saying why.
+ */
+function componentRenders(source: string): string[] {
+  return [...source.matchAll(/^\s*<([A-Z][A-Za-z0-9]*)/gm)].map((match) => match[1]!)
+}
+
+/**
  * Strip imports too, for the same reason.
  *
  * Found the same way the comment bug was: removing the real `cleanUrl` calls
@@ -92,6 +119,37 @@ function callersOf(needle: string, definedIn: string): string[] {
     return stripImports(stripComments(readFileSync(f, 'utf8'))).includes(needle)
   }).map((f) => relative(repo, f))
 }
+
+describe('the greps can see the files they read', () => {
+  /**
+   * The check on the checker.
+   *
+   * Every `callersOf` assertion in this file is an argument about text that
+   * survived `stripComments`, so a stripper that quietly eats a span turns each
+   * of them into a claim about nothing — and it fails OPEN: the needle is
+   * missing, so `not.toEqual([])` goes red and gets noticed, while a `toEqual`
+   * or a deferred-block assertion goes green and does not.
+   *
+   * A component render is the shape worth checking because it is the shape that
+   * was actually lost, and because it cannot legitimately disappear: a `<Name`
+   * at the start of a line is JSX, and a stripper has no business removing one.
+   */
+  it('nothing a stripper eats is a component render', () => {
+    for (const file of PRODUCTION) {
+      const source = readFileSync(file, 'utf8')
+      const before = componentRenders(source)
+      if (before.length === 0) continue
+
+      const after = componentRenders(stripComments(source))
+      const lost = before.filter((name) => !after.includes(name))
+
+      expect(
+        lost,
+        `${relative(repo, file)} loses ${lost.join(', ')} to the comment stripper — look for “/” next to “*” in JSX text, and write &#42;`,
+      ).toEqual([])
+    }
+  })
+})
 
 describe('the safety machinery is reachable from the product', () => {
   it('something writes a ShiftReport, or the Accept-all guard can never fire', () => {
@@ -128,6 +186,31 @@ describe('the safety machinery is reachable from the product', () => {
     >
 
     expect(Object.keys(scripts)).toContain('worker')
+  })
+
+  /**
+   * And a way to start it that somebody will actually type.
+   *
+   * `npm run worker` existing is not the same as the worker running. `README.md`
+   * records the consequence of forgetting the second terminal — *"pressing Take
+   * over enqueues a run nobody drains and the session stays `away` for ever"* —
+   * and the supervisor added 2026-08-26 is what stops that being the default.
+   * A `dev` script that quietly went back to starting only the web half would
+   * restore the failure with nothing to notice it.
+   */
+  it('the everyday command starts the worker too', () => {
+    const scripts = JSON.parse(readFileSync(join(repo, 'package.json'), 'utf8')).scripts as Record<
+      string,
+      string
+    >
+
+    expect(
+      scripts['dev'],
+      'npm run dev no longer starts the worker — a run would be enqueued and never drained',
+    ).toContain('scripts/dev.ts')
+
+    const supervisor = stripComments(readFileSync(join(repo, 'scripts/dev.ts'), 'utf8'))
+    expect(supervisor, 'the supervisor does not start the worker').toContain('scripts/worker.ts')
   })
 
   it('the gate is reachable from the run path', () => {
@@ -1390,6 +1473,251 @@ describe('the three landed signals are consulted, and each by something named', 
   })
 })
 
+/**
+ * A question can be answered, and the answer has exactly two writers. ADR-0022.
+ *
+ * ── Why this needed a pin at all ─────────────────────────────────────────
+ *
+ * `src/persistence/repositories/index.ts` carried a long docblock explaining
+ * that `openDecisions` was hardcoded to zero because a `DecisionNeeded` "has no
+ * answered, resolved or verdict column; nothing deletes one" — and the note it
+ * pointed at offered a toggle whose own copy said *"Propositum doesn't keep
+ * your answer."* That was the product telling somebody, in its own interface
+ * copy, that it was not listening.
+ *
+ * This was in *deferred, and asserted as deferred* for exactly one commit, and
+ * it went red the way that block is supposed to: something started writing the
+ * row, so the claim moved up here rather than slipping in with the schema.
+ */
+describe('a raised decision can be answered', () => {
+  it('is reached from the re-entry note', () => {
+    expect(callersOf('answerDecision(', 'src/server/actions.ts')).toContain(
+      join('src', 'ui', 'shift-report.tsx'),
+    )
+  })
+
+  /**
+   * The write has ONE door.
+   *
+   * `reports.answer` is the only thing that creates a `DecisionVerdict`, and
+   * this asserts nothing reaches `prisma.decisionVerdict` around it. The same
+   * shape `ConfirmationVerdict` holds by having exactly two server actions:
+   * a verdict with two writers is a verdict with two sets of rules.
+   */
+  it('is written through the repository and nowhere else', () => {
+    const writers = PRODUCTION.filter((file) => {
+      const source = stripImports(stripComments(readFileSync(file, 'utf8')))
+      return /decisionVerdict\s*\.\s*create/.test(source)
+    }).map((file) => relative(repo, file))
+
+    expect(writers).toEqual([join('src', 'persistence', 'repositories', 'index.ts')])
+  })
+
+  /**
+   * The property ADR-0021 rests on when it lets this one verdict be given from
+   * a phone: an answer grants nothing. `tests/thread-scope.test.ts` holds the
+   * containment; this holds the narrower fact that the action itself never
+   * reaches the gate.
+   */
+  it('never reaches the gate', () => {
+    for (const file of PRODUCTION) {
+      const source = stripImports(stripComments(readFileSync(file, 'utf8')))
+      if (!source.includes('compilePolicy(')) continue
+      expect(
+        source,
+        `${relative(repo, file)} evaluates the policy and mentions answering a decision`,
+      ).not.toMatch(/\banswerDecision\b|\bDecisionVerdict\b/)
+    }
+  })
+})
+
+/**
+ * The channel can speak, and exactly two callers make it. ADR-0021.
+ *
+ * ── Why this moved up, and what it cost ──────────────────────────────────
+ *
+ * These were in *deferred, and asserted as deferred* for two commits: the
+ * message set was built and pinned as unsendable while the transport did not
+ * exist. They went red the way that block is supposed to.
+ *
+ * The claim that moves with them is the one ADR-0021 spends a promise on —
+ * `docs/SECURITY_AND_PRIVACY.md` no longer says *"Nothing about what you read,
+ * wrote or handed over is stored anywhere but here"*, because as of the commit
+ * that turned these red it is not true. `tests/thread-scope.test.ts` holds what
+ * replaced it.
+ */
+/**
+ * Setting Propositum up is reachable, and the derivation is not in the page.
+ *
+ * ── Why a route needs an assertion at all ────────────────────────────────
+ *
+ * `tests/reachability.test.ts` already pins `WhereYouLeftOff` by file path to
+ * stop screens quietly disappearing, and this is the same hazard pointing the
+ * other way: a setup screen nothing links to is a setup screen nobody finds, and
+ * the whole reason it exists is that the current first-run experience is a hint
+ * buried in a JSON body.
+ */
+describe('setting Propositum up', () => {
+  it('is linked from the front door', () => {
+    const home = stripImports(stripComments(readFileSync(join(repo, 'src/app/page.tsx'), 'utf8')))
+    // The path, however it is quoted — JSX writes `href="/welcome"` and a
+    // needle that assumed one quoting style would go red on a formatter run.
+    expect(home, 'nothing links to /welcome — a setup screen nobody finds').toMatch(
+      /['"]\/welcome['"]/,
+    )
+  })
+
+  /**
+   * The step ordering is the half that fails silently, so it may not live in a
+   * `.tsx`. `src/app/page.tsx`'s own docblock: *"a decision that fails silently
+   * does not live in a `.tsx` file."*
+   */
+  it('decides which step somebody is on outside the page', () => {
+    expect(callersOf('welcomeState(', 'src/server/welcome.ts').sort()).toEqual(
+      [join('src', 'app', 'page.tsx'), join('src', 'app', 'welcome', 'page.tsx')].sort(),
+    )
+    expect(callersOf('stepFrom(', 'src/server/welcome.ts')).toEqual([])
+  })
+
+  /** Pairing writes through one door, so there is one thing to read. */
+  it('pairs an extension through the server action and nowhere else', () => {
+    expect(callersOf('pairExtension(', 'src/server/extension-pairing.ts')).toEqual([
+      join('src', 'server', 'actions.ts'),
+    ])
+  })
+})
+
+/**
+ * Getting work in and out, added 2026-08-26.
+ *
+ * `src/ui/document.tsx` is a capability rather than a rendering: it is the only
+ * file that can read a file a person chose, and the only one that can hand a
+ * document back. Built and rendered by nobody, it would be the exact shape this
+ * file exists to refuse — a working import with no way to reach it, and a green
+ * suite underneath.
+ *
+ * The screen is asserted by name rather than by count, for the reason the
+ * `WhereYouLeftOff` block above gives: a count passes on a component rendered
+ * twice in one place and nowhere in the other.
+ */
+describe('a document can be brought in and taken out', () => {
+  const component = 'src/ui/document.tsx'
+  const project = join('src', 'app', 'projects', '[projectId]', 'page.tsx')
+
+  it('the editor is on the project screen, or importing reaches nothing', () => {
+    expect(
+      callersOf('DocumentWorkbench', component),
+      'nothing renders the editor — copy, download and file import are unreachable',
+    ).toContain(project)
+  })
+
+  it('the first-document form is too, or a new project cannot be given one', () => {
+    // The two are separate components on purpose and they fail separately: an
+    // empty project reaching only the editor would have no way to name the
+    // document, and the reverse would give a person one shot at the text.
+    expect(
+      callersOf('DocumentDraft', component),
+      'nothing renders the empty-project form — a new project can never get a document',
+    ).toContain(project)
+  })
+
+  it('the project screen no longer carries an editor of its own', () => {
+    // The half a caller check cannot see. Both components could be rendered
+    // and a leftover `<textarea name="content">` in the page would still be
+    // the door people actually used — with no file picker, no export, and its
+    // own idea of what a document is.
+    const page = stripComments(readFileSync(join(repo, project), 'utf8'))
+
+    expect(page, 'the project screen has its own textarea again').not.toMatch(
+      /<textarea[^>]*name="content"/,
+    )
+  })
+})
+
+describe('the channel can speak, from two feeds and no others', () => {
+  /**
+   * Two feeds, because the facts live in two processes.
+   *
+   * A composed offer is in an in-memory map in the Next app process and ADR-0008
+   * refuses to give it a row, so the worker cannot see one. Everything else is
+   * durable and the worker can. A third caller is a third place that decides
+   * when Propositum speaks, which is the thing Principle 13 says erodes first.
+   */
+  it('is sent from the orchestrator and from nowhere else', () => {
+    for (const message of [
+      'offerMessage(',
+      'confirmationMessage(',
+      'decisionMessage(',
+      'runEndedMessage(',
+      'captureGapMessage(',
+    ]) {
+      expect(
+        callersOf(message, 'src/domain/conversation/messages.ts'),
+        `${message} has a second caller — every message goes through src/server/thread.ts`,
+      ).toEqual([join('src', 'server', 'thread.ts')])
+    }
+  })
+
+  /**
+   * The offer feed hangs off the counter, and that is deliberate.
+   *
+   * ADR-0015 counts offers shown per hour of observed browsing so that somebody
+   * can notice this product getting louder. A channel that spoke without landing
+   * in that denominator would be the erosion with the smoke alarm disconnected —
+   * so the send and the count sit on ONE gate, `newlyShown`, and this asserts
+   * they are still in the same function rather than trusting the comment.
+   */
+  it('says an offer on the same gate that counts one', () => {
+    const poll = readFileSync(join(repo, 'src/app/api/session/current/route.ts'), 'utf8')
+    const body = stripImports(stripComments(poll))
+
+    expect(body, 'the poll route no longer says offers').toContain('sayOffer(')
+    expect(
+      body,
+      'sayOffer is no longer beside countQuietly — the send and the loudness counter must fire on one gate',
+    ).toMatch(/newlyShown\([\s\S]{0,400}sayOffer\(/)
+  })
+
+  /**
+   * Inbound writes one kind of row, and the union is what makes that true.
+   *
+   * `parseReply` has no member a confirmation answer could become, which is the
+   * form ADR-0021's refusal takes: not a check that could be removed, an absence
+   * that would have to be built.
+   */
+  it('parses a reply in the orchestrator and nowhere else', () => {
+    expect(callersOf('parseReply(', 'src/domain/conversation/reply.ts')).toEqual([
+      join('src', 'server', 'thread.ts'),
+    ])
+  })
+
+  /** One file knows the provider's API. A second transport is a new file here. */
+  it('keeps the provider behind one transport', () => {
+    const speakers = PRODUCTION.filter((file) => {
+      const source = stripImports(stripComments(readFileSync(file, 'utf8')))
+      return /api\.telegram\.org/.test(source)
+    }).map((file) => relative(repo, file))
+
+    expect(speakers).toEqual([join('src', 'runtime', 'thread-channel.ts')])
+  })
+
+  /**
+   * The transport holds a credential in every URL it builds, so it may not log.
+   *
+   * `src/server/calendar.ts` has no `console` call for exactly this reason and
+   * says so. One `console.error(url)` on a failure path puts a bot token in a
+   * terminal and, eventually, in an issue.
+   */
+  it('never logs, because the token is in the URL', () => {
+    const source = stripComments(
+      readFileSync(join(repo, 'src/runtime/thread-channel.ts'), 'utf8'),
+    )
+    expect(source, 'the transport logs — the bot token is in every URL it builds').not.toMatch(
+      /\bconsole\s*\./,
+    )
+  })
+})
+
 describe('deferred, and asserted as deferred', () => {
   it('boundary 6 is still unwired, so the narrative is a stop-rule label', () => {
     /**
@@ -1531,6 +1859,8 @@ describe('deferred, and asserted as deferred', () => {
       'a kind lands now — external-effect is reachable, so move this into the section above',
     ).toBe('')
   })
+
+
 })
 
 /**

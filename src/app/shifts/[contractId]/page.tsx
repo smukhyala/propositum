@@ -496,6 +496,7 @@ export default async function ShiftPage({ params }: { params: Promise<{ contract
     question: decision.question,
     whyStopped: decision.whyStopped,
     needs: decision.needs,
+    answer: decision.answer,
   }))
 
   const stopped = whereItStopped({
@@ -731,7 +732,7 @@ function Missing() {
       <BackLink href="/">&larr; All projects</BackLink>
       <Masthead
         kicker="Propositum"
-        title="There is no shift here"
+        title="There is nothing to report here"
         mark={<Away size={20} />}
         subtitle="This working agreement doesn't exist any more, or the link is wrong."
       />
@@ -765,7 +766,7 @@ function NotStarted({
         kicker={title}
         title="Nothing has happened yet"
         mark={<Away size={20} />}
-        subtitle="This agreement hasn't been handed over, so there is no shift to report on."
+        subtitle="This agreement hasn't been handed over, so there is nothing to report on yet."
       />
       <Empty
         title="Propositum hasn't started."

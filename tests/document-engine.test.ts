@@ -40,6 +40,42 @@ describe('normalise puts one sentence per line', () => {
     expect(lines[2]).toContain('e.g.')
   })
 
+  it('splits after a title or an abbreviation that a capital follows', () => {
+    /**
+     * The limit of the test above, pinned rather than left to be discovered.
+     *
+     * `Intl.Segmenter` is decisively better than the naive `.`-plus-space rule,
+     * and it is not the "knows about abbreviations" that this file's docblock
+     * used to claim. Which abbreviations survive depends on what comes next: a
+     * lowercase word keeps the sentence together, a capitalised word or a bare
+     * numeral ends it. `See section No. 4` above is the surviving spelling and
+     * this is the other one.
+     *
+     * Found by importing a real document on 2026-08-26. Asserted as the
+     * behaviour rather than fixed, because the unit getting SMALLER is the safe
+     * direction — a paragraph-sized unit is what shreds a diff — and because
+     * `linesOf` hands out offsets that live changesets already point at, so
+     * moving the split is an ADR rather than an edit.
+     *
+     * If this goes red because somebody improved the segmentation: good. Check
+     * what it does to stored offsets before you celebrate.
+     */
+    const lines = normalise('We fly on the 4th. Dr. Alves confirmed it. No. 7 Rua da Boavista.')
+      .split('\n')
+
+    expect(lines).toEqual([
+      'We fly on the 4th.',
+      'Dr.',
+      'Alves confirmed it.',
+      'No.',
+      '7 Rua da Boavista.',
+    ])
+
+    // What is NOT lost: every word, in order. The split is about where a change
+    // can point, never about the text.
+    expect(lines.join(' ')).toBe('We fly on the 4th. Dr. Alves confirmed it. No. 7 Rua da Boavista.')
+  })
+
   it('leaves headings, lists and blank lines alone', () => {
     const out = normalise(DOC)
     expect(out).toContain('# Northwind partnership proposal')
@@ -50,6 +86,25 @@ describe('normalise puts one sentence per line', () => {
   it('never touches fenced code', () => {
     const code = ['Before.', '', '```js', 'const a = 1. Not a sentence.', '```', '', 'After.'].join('\n')
     expect(normalise(code)).toContain('const a = 1. Not a sentence.')
+  })
+
+  it('folds Windows line endings, including inside a fence', () => {
+    /**
+     * Found by the file import on 2026-08-26, and reachable before it by
+     * pasting from a Windows editor.
+     *
+     * A prose line survived a stray `\r` by accident — the paragraph join runs
+     * `\s+` over it — but headings, list items, table rows and fenced lines are
+     * pushed through verbatim and kept theirs. So the same words arriving from
+     * a CRLF file produced a different string, a different `contentHash`, and a
+     * Shift that had pinned the other spelling drifted against words nobody had
+     * touched.
+     */
+    const unix = '# Heading\n\n- one\n- two\n\n```\ncode()\n```\n'
+
+    expect(normalise(unix.replace(/\n/g, '\r\n'))).toBe(normalise(unix))
+    expect(normalise(unix.replace(/\n/g, '\r'))).toBe(normalise(unix))
+    expect(normalise(unix)).not.toContain('\r')
   })
 
   it('is idempotent', () => {

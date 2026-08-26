@@ -30,7 +30,7 @@ export async function POST(request: Request) {
 
   const admission = admit(
     { headers, body },
-    { expectedOrigin: expectedOrigin(), sessionToken: live.token, sessionId: live.sessionId },
+    { expectedOrigin: await expectedOrigin(), sessionToken: live.token, sessionId: live.sessionId },
   )
 
   if (!admission.ok) {

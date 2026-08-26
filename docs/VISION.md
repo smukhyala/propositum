@@ -453,7 +453,13 @@ it pretends to undo.
 - ~~Everything is local. There is no cloud, no telemetry, and no account.~~ **Struck 2026-08-18
   ([ADR-0014](./adr/0014-reading-free-busy.md)), and left here rather than deleted so the promise is
   visible beside what replaced it.** There is still no cloud, no telemetry and no server of ours, and
-  nothing about what you read or wrote leaves this machine except the prompts a boundary needs. **But
+  ~~nothing about what you read or wrote leaves this machine except the prompts a boundary needs.~~
+  **Struck again 2026-08-26 ([ADR-0021](./adr/0021-a-thread-on-the-persons-phone.md)).** Pair a phone
+  thread and Propositum sends you sentences about your own work — that is what the channel is for, and
+  those sentences pass through Telegram, who can read them. *No server of ours* survives literally: the
+  worker long-polls and there is no host, no webhook and no relay to operate. *Nothing about what you
+  read leaves this machine* does not survive at all. This is the second time this bullet has been
+  struck and the first time the exposure was the subject rather than the schedule. **But
   there is now an account**, optionally: a Google calendar, connected by you, for one question —
   `calendar.freebusy`, *"View your availability in your calendars"*, which returns busy intervals as
   bare start and end times and cannot return a title, an attendee or a description. It is off unless

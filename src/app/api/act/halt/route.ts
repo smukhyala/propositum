@@ -55,7 +55,7 @@ export async function POST(request: Request) {
 
   const admission = admitControl(
     { headers, body },
-    { from: 'extension', expectedOrigin: expectedOrigin() },
+    { from: 'extension', expectedOrigin: await expectedOrigin() },
     { kind: 'json', schema: haltRequestSchema },
   )
 

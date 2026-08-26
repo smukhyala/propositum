@@ -36,7 +36,7 @@ export async function POST(request: Request) {
 
   const admission = admit(
     { headers, body: { events: [], ...(body as object) } },
-    { expectedOrigin: expectedOrigin(), sessionToken: live.token, sessionId: live.sessionId },
+    { expectedOrigin: await expectedOrigin(), sessionToken: live.token, sessionId: live.sessionId },
   )
   if (!admission.ok) {
     return NextResponse.json({ ok: false, reason: admission.reason }, { status: 403 })
