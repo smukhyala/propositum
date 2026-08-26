@@ -203,6 +203,74 @@ describe('no call that would spend ADR-0010’s central property', () => {
   })
 })
 
+/**
+ * The two halves of the wire agree on what the fields are called.
+ *
+ * ── The defect this exists for ───────────────────────────────────────────
+ *
+ * `src/policy/tools.ts` dispatched `type-text` as `{ ref, snapshotId, inputText }`
+ * and `extension/src/cdp.js` read `params.text`, which was never sent. So
+ * `Input.insertText` received `String(undefined ?? '')` — the empty string — and
+ * had done since the capability shipped.
+ *
+ * It failed in the safe direction against injection, and it broke the property
+ * the confirmation screen exists for. `tools.ts` says `inputText` is named that
+ * *"so the confirmation screen can show the person VERBATIM what is about to be
+ * typed"*. A person was shown a string, said yes, and something else happened —
+ * on the one screen in this product where *what you were shown is what happens*
+ * is the whole of the guarantee.
+ *
+ * ── Why nothing caught it ────────────────────────────────────────────────
+ *
+ * `src/act/channel.ts` carries params as `z.record(z.string(), z.unknown())` on
+ * purpose: a second per-kind validation there would be a second author for a
+ * shape that already has one. That is the right call and it leaves this seam
+ * unchecked by construction — the app names the fields, the extension reads
+ * them, and no type spans the two. The existing assertions in this file check
+ * WHICH CDP command runs and never its payload.
+ *
+ * ── What this does NOT cover ─────────────────────────────────────────────
+ *
+ * Only that every key sent is a key read. It says nothing about the VALUE being
+ * right, about a key read that is never sent (harmless: `undefined`, and
+ * `press-key` has one today), or about the two sides meaning the same thing by
+ * a name they agree on. A rename on both sides at once still passes, which is
+ * correct — that is a working change, not a defect.
+ */
+describe('the app and the extension agree on parameter names', () => {
+  const tools = stripComments(readFileSync(join(repo, 'src/policy/tools.ts'), 'utf8'))
+
+  /**
+   * Every key `tools.ts` puts on the wire, read out of the `report(action, {…})`
+   * payloads that are the single dispatch site.
+   */
+  const dispatched = new Set<string>()
+  for (const match of tools.matchAll(/report\(\s*action,\s*\{([^}]*)\}/g)) {
+    for (const part of (match[1] ?? '').split(',')) {
+      const key = part.trim().split(':')[0]?.trim()
+      if (key !== undefined && /^[A-Za-z_]\w*$/.test(key)) dispatched.add(key)
+    }
+  }
+
+  it('sends at least the parameters it used to, so this guard cannot go quiet', () => {
+    // The canary this file's header describes. If `report(action, {…})` is
+    // renamed or restructured, the regex above finds nothing and every
+    // assertion below passes vacuously.
+    expect(
+      [...dispatched].sort(),
+      'the dispatch shape in tools.ts changed — this guard is now reading nothing',
+    ).toEqual(['inputText', 'key', 'ref', 'snapshotId', 'url'])
+  })
+
+  it.each([...dispatched].sort())('cdp.js reads params.%s', (key) => {
+    expect(
+      ALL_CODE,
+      `tools.ts dispatches ${key} and no extension file reads params.${key}, so the browser ` +
+        'is handed undefined for it — the same defect that made every type-text insert an empty string',
+    ).toContain(`params.${key}`)
+  })
+})
+
 describe('the manifest says what it now does', () => {
   const manifest = JSON.parse(readFileSync(join(repo, 'extension/manifest.json'), 'utf8')) as {
     permissions: string[]

@@ -79,7 +79,32 @@ function portFromArgv(argv: readonly string[]): string {
   return value
 }
 
+/**
+ * Which interface the app listens on, read from argv for the same reason the
+ * port is.
+ *
+ * It is not a preference. Without it Next binds every interface, and the
+ * `/api/act/*` control routes prove a CLASS of caller rather than an identity —
+ * `src/act/channel.ts` accepts that as a bound on a local process, not on the
+ * network. So this refuses rather than defaulting: a supervisor that quietly
+ * picked a host would be the one place the decision could go missing.
+ */
+function hostFromArgv(argv: readonly string[]): string {
+  const flag = argv.indexOf('-H')
+  const value = flag < 0 ? undefined : argv[flag + 1]
+  if (value === undefined || value.startsWith('-')) {
+    console.error(
+      "dev: no -H <host> in the arguments. It belongs in package.json's dev script, where " +
+        'tests/capture.test.ts can read it and check it against the extension. Without it Next ' +
+        'binds every interface and the control routes are reachable off this machine.',
+    )
+    process.exit(1)
+  }
+  return value
+}
+
 const port = portFromArgv(process.argv.slice(2))
+const host = hostFromArgv(process.argv.slice(2))
 
 /**
  * Is anything already listening?
@@ -98,9 +123,25 @@ const port = portFromArgv(process.argv.slice(2))
  *
  * ── Why `::` and not `127.0.0.1` ─────────────────────────────────────────
  *
- * That is what Next binds and what the error names. Probing the loopback
+ * ~~That is what Next binds and what the error names. Probing the loopback
  * address alone would miss a server bound to every interface, which is the
- * common case and the one that actually happens.
+ * common case and the one that actually happens.~~
+ *
+ * **Corrected 2026-08-26.** Every word of that was true and it was describing a
+ * security defect as though it were weather. Next bound every interface because
+ * nothing told it not to, while `next.config.ts`, the extension's `APP_ORIGIN`
+ * and every sentence a person reads all said `127.0.0.1` — and the one place
+ * that discrepancy was written down was this docblock, about probing for a
+ * taken port, which is not where anybody looks for a bind address.
+ *
+ * The scripts now pass `-H 127.0.0.1`, so the app listens on this machine only.
+ * `tests/capture.test.ts` asserts that and asserts this file forwards it.
+ *
+ * The probe below still binds every interface ON PURPOSE, and that is now a
+ * deliberate asymmetry rather than a matching default: it must detect anything
+ * holding the port, including a server somebody started with a different host,
+ * so a narrow probe would report free and hand the crash-loop back. Detecting
+ * broadly and serving narrowly is the correct pair.
  */
 function inUse(onPort: string): Promise<boolean> {
   return new Promise((resolve) => {
@@ -262,7 +303,7 @@ function start(name: string, command: string, args: readonly string[]): Supervis
   return supervised
 }
 
-running.push(start('the app', bin('next'), ['dev', '-p', port]))
+running.push(start('the app', bin('next'), ['dev', '-H', host, '-p', port]))
 running.push(start('the worker', bin('tsx'), ['scripts/worker.ts']))
 
 console.log(`[dev] the app on http://127.0.0.1:${port}, and the worker beside it.`)

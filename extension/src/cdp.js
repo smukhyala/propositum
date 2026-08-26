@@ -483,7 +483,31 @@ export function flattenAXTree(nodes, options) {
  *
  * **Any non-`GET` is blocked.** No scoping, no exceptions. The property that
  * buys is unconditional: while Propositum holds this tab, it does not send a
- * request that changes something without a human having confirmed it.
+ * request that changes something ~~without a human having confirmed it~~
+ * **— including after a human has confirmed it.**
+ *
+ * **Corrected 2026-08-26, and nothing drifted: that clause was wrong the day it
+ * was written.** This function takes no confirmation, has no bypass, and the
+ * word "confirmed" appears nowhere else in this file. A confirmed click whose
+ * page posts still fails with `blocked-request`, which
+ * [ADR-0010](../../docs/adr/0010-acting-in-the-browser.md) records as the
+ * surprising consequence rather than as a bug. The trailing clause read as
+ * though confirmation lifted the block, which is the direction that flatters
+ * the product — it described a weaker mechanism than the one implemented, and
+ * a reader would have believed a confirmation was load-bearing here when the
+ * method alone is.
+ *
+ * It matters more now than it did, because it is about to become *nearly* true
+ * for the wrong reason.
+ * [ADR-0024](../../docs/adr/0024-purchases-within-a-ratified-authorisation.md)
+ * makes the block conditional — but on a ratified `PurchaseAuthorization`, an
+ * origin and a ceiling and a count and an expiry, checked against what Chrome is
+ * holding. **Not on a confirmation.** ADR-0024 §4 refuses the per-action
+ * confirmation explicitly, on habituation grounds. Somebody reading the old
+ * clause after that change would have taken it for a correct description.
+ *
+ * As of this correction ADR-0024 is a decision and nothing here implements it:
+ * the two branches below still refuse every non-`GET`.
  *
  * **Off-origin is checked on the TOP-LEVEL `Document` request only** — that is,
  * on the tab navigating somewhere. This is narrower than a literal reading of
@@ -1090,11 +1114,31 @@ async function clickElement(tabId, params) {
   return null
 }
 
+/**
+ * Type into an element the agent just saw.
+ *
+ * `params.inputText`, not `params.text`. **Corrected 2026-08-26**: this read
+ * `params.text`, which `src/policy/tools.ts` has never sent — it dispatches
+ * `{ ref, snapshotId, inputText }` — so every `type-text` since the capability
+ * shipped inserted the empty string.
+ *
+ * The name is `inputText` on both sides on purpose, and the reason is in
+ * `tools.ts`: `draft-section` already dispatches a `text` param carrying prose
+ * destined for a `Changeset`, and a shared name is how the wrong one gets
+ * picked up. It is also what the confirmation screen renders verbatim, so a
+ * mismatch here means a person is shown one string and a different thing
+ * happens — which is the failure that matters, not the empty insert.
+ *
+ * `tests/extension-cdp.test.ts` now greps every key `tools.ts` dispatches
+ * against the keys read here. Nothing checked this seam before, because
+ * `src/act/channel.ts` carries params as an opaque record deliberately and no
+ * type spans the two halves.
+ */
 async function typeText(tabId, params) {
   const backendNodeId = await resolveRef(params.snapshotId, params.ref)
 
   await send(tabId, 'DOM.focus', { backendNodeId })
-  await send(tabId, 'Input.insertText', { text: String(params.text ?? '') })
+  await send(tabId, 'Input.insertText', { text: String(params.inputText ?? '') })
   return null
 }
 

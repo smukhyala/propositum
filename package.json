@@ -8,10 +8,10 @@
     "node": ">=22"
   },
   "scripts": {
-    "dev": "tsx scripts/dev.ts -p 3117",
-    "dev:web": "next dev -p 3117",
+    "dev": "tsx scripts/dev.ts -H 127.0.0.1 -p 3117",
+    "dev:web": "next dev -H 127.0.0.1 -p 3117",
     "build": "next build",
-    "start": "next start -p 3117",
+    "start": "next start -H 127.0.0.1 -p 3117",
     "worker": "tsx scripts/worker.ts",
     "typecheck": "tsc --noEmit",
     "format": "tsx scripts/format.ts",

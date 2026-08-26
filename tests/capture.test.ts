@@ -251,6 +251,74 @@ describe('the manifest asks for nothing frightening', () => {
   })
 
   /**
+   * The app listens on this machine and nowhere else.
+   *
+   * ── The failure this exists for ──────────────────────────────────────────
+   *
+   * Every start script read `next dev -p 3117` with no `-H`, so Next bound `::`
+   * — every interface — while the whole product assumed loopback:
+   * `next.config.ts` allows `127.0.0.1` as a dev origin, the extension pins
+   * `http://127.0.0.1:3117`, and every sentence a person reads says `127.0.0.1`.
+   * `scripts/dev.ts` said so out loud in a docblock about probing for a taken
+   * port, which is the one place nobody reads for a security property.
+   *
+   * Why it matters more than an ordinary bind: `/api/act/next`, `/api/act/report`
+   * and `/api/act/halt` are guarded by `admitControl({ from: 'extension' })`,
+   * which proves a CLASS of caller and never an identity — a content type, a
+   * custom header, and an origin check that also accepts `Sec-Fetch-Site: none`.
+   * `src/act/channel.ts` accepts that deliberately, as a bound on a LOCAL
+   * process: *"a local process that can lie to the worker is a local process
+   * that can choose what the worker clicks next."* Binding every interface
+   * turned "a local process" into "anything on the same network", which is not
+   * the risk that argument accepted.
+   *
+   * ── Why the host lives in package.json ───────────────────────────────────
+   *
+   * The same reason the port does, in the test above: it is duplicated in the
+   * extension's `APP_ORIGIN`, which is buildless and cannot read config. A
+   * duplication is only safe if something notices when it drifts, and the greps
+   * here are that something. `scripts/dev.ts` reads `-H` from its own argv for
+   * the same reason it reads `-p` — burying it in the supervisor would make
+   * this regex find nothing and the guard would go QUIET rather than red.
+   *
+   * ── What this does NOT cover ─────────────────────────────────────────────
+   *
+   * That the process actually bound what it was told to. This reads scripts, not
+   * sockets. `lsof -nP -iTCP:<port> -sTCP:LISTEN` is the check that proves it,
+   * and it needs a running server, so it stays a manual step.
+   */
+  it('binds the app to loopback, not to every interface', () => {
+    const scripts = JSON.parse(readFileSync(join(repo, 'package.json'), 'utf8')).scripts as Record<
+      string,
+      string
+    >
+
+    const hostIn = (script: string | undefined) => /-H\s+(\S+)/.exec(script ?? '')?.[1]
+
+    const workerOrigin = /const APP_ORIGIN = '([^']+)'/.exec(
+      readFileSync(join(repo, 'extension/src/service-worker.js'), 'utf8'),
+    )?.[1]
+    const expected = new URL(workerOrigin ?? 'http://invalid').hostname
+
+    for (const name of ['dev', 'dev:web', 'start'] as const) {
+      expect(
+        hostIn(scripts[name]),
+        `${name} passes no -H, so Next binds every interface and the control routes — ` +
+          'which authenticate a class of caller and never an identity — are reachable off this machine',
+      ).toBe(expected)
+    }
+
+    // The supervisor spawns Next itself, so a host in `package.json` it never
+    // forwards would satisfy the greps above and bind nothing. Assert it is
+    // passed on, the same way `-p` is.
+    const supervisor = readFileSync(join(repo, 'scripts/dev.ts'), 'utf8')
+    expect(
+      supervisor,
+      'scripts/dev.ts does not forward -H to Next, so the dev script binds every interface anyway',
+    ).toMatch(/'-H',\s*host/)
+  })
+
+  /**
    * The supervisor refuses BEFORE it starts anything, and the order is the rule.
    *
    * ── The failure this exists for ──────────────────────────────────────────
