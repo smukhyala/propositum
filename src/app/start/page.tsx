@@ -55,6 +55,22 @@
  * shows the deterministic sentence and a button that starts watching. Same URL,
  * same button, less to read.
  *
+ * ── Why this page is kept, decided 2026-08-26 ───────────────────────────
+ *
+ * `docs/todo/04-quick-fixes.md` asked whether it earns its place: it duplicates
+ * the front door's offer, and the front door's own *Set this up for me* posts a
+ * server action and never comes here. The answer is that it has two callers the
+ * front door cannot serve, and both of them are somewhere the front door is not:
+ * `extension/src/panel.html` links it from the side panel, and
+ * `src/domain/conversation/messages.ts` links it from the thread on a person's
+ * phone. Both hand over a `?thread=` signature and nothing else, and both are
+ * reached by somebody who is not looking at the app.
+ *
+ * That second caller is the one the question was waiting on — the thread landed
+ * on 2026-08-26, after the todo file was written — so the decision is recorded
+ * here rather than left open. Deleting this page now would take the accept path
+ * off both surfaces.
+ *
  * ── What this deliberately does NOT do ───────────────────────────────────
  *
  * It does not start a run. It sets the work up and stops at the agreement,
