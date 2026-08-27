@@ -10,6 +10,12 @@
  * the first thing a new person gets wrong, and it fails silently — the interface
  * says a shift is running and nothing is running.
  *
+ * **Corrected 2026-08-27.** The README has never warned about the worker — the
+ * sentence lives at `scripts/worker.ts:10`, in the worker's own docblock, and
+ * ADR-0023 struck the same misattribution in its own text on 2026-08-26. This
+ * was the last copy still pointing at the wrong file. The failure it describes
+ * is unchanged.
+ *
  * ── Siblings, not parent and child, and that is the whole design ─────────
  *
  * [ADR-0001](../docs/adr/0001-worker-runtime.md) makes the worker a separate

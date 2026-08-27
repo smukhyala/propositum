@@ -59,8 +59,11 @@ grep -c 'tauri' package.json
 
 **As of 2026-08-26 all three return nothing.** No `.rs`, no `Cargo.toml`, no
 `tauri.conf.json`, no `electron`, no packaging, no signing, no notarisation, no
-auto-update, and `.github/workflows/ci.yml` runs typecheck, format and tests
-with no build, no release job and no artefact upload.
+auto-update, and ~~`.github/workflows/ci.yml` runs typecheck, format and tests
+with no build, no release job and no artefact upload~~ **corrected 2026-08-27:
+CI runs typecheck, tests *and* `npm run build`, and does not run `format:check`.
+What holds is the absence — no release job, no artefact upload, no macOS
+runner.**
 
 ### What already landed, 2026-08-26
 
@@ -84,12 +87,17 @@ restart**, not about building the flow. Steps 3, 7, 8, 9 and 10 — supervision,
 migration on upgrade, a log file, the Playwright browser, and a signed release —
 are untouched, and none of them can be done from inside a web page.
 
-One gap that came with it: **nothing links to `/welcome`.** A new person landing
+~~One gap that came with it: **nothing links to `/welcome`.** A new person landing
 on `/` still sees *"Go and read about something for a while."* and has no way to
-find the screen built for them. That fix is in [`04`](./04-quick-fixes.md).
+find the screen built for them. That fix is in [`04`](./04-quick-fixes.md).~~
+**Struck 2026-08-27 — the front door links it now.** `/` computes whether setup
+is unfinished and renders *Finish setting it up*; [`04`](./04-quick-fixes.md)'s
+own strike recorded this the same day it was written, and this file did not.
 
-Also worth knowing: **ADR-0023 is untracked.** `git log -- docs/adr/0023-*`
-returns nothing. Commit it before you build against it.
+~~Also worth knowing: **ADR-0023 is untracked.** `git log -- docs/adr/0023-*`
+returns nothing. Commit it before you build against it.~~ **Struck 2026-08-27 —
+committed 2026-08-26**, in the same change that wrote this folder; the command
+now returns three commits.
 
 ---
 
@@ -116,10 +124,13 @@ it processes; nothing can be shipped until it lands.
 ADR-0023's own table is the specification. Four things, and it is worth
 resisting a fifth.
 
-1. **Commit ADR-0023**, and while you are there fix the one thing it gets wrong:
+1. ~~**Commit ADR-0023**, and while you are there fix the one thing it gets wrong:
    it attributes *"pressing Take over enqueues a run nobody drains"* to
    `README.md`. That sentence is a code comment at `scripts/worker.ts:10`. The
-   README never warns about the worker at all.
+   README never warns about the worker at all.~~ **Done by 2026-08-27, in two
+   places at two times:** the ADR was committed 2026-08-26 and struck its own
+   misattribution the same day; the last copy of the error was
+   `scripts/dev.ts:8`, corrected 2026-08-27 in the change that struck this item.
 
 2. **Scaffold the Tauri app.** A `src-tauri/` beside the Next app, a tray icon,
    no dock icon, one small window.
@@ -128,11 +139,16 @@ resisting a fifth.
    `tsx scripts/worker.ts` as children. Restart on crash with a backoff. Kill
    both on quit — an orphaned worker holding a lease is worse than no worker.
    - `scripts/dev.ts` is the shape to absorb, not the code to reuse: it is
-     development-only, and it deliberately does **not** restart anything. Its
+     development-only~~, and it deliberately does **not** restart anything~~
+     **— corrected 2026-08-27: it restarts a dead child, inside a three-second
+     startup window and a give-up after three quick failures; what it lacks is
+     a backoff, and any production coverage at all.** Its
      one hard rule is worth carrying over — *"one child dying does not take the
      other with it"* — because killing the web server when a worker crashes
      would be quietly reversing ADR-0001.
-   - What is still missing is the restart. `src/runtime/worker-process.ts`
+   - ~~What is still missing is the restart.~~ **Corrected 2026-08-27: in
+     development the restart exists; missing are the backoff, and anything at
+     all in production.** `src/runtime/worker-process.ts`
      sweeps expired *leases* from inside the worker; nothing watches the worker
      itself. Its own comment: *"A failed sweep costs one interval. A dead worker
      costs every run after it."*
