@@ -219,3 +219,14 @@ specified** section is the honest list of what is named and not done.
 `docs/agents/issue-tracker.md` has the `gh` conventions; `docs/agents/triage-labels.md`
 has the labels. `ready-for-agent` means fully specified and safe to hand to an
 agent; `ready-for-human` means it needs judgment that has not been written down yet.
+
+[`docs/todo/`](./docs/todo/) is the longer-form version of the same list — one
+file per piece of work, each opening with a command that tells you whether it is
+already done. **Leaving it true is part of a change** *(2026-08-26)*: strike what
+you finished, add what you found, and if you accepted an ADR for something you
+did not build, write the file in the same change. `AGENTS.md` argues all three.
+The last one is the one that gets skipped, and the cost is a corpus that
+describes a product nobody has written — which has happened once, and is why
+[`06`](./docs/todo/06-buying-things.md), [`07`](./docs/todo/07-off-the-browser.md)
+and [`08`](./docs/todo/08-one-time-codes.md) were written after their decisions
+rather than beside them.

@@ -35,6 +35,18 @@ Every one has the same six headings, in this order:
 | 3 | [`03-document-loop.md`](./03-document-loop.md) | ~~~1 week~~ **import, export and the editor done 2026-08-26; items 2 and 5 left** | no |
 | 4 | [`04-quick-fixes.md`](./04-quick-fixes.md) | ~~half a day~~ **done 2026-08-26, except item 7** | no |
 | 5 | [`05-chrome-web-store.md`](./05-chrome-web-store.md) | 1 day + weeks of waiting | $5 one-off |
+| 6 | [`06-buying-things.md`](./06-buying-things.md) | days, **decided not built** | what it buys |
+| 7 | [`07-off-the-browser.md`](./07-off-the-browser.md) | **the largest file here**, decided not built | via `01` |
+| 8 | [`08-one-time-codes.md`](./08-one-time-codes.md) | ~200 lines, **decided not built** | no |
+
+**6, 7 and 8 were written 2026-08-26**, hours after the decisions that made them necessary and in the
+same pass that noticed this folder did not have them. All three are **decided, not built** — the
+argument is finished, the ADR is accepted, and `grep` finds nothing in `src/`. Each carries the
+command that proves it.
+
+They sit at the end of the table and they are **not** at the end of the order. 7 depends on 1 and on
+6; 8 depends on 7. Where a file sits in this table is where it was added, and the *Blocked by*
+heading inside it is the thing to believe.
 
 **0 comes first because everything after it is premature if it fails.** H1, H2
 and H3 have no numbers, `eval-scores.json` is a blank worksheet, and
@@ -64,6 +76,18 @@ from a file, copied and downloaded, and the editor is prose rather than
 monospace. What is left of 3 is the URL import — a capability that needs an ADR —
 and the H2 numerator, which needs a person doing real work and therefore needs 1.
 
+**6, 7 and 8 come last, and the reason is not size.** Each one makes the product
+measurably less safe, and each one is currently held shut by a mechanism rather
+than a rule: `extension/src/cdp.js` refuses every non-`GET`, there is no native
+binary to hold a TCC permission, and nothing reads a file on the disk. Those are
+the strongest guarantees this product has, and **0 is what decides whether they
+are worth spending.** Building any of them before H1, H2 and H3 have numbers is
+paying the price of a bet without knowing whether the bet paid.
+
+The ADRs say this about themselves — two of the three open by saying the product
+gets less safe — so this ordering is not a fourth opinion, it is the same one
+written where somebody picking up work will read it.
+
 ## A note on how fast this goes stale
 
 [`02`](./02-phone-thread.md) was written as a week of work and was finished before
@@ -85,6 +109,20 @@ named one misattributed quotation and there were two. So the heading earns its
 place in both directions. A status line here can be behind the code, and it can
 also be wrong about how much there is to do.
 
+**And a third direction, found the same evening: a document can be ahead of the
+code and read as though it were behind it.** ADR-0024, ADR-0025 and ADR-0026 were
+accepted, `CONTEXT.md` gained a `PurchaseAuthorization` entry, `VISION.md` and
+`SECURITY_AND_PRIVACY.md` were rewritten to describe a product that drives macOS
+and spends money — and **none of it is built.** The commit that landed them says
+so in as many words, and three of its own corrections said otherwise for about an
+hour before being struck.
+
+That is why the glossary entry for `PurchaseAuthorization` carries a
+**specification rather than a description** fence, why [`06`](./06-buying-things.md),
+[`07`](./07-off-the-browser.md) and [`08`](./08-one-time-codes.md) all lead with
+*decided, not built*, and why each of them tells you to read the ADR for what was
+decided and the code for what runs. **When those two disagree, the code is right.**
+
 ## What is deliberately not in this folder
 
 - **Cloud execution.** It fixes *"leave your desk, not leave the building"* and
@@ -102,10 +140,18 @@ also be wrong about how much there is to do.
   line on the ratification screen, the amount parse at `Fetch.requestPaused`, the
   charge count off the ledger, and `tests/purchase-authorisation.test.ts` with
   the *"Find me food for dinner"* fixture that must never start passing.
-  [ADR-0025](../adr/0025-computer-use-beyond-the-browser.md) and
+  ~~[ADR-0025](../adr/0025-computer-use-beyond-the-browser.md) and
   [ADR-0026](../adr/0026-reading-a-one-time-code.md) are two more files this
-  folder does not have — and ADR-0025 is the largest single piece of work in the
+  folder does not have~~ — and ADR-0025 is the largest single piece of work in the
   project, larger than [`01`](./01-menu-bar-app.md), which it also depends on.
+
+  **Struck later the same day: all three files exist now.**
+  [`06`](./06-buying-things.md), [`07`](./07-off-the-browser.md) and
+  [`08`](./08-one-time-codes.md). This paragraph named the work in one breath and
+  did not write it down in the next — which is the exact gap
+  [`AGENTS.md`](../../AGENTS.md) now has a rule about: **a decision that is not
+  yet built gets a file here, in the same change that accepts the ADR.** The rule
+  exists because of this paragraph.
 
   **The `Runtime.evaluate` half of the comparison is unspent** and ADR-0025 §3
   carries it to the desktop unchanged: no shell, no `osascript`, no AppleScript.

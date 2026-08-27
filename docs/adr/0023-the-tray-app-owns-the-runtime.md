@@ -2,7 +2,7 @@
 
 **Status:** accepted · 2026-08-26 · **amended 2026-08-26**
 **Amended by:** [ADR-0025](0025-computer-use-beyond-the-browser.md) — prohibitions 1 and 4, reversed
-two days after acceptance · [ADR-0026](0026-reading-a-one-time-code.md) — Full Disk Access. What it
+**the same day this ADR was accepted** · [ADR-0026](0026-reading-a-one-time-code.md) — Full Disk Access. What it
 supervises, configures, pairs and shows is unchanged; what it may never do is now three things rather
 than five
 **Depends on:** [ADR-0001](0001-worker-runtime.md) — the worker as a separate OS process, which is
@@ -70,7 +70,8 @@ filesystem outside its own configuration, and adds no sensor.**
 ~~Five prohibitions, and the first is the one the rest exist to protect.~~
 
 **Three, as of 2026-08-26.** Prohibitions 1 and 4 are reversed by
-[ADR-0025](0025-computer-use-beyond-the-browser.md), two days after this ADR was accepted. The
+[ADR-0025](0025-computer-use-beyond-the-browser.md), **the same day this ADR was accepted** — its
+Status line says 2026-08-26 and so does the reversal. The
 struck text is left in place because it contains the argument, and the argument is the thing worth
 having when somebody proposes going further. Prohibitions 2, 3 and 5 stand unchanged and are now
 carrying more weight than they were written to carry.
@@ -102,9 +103,25 @@ either.
 
 **3. It holds no credential the app does not already hold.** It writes `.env`. It does not reach the
 Keychain, which `SECURITY_AND_PRIVACY.md` notes is *"where it ought to live"* for the Google token
-and cannot be, precisely because there is no signed helper. **There is now a binary and there is
+~~and cannot be, precisely because there is no signed helper~~. **There is now a binary and there is
 still no Keychain access**, and that gap is deliberate: taking it would be a decision about
 credential storage and belongs in an ADR about credential storage.
+
+**Stands, and is now the only copy of this claim worth citing — 2026-08-26.** The struck clause was
+already the weaker half of its own sentence and became false when
+[ADR-0025](0025-computer-use-beyond-the-browser.md) gave this binary Accessibility, Screen Recording
+and Full Disk Access: the helper exists and holds more than a Keychain entitlement would have needed.
+So *no Keychain read* is a **refusal**, not a limitation, which is the harder position to hold and
+the honest one. ADR-0025 §5 refuses a credential vault at its strongest — a vault would create a
+secret that does not exist, on a machine whose database is not encrypted, to solve a problem Chrome
+has already solved, and Propositum signs in by clicking Chrome's own prompt rather than by holding
+anything.
+
+Four other documents said *"a signed native helper this product does not have and is not building"*
+and all four are struck the same day — `docs/SECURITY_AND_PRIVACY.md` twice, the salt and the
+calendar token; [ADR-0020](0020-remembering-a-decline.md); [ADR-0014](0014-reading-free-busy.md).
+Each now points here rather than restating it, because the sentence has been overtaken by three ADRs
+in a row and the fifth restatement would go stale too.
 
 ~~**4. It observes nothing.** No window titles, no foreground app, no idle detection, no filesystem
 watching. The one sensor is the Chrome extension and this does not become a second one. An

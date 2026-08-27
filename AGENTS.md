@@ -36,6 +36,29 @@ Each also names the parts that are **not software**: an account to open, a fee t
 to request, a button only a person can press. Those have lead times and they are usually the reason a
 two-week job takes five.
 
+**Keeping that folder true is part of the change, not a tidy-up afterwards** *(added 2026-08-26)*.
+Three rules, and the third is the one that gets skipped:
+
+- **You finished something a file here predicted** — strike it and date it in that file, in the same
+  commit. Do not delete the item; a checklist that silently loses its finished entries reads as
+  though they were never on it.
+- **You found work no file here covers** — add it, with all six headings. A `TODO` comment in a
+  source file is not this; nobody reads `src/` looking for what is left.
+- **You accepted an ADR for something you did not build** — **write the file in the same change that
+  accepts the ADR.** An accepted decision with no todo beside it is the worst state in this
+  repository, because every other document starts describing the new product in the present tense
+  while `grep` still finds nothing. That is exactly what happened on 2026-08-26: ADR-0024, ADR-0025
+  and ADR-0026 landed, `CONTEXT.md`, `VISION.md` and `SECURITY_AND_PRIVACY.md` were rewritten around
+  them, and [`docs/todo/README.md`](docs/todo/) named the missing work in one paragraph without
+  writing it down. [`06`](docs/todo/06-buying-things.md),
+  [`07`](docs/todo/07-off-the-browser.md) and [`08`](docs/todo/08-one-time-codes.md) exist because
+  of that gap, and this rule exists so the next one is closed on the day rather than found later.
+
+A decided-but-unbuilt term also gets the **specification rather than a description** fence in
+`CONTEXT.md` — the `PurchaseAuthorization` entry is the pattern, and the fence comes off in the
+commit that builds the thing. Where a document and the code disagree, **the code is right**, and the
+document is the one to fix.
+
 ## Commands
 
 ```bash
@@ -181,6 +204,10 @@ Beyond the guards:
 - **Never add a count you have to maintain by hand.** If your change moves a number some document
   states, fix that document in the same commit — or better, delete the number and point at the thing
   that knows it. This file follows that rule; keep it that way.
+- **`docs/todo/` is left true in the same commit** *(added 2026-08-26)*. Strike what you finished,
+  add what you found, and **write the file for a decision you accepted but did not build** — the
+  three rules are argued at the top of this document. Nothing enforces any of them; the failure mode
+  is a corpus that describes a product nobody has written, and it has happened once already.
 
 ## Vocabulary
 
