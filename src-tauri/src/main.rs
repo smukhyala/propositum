@@ -1,36 +1,47 @@
 //! The menu-bar app that owns the runtime. ADR-0023, stage 1.
 //!
-//! One binary that supervises the two Node processes, shows one light, and
-//! opens links. It holds no tools, reads no filesystem outside its own
-//! configuration and log, adds no sensor, and requests **no TCC permission** —
-//! `tests/tray-permissions.test.ts` pins that to the config, and its docblock
-//! says what stage 2 must do to change it knowingly.
+//! One binary that supervises the two Node processes, shows one light, opens
+//! links, holds the one key field, and owns the kill switch. It holds no
+//! tools, reads no filesystem outside its own configuration and log, adds no
+//! sensor, and requests **no TCC permission** — `tests/tray-permissions.test.ts`
+//! pins that to the config, and its docblock says what stage 2 must do to
+//! change it knowingly.
 //!
-//! Launch order: single instance → port preflight → children → tray → light.
-//! The preflight is dev.ts's argument transplanted: a taken port means a
-//! server that is not ours, and a worker started beside it — or a second
-//! worker double-draining — is worse than refusing to start.
+//! Launch order: single instance → tray (the light says *Starting…*) → on a
+//! worker thread: port preflight, `prisma db push`, build-if-missing → the
+//! children. The push always completes before either child starts, so
+//! `createDatabase()` in each child reinstalls and verifies the append-only
+//! triggers after every push — upgrades included, because every launch is
+//! this launch.
 //!
-//! Stage 1 supervises the existing repo checkout. What a stranger's `.dmg`
-//! needs — a bundled Node, a built app, signing, `prisma db push` on first
-//! launch — is the todo's stage 2 and is deliberately absent here.
+//! The kill switch (ADR-0025 §2): a global hotkey and a menu item, both
+//! handled here in the Tauri process — not in Node, so they work when the
+//! worker is wedged — and stopping never touches the network. What it stops
+//! today is the runtime, by SIGKILL; there is no input synthesis yet, and the
+//! menu says no more than that.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod env_file;
 mod light;
 mod logs;
 mod menu;
 mod origin;
+mod preflight;
 mod repo;
 mod supervisor;
 
 use std::net::TcpListener;
 use std::sync::Arc;
+use std::time::Duration;
 
 use tauri::Manager;
+use tauri_plugin_global_shortcut::ShortcutState;
 
 use logs::Logger;
-use supervisor::Supervisor;
+use supervisor::{RuntimeHold, Supervisor};
+
+const KILL_SWITCH: &str = "CmdOrCtrl+Shift+Escape";
 
 /// Broad-detect, narrow-serve, exactly as `scripts/dev.ts` argues: probe both
 /// families so a server bound any which way is seen, while the app itself only
@@ -41,11 +52,57 @@ fn port_taken() -> bool {
     v4.is_err() || v6.is_err()
 }
 
+/// The one writer `.env` has ever had, reachable only from the settings
+/// window. A refusal comes back as the sentence the window renders; the key
+/// itself never appears in a log, an error, or a return value.
+#[tauri::command]
+fn set_api_key(app: tauri::AppHandle, key: String) -> Result<(), String> {
+    let hold = Arc::clone(&*app.state::<Arc<RuntimeHold>>());
+    env_file::write_key(&repo::repo_root().join(".env"), &key)?;
+    hold.logger.line(
+        "tray",
+        ".env ANTHROPIC_API_KEY updated — restarting both halves for it",
+    );
+    // Both children read `.env` once at startup, so the write forces the
+    // bounce. This is a deliberate configuration change by the person, not a
+    // crash — ADR-0001's "one child dying never takes the other" is about
+    // failures, and is not being reversed here. Relaunching the binary IS the
+    // restart, preflights included.
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(600));
+        hold.shutdown();
+        app.restart();
+    });
+    Ok(())
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|_, _, _| {}))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_shortcut(KILL_SWITCH)
+                .expect("the kill-switch shortcut parses")
+                .with_handler(|app, _shortcut, event| {
+                    if event.state() == ShortcutState::Pressed {
+                        // ADR-0025 §2: stopping never needs the network, and it
+                        // works when the runtime is wedged — verified by
+                        // `kill -STOP` on the children and then pressing this.
+                        if let (Some(hold), Some(handles)) = (
+                            app.try_state::<Arc<RuntimeHold>>(),
+                            app.try_state::<menu::TrayHandles>(),
+                        ) {
+                            hold.kill_now();
+                            let _ = handles.status.set_text("Stopped");
+                            let _ = handles.start_again.set_enabled(true);
+                        }
+                    }
+                })
+                .build(),
+        )
+        .invoke_handler(tauri::generate_handler![set_api_key])
         .setup(|app| {
             // A menu-bar app, not a dock app. Runtime policy rather than an
             // Info.plist key, so the config stays free of platform extras the
@@ -59,31 +116,36 @@ fn main() {
                 &format!("Propositum {} starting", env!("CARGO_PKG_VERSION")),
             );
 
-            let supervisor = if port_taken() {
-                logger.line(
-                    "tray",
-                    &format!(
-                        "something else has port {} — `lsof -i :{}` names it. Nothing was started.",
-                        origin::PORT,
-                        origin::PORT
-                    ),
-                );
-                Supervisor::parked(
-                    Arc::clone(&logger),
-                    format!(
+            let hold = RuntimeHold::new(
+                Arc::clone(&logger),
+                Supervisor::pending(Arc::clone(&logger)),
+            );
+            let handles = menu::build(app, Arc::clone(&hold), preflight::chromium_missing())?;
+            light::start(handles.status.clone(), Arc::clone(&hold));
+            app.manage(Arc::clone(&hold));
+            app.manage(handles);
+
+            // The blocking half of the launch, off the main thread so the tray
+            // appears immediately with the light on Starting.
+            std::thread::spawn(move || {
+                if port_taken() {
+                    let reason = format!(
                         "something else has port {} — `lsof -i :{}` names it",
                         origin::PORT,
                         origin::PORT
-                    ),
-                )
-            } else {
-                Supervisor::start(Arc::clone(&logger))
-            };
+                    );
+                    logger.line("tray", &format!("{reason}. Nothing was started."));
+                    hold.replace(Supervisor::parked(logger, reason));
+                    return;
+                }
+                match preflight::run(&logger) {
+                    preflight::Outcome::Ready => hold.replace(Supervisor::start(logger)),
+                    preflight::Outcome::Parked(reason) => {
+                        hold.replace(Supervisor::parked(logger, reason))
+                    }
+                }
+            });
 
-            let status_item = menu::build(app, Arc::clone(&supervisor), Arc::clone(&logger))?;
-            light::start(status_item, Arc::clone(&supervisor), logger);
-
-            app.manage(supervisor);
             Ok(())
         })
         .build(tauri::generate_context!())
@@ -93,7 +155,7 @@ fn main() {
             // every other way out, so no exit path leaves an orphaned worker
             // holding a lease.
             if let tauri::RunEvent::Exit = event {
-                app.state::<Arc<Supervisor>>().shutdown();
+                app.state::<Arc<RuntimeHold>>().shutdown();
             }
         });
 }

@@ -46,6 +46,15 @@ const repo = fileURLToPath(new URL('..', import.meta.url))
 
 const BANNED = [/\btasks?\b/i, /\btake over\b/i, /\bshifts?\b/i, /\bclaims?\b/i]
 
+/**
+ * The argued exemptions, exact-match so no sentence can ride one. The single
+ * entry is the kill switch's accelerator: `Shift` there is the key on the
+ * keyboard, an accelerator token the OS parses and no person reads as prose —
+ * the ban is about the product word for a working session, which `CONTEXT.md`
+ * renders as "While you were away".
+ */
+const EXEMPT = new Set(['CmdOrCtrl+Shift+Escape'])
+
 /** Rust string literals, escapes respected, comments stripped first. */
 const literalsOf = (rustSource: string): string[] =>
   [...stripComments(rustSource).matchAll(/"((?:[^"\\]|\\.)*)"/g)].map((match) => match[1] ?? '')
@@ -80,7 +89,9 @@ describe('the extractor is not blind', () => {
 describe('no banned word reaches the tray', () => {
   it('keeps every Rust string literal clean', () => {
     for (const file of rustFiles()) {
-      const literals = literalsOf(readFileSync(file, 'utf8'))
+      const literals = literalsOf(readFileSync(file, 'utf8')).filter(
+        (literal) => !EXEMPT.has(literal),
+      )
       for (const ban of BANNED) {
         for (const literal of literals) {
           expect(

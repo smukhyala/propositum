@@ -8,9 +8,10 @@
 //! word for them is typed on this side.
 //!
 //! When the endpoint cannot answer, the fallback is what only the supervisor
-//! knows — child liveness. Those words (*Starting…*, *Stopped*, a give-up
-//! reason) are supervisor facts, not a sixth `IntentionState`, and they never
-//! mix into the five.
+//! knows — child liveness, read through the `RuntimeHold` so a preflight swap
+//! or a kill never leaves this thread holding a stale supervisor. Those words
+//! (*Starting…*, *Stopped*, a give-up reason) are supervisor facts, not a
+//! sixth `IntentionState`, and they never mix into the five.
 //!
 //! Five seconds is the poll: loopback plus a few indexed SQLite reads, and a
 //! `needs-you` surfacing within five seconds is fast enough for a menu bar.
@@ -19,19 +20,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tauri::menu::MenuItem;
-use tauri::Runtime;
+use tauri::Wry;
 
-use crate::logs::Logger;
 use crate::origin;
-use crate::supervisor::{Overall, Supervisor};
+use crate::supervisor::{Overall, RuntimeHold};
 
 const POLL_EVERY: Duration = Duration::from_secs(5);
 
-pub fn start<R: Runtime>(
-    status_item: MenuItem<R>,
-    supervisor: Arc<Supervisor>,
-    logger: Arc<Logger>,
-) {
+pub fn start(status_item: MenuItem<Wry>, hold: Arc<RuntimeHold>) {
     std::thread::spawn(move || {
         let agent = ureq::AgentBuilder::new()
             .timeout_connect(Duration::from_secs(2))
@@ -59,10 +55,11 @@ pub fn start<R: Runtime>(
                     }
                 }
                 Err(ureq::Error::Status(code, _)) => {
-                    // Reachable but refusing or without the route — an old build, or a
-                    // different server on our port. Logged once per streak, not per poll.
+                    // Reachable but refusing or without the route — an old
+                    // build, or a different server on our port. Logged once
+                    // per streak, not once per poll.
                     if !said_odd_answer {
-                        logger.line(
+                        hold.logger.line(
                             "tray",
                             &format!(
                                 "the light endpoint answered {code} — is the app build current?"
@@ -72,7 +69,7 @@ pub fn start<R: Runtime>(
                     }
                     format!("The app answered {code} — see the log")
                 }
-                Err(_) => match supervisor.overall() {
+                Err(_) => match hold.overall() {
                     Overall::Starting => "Starting…".into(),
                     Overall::Up => "Starting…".into(),
                     Overall::Stopped => "Stopped".into(),

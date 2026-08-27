@@ -1,6 +1,11 @@
 # 01 — The menu-bar app that owns the runtime
 
-**Status:** not started — no code exists. ~~**Narrowed twice on 2026-08-26:**
+**Status:** ~~not started — no code exists.~~ **Corrected 2026-08-27: stage 1
+built** — scaffold, supervision with backoff, the light, the key field, the
+kill switch, launch preflights and the log file all exist in `src-tauri/`.
+What remains is stage 2: signing, notarisation, bundling the runtime, release
+CI (item 10), and the *Done when* below, which is written for a stranger's
+`.dmg` and stays open until one exists. ~~**Narrowed twice on 2026-08-26:**
 three of ADR-0023's four jobs now have answers that are not a native binary —
 see *What already landed* below. What is left is the part only a native binary
 can do, and it is smaller than this file was written to describe.~~
@@ -157,15 +162,28 @@ resisting a fifth.
      itself. Its own comment: *"A failed sweep costs one interval. A dead worker
      costs every run after it."*
 
-4. **Configure.** One field for `ANTHROPIC_API_KEY`, written to `.env`. Today
+4. ~~**Configure.** One field for `ANTHROPIC_API_KEY`, written to `.env`. Today
    this is a hidden dotfile edited by hand, and there is no settings UI anywhere
-   in the product.
+   in the product.~~ **Done 2026-08-27** — `src-tauri/src/env_file.rs` is the
+   file's first and only writer: atomic, mode 0600, every line it does not own
+   preserved byte for byte, refusals returned as sentences. Saving restarts
+   both halves by relaunching the binary, because each child reads `.env` once
+   at startup.
 
-5. **Pair the extension in one click.** Read the id, write
+5. ~~**Pair the extension in one click.** Read the id, write
    `PROPOSITUM_EXTENSION_ID`, restart the Next child. Today this is a 32-character
    string copied out of `chrome://extensions`, and getting it wrong produces a
    `bad-origin` visible only inside an HTTP 403 JSON body
-   (`src/app/api/session/current/route.ts:181`).
+   (`src/app/api/session/current/route.ts:181`).~~ **Struck 2026-08-27 — this
+   item was overtaken on 2026-08-26 and doing it as written would be a
+   regression.** `/welcome` already pairs in one click by writing a `pairing`
+   row, restart-free, and `resolveExtensionOrigin` reads the env var *ahead
+   of* that row — so a tray-written `PROPOSITUM_EXTENSION_ID` would silently
+   outrank every later click the person makes on the screen. The tray
+   deliberately writes nothing here; its Pairs job shrank to the *Finish
+   setting up* link, and ADR-0023's table row carries the same dated
+   correction. (The `bad-origin` hint has also moved to `:198` and now points
+   at `/welcome` itself.)
 
 6. ~~**One status light**, off `intentionState()`. Five members —
    `working`, `delegated`, `needs-you`, `sleeping`, `done`. Not a dashboard.
@@ -174,10 +192,15 @@ resisting a fifth.
    project and serves the consumer label; the tray renders the word verbatim
    and never writes its own (`src-tauri/src/light.rs`).
 
-7. **Run `prisma db push` on first launch and after an upgrade**, then restart so
+7. ~~**Run `prisma db push` on first launch and after an upgrade**, then restart so
    the append-only triggers are reinstalled and verified. `db push` silently
    drops the triggers on any table it rebuilds, and a ledger without its triggers
-   looks identical and is not append-only.
+   looks identical and is not append-only.~~ **Done 2026-08-27, by ordering
+   rather than by a special step**: the push runs on *every* launch and always
+   completes before either child starts, so each child's own `createDatabase()`
+   reinstalls and verifies the triggers after every push — first launch,
+   upgrade, and every day in between are the same launch
+   (`src-tauri/src/preflight.rs`).
 
 8. ~~**A log file** at `~/Library/Logs/Propositum/`, a version string somewhere a
    person can read, and a **Copy diagnostics** button. Today there is no log file
@@ -188,10 +211,15 @@ resisting a fifth.
    worker lines can carry page titles, and putting those in a clipboard
    silently is the person's choice to make with the file open (`logs.rs`).
 
-9. **Handle the Playwright Chromium.** `src/policy/playwright-fetcher.ts` imports
+9. ~~**Handle the Playwright Chromium.** `src/policy/playwright-fetcher.ts` imports
    `playwright` and launches Chromium. It is a devDependency whose postinstall
    pulls hundreds of megabytes, it is documented nowhere, and if it failed the
-   worker throws on the first fetch with no user-facing message.
+   worker throws on the first fetch with no user-facing message.~~ **Done
+   2026-08-27, with the limit stated**: the tray checks Playwright's cache at
+   launch and, when Chromium is missing, offers a one-click logged install —
+   the click is the consent for the ~150 MB. The check is a glob over the
+   cache layout, not a launch test, so a corrupt install still fails at first
+   fetch exactly as before.
 
 10. **Release CI.** Build, sign, notarise, staple, produce a `.dmg`, and publish
     an update feed. Tauri's updater needs its own signing keypair — that is

@@ -92,6 +92,22 @@ impl Supervisor {
         supervisor
     }
 
+    /// A supervisor that has not started yet — the preflight's placeholder, so
+    /// the light says *Starting…* while `prisma db push` and a first build run.
+    pub fn pending(logger: Arc<Logger>) -> Arc<Supervisor> {
+        let supervisor = Arc::new(Supervisor {
+            stopping: Arc::new(AtomicBool::new(false)),
+            slots: Arc::new(Mutex::new(Vec::new())),
+            logger,
+        });
+        supervisor.slots.lock().unwrap().push(Slot {
+            prefix: "tray",
+            pid: None,
+            state: ChildState::Starting,
+        });
+        supervisor
+    }
+
     pub fn start(logger: Arc<Logger>) -> Arc<Supervisor> {
         let supervisor = Arc::new(Supervisor {
             stopping: Arc::new(AtomicBool::new(false)),
@@ -328,6 +344,25 @@ impl Supervisor {
         }
     }
 
+    /// The kill switch's half: SIGKILL, immediately, no grace. Not SIGTERM,
+    /// because ADR-0025 §2's verification is `kill -STOP` on the children and
+    /// then pressing it — a stopped process cannot run a SIGTERM handler, and
+    /// SIGKILL is uncatchable. That asymmetry is the whole reason quitting
+    /// drains and stopping does not. A run killed this way surfaces as
+    /// interrupted through the worker's startup lease sweep, which is what the
+    /// sweep is for.
+    pub fn kill_now(&self) {
+        self.stopping.store(true, Ordering::SeqCst);
+        let mut slots = self.slots.lock().unwrap();
+        for slot in slots.iter_mut() {
+            if let Some(pid) = slot.pid {
+                unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
+            }
+            slot.state = ChildState::Stopped;
+        }
+        self.logger.line("tray", "stopped by the kill switch");
+    }
+
     pub fn overall(&self) -> Overall {
         let slots = self.slots.lock().unwrap();
         for slot in slots.iter() {
@@ -361,5 +396,43 @@ impl Supervisor {
         while Instant::now() < deadline && !self.stopping.load(Ordering::SeqCst) {
             std::thread::sleep(Duration::from_millis(100));
         }
+    }
+}
+
+/// The tray's one handle on whichever supervisor currently exists.
+///
+/// The preflight replaces a `pending` supervisor with a started one (or a
+/// parked one, when a check fails), and every consumer — the light, the menu,
+/// the kill switch, the exit handler — reads through here, so nobody holds a
+/// stale `Arc` across the swap.
+pub struct RuntimeHold {
+    pub logger: Arc<Logger>,
+    current: Mutex<Arc<Supervisor>>,
+}
+
+impl RuntimeHold {
+    pub fn new(logger: Arc<Logger>, initial: Arc<Supervisor>) -> Arc<RuntimeHold> {
+        Arc::new(RuntimeHold {
+            logger,
+            current: Mutex::new(initial),
+        })
+    }
+
+    pub fn replace(&self, next: Arc<Supervisor>) {
+        *self.current.lock().unwrap() = next;
+    }
+
+    pub fn overall(&self) -> Overall {
+        self.current.lock().unwrap().overall()
+    }
+
+    pub fn shutdown(&self) {
+        let held = Arc::clone(&self.current.lock().unwrap());
+        held.shutdown();
+    }
+
+    pub fn kill_now(&self) {
+        let held = Arc::clone(&self.current.lock().unwrap());
+        held.kill_now();
     }
 }
