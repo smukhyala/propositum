@@ -1,32 +1,62 @@
 {
-  "partnership-clean": {
-    "ranAt": "2026-08-07",
+  "lisbon-thread": {
+    "ranAt": "2026-08-27",
     "model": "claude-opus-5",
-    "scoredBy": "",
+    "scoredBy": "Mark",
     "h1": {
-      "objective": null,
-      "completedWork": null,
-      "openThreads": null,
-      "constraints": null,
-      "nextActions": null,
-      "uncertainties": null
+      "objective": 2,
+      "completedWork": 2,
+      "openThreads": 1,
+      "constraints": 2,
+      "nextActions": 2,
+      "uncertainties": 2
     },
-    "notes": "",
-    "baselineAtLeastAsGood": null
+    "notes": "Output got a little distracted, focused on subjective things rather than pure cost. Besides that did beyond what was needed, so p good.",
+    "baselineAtLeastAsGood": true
+  },
+  "monitor-shortlist": {
+    "ranAt": "2026-08-27",
+    "model": "claude-opus-5",
+    "scoredBy": "Mark",
+    "h1": {
+      "objective": 1,
+      "completedWork": 2,
+      "openThreads": 2,
+      "constraints": 2,
+      "nextActions": 1,
+      "uncertainties": 2
+    },
+    "notes": "Objective output is too certain, human still seems to want the final decision. But next action is the opposite, not certain enough and too vague.",
+    "baselineAtLeastAsGood": true
+  },
+  "partnership-clean": {
+    "ranAt": "2026-08-27",
+    "model": "claude-opus-5",
+    "scoredBy": "Mark",
+    "h1": {
+      "objective": 2,
+      "completedWork": 2,
+      "openThreads": 2,
+      "constraints": 0,
+      "nextActions": 0,
+      "uncertainties": 1
+    },
+    "notes": "got constraints and nextActions messed up. But the actual got some errors that I think have merit, but should warrant further discovery and work",
+    "baselineAtLeastAsGood": true
   },
   "partnership-messy": {
-    "ranAt": "2026-08-07",
+    "ranAt": "2026-08-27",
     "model": "claude-opus-5",
-    "scoredBy": "",
+    "scoredBy": "Mark",
     "h1": {
-      "objective": null,
-      "completedWork": null,
-      "openThreads": null,
-      "constraints": null,
-      "nextActions": null,
-      "uncertainties": null
+      "objective": 2,
+      "completedWork": 1,
+      "openThreads": 0,
+      "constraints": 1,
+      "nextActions": 1,
+      "uncertainties": 2
     },
-    "notes": "",
-    "baselineAtLeastAsGood": null
+    "notes": "Constraints answer key was a bit off, everythings p much there but a lil more detailed and sometimes the output gets distracted a little.",
+    "baselineAtLeastAsGood": true
   }
 }

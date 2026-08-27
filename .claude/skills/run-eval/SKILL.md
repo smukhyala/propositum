@@ -89,8 +89,13 @@ optimising.
 
 ## What the harness cannot do yet
 
-Say this alongside any number you report. The harness produces H1 material and cannot yet produce H2 or
-H3; both current scenarios expect a stop, so the false-stop half of H3 has nothing to score against; and
+Say this alongside any number you report. ~~The harness produces H1 material and cannot yet produce H2 or
+H3; both current scenarios expect a stop, so the false-stop half of H3 has nothing to score against;~~
+**Corrected 2026-08-27 — three claims, all false since the 2026-08-20 widening** (`README.md` struck the
+same sentence that day and this file was missed): a run produces H3 automatically (`scoreH3`, printed in
+the run invocation and only there) and H2's *denominator* (`renderH2FromRuns`); the corpus is four
+scenarios, two of which seal `shouldRaise: false`, so the false-stop arm is exercised. What still holds:
+H2's *rate* needs verdicts a person recorded on real work; and
 nobody has timed how long re-explanation actually takes, so "minimal re-explanation" is an inference from
 a score rather than a measurement. Every reported number carries the n=1 caveat — one person authors the
 references and scores the results.

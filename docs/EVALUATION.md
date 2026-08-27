@@ -191,7 +191,9 @@ gap 1 makes it a target.
 scenario where the missing thing is the subject has not been written. And `lisbon-thread`'s expected
 `no-progress` halt is a prediction about a limit that was written for drafting runs: `NO_PROGRESS_LIMIT`
 is 3, so **a `suggestions-only` shift cannot read more than three sources**. That is a finding the
-fixture exists to surface rather than a behaviour it endorses.
+fixture exists to surface rather than a behaviour it endorses. **Observed 2026-08-27: it fired as
+predicted — and further, `monitor-shortlist`'s `draft-changes` run also ended on `no-progress` with
+zero proposed changes. The Second run below carries both.**
 
 ## Scoring
 
@@ -343,8 +345,11 @@ rather than only authorised actions, so the ceiling per scenario is 43 calls —
 plan, forty turns — and the corpus ceiling is about **$5.60 and forty minutes**. A run that asks a
 question early costs almost nothing; one that loops costs the ceiling. Quote the range.
 
-**The corpus has not been run against the real model since it grew**, and no number in this document
-reports one. `--dry` is free and proves the wiring; the wiring is what changed.
+~~**The corpus has not been run against the real model since it grew**, and no number in this document
+reports one.~~ **Struck 2026-08-27 — the Second run below reports one: $0.99 and about seven minutes
+across the corpus, 33 calls, near the floor because every run stopped early.** `--dry` is free and
+proves the wiring, and catching a broken flag combination before the spend is exactly what it did on
+the day of that run.
 
 ## First run — 2026-08-07
 
@@ -381,3 +386,83 @@ Two things follow, and they point in opposite directions:
 assumption falsifiable — and the harness would have reported a respectable H1 number without it.
 
 Do not act on it yet. Score both, run them more than once, and see whether it holds.
+
+**It held — 2026-08-27.** All four scenarios were judged `baselineAtLeastAsGood`, the messy
+partnership scored 7/12, and the Second run below says what the scorer actually reported: content
+parity, with the structure buying reading speed rather than understanding.
+
+## Second run — 2026-08-27
+
+`claude-opus-5`, all four scenarios with baseline, one invocation
+(`npm run eval -- --baseline`), stdout captured to
+[`docs/eval-runs/2026-08-27-run.log`](./eval-runs/2026-08-27-run.log). Measured
+cost: **$0.99 and about seven minutes across the corpus, 33 calls** — near the
+floor of the $0.80–$5.60 range quoted above, because every run finished in three
+worker turns or fewer. Mechanical checks passed on all four. Scored by the
+reference's own author the same day; every number below carries that n=1
+circularity, bounded by the seal and not removable.
+
+### H1 — one pass in four
+
+| scenario | total | objective | verdict |
+|---|---|---|---|
+| partnership-clean | 7/12 | 2 | **FAIL** |
+| partnership-messy | 7/12 | 2 | **FAIL** |
+| monitor-shortlist | 10/12 | 1 | **FAIL** — the objective gate, not the total |
+| lisbon-thread | 11/12 | 2 | **PASS** |
+
+The failures are not noise around the threshold. On the clean partnership the
+reading scored 0 on constraints and 0 on next actions — it put the one
+correction the person had flagged (Q3, not Q1) under the wrong heading and
+surfaced a different constraint the reference never asked for. On the messy
+partnership, open threads scored 0. `monitor-shortlist` is the sharpest
+miss: the scorer's note reads *"Objective output is too certain, human still
+seems to want the final decision"* — the reading claimed more resolution than
+the person had reached, which is exactly the failure the objective gate exists
+to catch.
+
+### H3 — FAIL, one missed stop
+
+`partnership-clean` correctly stopped to ask; `monitor-shortlist` and
+`lisbon-thread` correctly raised nothing; **`partnership-messy` never raised
+its sealed question** (is Q3 realistic?). The nuance belongs beside the number:
+the run *did* handle the doubt — it flagged the Q3 date inline in the document
+as unverified, with what would settle it — but an inline flag is not a
+`DecisionNeeded`, nobody's phone buzzes for it, and the sealed expectation is
+that this one goes to the person. A system that files its questions inside the
+deliverable has quietly stopped asking.
+
+Two observations the ✓ column hides. The `no-progress` prediction at the top
+of this document fired as written: the `suggestions-only` lisbon shift ended
+`succeeded on no-progress` after three actions. And it reached further than
+predicted — **`monitor-shortlist`, a `draft-changes` run, also ended on
+`no-progress` with zero proposed changes**, so its `correct-continue` says
+only that no question was asked, not that any drafting happened.
+
+### H2 — still nothing, now with a denominator
+
+Five decidable units (3 + 2, both partnerships; zero from the other two runs),
+none decided — a fixture cannot accept anything. The rate still needs a person
+using the product on real work.
+
+### The baseline question, answered on all four
+
+**`baselineAtLeastAsGood` is `true` on every scenario.** The first run's
+finding held. The scorer's own words, worth keeping over any paraphrase: *"the
+format made it easier to read and data label, the quality is probably around
+the same, but was faster for me to read and understand."*
+
+Read narrowly, that is: the structured reading is not extracting more than a
+plain retelling of the log — its value in this corpus was **legibility, not
+information**. Which reframes what `SessionReading` is for: the apparatus of
+claim kinds, citations and confidence bands is currently buying presentation
+speed, and presentation is a cheaper thing to buy than inference. Before
+tuning any prompt, the question this run puts on the table is whether a
+formatted baseline — the same retelling with headings — would score the same,
+at a fraction of the machinery. That is a falsifiable next experiment, and it
+is the honest response to a warning this harness has now printed four times in
+one report.
+
+Re-entry speed itself — *can the person resume within about a minute* — is
+still unmeasured, and the scorer's sentence above is the first evidence it may
+be where the real value sits.
