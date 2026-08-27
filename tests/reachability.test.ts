@@ -1004,6 +1004,24 @@ describe('the safety machinery is reachable from the product', () => {
     ).toContain("'needs-you'")
   })
 
+  it('the machine-wide lifecycle word is served, or the menu-bar light has nothing to poll', () => {
+    /**
+     * ADR-0023's status light is rendered by the tray app, whose Rust these
+     * greps cannot see — `callersOf` reads `src/` and `scripts/`, and the
+     * poller lives in neither. So the route is the greppable seam: it is the
+     * one caller of `overallIntentionState`, and a fold that lost its route
+     * would be a light polling a 404 while every other test stayed green.
+     *
+     * The fold's own derivation is not pinned here because it is not its own:
+     * `frontDoorRow` is the one converter, asserted above, and
+     * `tests/intention-state.test.ts` holds the ordering the fold adds.
+     */
+    expect(
+      callersOf('overallIntentionState(', 'src/server/intention-state.ts'),
+      'nothing serves the machine-wide lifecycle word — the menu-bar light has nothing to poll',
+    ).toContain(join('src', 'app', 'api', 'intention-state', 'route.ts'))
+  })
+
   it('where you left off reaches both screens, or the fold is a paragraph nobody reads', () => {
     /**
      * ADR-0017's whole argument turns on WHERE this renders, not on whether it
