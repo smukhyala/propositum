@@ -26,6 +26,7 @@
 //! kill switch is for, and that is a later slice.
 
 use std::io::{BufRead, BufReader};
+use std::os::unix::process::CommandExt;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -195,9 +196,18 @@ impl Supervisor {
                 return;
             }
 
+            // Each child leads its own process group, because a child is a
+            // TREE and a pid only names its root. The worker is spawned
+            // through tsx's CLI, which runs the real worker as its own child;
+            // SIGKILLing the wrapper alone left that grandchild alive — three
+            // orphaned workers on 2026-08-27, found by the first hands-on kill
+            // switch test. Signalling the negative pgid reaches the whole
+            // tree, including whatever the worker itself spawns later
+            // (Playwright's Chromium is the one already known).
             let mut child = match Command::new(&node)
                 .args(&argv)
                 .current_dir(&repo_dir)
+                .process_group(0)
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .spawn()
@@ -323,7 +333,8 @@ impl Supervisor {
             .collect();
 
         for pid in &pids {
-            unsafe { libc::kill(*pid as libc::pid_t, libc::SIGTERM) };
+            // Negative pid: the whole process group, not just the tree's root.
+            unsafe { libc::kill(-(*pid as libc::pid_t), libc::SIGTERM) };
         }
 
         let deadline = Instant::now() + Duration::from_millis(SHUTDOWN_GRACE_MS);
@@ -339,8 +350,11 @@ impl Supervisor {
                     "tray",
                     &format!("pid {pid} did not drain in {SHUTDOWN_GRACE_MS} ms — killed"),
                 );
-                unsafe { libc::kill(*pid as libc::pid_t, libc::SIGKILL) };
             }
+            // The group SIGKILL goes regardless of the root's own state: the
+            // root draining does not prove its tree did, and a KILL to a group
+            // with no survivors is a no-op.
+            unsafe { libc::kill(-(*pid as libc::pid_t), libc::SIGKILL) };
         }
     }
 
@@ -356,7 +370,10 @@ impl Supervisor {
         let mut slots = self.slots.lock().unwrap();
         for slot in slots.iter_mut() {
             if let Some(pid) = slot.pid {
-                unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
+                // The group, not the pid: SIGKILL cannot be forwarded by a
+                // wrapper, which is exactly how the first hands-on test of
+                // this switch minted three orphaned workers.
+                unsafe { libc::kill(-(pid as libc::pid_t), libc::SIGKILL) };
             }
             slot.state = ChildState::Stopped;
         }

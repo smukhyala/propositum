@@ -19,6 +19,8 @@ use std::sync::Arc;
 use tauri::menu::{MenuBuilder, MenuItem, MenuItemBuilder};
 use tauri::tray::TrayIconBuilder;
 use tauri::{include_image, App, AppHandle, Manager, WebviewUrl, WebviewWindowBuilder, Wry};
+// Manager is load-bearing twice over: get_webview_window for the settings
+// window, and tray_by_id for the kill switch's visible word.
 use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_opener::OpenerExt;
 
@@ -144,6 +146,12 @@ pub fn build(
                 hold.kill_now();
                 let _ = status.set_text("Stopped");
                 let _ = start_again.set_enabled(true);
+                // The word appears in the menu bar itself, beside the ring —
+                // the first hands-on test pressed the switch three times
+                // because nothing visible confirmed the first press.
+                if let Some(tray) = app.tray_by_id("propositum") {
+                    let _ = tray.set_title(Some("Stopped"));
+                }
             }
             "start-again" => {
                 // The whole launch sequence is the restart — preflights
