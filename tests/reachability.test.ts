@@ -264,6 +264,29 @@ describe('the safety machinery is reachable from the product', () => {
     expect(callersOf('ensureAppendOnlyGuards', 'src/persistence/append-only.ts')).not.toEqual([])
   })
 
+  it('something polls for heartbeat silence, or a gap reason cannot occur', () => {
+    /**
+     * `sweepForGap` turns silence into a `captureGap` with reason
+     * `service_worker_terminated`. It was correct and tested from the day it
+     * was written and called by nothing, so that reason was unreachable and the
+     * timeline read as continuous whenever the service worker had died.
+     *
+     * Promoted out of the deferred block 2026-08-27 when `src/server/gap-watch.ts`
+     * armed a clock on the session's lifetime.
+     *
+     * ── What this does NOT say ───────────────────────────────────────────
+     *
+     * `machine_slept` is STILL unwritable, and the caller does not change that:
+     * elapsed silence cannot tell a slept machine from a dead service worker.
+     * One of the two reasons this pin used to cover is closed and the other is
+     * exactly as open as it was — which is why the title says *a* gap reason.
+     */
+    expect(
+      callersOf('sweepForGap(', 'src/server/gap-sweeper.ts'),
+      'the gap sweeper lost its caller — silence stopped being recordable',
+    ).not.toEqual([])
+  })
+
   it('events reach the ledger writer rather than a repository', () => {
     expect(callersOf('createLedgerWriter', 'src/persistence/ledger-writer.ts')).not.toEqual([])
   })
@@ -1752,16 +1775,6 @@ describe('deferred, and asserted as deferred', () => {
     expect(
       callersOf('shiftReportBoundary', 'src/model/boundaries/shift-report.ts'),
       'shiftReportBoundary is wired now — move this into the section above',
-    ).toEqual([])
-  })
-
-  it('nothing polls for heartbeat silence, so that gap reason cannot occur', () => {
-    // `sweepForGap` turns silence into a `captureGap` with reason
-    // `service_worker_terminated`. With no caller, that reason is unreachable,
-    // and so is `machine_slept` — two of the four are unwritable in slice 0.
-    expect(
-      callersOf('sweepForGap(', 'src/server/gap-sweeper.ts'),
-      'the gap sweeper has a caller now — move this into the section above',
     ).toEqual([])
   })
 

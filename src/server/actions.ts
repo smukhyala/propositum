@@ -37,6 +37,7 @@ import { beginPairing, completePairing, unpair } from './thread'
 import { readableCause } from './problem'
 import { confirmRequest, haltRun, rejectRequest } from './confirmations'
 import { ambientStore, captureStore } from './capture-store'
+import { startGapWatch, stopGapWatch } from './gap-watch'
 import { countQuietly, dayBucket } from './offer-tally'
 import { whereYouLeftOffIn, whereYouLeftOffOn } from './work-so-far'
 import { describeWork, signatureOf } from './ambient-store'
@@ -1203,6 +1204,7 @@ export async function startFromSuggestion(
     const session = await repos.sessions.start(project.id, intentionId)
     const startedAtMs = Date.now()
     captureStore().start(session.id, startedAtMs)
+    startGapWatch()
 
     /**
      * Accepting forgets every decline of this strand.
@@ -2129,6 +2131,7 @@ export async function startSession(projectId: string): Promise<ActionResult<Sess
 
     const session = await repos.sessions.start(projectId, intention?.id ?? null)
     captureStore().start(session.id, Date.now())
+    startGapWatch()
 
     const sources = await repos.projects.approvedSources(projectId)
     refresh()
@@ -2163,7 +2166,10 @@ export async function endSession(sessionId: string): Promise<ActionResult<Sessio
     // else's live capture because a stale tab posted an old id would lose events
     // with no trace.
     const live = captureStore().current()
-    if (live && live.sessionId === sessionId) captureStore().end()
+    if (live && live.sessionId === sessionId) {
+      captureStore().end()
+      stopGapWatch()
+    }
 
     refresh()
     return ok({ sessionId, endedAt: endedAt.toISOString() })
