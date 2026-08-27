@@ -481,8 +481,11 @@ promoted too, so this sentence now names two symbols that are both reachable and
 When a reader lands, that suite goes red **by design**, the claim is relocated into the reachable
 section rather than deleted, and this section's status marker moves with it.
 
-**The status marker did NOT move with it**, and that is not an oversight: rendering a finding is not
-learning from one, so *read, and still learning nothing* is unchanged.
+**The mechanism was exercised three times on 2026-08-27** and it worked the way this paragraph
+promises: boundary 6, the gap sweeper and the outcome-scoped finding were all wired, this file went
+red on each, and each claim moved up rather than being deleted. The status marker did **not** move —
+*read, and still learning nothing* is unchanged, because rendering a finding is not learning from
+one.
 
 ---
 

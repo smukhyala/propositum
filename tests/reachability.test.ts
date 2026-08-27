@@ -1806,16 +1806,27 @@ describe('deferred, and asserted as deferred', () => {
    * The computer-use tables, landed ahead of everything that uses them.
    *
    * Schema and repositories are one unit and the paths that write them are
-   * several others, so for one commit these are tables with guards,
+   * several others, so for one commit these were tables with guards,
    * repositories with tests, and no callers — the exact shape of every bug the
    * section above exists to remember. Asserting the absence is what stops that
-   * shape from being indistinguishable from the accident: each of these turns
-   * this file RED the moment something calls it, which forces the claim up into
-   * the reachable section rather than leaving it ambiguous.
+   * shape from being indistinguishable from the accident: it turns this file
+   * RED the moment something calls it, which forces the claim up into the
+   * reachable section rather than leaving it ambiguous.
    *
-   * If you are here because one went red: that is the system working. Move it.
+   * **This block held four assertions and now holds one.** Boundary 6, the gap
+   * sweeper and the outcome-scoped finding were all promoted on 2026-08-27 —
+   * boundary 6 by this file going red on the commit that wired it, which is the
+   * mechanism working rather than anybody remembering.
+   *
+   * What is left is the one that is different in kind. The other three were
+   * *not yet*: the code existed, nothing called it, and calling it was a day's
+   * work. This one is held shut by a MECHANISM — `classifyPausedRequest` fails
+   * every non-`GET` unconditionally — so it cannot be wired by wiring. Read its
+   * body before treating it as the same sort of absence.
+   *
+   * If you are here because it went red: that is the system working, and
+   * ADR-0024 is the argument you are looking for. Move it.
    */
-  const repos = 'src/persistence/repositories/index.ts'
 
   it('nothing lands, so an external-effect outcome cannot occur', () => {
     /**

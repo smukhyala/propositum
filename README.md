@@ -42,12 +42,24 @@ while you're gone. You come back to what changed, why, and what it couldn't deci
 | The product | Chrome MV3 capture, the reading with per-claim evidence, the editable agreement, the unbypassable gate, the worker and reviewer, the diff, the shift report, per-change accept/reject, and the fold into a new version. **Added 2026-08-26:** the `/welcome` setup screen, the optional phone thread ([ADR-0021](./docs/adr/0021-a-thread-on-the-persons-phone.md)), and **an answer to a `DecisionNeeded` that is actually kept** ([ADR-0022](./docs/adr/0022-the-fourth-verdict.md)) — the screen used to offer a button beside the words *"Propositum doesn't keep your answer"*, so `needs-you` could be entered and never left. **Later the same day: a document can be opened from a `.md` or `.txt` file, copied, and downloaded**, and the editor is prose rather than monospace. The file is read in your browser and lands in the box on screen before anything is stored — there is no upload endpoint, and `tests/document-import.test.ts` pins that as an absence rather than a promise. |
 | [`extension/`](./extension/) | The capture extension. See its README — the host grant is a step only you can do, from the side panel. |
 
-**Built but not yet wired**, and asserted as such in `tests/reachability.test.ts` so it cannot be
+~~**Built but not yet wired**, and asserted as such in `tests/reachability.test.ts` so it cannot be
 mistaken for done: the shift-report narrative boundary (the field currently holds a stop-rule
-label), the heartbeat gap sweeper (so two of four `CaptureGap` reasons cannot occur), and ~~the
+label), the heartbeat gap sweeper (so two of four `CaptureGap` reasons cannot occur), and~~ ~~the
 `ModelCallRecord` writer (so the ledger does not reconstruct model calls)~~ — **the
 `ModelCallRecord` writer was wired 2026-08-16 and the reachability claim moved into the reachable
 section; every model call now records its boundary, model, latency, tokens and failure kind.**
+
+**The other two were wired 2026-08-27, along with outcome-scoped review findings.** The handover
+note now opens with a sentence boundary 6 wrote from rows rather than with a stop-rule label; the
+gap sweeper has a clock, so `service_worker_terminated` is writable — **`machine_slept` still is
+not**, because elapsed silence cannot tell a slept machine from a dead service worker; and a
+reviewer finding about a whole production is rendered on the card it belongs to instead of being
+stored and shown to nobody.
+
+**What is left in that block is one pin, and it is different in kind.** `LANDING_ACTION_KINDS` is
+empty because `extension/src/cdp.js` refuses every non-`GET` unconditionally — a mechanism, not a
+*not yet*, and spending it is [ADR-0024](./docs/adr/0024-purchases-within-a-ratified-authorisation.md)
+rather than an afternoon of wiring.
 
 ~~That is three.~~ ~~**Corrected 2026-08-16: the suite pins seven.**~~ ~~**The suite pins ten, and
 this paragraph accounts for six of them — corrected 2026-08-16, twice in one day.**~~
@@ -70,9 +82,10 @@ always passes, which is the outcome the README argues for in its own prose."*
 to ask a person, and a lost tab is reported. `scrollFraction`, exit type and arrival are read by the
 offer grounds ([ADR-0018](./docs/adr/0018-the-everyday-shapes.md)). ~~What is still pinned as deferred
 is the shift-report narrative boundary, the gap sweeper, outcome-scoped review findings, and
-`LANDING_ACTION_KINDS`~~ **Amended 2026-08-26 — two pins added and one spent.** Still deferred: the
+`LANDING_ACTION_KINDS`~~ ~~**Amended 2026-08-26 — two pins added and one spent.** Still deferred: the
 shift-report narrative boundary, the gap sweeper, outcome-scoped review findings,
-`LANDING_ACTION_KINDS`, and — ~~new with [ADR-0021](./docs/adr/0021-a-thread-on-the-persons-phone.md) —
+`LANDING_ACTION_KINDS`,~~ **Amended again 2026-08-27: three of those four are spent, and only
+`LANDING_ACTION_KINDS` is still deferred.** And — ~~new with [ADR-0021](./docs/adr/0021-a-thread-on-the-persons-phone.md) —
 **the message set, which is built and which no transport sends**, outbound and inbound pinned
 separately because they go live in different commits.~~ **Struck 2026-08-26, later the same day, by
 the commit that built the transport.** Both pins went red exactly as that block intends and have
