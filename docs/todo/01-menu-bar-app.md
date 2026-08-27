@@ -1,19 +1,51 @@
 # 01 — The menu-bar app that owns the runtime
 
-**Status:** not started — no code exists. **Narrowed twice on 2026-08-26:**
+**Status:** not started — no code exists. ~~**Narrowed twice on 2026-08-26:**
 three of ADR-0023's four jobs now have answers that are not a native binary —
 see *What already landed* below. What is left is the part only a native binary
-can do, and it is smaller than this file was written to describe.
+can do, and it is smaller than this file was written to describe.~~
+**Widened again, hours later the same day** — see *What ADR-0025 did to this
+file* below. It is still true that three of ADR-0023's four jobs are answered
+without a binary; it is no longer true that what is left is small.
 **Decided by:** [ADR-0023](../adr/0023-the-tray-app-owns-the-runtime.md), accepted
-2026-08-26
+2026-08-26, **as amended by**
+[ADR-0025](../adr/0025-computer-use-beyond-the-browser.md) the same day
 **Blocked by:** [`00`](./00-score-the-hypotheses.md), by judgment rather than by
 code. Nothing here is technically waiting on a score; building distribution for
 an unproven bet is just the expensive order to do it in.
-**Blocks:** [`05`](./05-chrome-web-store.md), and any honest attempt at H2.
+**Blocks:** [`05`](./05-chrome-web-store.md), ~~and any honest attempt at H2.~~
+**and — added 2026-08-26 —** [`07`](./07-off-the-browser.md) and, through it,
+[`08`](./08-one-time-codes.md), **and any honest attempt at H2.**
 
-This is the largest file here — two to three weeks — and it is the one that
-turns *n=1* into *n=many*. ADR-0023 names the cost of not doing it: *"the reason
-n=1 is partly that the second person cannot get the thing running."*
+~~This is the largest file here — two to three weeks~~ **— struck 2026-08-26:
+[`07`](./07-off-the-browser.md) is larger, and it depends on this one** — and it
+is the one that turns *n=1* into *n=many*. ADR-0023 names the cost of not doing
+it: *"the reason n=1 is partly that the second person cannot get the thing
+running."*
+
+### What ADR-0025 did to this file
+
+**ADR-0023's prohibition 1 — that the tray app requests no TCC permission — is
+amended, not deleted.** The binary this file describes is now the thing that
+holds **Accessibility, Screen Recording and Full Disk Access**. That is a very
+different install from a status light, and ADR-0023 said so about itself: a tray
+app requesting none was *"the prohibition the other four exist to protect."*
+
+What that changes here, concretely:
+
+- **Notarisation stops being a nicety.** Three TCC prompts on an unsigned binary
+  is not something you can ask a second person to accept, so the $99 and the
+  signing identity move from *needed eventually* to *needed before anyone else
+  runs this*.
+- **The permission grants are a new *What you have to do yourself* row**, and
+  there are three of them, each granted by hand in System Settings, each with its
+  own dialog. No script can do it.
+- **The kill switch belongs to this binary**, per ADR-0025 §2 — a global hotkey
+  handled in the Tauri process rather than in Node, so it works when the app is
+  wedged. That is scope this file did not have this morning.
+
+The capability itself is [`07`](./07-off-the-browser.md), not this file. What
+belongs here is the binary, the signature and the permissions it holds.
 
 ---
 

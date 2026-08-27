@@ -5,6 +5,14 @@
 **Blocks:** every other file here, in the sense that a failing H1 makes them
 premature rather than impossible.
 
+**That sentence got sharper on 2026-08-26**, when three decisions landed that
+each spend a safety guarantee: [`06`](./06-buying-things.md) spends the
+unconditional non-`GET` block, [`07`](./07-off-the-browser.md) spends the bound to
+one browser tab, and [`08`](./08-one-time-codes.md) spends read access to every
+message on the machine. *Premature* is the wrong word for those three. **Spending
+a guarantee to buy a capability nobody has measured is paying a price without
+knowing what it bought**, and this file is what turns the guess into a number.
+
 Related: [issue #85](https://github.com/smukhyala/propositum/issues/85), *Score
 H1 on the two sealed scenarios*.
 
