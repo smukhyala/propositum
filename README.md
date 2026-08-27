@@ -164,6 +164,16 @@ npx prisma db push            # creates the file and installs the append-only gu
 npm run dev                   # serves on 3117, and starts the worker beside it
 ```
 
+**A menu-bar app exists since 2026-08-27** (`src-tauri/`, ADR-0023 stage 1): `npm run build` then
+`npm run tray:dev` puts both halves under a supervisor that restarts a crashed child with backoff,
+shows one status light, and writes both children's output to
+`~/Library/Logs/Propositum/Propositum.log` — the first log this product has had that survives the
+terminal closing. It supervises this checkout in production mode (`next start`), takes no macOS
+permission (`tests/tray-permissions.test.ts` holds it to none), and every control on it is a link to
+a page here. What it does not yet do: hold the key field, run `prisma db push` at launch, or ship as
+a signed `.dmg` — that is [`docs/todo/01-menu-bar-app.md`](docs/todo/01-menu-bar-app.md)'s remaining
+half.
+
 **Then open [`/welcome`](http://127.0.0.1:3117/welcome), added 2026-08-26.** Five steps, each
 reading what is actually true rather than tracking a cursor — the key, a paired extension, an
 approved source, whether pages are arriving, and the phone — so refreshing, arriving by a link and

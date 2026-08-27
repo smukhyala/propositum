@@ -29,3 +29,7 @@ coverage/
 
 # Agent worktrees, created by Claude Code.
 .claude/worktrees/
+
+# the tray app (Rust build products and Tauri codegen)
+src-tauri/target/
+src-tauri/gen/
