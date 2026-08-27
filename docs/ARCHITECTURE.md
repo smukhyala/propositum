@@ -387,9 +387,12 @@ check is the one it cannot make: `sourcesRead` is empty and stays empty until so
 fetched page text, so it can judge internal support and vagueness and **cannot compare a draft against
 the source it cites**.
 
-**Honest limit: outcome-scoped findings are written and never shown.** A finding citing a whole
+~~**Honest limit: outcome-scoped findings are written and never shown.** A finding citing a whole
 production is stored with `outcomeId` set and `changeId` null, and the only reader on the re-entry
-screen joins through `changeId`. `findings.forRun` is pinned at zero callers in the deferred block.
+screen joins through `changeId`. `findings.forRun` is pinned at zero callers in the deferred block.~~
+**Struck 2026-08-27.** The shift page reads `findings.forRun`, and the outcome card renders what it
+returns under the same *"A second pass flagged this"* heading the per-change block uses. The pin has
+moved into the reachable section and now asserts the opposite.
 
 **Honest limit: `unverified` is the routine value.** Under the "leave your desk, not the building"
 constraint a local worker stops when the Mac sleeps, so an effect that landed with no check after it
@@ -473,9 +476,13 @@ do-not-build list; trust history can recommend a setting and can never create pe
 *Self-correcting:* `tests/reachability.test.ts` ~~pins `modelCallRecord.create` and `findings.forRun` at
 zero callers~~ *(2026-08-16: `modelCalls.create` moved into the reachable section and its needle was
 corrected there — the old one named a string only the repository's own Prisma delegate matched, so it
-could never have gone red; `findings.forRun` is still pinned)*. When a reader lands, that suite goes
-red **by design**, the claim is relocated into the reachable section rather than deleted, and this
-section's status marker moves with it.
+could never have gone red; ~~`findings.forRun` is still pinned~~ **2026-08-27: `findings.forRun` was
+promoted too, so this sentence now names two symbols that are both reachable and pins neither**)*.
+When a reader lands, that suite goes red **by design**, the claim is relocated into the reachable
+section rather than deleted, and this section's status marker moves with it.
+
+**The status marker did NOT move with it**, and that is not an oversight: rendering a finding is not
+learning from one, so *read, and still learning nothing* is unchanged.
 
 ---
 

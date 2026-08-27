@@ -71,6 +71,7 @@ function outcome(over: Partial<OutcomeView> = {}): OutcomeView {
     whatYouCanDo: null,
     verdict: null,
     changeCount: null,
+    findings: [],
     ...over,
   }
 }
@@ -319,6 +320,54 @@ describe('a verdict control appears once per decidable unit and never beside a l
 })
 
 /* ── the summary leads, the diff is the evidence ─────────────────────────── */
+
+/**
+ * The second pass, on a production rather than on a change.
+ *
+ * A finding citing an outcome handle has been storable since `review@2` and
+ * was rendered by nothing: the only reader was `findings.forChangeset`, which
+ * joins through `changeId`. So the reviewer said something true about a
+ * collection and the person never saw it — indistinguishable, in a green
+ * suite, from the reviewer never having said it.
+ */
+describe('an outcome-scoped finding reaches the person', () => {
+  it('renders what the second pass said about a whole production', () => {
+    const markup = renderToStaticMarkup(
+      createElement(WhatIMade, {
+        outcomes: [
+          outcome({
+            id: 'o1',
+            kind: 'collection',
+            items: ['4.1%', '4.4%'],
+            body: null,
+            findings: [
+              { kind: 'unsupported', detail: 'Two of these rates are from the same page.' },
+            ],
+          }),
+        ],
+        busy: false,
+        onDecide: () => undefined,
+      }),
+    )
+
+    expect(markup).toContain('A second pass flagged this')
+    expect(markup).toContain('Two of these rates are from the same page.')
+  })
+
+  it('says nothing at all when the reviewer flagged nothing', () => {
+    // The reviewer not running is a supported outcome, not a degraded one, so
+    // an empty heading would be this screen inventing a section.
+    const markup = renderToStaticMarkup(
+      createElement(WhatIMade, {
+        outcomes: [outcome({ id: 'o1', findings: [] })],
+        busy: false,
+        onDecide: () => undefined,
+      }),
+    )
+
+    expect(markup).not.toContain('A second pass flagged this')
+  })
+})
 
 describe('a change reads as a summary with the diff behind it', () => {
   it('puts why it was proposed above the changed text', () => {

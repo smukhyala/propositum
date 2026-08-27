@@ -76,6 +76,12 @@ const CSS = `
 .po-landed { margin: 0 0 0.6rem; font-family: var(--sans); font-size: 0.6875rem; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--attention); }
 .po-can-do { margin: 0.8rem 0 0; padding: 0.7rem 0.85rem; border-left: 2px solid var(--attention); font-size: 0.9375rem; }
 
+.po-findings { margin: 0.9rem 0 0; padding: 0.6rem 0 0.6rem 0.85rem; border-left: 2px solid var(--rule); }
+.po-findings-head { margin: 0 0 0.35rem; font-family: var(--sans); font-size: 0.6875rem; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+.po-findings ul { margin: 0; padding-left: 1.1rem; }
+.po-findings li { font-size: 0.875rem; color: var(--muted); max-width: 42rem; }
+.po-findings li + li { margin-top: 0.3rem; }
+
 .po-reason { margin: 0; padding: 0.625rem 1rem; border-top: 1px dashed var(--rule); font-size: 0.8125rem; color: var(--muted); }
 .po-verdicts { display: flex; gap: 0.5rem; align-items: baseline; flex-wrap: wrap; padding: 0.75rem 1rem; border-top: 1px solid var(--rule); }
 .po-aside { font-size: 0.8125rem; color: var(--faint); margin: 0; max-width: 34rem; }
@@ -121,6 +127,21 @@ export interface OutcomeView {
   readonly verdict: OutcomeVerdict | null
   /** How many changes are waiting below. `document-changes` only. */
   readonly changeCount: number | null
+  /**
+   * What the second pass said about this whole production, rather than about
+   * one change inside it.
+   *
+   * Display-only, exactly like the per-change findings in `diff.tsx`. These
+   * rows have been written since `review@2` gained outcome handles and were
+   * rendered by nothing: the only reader was `findings.forChangeset`, which
+   * joins through `changeId` and therefore cannot see a finding that cites
+   * `O1`. So the reviewer said something true about a collection or a draft and
+   * the person never read it.
+   *
+   * Empty is the normal case and renders nothing — the reviewer not running is
+   * a supported outcome, not a degraded one.
+   */
+  readonly findings: readonly { readonly kind: string; readonly detail: string }[]
 }
 
 /* ── the words for each kind ────────────────────────────────────────────── */
@@ -252,6 +273,21 @@ export function OutcomeCard({ outcome, index, busy = false, onDecide }: OutcomeC
               Propositum cannot undo this, and there is nothing here that would. Whatever happens
               next happens where it happened.
             </p>
+          ) : null}
+
+          {/* Deliberately the same words and the same treatment as the
+              per-change block in `diff.tsx`. A person reading down the page
+              should not have to work out that "a second pass" means the same
+              thing in two places — it does, and it is the same reviewer run. */}
+          {outcome.findings.length > 0 ? (
+            <div className="po-findings">
+              <p className="po-findings-head">A second pass flagged this</p>
+              <ul>
+                {outcome.findings.map((finding, i) => (
+                  <li key={`${finding.kind}-${i}`}>{finding.detail}</li>
+                ))}
+              </ul>
+            </div>
           ) : null}
         </div>
 

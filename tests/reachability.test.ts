@@ -326,6 +326,29 @@ describe('the safety machinery is reachable from the product', () => {
     ).toContain('src/persistence/ledger-writer.ts')
   })
 
+  it('an outcome-scoped finding is rendered, or the reviewer talks to nobody', () => {
+    /**
+     * `review@2` shows the reviewer outcome handles `O1…On` and asks it to cite
+     * the most specific handle it can, so a finding about a whole production is
+     * stored with `outcomeId` set and `changeId` null. The only reader on the
+     * re-entry screen was `findings.forChangeset`, which joins through
+     * `changeId` and therefore could not see one.
+     *
+     * So those rows existed and nobody was shown them — which in a green suite
+     * is indistinguishable from a finding never written, and is the exact shape
+     * of every defect the top of this file exists to remember.
+     *
+     * Promoted out of the deferred block 2026-08-27 when the shift page started
+     * reading `findings.forRun` and the outcome card started rendering it.
+     * `tests/re-entry-shape.test.ts` pins the rendering; this pins that the
+     * query has a caller at all.
+     */
+    expect(
+      callersOf('findings.forRun', 'src/persistence/repositories/index.ts'),
+      'outcome-scoped findings lost their reader — the reviewer is talking to nobody',
+    ).not.toEqual([])
+  })
+
   it('a finished review reaches the document, or the loop produces nothing', () => {
     // `materialise` had exactly one call site — the shift page's scale-label
     // recovery — and no code path ever wrote a version from a review. The
@@ -1792,34 +1815,6 @@ describe('deferred, and asserted as deferred', () => {
    * If you are here because one went red: that is the system working. Move it.
    */
   const repos = 'src/persistence/repositories/index.ts'
-
-  it('an outcome-scoped ReviewFinding is written and not yet rendered', () => {
-    /**
-     * The reviewer can now annotate a whole production, not only one change.
-     *
-     * `review@2` shows it outcome handles `O1…On` with change handles nested
-     * under the `document-changes` case, and the system prompt tells it to cite
-     * the most specific handle it can. A finding that cites `O1` is stored with
-     * `outcomeId` set and `changeId` null — and the only reader on the re-entry
-     * screen is `findings.forChangeset`, which joins through `changeId` and
-     * therefore cannot see it.
-     *
-     * So those rows exist and nobody is shown them. That is a real gap with a
-     * real consequence: the second pass says something true about the set of
-     * changes as a whole, and the person never reads it. It is asserted here
-     * rather than left implicit, because a finding written and never rendered is
-     * indistinguishable in a green suite from a finding never written — which is
-     * the exact shape of every defect the section above exists to remember.
-     *
-     * The fix is on the render side and the query it needs already exists:
-     * `findings.forRun` returns `outcomeId` beside `changeId`. Wiring it turns
-     * this red.
-     */
-    expect(
-      callersOf('findings.forRun', repos),
-      'outcome-scoped findings are rendered now — move this into the section above',
-    ).toEqual([])
-  })
 
   it('nothing lands, so an external-effect outcome cannot occur', () => {
     /**
