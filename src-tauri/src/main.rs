@@ -141,6 +141,12 @@ fn main() {
                             hold.kill_now();
                             let _ = handles.status.set_text("Stopped");
                             let _ = handles.start_again.set_enabled(true);
+                            // Beside the ring, so a press is visibly answered —
+                            // the first hands-on test pressed three times
+                            // because nothing on screen moved.
+                            if let Some(tray) = app.tray_by_id("propositum") {
+                                let _ = tray.set_title(Some("Stopped"));
+                            }
                         }
                     }
                 })
