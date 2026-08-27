@@ -7,7 +7,7 @@
  * because a dead service worker cannot report its own death.
  */
 
-import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest'
+import { describe, it, expect, beforeAll, beforeEach, afterEach, afterAll, vi } from 'vitest'
 import { execFileSync } from 'node:child_process'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -23,6 +23,8 @@ import { createLedgerWriter } from '../src/persistence/ledger-writer'
 import type { LedgerWriter } from '../src/persistence/ledger-writer'
 import { HEARTBEAT_GRACE_MS, createCaptureSessionStore } from '../src/server/capture-session'
 import { sweepForGap } from '../src/server/gap-sweeper'
+import { GAP_SWEEP_INTERVAL_MS, startGapWatch, stopGapWatch } from '../src/server/gap-watch'
+import { existingAppContext } from '../src/server/db'
 
 let dir: string
 let db: Database
@@ -150,6 +152,68 @@ describe('the sweeper writes the gap to the ledger', () => {
 })
 
 /**
+ * The clock that calls the sweeper.
+ *
+ * `sweepForGap` was correct and tested above from the day it was written, and
+ * nothing called it — so `service_worker_terminated` was a reason no row could
+ * ever carry. `tests/reachability.test.ts` is what pins the caller's existence;
+ * what is worth testing HERE is the two properties that file cannot see.
+ *
+ * Both are about not doing damage rather than about doing work, which is why
+ * neither is covered by the sweeper's own tests: the sweeper is handed its
+ * dependencies, and these are the two ways the timer around it could hurt.
+ */
+describe('the gap watch is armed by a session and disarmed with it', () => {
+  afterEach(() => {
+    stopGapWatch()
+    vi.useRealTimers()
+  })
+
+  it('arms once, however many times a session starts', () => {
+    startGapWatch()
+    const first = globalThis.__propositumGapWatch
+    startGapWatch()
+    startGapWatch()
+
+    // Two intervals sweeping one store would be two callers racing to record
+    // the same silence, and `detectGap` only defends against the second READ —
+    // it has no idea two timers exist.
+    expect(globalThis.__propositumGapWatch).toBe(first)
+
+    stopGapWatch()
+    expect(globalThis.__propositumGapWatch).toBeUndefined()
+
+    // Disarming something already disarmed is not an error. `endSession` runs
+    // on a session that may never have armed one.
+    stopGapWatch()
+    expect(globalThis.__propositumGapWatch).toBeUndefined()
+  })
+
+  it('opens no database when a tick finds no context', async () => {
+    /**
+     * The loaded gun `src/server/db.ts` documents, aimed at this file.
+     *
+     * `appContext()` would take `DATABASE_URL` from `.env` and open the
+     * developer's real `propositum.db` — from a TIMER, in any process that
+     * imported this module, including a vitest worker running a file that has
+     * no idea a sweeper exists. That is how `npm run eval -- --report` came to
+     * print counts its own test suite had manufactured, once already.
+     *
+     * So the assertion is the absence: with no context built, a tick returns
+     * having touched nothing. `existingAppContext()` is what makes that true,
+     * and swapping it back to `appContext()` turns this red.
+     */
+    expect(existingAppContext()).toBeUndefined()
+
+    vi.useFakeTimers()
+    startGapWatch()
+    await vi.advanceTimersByTimeAsync(GAP_SWEEP_INTERVAL_MS * 3)
+
+    expect(existingAppContext()).toBeUndefined()
+  })
+})
+
+/**
  * How far down the page they got, from the wire into the buffer.
  *
  * `content.js` has computed a scroll fraction on every engagement report for as
@@ -218,9 +282,15 @@ describe('the ambient path carries how far down the page they got', () => {
   it('keeps both ends of the range, because 0 and 1 are real readings', async () => {
     const now = Date.now()
 
-    await ambientRoute(ambientPost([engagement(now, 0), { ...engagement(now, 1), url: 'https://a.example/2' }]))
+    await ambientRoute(
+      ambientPost([engagement(now, 0), { ...engagement(now, 1), url: 'https://a.example/2' }]),
+    )
 
-    expect(ambientStore().since(now).map((o) => o.scrollFraction)).toEqual([0, 1])
+    expect(
+      ambientStore()
+        .since(now)
+        .map((o) => o.scrollFraction),
+    ).toEqual([0, 1])
   })
 
   it('leaves the field absent when the sender says nothing, rather than calling it zero', async () => {
@@ -337,9 +407,7 @@ describe('the ambient path carries how far down the page they got', () => {
     it('carries a tab group title, which is the one thing here the person wrote', async () => {
       const now = Date.now()
 
-      await ambientRoute(
-        ambientPost([{ ...engagement(now, 0.4), groupTitle: 'world models' }]),
-      )
+      await ambientRoute(ambientPost([{ ...engagement(now, 0.4), groupTitle: 'world models' }]))
 
       expect(ambientStore().since(now)[0]?.groupTitle).toBe('world models')
     })
@@ -381,9 +449,7 @@ describe('the ambient path carries how far down the page they got', () => {
       // of the same thing and the tie-break picks whichever sorts first.
       const now = Date.now()
 
-      await ambientRoute(
-        ambientPost([{ ...engagement(now, 0.4), groupTitle: '  world models ' }]),
-      )
+      await ambientRoute(ambientPost([{ ...engagement(now, 0.4), groupTitle: '  world models ' }]))
 
       expect(ambientStore().since(now)[0]?.groupTitle).toBe('world models')
     })

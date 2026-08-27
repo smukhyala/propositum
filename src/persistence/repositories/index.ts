@@ -58,6 +58,7 @@ export interface Repositories {
   readonly changesets: ChangesetRepository
   readonly findings: ReviewFindingRepository
   readonly reports: ShiftReportRepository
+  readonly plans: PlanStepRepository
   readonly offers: WorkOfferRepository
   readonly outcomes: ShiftOutcomeRepository
   readonly confirmations: ConfirmationRepository
@@ -109,6 +110,7 @@ export function createRepositories(prisma: PrismaClient): Repositories {
     changesets: changesetRepository(prisma),
     findings: reviewFindingRepository(prisma),
     reports: shiftReportRepository(prisma),
+    plans: planStepRepository(prisma),
     offers: workOfferRepository(prisma),
     outcomes: shiftOutcomeRepository(prisma),
     confirmations: confirmationRepository(prisma),
@@ -1899,6 +1901,72 @@ function reviewFindingRepository(prisma: PrismaClient): ReviewFindingRepository 
         where: { runId },
         select: { changeId: true, outcomeId: true, kind: true, detail: true },
       }),
+  }
+}
+
+/* ── PlanStep ──────────────────────────────────────────────────────────── */
+
+/**
+ * What a run said it would do, beside what came of each part.
+ *
+ * ── Read-only, because the writer is somewhere else ──────────────────────
+ *
+ * `recordSteps` in `src/server/execute-run.ts` writes these through
+ * `ctx.db.prisma` directly, and this repository deliberately does not offer a
+ * `create` that would make two writers for one table. It exists for the one
+ * thing no other query can answer: which of the run's stated steps produced an
+ * action that succeeded.
+ *
+ * ── Why the join rather than a status column ─────────────────────────────
+ *
+ * `PlanStep` has no status and should not gain one. A step is what the model
+ * SAID it would do; whether it happened is a fact about `ActionIntent` and
+ * `ActionOutcome`, which are append-only and are the receipt. A status column
+ * would be a second, mutable opinion about the same question, kept in step by
+ * hand — and the first time the two disagreed the wrong one would be the one
+ * on screen.
+ *
+ * So this returns the rows and decides nothing. The split into done and not
+ * done is `splitSteps` in `src/domain/outcome/plan-progress.ts`, which is pure
+ * and reads no clock.
+ */
+export interface PlanStepRepository {
+  forRun(runId: string): Promise<
+    Array<{
+      ordinal: number
+      intent: string
+      intents: Array<{ authorized: boolean; result: string | null }>
+    }>
+  >
+}
+
+function planStepRepository(prisma: PrismaClient): PlanStepRepository {
+  return {
+    forRun: async (runId) => {
+      const rows = await prisma.planStep.findMany({
+        where: { runId },
+        orderBy: { ordinal: 'asc' },
+        select: {
+          ordinal: true,
+          intent: true,
+          intents: {
+            select: { authorized: true, outcome: { select: { result: true } } },
+          },
+        },
+      })
+
+      return rows.map((row) => ({
+        ordinal: row.ordinal,
+        intent: row.intent,
+        // Flattened here rather than in the caller, so `result: null` says one
+        // thing — no outcome row — instead of the caller having to tell a
+        // missing join from a missing column.
+        intents: row.intents.map((intent) => ({
+          authorized: intent.authorized,
+          result: intent.outcome?.result ?? null,
+        })),
+      }))
+    },
   }
 }
 

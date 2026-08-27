@@ -264,6 +264,29 @@ describe('the safety machinery is reachable from the product', () => {
     expect(callersOf('ensureAppendOnlyGuards', 'src/persistence/append-only.ts')).not.toEqual([])
   })
 
+  it('something polls for heartbeat silence, or a gap reason cannot occur', () => {
+    /**
+     * `sweepForGap` turns silence into a `captureGap` with reason
+     * `service_worker_terminated`. It was correct and tested from the day it
+     * was written and called by nothing, so that reason was unreachable and the
+     * timeline read as continuous whenever the service worker had died.
+     *
+     * Promoted out of the deferred block 2026-08-27 when `src/server/gap-watch.ts`
+     * armed a clock on the session's lifetime.
+     *
+     * ── What this does NOT say ───────────────────────────────────────────
+     *
+     * `machine_slept` is STILL unwritable, and the caller does not change that:
+     * elapsed silence cannot tell a slept machine from a dead service worker.
+     * One of the two reasons this pin used to cover is closed and the other is
+     * exactly as open as it was — which is why the title says *a* gap reason.
+     */
+    expect(
+      callersOf('sweepForGap(', 'src/server/gap-sweeper.ts'),
+      'the gap sweeper lost its caller — silence stopped being recordable',
+    ).not.toEqual([])
+  })
+
   it('events reach the ledger writer rather than a repository', () => {
     expect(callersOf('createLedgerWriter', 'src/persistence/ledger-writer.ts')).not.toEqual([])
   })
@@ -301,6 +324,66 @@ describe('the safety machinery is reachable from the product', () => {
       callers,
       'cleanUrl must be called at the ledger door, so no caller can bypass it',
     ).toContain('src/persistence/ledger-writer.ts')
+  })
+
+  it('an outcome-scoped finding is rendered, or the reviewer talks to nobody', () => {
+    /**
+     * `review@2` shows the reviewer outcome handles `O1…On` and asks it to cite
+     * the most specific handle it can, so a finding about a whole production is
+     * stored with `outcomeId` set and `changeId` null. The only reader on the
+     * re-entry screen was `findings.forChangeset`, which joins through
+     * `changeId` and therefore could not see one.
+     *
+     * So those rows existed and nobody was shown them — which in a green suite
+     * is indistinguishable from a finding never written, and is the exact shape
+     * of every defect the top of this file exists to remember.
+     *
+     * Promoted out of the deferred block 2026-08-27 when the shift page started
+     * reading `findings.forRun` and the outcome card started rendering it.
+     * `tests/re-entry-shape.test.ts` pins the rendering; this pins that the
+     * query has a caller at all.
+     */
+    expect(
+      callersOf('findings.forRun', 'src/persistence/repositories/index.ts'),
+      'outcome-scoped findings lost their reader — the reviewer is talking to nobody',
+    ).not.toEqual([])
+  })
+
+  it('boundary 6 is wired, or the narrative is a stop-rule label again', () => {
+    /**
+     * `execute-run` stored `narrative: stopLabel` — a consumer label rendered
+     * where model prose belongs. Not wrong, and not what the field means: a
+     * person coming back to *"I ran out of the time you gave me."* was told
+     * where the run stopped and nothing about what it did, and a clean run that
+     * hit no stop rule stored `null`, leaving the top of the screen a time
+     * window.
+     *
+     * Promoted out of the deferred block 2026-08-27. `src/server/shift-narrative.ts`
+     * is the caller; `writeReport` tries it first and falls back to exactly what
+     * it wrote before, so the boundary still fails open the way its own header
+     * asks it to.
+     *
+     * ── The needle lost its paren, 2026-08-20, and that was the whole pin ──
+     *
+     * Kept, because it is the reason this assertion is a BARE NAME and every
+     * instinct says it should have a paren. It read `'shiftReportBoundary('`,
+     * and no wiring of this boundary can ever produce that text:
+     * `shiftReportBoundary` is a plain object, not a factory, so `ModelClient.run`
+     * takes it as `run(boundary, input)` and it is written `shiftReportBoundary,`
+     * the way `planBoundary`, `offerBoundary`, `subjectBoundary` and
+     * `workerActionBoundary` are. Only the three factory boundaries —
+     * `sessionReadingBoundary`, `handoffBoundary`, `reviewBoundary` — are ever
+     * followed by `(`.
+     *
+     * So the one form in which boundary 6 can be wired was the one form the
+     * needle could not see, and this file sat green through the whole period it
+     * was meant to be watching. A bare name is safe here because `callersOf`
+     * excludes the defining file and strips imports and comments.
+     */
+    expect(
+      callersOf('shiftReportBoundary', 'src/model/boundaries/shift-report.ts'),
+      'boundary 6 lost its caller — the narrative is a stop-rule label again',
+    ).not.toEqual([])
   })
 
   it('a finished review reaches the document, or the loop produces nothing', () => {
@@ -1719,94 +1802,31 @@ describe('the channel can speak, from two feeds and no others', () => {
 })
 
 describe('deferred, and asserted as deferred', () => {
-  it('boundary 6 is still unwired, so the narrative is a stop-rule label', () => {
-    /**
-     * `execute-run` stores `narrative: stopLabel` — a consumer label rendered
-     * where model prose belongs. Not wrong, but not what the field means.
-     *
-     * ── The needle lost its paren, 2026-08-20, and that was the whole pin ──
-     *
-     * It read `'shiftReportBoundary('`, and no wiring of THIS boundary can ever
-     * produce that text. `shiftReportBoundary` is a plain object, not a factory:
-     * `ModelClient.run` takes it as `run(boundary, input)`, so it is written
-     * `shiftReportBoundary,` exactly the way `planBoundary`, `offerBoundary`,
-     * `subjectBoundary` and `workerActionBoundary` are. Only the three factory
-     * boundaries — `sessionReadingBoundary`, `handoffBoundary`, `reviewBoundary`
-     * — are ever followed by `(`.
-     *
-     * So the one form in which boundary 6 can be wired was the one form the
-     * needle could not see. Measured: `deps.model.run(shiftReportBoundary, {…})`
-     * live in `src/server/execute-run.ts` left this file at 85 passed and
-     * `tsc --noEmit` clean, while `README.md` and `docs/ARCHITECTURE.md` both
-     * cite this pin as the reason the narrative cannot be mistaken for done.
-     *
-     * A bare name is the right needle HERE and the wrong one for `controlLost`
-     * above, and the difference is which file the writer lives in. `callersOf`
-     * excludes the defining file and strips imports, so a bare
-     * `shiftReportBoundary` surviving in any other production file is a use and
-     * can be nothing else — the only mention today is a comment in
-     * `execute-run.ts` saying this is not boundary 6, and `stripComments`
-     * removes it. `controlLost` is declared in the same function that writes
-     * it, so there the bare name was satisfied by the declaration.
-     */
-    expect(
-      callersOf('shiftReportBoundary', 'src/model/boundaries/shift-report.ts'),
-      'shiftReportBoundary is wired now — move this into the section above',
-    ).toEqual([])
-  })
-
-  it('nothing polls for heartbeat silence, so that gap reason cannot occur', () => {
-    // `sweepForGap` turns silence into a `captureGap` with reason
-    // `service_worker_terminated`. With no caller, that reason is unreachable,
-    // and so is `machine_slept` — two of the four are unwritable in slice 0.
-    expect(
-      callersOf('sweepForGap(', 'src/server/gap-sweeper.ts'),
-      'the gap sweeper has a caller now — move this into the section above',
-    ).toEqual([])
-  })
-
   /**
    * The computer-use tables, landed ahead of everything that uses them.
    *
    * Schema and repositories are one unit and the paths that write them are
-   * several others, so for one commit these are tables with guards,
+   * several others, so for one commit these were tables with guards,
    * repositories with tests, and no callers — the exact shape of every bug the
    * section above exists to remember. Asserting the absence is what stops that
-   * shape from being indistinguishable from the accident: each of these turns
-   * this file RED the moment something calls it, which forces the claim up into
-   * the reachable section rather than leaving it ambiguous.
+   * shape from being indistinguishable from the accident: it turns this file
+   * RED the moment something calls it, which forces the claim up into the
+   * reachable section rather than leaving it ambiguous.
    *
-   * If you are here because one went red: that is the system working. Move it.
+   * **This block held four assertions and now holds one.** Boundary 6, the gap
+   * sweeper and the outcome-scoped finding were all promoted on 2026-08-27 —
+   * boundary 6 by this file going red on the commit that wired it, which is the
+   * mechanism working rather than anybody remembering.
+   *
+   * What is left is the one that is different in kind. The other three were
+   * *not yet*: the code existed, nothing called it, and calling it was a day's
+   * work. This one is held shut by a MECHANISM — `classifyPausedRequest` fails
+   * every non-`GET` unconditionally — so it cannot be wired by wiring. Read its
+   * body before treating it as the same sort of absence.
+   *
+   * If you are here because it went red: that is the system working, and
+   * ADR-0024 is the argument you are looking for. Move it.
    */
-  const repos = 'src/persistence/repositories/index.ts'
-
-  it('an outcome-scoped ReviewFinding is written and not yet rendered', () => {
-    /**
-     * The reviewer can now annotate a whole production, not only one change.
-     *
-     * `review@2` shows it outcome handles `O1…On` with change handles nested
-     * under the `document-changes` case, and the system prompt tells it to cite
-     * the most specific handle it can. A finding that cites `O1` is stored with
-     * `outcomeId` set and `changeId` null — and the only reader on the re-entry
-     * screen is `findings.forChangeset`, which joins through `changeId` and
-     * therefore cannot see it.
-     *
-     * So those rows exist and nobody is shown them. That is a real gap with a
-     * real consequence: the second pass says something true about the set of
-     * changes as a whole, and the person never reads it. It is asserted here
-     * rather than left implicit, because a finding written and never rendered is
-     * indistinguishable in a green suite from a finding never written — which is
-     * the exact shape of every defect the section above exists to remember.
-     *
-     * The fix is on the render side and the query it needs already exists:
-     * `findings.forRun` returns `outcomeId` beside `changeId`. Wiring it turns
-     * this red.
-     */
-    expect(
-      callersOf('findings.forRun', repos),
-      'outcome-scoped findings are rendered now — move this into the section above',
-    ).toEqual([])
-  })
 
   it('nothing lands, so an external-effect outcome cannot occur', () => {
     /**

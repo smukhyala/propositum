@@ -1,6 +1,8 @@
 # 04 — The half-day of things that are just wrong
 
-**Status:** ~~not started~~ **done 2026-08-26, except item 7, which is the owner's.**
+**Status:** ~~not started~~ ~~done 2026-08-26, except item 7, which is the owner's.~~ **Two left,
+2026-08-27: item 7, which is the owner's, and item 10, which was added the same day and is not a
+quick fix at all — it is here so nobody rediscovers why it cannot be one.**
 **Blocked by:** nothing at all.
 **Blocks:** nothing.
 
@@ -8,8 +10,8 @@ It took rather longer than half a day, and the reason is item 4: the file said
 *shift* leaked onto four screens and it had leaked onto **twelve**. Two other
 counts here were low as well. What the fixes cost is written beside each one.
 
-Ten small defects, one of which fixed itself while this file was being
-written. None is hard, none depends on anything, and each one is
+~~Ten~~ **eleven** small defects, one of which fixed itself while this file was being
+written, and one of which — item 10, added 2026-08-27 — turned out not to be small. None is hard, none depends on anything, and each one is
 visible to the first person who uses the product. Do them when something else is
 waiting on Apple or on a model run.
 
@@ -60,7 +62,8 @@ over…`, which is now the *correct* answer rather than a job, and no longer hit
 `Take over`; (4) returns nothing; (5) still returns `0`, and that one is
 deliberate.
 
-**~~Seven left, not nine.~~ One left, and it is item 7.** Everything struck below
+**~~Seven left, not nine.~~ ~~One left, and it is item 7.~~ Two left, 2026-08-27 — item 7 and item
+10.** Everything struck below
 is struck rather than deleted, because a checklist that silently loses its
 finished items reads as though they were never on it.
 
@@ -185,6 +188,34 @@ from the greps at the top rather than from the code.
    place, keeping the section. Its consumer-language table also gained the two
    rulings from items 3 and 4, so the principles and `CONTEXT.md` now say the
    same thing about the same words.
+
+10. **`machine_slept` is still an unwritable `CaptureGap` reason.** *(Added
+    2026-08-27, found while wiring the gap sweeper.)*
+
+    ```bash
+    grep -rn "machine_slept" src/
+    ```
+
+    Two of the four reasons used to be unreachable because `sweepForGap` had no
+    caller. It has one now — `src/server/gap-watch.ts`, armed by `startSession`
+    and disarmed by `endSession` — so `service_worker_terminated` is writable.
+    **`machine_slept` is not, and a caller cannot make it one.**
+
+    The reason is not wiring, which is why this is a separate item rather than a
+    loose end on the last one: from the app's side the two are *identical*.
+    Elapsed silence is all there is, and a slept machine and a dead service
+    worker both produce exactly that. Telling them apart needs a signal nothing
+    currently supplies — a wake notification from the OS, or the extension
+    reporting on revival that it was terminated rather than that time passed.
+
+    Both of those are the menu-bar app's ([`01`](./01-menu-bar-app.md)) or the
+    extension's, so **this is not the half-day job the rest of this file is**.
+    It is listed here because the alternative is that a reader runs the grep,
+    finds a reason no row can carry, and has to rediscover why.
+
+    Until then the gap is recorded with the reason that is true — the extension
+    went quiet — rather than with a guess about why, which is the correct fail
+    direction and is worth keeping if this is ever built.
 
 ---
 

@@ -208,6 +208,18 @@ Beyond the guards:
   add what you found, and **write the file for a decision you accepted but did not build** — the
   three rules are argued at the top of this document. Nothing enforces any of them; the failure mode
   is a corpus that describes a product nobody has written, and it has happened once already.
+- **`docs/ARCHITECTURE.md` is re-marked in the same commit as any major change** *(added
+  2026-08-27)*. A major change is one that moves a layer's Status cell, spends a bound that file
+  states as permanent, or accepts an ADR that reverses something it asserts. `tests/counts.test.ts`
+  reads the Status column and nothing else, so **no test will ever catch a stale claim in the
+  prose** — it is corrected by somebody remembering or not at all. It went 0-for-3 on ADR-0024,
+  ADR-0025 and ADR-0026 for a day, which is why this bullet exists.
+
+  **Keep it short.** Re-mark the sentence that is now false, strike and date it in place, and stop —
+  the correction is a clause or two beside the claim, never a new section and never a summary of the
+  ADR, which is what the ADR is for. **A status cell moves only when the code moves**, so a decision
+  that is accepted and unbuilt gets a corrected sentence and an unchanged cell; that distinction is
+  the whole value of the column and it is the easiest thing to lose on the day an ADR lands.
 
 ## Vocabulary
 
