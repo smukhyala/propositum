@@ -5,10 +5,20 @@
 does. The mechanism stays; it stops being unconditional.
 **Depends on:** [ADR-0004](./0004-policy-gate.md) (the gate), [ADR-0006](./0006-trust-boundary.md)
 (why prose may not reach a permission decision)
+**Requested by:** the owner, 2026-08-26 — *"it can buy things, but needs explicit human permission"*, and, on what
+separates the two cases: *"if i say 'buy 10 avacados from amazon' it should do EXACTLY that … If i
+say 'find me food for dinner' it should NOT place an order or charge, as permission was not
+explicitly added"*
 
 ## The sentence that stops being true
 
-**Propositum can now spend your money.** Until today it could not, and the reason was not a policy —
+**Propositum may now spend your money — decided here, and not yet built.** The distinction is not
+pedantry: as this ADR is accepted `extension/src/cdp.js` still refuses every non-`GET`,
+`LANDING_ACTION_KINDS` is still empty, and `src/ui/agreement.tsx` still tells people Propositum
+cannot buy anything, correctly. [`docs/todo/06-buying-things.md`](../todo/06-buying-things.md) is the
+work between the decision and the capability. Everything below describes what is being permitted.
+
+Until today it could not, and the reason was not a policy —
 it was that `extension/src/cdp.js` failed every request the agent's tab was about to send that was
 not a `GET`, at the network, unconditionally:
 

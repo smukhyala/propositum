@@ -20,23 +20,27 @@ bullet that used to forbid it.
 ## Is this already done?
 
 ```bash
-# 1. the object itself — schema, domain, anywhere
-grep -rn 'PurchaseAuthorization' src/ prisma/
+# 1. the object itself — a FIELD, not a mention. The word appears in docblocks
+#    describing what was decided, so grep for something only the code would have.
+grep -rn 'maxAmount\|originPattern.*PurchaseAuth\|purchaseAuthorization' src/ prisma/
 
 # 2. the transport. This is the one that decides whether Propositum can spend
 grep -n "method !== 'GET'" extension/src/cdp.js
 
-# 3. the enum the whole thing hangs off
-grep -rn 'LANDING_ACTION_KINDS = ' src/
+# 3. the set the whole thing hangs off
+grep -n 'export const LANDING_ACTION_KINDS' src/domain/handoff/policy.ts
 
 # 4. the standing fixture that must never pass
 ls tests/purchase-authorisation.test.ts
 ```
 
-**As of 2026-08-26:** (1) returns nothing in `src/` or `prisma/` — the only hits anywhere are
-`CONTEXT.md` and the ADR, both of which say so about themselves; (2) returns
-`extension/src/cdp.js:553`, still refusing unconditionally; (3) returns `new Set<ActionKind>()`,
-still empty; (4) does not exist.
+**As of 2026-08-26:** (1) returns nothing — a bare `grep -rn 'PurchaseAuthorization' src/` returns
+**one** hit, and it is a docblock in `src/domain/execution/reversibility.ts:75` describing the
+decision, which is why command 1 asks for a field name instead. That distinction is the whole point
+of this heading: the word is all over the corpus and the fields are nowhere. (2) returns
+`extension/src/cdp.js:553`, still refusing unconditionally; (3) returns
+`export const LANDING_ACTION_KINDS: ReadonlySet<ActionKind> = new Set<ActionKind>()` at
+`src/domain/handoff/policy.ts:168`, still empty; (4) does not exist.
 
 So **Propositum cannot buy anything today**, and every sentence in the product that says so is still
 true. `src/ui/agreement.tsx:298` lists *"Buy anything"* under what Propositum has no way to do, and

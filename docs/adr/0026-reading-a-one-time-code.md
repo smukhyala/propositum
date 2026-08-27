@@ -5,6 +5,8 @@
 this uses), [ADR-0023](./0023-the-tray-app-owns-the-runtime.md) as amended (the signed binary that
 can hold it)
 **Amends:** [ADR-0002](./0002-observation-capture.md) — the boundary of what Propositum may read
+**Requested by:** the owner, 2026-08-26 — *"full computer use so it can do 2fa. I have my imessage on mac … it should
+be able to say, go to amazon, use stored passkey, and wait for 2fa code from imessage"*
 
 ## The sentence that stops being true
 

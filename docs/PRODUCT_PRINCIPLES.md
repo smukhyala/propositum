@@ -165,8 +165,9 @@ landing `ActionKind`, which the gate refuses unless the human acknowledged ~~**t
 individually**~~ — not via a dial — and whose outcome is **reported rather than reviewed**.
 
 *(Amended again 2026-08-26 — [ADR-0024](./adr/0024-purchases-within-a-ratified-authorisation.md).
-**This is the second time this principle has got weaker, and this is the second time that is said
-here rather than in a footnote.**)*
+**The second time this principle has got weaker, and the first strike it has carried** — the
+2026-08-11 weakening was recorded as an amendment note and left the sentence intact. Both are said
+here rather than in a footnote.)*
 
 **For a purchase the acknowledgement is per instruction, not per action.** A `PurchaseAuthorization`
 — an origin, a ceiling, a count, an expiry — drafted by a model from what the person asked for and

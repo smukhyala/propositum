@@ -7,6 +7,8 @@
 requests no TCC permission · [ADR-0002](./0002-observation-capture.md) — what may be observed
 **Depends on:** [ADR-0024](./0024-purchases-within-a-ratified-authorisation.md) (a non-`GET` can now
 be sent, which is what makes signing in possible at all)
+**Requested by:** the owner, 2026-08-26 — *"this needs to expand beyond just the chrome browser"*, *"full computer
+use"*, and the constraint the design is built around: *"DO NOT INCONVENIENCE THE HUMAN"*
 
 ## The sentence that stops being true
 

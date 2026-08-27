@@ -9,7 +9,18 @@ finished todo is a record of what the state was when somebody started.
 
 ## How to read a file here
 
-Every one has the same six headings, in this order:
+~~Every one has the same six headings, in this order:~~ **Struck 2026-08-26 —
+that was never true and it was checked rather than assumed.** Every one covers
+these six things, in this order, and where each lives is not uniform: **Blocked
+by** is a bold field in the header on [`00`](./00-score-the-hypotheses.md) through
+[`05`](./05-chrome-web-store.md) and a full heading on
+[`06`](./06-buying-things.md) through [`08`](./08-one-time-codes.md), where there
+is an argument rather than a name. Three files also carry a seventh heading of
+their own, and [`02`](./02-phone-thread.md) is finished and has dropped most of
+them.
+
+The claim is corrected rather than the files, because the shape was never the
+point and a rule nothing enforces is one more thing to keep true by hand.
 
 1. **Is this already done?** — a command to run, and what its output means. Run
    it first. Work in this repository has a habit of landing without the document
@@ -24,6 +35,11 @@ Every one has the same six headings, in this order:
 5. **Done when** — the check that closes the file.
 6. **What this does not cover** — stated because a finished todo reads as a
    stronger promise than it is.
+
+A seventh is worth adding when it earns a heading: what the work **disturbed**
+that nothing predicted ([`03`](./03-document-loop.md), [`04`](./04-quick-fixes.md)),
+or what would make the file **deletable** rather than done
+([`08`](./08-one-time-codes.md)).
 
 ## The order, and why
 
@@ -84,7 +100,8 @@ the strongest guarantees this product has, and **0 is what decides whether they
 are worth spending.** Building any of them before H1, H2 and H3 have numbers is
 paying the price of a bet without knowing whether the bet paid.
 
-The ADRs say this about themselves — two of the three open by saying the product
+The ADRs say this about themselves — all three open with a section headed *The
+sentence that stops being true*, and each says the product
 gets less safe — so this ordering is not a fourth opinion, it is the same one
 written where somebody picking up work will read it.
 
