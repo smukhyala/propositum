@@ -349,6 +349,43 @@ describe('the safety machinery is reachable from the product', () => {
     ).not.toEqual([])
   })
 
+  it('boundary 6 is wired, or the narrative is a stop-rule label again', () => {
+    /**
+     * `execute-run` stored `narrative: stopLabel` — a consumer label rendered
+     * where model prose belongs. Not wrong, and not what the field means: a
+     * person coming back to *"I ran out of the time you gave me."* was told
+     * where the run stopped and nothing about what it did, and a clean run that
+     * hit no stop rule stored `null`, leaving the top of the screen a time
+     * window.
+     *
+     * Promoted out of the deferred block 2026-08-27. `src/server/shift-narrative.ts`
+     * is the caller; `writeReport` tries it first and falls back to exactly what
+     * it wrote before, so the boundary still fails open the way its own header
+     * asks it to.
+     *
+     * ── The needle lost its paren, 2026-08-20, and that was the whole pin ──
+     *
+     * Kept, because it is the reason this assertion is a BARE NAME and every
+     * instinct says it should have a paren. It read `'shiftReportBoundary('`,
+     * and no wiring of this boundary can ever produce that text:
+     * `shiftReportBoundary` is a plain object, not a factory, so `ModelClient.run`
+     * takes it as `run(boundary, input)` and it is written `shiftReportBoundary,`
+     * the way `planBoundary`, `offerBoundary`, `subjectBoundary` and
+     * `workerActionBoundary` are. Only the three factory boundaries —
+     * `sessionReadingBoundary`, `handoffBoundary`, `reviewBoundary` — are ever
+     * followed by `(`.
+     *
+     * So the one form in which boundary 6 can be wired was the one form the
+     * needle could not see, and this file sat green through the whole period it
+     * was meant to be watching. A bare name is safe here because `callersOf`
+     * excludes the defining file and strips imports and comments.
+     */
+    expect(
+      callersOf('shiftReportBoundary', 'src/model/boundaries/shift-report.ts'),
+      'boundary 6 lost its caller — the narrative is a stop-rule label again',
+    ).not.toEqual([])
+  })
+
   it('a finished review reaches the document, or the loop produces nothing', () => {
     // `materialise` had exactly one call site — the shift page's scale-label
     // recovery — and no code path ever wrote a version from a review. The
@@ -1765,42 +1802,6 @@ describe('the channel can speak, from two feeds and no others', () => {
 })
 
 describe('deferred, and asserted as deferred', () => {
-  it('boundary 6 is still unwired, so the narrative is a stop-rule label', () => {
-    /**
-     * `execute-run` stores `narrative: stopLabel` — a consumer label rendered
-     * where model prose belongs. Not wrong, but not what the field means.
-     *
-     * ── The needle lost its paren, 2026-08-20, and that was the whole pin ──
-     *
-     * It read `'shiftReportBoundary('`, and no wiring of THIS boundary can ever
-     * produce that text. `shiftReportBoundary` is a plain object, not a factory:
-     * `ModelClient.run` takes it as `run(boundary, input)`, so it is written
-     * `shiftReportBoundary,` exactly the way `planBoundary`, `offerBoundary`,
-     * `subjectBoundary` and `workerActionBoundary` are. Only the three factory
-     * boundaries — `sessionReadingBoundary`, `handoffBoundary`, `reviewBoundary`
-     * — are ever followed by `(`.
-     *
-     * So the one form in which boundary 6 can be wired was the one form the
-     * needle could not see. Measured: `deps.model.run(shiftReportBoundary, {…})`
-     * live in `src/server/execute-run.ts` left this file at 85 passed and
-     * `tsc --noEmit` clean, while `README.md` and `docs/ARCHITECTURE.md` both
-     * cite this pin as the reason the narrative cannot be mistaken for done.
-     *
-     * A bare name is the right needle HERE and the wrong one for `controlLost`
-     * above, and the difference is which file the writer lives in. `callersOf`
-     * excludes the defining file and strips imports, so a bare
-     * `shiftReportBoundary` surviving in any other production file is a use and
-     * can be nothing else — the only mention today is a comment in
-     * `execute-run.ts` saying this is not boundary 6, and `stripComments`
-     * removes it. `controlLost` is declared in the same function that writes
-     * it, so there the bare name was satisfied by the declaration.
-     */
-    expect(
-      callersOf('shiftReportBoundary', 'src/model/boundaries/shift-report.ts'),
-      'shiftReportBoundary is wired now — move this into the section above',
-    ).toEqual([])
-  })
-
   /**
    * The computer-use tables, landed ahead of everything that uses them.
    *

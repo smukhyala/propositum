@@ -499,9 +499,20 @@ from `AgentRun.status` and `terminalReason`. Rendered by `src/ui/shift-report.ts
 **decisions, never documents**, and a document is a pure fold over the immutable base
 ([ADR-0003](./adr/0003-artifact-versioning-ledger.md)).
 
-**Not built: the narrative.** `shiftReportBoundary` in `src/model/boundaries/shift-report.ts` is
+~~**Not built: the narrative.** `shiftReportBoundary` in `src/model/boundaries/shift-report.ts` is
 unwired, and `ShiftReport.narrative` currently holds a stop-rule label — a consumer string sitting in
-the field where model prose belongs. Pinned in the deferred block.
+the field where model prose belongs. Pinned in the deferred block.~~
+
+**Built 2026-08-27.** `src/server/shift-narrative.ts` gathers the facts from rows — the contract's
+stated objective, `PlanStep`s joined to their outcomes, the counts, the stop rule's own label — and
+`writeReport` tries the boundary first. **It still fails open**: a boundary failure falls back to
+exactly what the field held before, so the cost of a refusal is the sentence and nothing else, which
+is what the boundary's own header asks for.
+
+Two things it deliberately does not narrate, both because the answer would be less trustworthy than
+the silence: a **crashed** run, where the least reliable component would be explaining its own
+outage, and a **cancelled** one, where *"You stopped me, so I put everything down where it was."* is
+already exact.
 
 **One shift per session.** Re-entry ends at accept or reject. No *keep going*, no *redirect*.
 

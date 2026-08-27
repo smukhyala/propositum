@@ -187,12 +187,31 @@ const QUIET_WORKER = [
   },
 ]
 
+/**
+ * Boundary 6 now runs at the end of every completed run, so every script
+ * through this helper needs one more reply than it used to.
+ *
+ * Appended HERE rather than in each test, because the narrative is not what any
+ * of these files is about: they test what a run produces and what the reviewer
+ * says about it, and threading a handover sentence through thirty fixtures
+ * would put a call nobody is asserting on into thirty places that would then
+ * have to be kept in step.
+ *
+ * A trailing unused reply is harmless — the fake only refuses to run OUT of
+ * them — and several runs here never reach the call at all, because
+ * `narrateShift` returns early when there is nothing to narrate.
+ */
+const NARRATIVE = {
+  kind: 'ok' as const,
+  value: { narrative: 'I got through the scoping and left the tier question for you.' },
+}
+
 async function runWith(replies: ReadonlyArray<unknown>, contractId: string) {
   const run = await repos.runs.enqueue({ contractId, role: 'worker' })
   await repos.runs.claim({ leaseUntil: new Date(Date.now() + 60_000), startedAt: new Date() })
   await executeRun(run.id, {
     ctx,
-    model: new FakeModelClient(replies as never),
+    model: new FakeModelClient([...replies, NARRATIVE] as never),
     fetcher: fixtureFetcher({}),
     // The claim fence, which `executeRun` now requires. These tests do not
     // exercise a stale claim, so it always says proceed — spelled out rather
@@ -215,7 +234,11 @@ describe('the second pass runs and is recorded', () => {
           kind: 'ok' as const,
           value: {
             findings: [
-              { handle: 'C1', kind: 'unsupported', detail: 'Nothing read says Gold is the right tier.' },
+              {
+                handle: 'C1',
+                kind: 'unsupported',
+                detail: 'Nothing read says Gold is the right tier.',
+              },
             ],
           },
         },
@@ -235,7 +258,10 @@ describe('the second pass runs and is recorded', () => {
 
   it('records the reviewer as its own run, not folded into the worker', async () => {
     const { contractId } = await shiftWithChanges()
-    await runWith([...DRAFTING_WORKER, { kind: 'ok' as const, value: { findings: [] } }], contractId)
+    await runWith(
+      [...DRAFTING_WORKER, { kind: 'ok' as const, value: { findings: [] } }],
+      contractId,
+    )
 
     const runs = await db.prisma.agentRun.findMany({
       where: { contractId },
@@ -275,7 +301,10 @@ describe('the second pass runs and is recorded', () => {
 
   it('an empty finding list is a good outcome, not a failure', async () => {
     const { contractId } = await shiftWithChanges()
-    await runWith([...DRAFTING_WORKER, { kind: 'ok' as const, value: { findings: [] } }], contractId)
+    await runWith(
+      [...DRAFTING_WORKER, { kind: 'ok' as const, value: { findings: [] } }],
+      contractId,
+    )
 
     const changeset = await repos.changesets.forContract(contractId)
     if (!changeset) throw new Error('no changeset')
@@ -290,8 +319,23 @@ describe('the reviewer cannot take the note down — acceptance bullet 9', () =>
   it('a ShiftReport still exists when the reviewer boundary fails', async () => {
     const { contractId } = await shiftWithChanges()
 
-    // No scripted reply for `review`, so FakeModelClient throws on that call.
-    await runWith(DRAFTING_WORKER, contractId)
+    /**
+     * The reviewer boundary fails, said explicitly.
+     *
+     * ~~No scripted reply for `review`, so FakeModelClient throws on that
+     * call.~~ **Corrected 2026-08-27**, when boundary 6 gained a caller and
+     * started consuming a reply of its own at the end of every run: relying on
+     * the script running DRY made this test's premise depend on how many calls
+     * happen after the one it is about.
+     *
+     * A scripted failure is what it meant all along, and it is stronger — this
+     * now exercises the designed `BoundaryResult` failure path rather than the
+     * fake's own guard rail.
+     */
+    await runWith(
+      [...DRAFTING_WORKER, { kind: 'fail' as const, failure: 'refusal' as const }],
+      contractId,
+    )
 
     const report = await repos.reports.forContract(contractId)
 
@@ -304,7 +348,11 @@ describe('the reviewer cannot take the note down — acceptance bullet 9', () =>
     if (!contract) throw new Error('no contract')
 
     await repos.sessions.markAway(contract.sessionId)
-    await runWith(DRAFTING_WORKER, contractId)
+    // Reviewer fails, for the reason spelled out in the test above.
+    await runWith(
+      [...DRAFTING_WORKER, { kind: 'fail' as const, failure: 'refusal' as const }],
+      contractId,
+    )
 
     const session = await repos.sessions.byId(contract.sessionId)
     expect(session?.phase).toBe('observing')
@@ -344,7 +392,16 @@ describe('the reviewer runs only when there is something to review', () => {
     })
     await repos.contracts.accept(contract.id, new Date())
 
-    await runWith(QUIET_WORKER, contract.id)
+    /**
+     * Two replies, not three.
+     *
+     * The run stops on the `decisionNeeded` in the second, so `QUIET_WORKER`'s
+     * third has never been consumed here — a leftover the fake permits and
+     * nothing noticed until boundary 6 started making a call after the run,
+     * which then ate it. Trimming it is the honest fixture: this is what the
+     * run actually asks for.
+     */
+    await runWith(QUIET_WORKER.slice(0, 2), contract.id)
 
     const runs = await db.prisma.agentRun.findMany({
       where: { contractId: contract.id },
