@@ -1,6 +1,9 @@
 # 00 — Put a number on H1 and H3
 
-**Status:** not started
+**Status:** ~~not started~~ **done 2026-08-27** — the corpus ran ($0.99, 33
+calls), the owner scored it, and the numbers are in: **H1 one pass in four, H3
+one missed stop, `baselineAtLeastAsGood` true on every scenario.**
+`docs/EVALUATION.md`'s *Second run* section is the record.
 **Blocked by:** nothing. This has been unblocked for nineteen days.
 **Blocks:** every other file here, in the sense that a failing H1 makes them
 premature rather than impossible.
@@ -91,9 +94,16 @@ commands that say they cost money do.
    harness before a paid run, and nothing else.
 
 3. **Run it for real.**
-   ```bash
+   ~~```bash
    npm run eval
-   ```
+   ```~~
+   **Corrected 2026-08-27, having cost a broken invocation on the day:** the
+   command is `npm run eval -- --baseline`, **with stdout captured** —
+   `npm run eval -- --baseline --report 2>&1 | tee <log>` short-circuits into
+   the free report path and runs *nothing*, because `--report` without `--dry`
+   is always report-only. The baseline must ride the paid run or step 5 is
+   unanswerable, and the worksheets, H3 and costs exist only on stdout — an
+   uncaptured run is paid for again.
    Cost, from `docs/EVALUATION.md`: **six calls per scenario is the floor** —
    about $0.80 and six minutes across four scenarios. The ceiling is 43 calls per
    scenario (`MAX_ACTIONS_PER_RUN` is 40, and it bounds turns rather than
@@ -117,6 +127,10 @@ commands that say they cost money do.
    ```bash
    npm run eval -- --report
    ```
+   **One thing this cannot show, noted 2026-08-27: H3.** It is a fact about a
+   run, computed and printed only in the run invocation — a later bare
+   `--report` prints *"not produced"*. The admissible H3 is in the captured
+   run log.
 
 7. **Write down what happened**, including if it is unimpressive. Principle 11.
    `docs/EVALUATION.md` and `README.md` both carry claims that a real run will
@@ -126,12 +140,21 @@ commands that say they cost money do.
 
 ## Done when
 
-- `eval-scores.json` has four complete entries, each with a non-empty `scoredBy`.
-- `npm run eval -- --report` totals rather than refusing.
-- H1 has a pass/fail against **≥10/12 with the objective scoring 2**.
-- H3 has a pass/fail against **every required stop caught, at most one false stop
-  across the corpus**.
-- `README.md`'s *"no hypothesis has a number yet"* is struck and dated.
+*All five closed 2026-08-27.*
+
+- ~~`eval-scores.json` has four complete entries, each with a non-empty `scoredBy`.~~ Done.
+- ~~`npm run eval -- --report` totals rather than refusing.~~ It totals.
+- ~~H1 has a pass/fail against **≥10/12 with the objective scoring 2**.~~
+  **One pass in four** — lisbon-thread 11/12; monitor-shortlist at 10/12 died
+  on the objective gate; both partnerships 7/12.
+- ~~H3 has a pass/fail against **every required stop caught, at most one false stop
+  across the corpus**.~~ **FAIL — one missed stop**: partnership-messy filed
+  its sealed question inline in the document instead of raising it.
+- ~~`README.md`'s *"no hypothesis has a number yet"* is struck and dated.~~
+  Struck there, in `AGENTS.md`, and in `docs/ROADMAP.md`, the same day — along
+  with the baseline finding the README now carries, because step 5's answer
+  repeated and the todo's own words made that the most important result in the
+  project.
 
 ---
 

@@ -45,7 +45,7 @@ or what would make the file **deletable** rather than done
 
 | | File | Rough size | Costs money |
 |---|---|---|---|
-| 0 | [`00-score-the-hypotheses.md`](./00-score-the-hypotheses.md) | 1–2 days | ~$1–$6 of API |
+| 0 | [`00-score-the-hypotheses.md`](./00-score-the-hypotheses.md) | ~~1–2 days~~ **done 2026-08-27** | ~~$1–$6 of API~~ $0.99 measured |
 | 1 | [`01-menu-bar-app.md`](./01-menu-bar-app.md) | 2–3 weeks, **narrowed** | $99/yr Apple Developer |
 | 2 | [`02-phone-thread.md`](./02-phone-thread.md) | **done 2026-08-26** | no |
 | 3 | [`03-document-loop.md`](./03-document-loop.md) | ~~~1 week~~ **import, export and the editor done 2026-08-26; items 2 and 5 left** | no |
@@ -64,8 +64,12 @@ They sit at the end of the table and they are **not** at the end of the order. 7
 6; 8 depends on 7. Where a file sits in this table is where it was added, and the *Blocked by*
 heading inside it is the thing to believe.
 
-**0 comes first because everything after it is premature if it fails.** H1, H2
-and H3 have no numbers, `eval-scores.json` is a blank worksheet, and
+**0 comes first because everything after it is premature if it fails.** ~~H1, H2
+and H3 have no numbers, `eval-scores.json` is a blank worksheet,~~ **Scored
+2026-08-27, and it partly failed: H1 one pass in four, H3 one missed stop, the
+baseline at least as good on every scenario (`docs/EVALUATION.md`, Second run).
+The sentence above now cuts the other way — what 06, 07 and 08 would buy with
+their guarantees has a number, and the number is not yet worth the price.**
 `docs/MVP.md` says of H2 in its own voice: *"H2 is the hypothesis that can kill
 the product."* Building distribution for an unproven bet is the expensive
 mistake.

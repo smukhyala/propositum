@@ -5,8 +5,10 @@ was going for, and — once they have ratified an explicit agreement — continu
 environment while they are away. They come back to what changed, why, and what it could not decide
 for them. *Propositum* is Latin for intention.
 
-**Status: pre-alpha.** The slice runs end to end and no hypothesis has a number yet. `eval-scores.json`
-is still a blank worksheet. `README.md` is the authority on setup and on what is built; it says
+**Status: pre-alpha.** The slice runs end to end~~ and no hypothesis has a number yet. `eval-scores.json`
+is still a blank worksheet~~ — **scored 2026-08-27: H1 passed one scenario of four, H3 failed on a
+missed stop, and the baseline read at least as well on all four (`docs/EVALUATION.md`, Second
+run)**. `README.md` is the authority on setup and on what is built; it says
 plainly where the gaps are, and so should you.
 
 This file is the agent-facing manual. `CLAUDE.md` is a stub that imports it, so Claude Code and other

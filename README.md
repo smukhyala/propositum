@@ -10,12 +10,21 @@ Propositum watches an approved work session, builds a structured reading of what
 for, and — once you've ratified an explicit agreement — continues in a constrained environment
 while you're gone. You come back to what changed, why, and what it couldn't decide for you.
 
-> **Status: pre-alpha. The slice runs end to end; no hypothesis has a number yet.** Capture,
+> **Status: pre-alpha. The slice runs end to end; ~~no hypothesis has a number yet~~ struck
+> 2026-08-27 — H1 and H3 have numbers, and the numbers are not flattering.** Capture,
 > reading, handoff, the gated worker, the changeset, the shift report, review and the fold into a
 > new document version are all built and wired — and, since 2026-08-26, so are a setup screen, an
 > optional phone thread, and an answer to a raised decision that is kept rather than discarded.
-> What is missing is evidence: `eval-scores.json` is still the blank worksheet, and H1, H2 and H3
-> are unscored. This README says plainly where the gaps are rather than rounding them up.
+> ~~What is missing is evidence: `eval-scores.json` is still the blank worksheet, and H1, H2 and H3
+> are unscored.~~ **Scored 2026-08-27** ([docs/EVALUATION.md](docs/EVALUATION.md), *Second run*):
+> **H1 passed one scenario of four. H3 failed on a missed stop — the run filed its sealed question
+> inline in the document instead of asking it. And on all four scenarios the raw-log baseline was
+> judged to catch the person up at least as well as the structured reading** — in the scorer's own
+> words, the quality is about the same and the structure was just faster to read. That last finding
+> has now appeared on two runs out of two, and the question it puts on the table is whether
+> `SessionReading`'s inference apparatus is buying anything a formatted retelling would not. H2 is
+> still unmeasured; it needs a person deciding on real work.
+> This README says plainly where the gaps are rather than rounding them up.
 >
 > **The gap that shrank and the one that did not.** Setup is no longer the reason a second person
 > cannot run this — `/welcome` pairs the extension and explains the key. Two terminals still are,
@@ -112,8 +121,10 @@ real fixture. [`docs/EVALUATION.md`](./docs/EVALUATION.md) was corrected by the 
 this line was not — one claim in two places, one of which nothing checks, which is the failure
 `tests/counts.test.ts`'s own header is about.
 
-**What is still not measured, said narrowly rather than rounded back up.** No hypothesis has a
-number: `eval-scores.json` is still the blank worksheet and the H1 component scores are typed by a
+**What is still not measured, said narrowly rather than rounded back up.** ~~No hypothesis has a
+number: `eval-scores.json` is still the blank worksheet~~ **struck 2026-08-27 — H1 and H3 are
+scored (one pass in four, and a missed stop; the status block above carries it)**. The H1 component
+scores are typed by a
 person after a run, because a model judge shares the generator's blind spots. A run cannot produce
 an H2 *rate* — a rate needs verdicts, a verdict is what a person did to real work, and a fixture
 accepts nothing; `renderH2FromRuns` reports the denominator and says the numerator is missing, and

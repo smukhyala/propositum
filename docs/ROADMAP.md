@@ -48,8 +48,10 @@ two would drift silently — both would look authoritative and a reader would ha
 was stale. **This is the only structural decision in this file that matters:** the roadmap points at
 the MVP, and never paraphrases it.
 
-What is true today, and MVP.md is the authority on it: the slice runs end to end, and **no hypothesis
-has a number yet.**
+What is true today, and MVP.md is the authority on it: the slice runs end to end, and ~~**no hypothesis
+has a number yet.**~~ **numbered 2026-08-27 — H1 one pass in four, H3 a missed stop, the baseline at
+least as good on every scenario (`docs/EVALUATION.md`, Second run). H2, the one that can kill the
+product, is still unmeasured.**
 
 ---
 
