@@ -94,8 +94,10 @@ Two setup facts that cost an afternoon:
 - **The extension's host grant needs a user gesture**, so nothing can automate it. `extension/README.md`
   is the authoritative order.
 
-Port 3117 is pinned in three places: the dev and start scripts, a hardcoded constant in the extension,
-and the Google OAuth redirect URI. A test asserts the first two agree.
+Port 3117 is pinned in the dev and start scripts, a hardcoded constant in the extension, the Google
+OAuth redirect URI, and the tray app's `src-tauri/src/origin.rs`. `tests/capture.test.ts` is the
+count that stays true: it asserts the scripts, the extension and the tray agree — the OAuth pin is
+the one nothing asserts.
 
 ## Layout
 

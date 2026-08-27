@@ -564,9 +564,11 @@ never runs its own JavaScript inside a page you are signed into.** ADR-0025 §3 
 sentence to the desktop unspent.
 
 **None of it is built.** `grep -rn 'approvedApplications' src/` returns nothing, there is no
-`tests/desktop-scope.test.ts`, and there is no native binary to hold a TCC permission — which is
+`tests/desktop-scope.test.ts`, and ~~there is no native binary to hold a TCC permission~~ — which is
 [`docs/todo/07-off-the-browser.md`](./todo/07-off-the-browser.md), the largest single piece of work
-in the project.
+in the project. **Corrected 2026-08-27: the native binary exists (`src-tauri/`, ADR-0023 stage 1) and
+holds no TCC permission — `tests/tray-permissions.test.ts` pins its config to none, and going red
+there is how a grant enters knowingly.**
 
 **The tension with the direction document, stated rather than resolved.** Direction §4 files Computer
 Use under *Later — fallback when structured APIs/integrations are unavailable*. This repository shipped

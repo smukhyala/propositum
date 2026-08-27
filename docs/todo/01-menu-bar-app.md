@@ -57,9 +57,9 @@ find . -name 'tauri.conf.json' -not -path './node_modules/*'
 grep -c 'tauri' package.json
 ```
 
-**As of 2026-08-26 all three return nothing.** No `.rs`, no `Cargo.toml`, no
-`tauri.conf.json`, no `electron`, no packaging, no signing, no notarisation, no
-auto-update, and ~~`.github/workflows/ci.yml` runs typecheck, format and tests
+~~**As of 2026-08-26 all three return nothing.**~~ **Corrected 2026-08-27: the
+scaffold exists — all three commands find `src-tauri/`.** Still no packaging, no
+signing, no notarisation, no auto-update, and ~~`.github/workflows/ci.yml` runs typecheck, format and tests
 with no build, no release job and no artefact upload~~ **corrected 2026-08-27:
 CI runs typecheck, tests *and* `npm run build`, and does not run `format:check`.
 What holds is the absence — no release job, no artefact upload, no macOS
@@ -132,12 +132,16 @@ resisting a fifth.
    misattribution the same day; the last copy of the error was
    `scripts/dev.ts:8`, corrected 2026-08-27 in the change that struck this item.
 
-2. **Scaffold the Tauri app.** A `src-tauri/` beside the Next app, a tray icon,
-   no dock icon, one small window.
+2. ~~**Scaffold the Tauri app.** A `src-tauri/` beside the Next app, a tray icon,
+   no dock icon, one small window.~~ **Done 2026-08-27**, bar the window: the
+   one small window is the key field, and it arrives with item 4's slice.
 
-3. **Supervise, for production.** Spawn `next start -p 3117` and
+3. ~~**Supervise, for production.** Spawn `next start -p 3117` and
    `tsx scripts/worker.ts` as children. Restart on crash with a backoff. Kill
-   both on quit — an orphaned worker holding a lease is worse than no worker.
+   both on quit — an orphaned worker holding a lease is worse than no worker.~~
+   **Done 2026-08-27** (`src-tauri/src/supervisor.rs`) — with `-H 127.0.0.1`,
+   which this item's own command forgot and which is the difference between a
+   loopback bind and the control routes reachable off the machine.
    - `scripts/dev.ts` is the shape to absorb, not the code to reuse: it is
      development-only~~, and it deliberately does **not** restart anything~~
      **— corrected 2026-08-27: it restarts a dead child, inside a three-second
@@ -163,20 +167,26 @@ resisting a fifth.
    `bad-origin` visible only inside an HTTP 403 JSON body
    (`src/app/api/session/current/route.ts:181`).
 
-6. **One status light**, off `intentionState()`. Five members —
+6. ~~**One status light**, off `intentionState()`. Five members —
    `working`, `delegated`, `needs-you`, `sleeping`, `done`. Not a dashboard.
-   Principle 13: *"The system should be comfortable doing nothing."*
+   Principle 13: *"The system should be comfortable doing nothing."*~~
+   **Done 2026-08-27** — `GET /api/intention-state` folds `frontDoorRow` per
+   project and serves the consumer label; the tray renders the word verbatim
+   and never writes its own (`src-tauri/src/light.rs`).
 
 7. **Run `prisma db push` on first launch and after an upgrade**, then restart so
    the append-only triggers are reinstalled and verified. `db push` silently
    drops the triggers on any table it rebuilds, and a ledger without its triggers
    looks identical and is not append-only.
 
-8. **A log file** at `~/Library/Logs/Propositum/`, a version string somewhere a
+8. ~~**A log file** at `~/Library/Logs/Propositum/`, a version string somewhere a
    person can read, and a **Copy diagnostics** button. Today there is no log file
    at all — everything is `console.log` to whichever terminal is in front of you,
    gone when the window closes. This does not violate the no-telemetry rule:
-   nothing is sent, the person copies and chooses.
+   nothing is sent, the person copies and chooses.~~ **Done 2026-08-27**, with
+   one narrowing: *Copy diagnostics* copies the log's path, not its content —
+   worker lines can carry page titles, and putting those in a clipboard
+   silently is the person's choice to make with the file open (`logs.rs`).
 
 9. **Handle the Playwright Chromium.** `src/policy/playwright-fetcher.ts` imports
    `playwright` and launches Chromium. It is a devDependency whose postinstall

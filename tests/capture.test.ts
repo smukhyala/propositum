@@ -251,6 +251,46 @@ describe('the manifest asks for nothing frightening', () => {
   })
 
   /**
+   * Added 2026-08-27 with the tray app: the FOURTH place the origin is
+   * written. `src-tauri/src/origin.rs` cannot import `package.json` any more
+   * than the extension can, so it is one more deliberate duplication — and a
+   * duplication is only safe if something notices when it drifts. Each regex
+   * asserts it MATCHED before asserting the value, because this file's own
+   * lesson is that an unmatched regex makes a guard go quiet rather than red.
+   *
+   * The custom header rides along for the same reason: the tray's poller
+   * restates `src/capture/transport.ts`'s header name in Rust, and two
+   * spellings of one header are two guards until they drift, at which point
+   * they are none.
+   */
+  it('keeps the tray app pinned to the same origin and header', () => {
+    const scripts = JSON.parse(readFileSync(join(repo, 'package.json'), 'utf8')).scripts as Record<
+      string,
+      string
+    >
+    const devPort = /-p\s+(\d+)/.exec(scripts['dev'] ?? '')?.[1]
+    const devHost = /-H\s+(\S+)/.exec(scripts['dev'] ?? '')?.[1]
+
+    const originRs = readFileSync(join(repo, 'src-tauri', 'src', 'origin.rs'), 'utf8')
+    const trayHost = /pub const HOST: &str = "([^"]+)"/.exec(originRs)?.[1]
+    const trayPort = /pub const PORT: u16 = (\d+)/.exec(originRs)?.[1]
+    const trayHeader = /pub const CUSTOM_HEADER: &str = "([^"]+)"/.exec(originRs)?.[1]
+
+    const transportHeader = /export const CUSTOM_HEADER = '([^']+)'/.exec(
+      readFileSync(join(repo, 'src/capture/transport.ts'), 'utf8'),
+    )?.[1]
+
+    expect(trayHost, 'origin.rs no longer declares HOST the way this regex reads it').toBeDefined()
+    expect(trayPort, 'origin.rs no longer declares PORT the way this regex reads it').toBeDefined()
+    expect(trayHeader, 'origin.rs no longer declares the header the way this regex reads it').toBeDefined()
+    expect(transportHeader, 'transport.ts no longer declares the header the way this regex reads it').toBeDefined()
+
+    expect(trayHost, 'the tray app opens links on a different host from the app').toBe(devHost)
+    expect(trayPort, 'the tray app supervises a different port from the one it opens').toBe(devPort)
+    expect(trayHeader, 'the tray poller sends a header the app is not checking for').toBe(transportHeader)
+  })
+
+  /**
    * The app listens on this machine and nowhere else.
    *
    * ── The failure this exists for ──────────────────────────────────────────

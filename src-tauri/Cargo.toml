@@ -1,0 +1,18 @@
+[package]
+name = "propositum"
+version = "0.1.0"
+description = "The menu-bar app that owns the Propositum runtime (ADR-0023, stage 1)"
+edition = "2021"
+rust-version = "1.77.2"
+
+[build-dependencies]
+tauri-build = { version = "2.6.3" }
+
+[dependencies]
+serde_json = "1.0"
+tauri = { version = "2.11.3", features = ["tray-icon", "image-png"] }
+tauri-plugin-single-instance = "2"
+tauri-plugin-opener = "2"
+tauri-plugin-clipboard-manager = "2"
+ureq = { version = "2", default-features = false, features = ["json"] }
+libc = "0.2"
