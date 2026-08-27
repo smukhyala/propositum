@@ -46,7 +46,7 @@ or what would make the file **deletable** rather than done
 | | File | Rough size | Costs money |
 |---|---|---|---|
 | 0 | [`00-score-the-hypotheses.md`](./00-score-the-hypotheses.md) | ~~1–2 days~~ **done 2026-08-27** | ~~$1–$6 of API~~ $0.99 measured |
-| 1 | [`01-menu-bar-app.md`](./01-menu-bar-app.md) | 2–3 weeks, **narrowed** | $99/yr Apple Developer |
+| 1 | [`01-menu-bar-app.md`](./01-menu-bar-app.md) | ~~2–3 weeks, **narrowed**~~ **stage 1 done 2026-08-27; stage 2 (signing, bundling, release) open** | $99/yr Apple Developer |
 | 2 | [`02-phone-thread.md`](./02-phone-thread.md) | **done 2026-08-26** | no |
 | 3 | [`03-document-loop.md`](./03-document-loop.md) | ~~~1 week~~ **import, export and the editor done 2026-08-26; items 2 and 5 left** | no |
 | 4 | [`04-quick-fixes.md`](./04-quick-fixes.md) | ~~half a day~~ ~~done 2026-08-26, except item 7~~ **and item 10, added 2026-08-27** | no |
@@ -54,6 +54,7 @@ or what would make the file **deletable** rather than done
 | 6 | [`06-buying-things.md`](./06-buying-things.md) | days, **decided not built** | what it buys |
 | 7 | [`07-off-the-browser.md`](./07-off-the-browser.md) | **the largest file here**, decided not built | via `01` |
 | 8 | [`08-one-time-codes.md`](./08-one-time-codes.md) | ~200 lines, **decided not built** | no |
+| 9 | [`09-onboarding.md`](./09-onboarding.md) | **unshaped** — written down 2026-08-27, the owner's design pass pending | no |
 
 **6, 7 and 8 were written 2026-08-26**, hours after the decisions that made them necessary and in the
 same pass that noticed this folder did not have them. All three are **decided, not built** — the

@@ -269,3 +269,26 @@ resisting a fifth.
   needed no correction: it was written the morning the thing arrived, and *"both
   are now cheaper to reverse"* turned out to mean **the same day**. That is worth
   leaving on the page beside the reversal.
+
+---
+
+## What the build disturbed that nothing predicted
+
+*Added 2026-08-27, the day of the first hands-on test.* Three findings, each
+now fixed or recorded, none of which any item above named:
+
+- **The kill switch minted orphans on its first real press.** The worker is
+  spawned through tsx's CLI, which runs the real worker as its own child —
+  and SIGKILL, unlike Quit's SIGTERM, cannot be forwarded by a wrapper that
+  is already dead. Three orphaned workers in one test session. Fixed in the
+  same day's change: every child leads its own process group and signals go
+  to the negative pgid, which also covers whatever the worker spawns later
+  (Playwright's Chromium is the known one).
+- **The switch worked in silence.** The person pressed it three times
+  believing nothing had happened, because no pixel moved. The tray now
+  writes *Stopped* beside its ring.
+- **A signal-terminated tray orphaned both children** — tao installs no
+  signal handler, so `kill -TERM` never reached the run-event handler. A
+  `sigwait` thread now turns a signal into the same drain the Quit item runs.
+  A SIGKILL on the tray itself still orphans, which is what the worker's
+  lease sweep exists to absorb.
