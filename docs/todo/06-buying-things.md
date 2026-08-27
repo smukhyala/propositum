@@ -81,12 +81,17 @@ about how serious it is rather than reassuring.
 
 In this order, because the last step is the irreversible one and everything before it is inert.
 
-1. **Put the vocabulary in first.** `CONTEXT.md` already has the
-   [`PurchaseAuthorization`](../../CONTEXT.md) entry, written 2026-08-26 with a
-   *specification rather than a description* fence around it. **When you build this, that fence comes
-   off in the same change** — the entry currently says *"Nothing in `src/` or `prisma/` holds any of
-   these fields"*, and a glossary that says that while the fields exist is worse than one that says
-   nothing.
+1. **The vocabulary is already in — take the fences off in the commit that builds this.**
+   `CONTEXT.md` was written ahead of the code on 2026-08-26 and says so about itself, in **two
+   places**, both of which go stale the moment a field exists:
+
+   - the `PurchaseAuthorization` entry, whose fence reads *"Nothing in `src/` or `prisma/` holds any
+     of these fields… so **Propositum cannot buy anything today**"*;
+   - the `ContractScope` entry, which lists `purchaseAuthorization` among *"two more decided
+     2026-08-26 and neither built"* and quotes a `grep` that will stop returning nothing.
+
+   A glossary that says the fields do not exist while they do is worse than one that says nothing,
+   and the second fence is the one that gets missed because it is inside somebody else's entry.
 
 2. **`PurchaseAuthorization` on `ContractScope`, optional, absence is the deny.**
    `src/domain/handoff/policy.ts:336`. Six fields, and the closed set — currency — gets its Zod

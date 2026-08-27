@@ -29,14 +29,33 @@ ls tests/desktop-scope.test.ts
 # 3. any native code at all
 find . -name Cargo.toml -not -path './node_modules/*'
 
-# 4. the vocabulary, which has to come first
-grep -n 'approvedApplications\|ApplicationAllowlist' CONTEXT.md
+# 4. the vocabulary, which has to come first — and which is DONE
+grep -n 'approvedApplications' CONTEXT.md
 ```
 
-**As of 2026-08-26 all four return nothing.** There is no `approvedApplications`, no
+~~**As of 2026-08-26 all four return nothing.** There is no `approvedApplications`, no
 `tests/desktop-scope.test.ts`, no Rust, and — worth its own sentence — **no glossary entry either**.
 `CONTEXT.md` gained `PurchaseAuthorization` on the day ADR-0024 was accepted and gained nothing for
-this one, so [item 1](#the-work) below is not a formality.
+this one, so [item 1](#the-work) below is not a formality.~~
+
+**Corrected 2026-08-27, the next morning, by running command 4 instead of assuming it.** (1), (2) and
+(3) return nothing — no `approvedApplications` in `src/`, no `tests/desktop-scope.test.ts`, no Rust.
+**(4) returns three hits, and the glossary entry is already written.** `CONTEXT.md`'s `ContractScope`
+entry carries `approvedApplications[]` with the argument in full — bundle identifiers never window
+titles, checked against the frontmost application before every mutating action rather than once per
+turn, absent-or-unreadable escalating to a refusal — and the honest sentence that it *"replaces the
+bound ADR-0010 had… and it is weaker, because that one was Chrome refusing and this one is our code
+remembering."*
+
+It carries the **specification rather than a description** fence, and the fence quotes its own check:
+*"`grep -rn 'approvedApplications|purchaseAuthorization' src/ prisma/` returns nothing."*
+
+Two things follow, and they are why this correction is worth the space rather than a quiet edit.
+[Item 1](#the-work) is **smaller than it was written** — the entry exists, so what is left is taking
+the fence off. And the mistake here was the one this heading exists to catch, made by the person
+adding the heading: the claim *"no glossary entry either"* was written from memory of a diff rather
+than from a command, in a file whose first instruction is to run the command. It is struck rather
+than overwritten for that reason.
 
 ~~`docs/ARCHITECTURE.md` and `docs/SECURITY_AND_PRIVACY.md` have both been rewritten to describe what
 was decided.~~ **Corrected 2026-08-26, the same day this file was written.** `docs/SECURITY_AND_PRIVACY.md`
@@ -83,14 +102,18 @@ they are describing this file.
 Numbered, but read it as four groups: the words, the fence, the perception loop, and sign-in.
 **The fence comes before anything that can act.**
 
-1. **The vocabulary, before any schema.** `approvedApplications` on `ContractScope` needs a
-   `CONTEXT.md` entry with its consumer wording, exactly as `PurchaseAuthorization` got one. So does
-   whatever the desktop equivalent of an `ActionKind` turns out to be. Per
-   [`AGENTS.md`](../../AGENTS.md): *a new domain word goes into `CONTEXT.md` before it goes into a
-   schema.* Nothing enforces this one and it is the step most likely to be skipped.
+1. **The vocabulary, before any schema — and ~~it needs writing~~ most of it is written.**
+   `approvedApplications` already has its entry under `ContractScope` in `CONTEXT.md`, with the
+   consumer wording and the **specification rather than a description** fence. **What is left here is
+   taking the fence off in the commit that builds it**, and updating the line inside it that quotes
+   its own `grep` as returning nothing.
 
-   Give the new entries the same **specification rather than a description** fence the
-   `PurchaseAuthorization` entry carries, and take it off when the code lands.
+   What is genuinely missing is the word for **what a desktop action is**. `ActionKind` enumerates
+   mechanisms in a browser — `click-element`, `type-text` — and the desktop equivalent has no entry
+   and no name. Per [`AGENTS.md`](../../AGENTS.md): *a new domain word goes into `CONTEXT.md` before
+   it goes into a schema.* Nothing enforces that, and it is the step most likely to be skipped.
+
+   Give the new entry the same fence, and take it off when the code lands.
 
 2. **`approvedApplications` on `ContractScope`, derived from what the person ratified.** Never from a
    model naming an application — the same asymmetry as `approvedSourceIds`, and for the same reason.
@@ -148,7 +171,9 @@ Numbered, but read it as four groups: the words, the fence, the perception loop,
 
 ## Done when
 
-- The four commands under *Is this already done?* return what a finished repo returns.
+- The four commands under *Is this already done?* return what a finished repo returns — note that
+  the fourth already returns hits today and always will. What changes for it is the fence: the
+  `ContractScope` entry stops saying `grep` finds nothing, because it will not.
 - `tests/desktop-scope.test.ts` exists, and has been **seen red** — a mutating action dispatching
   against a frontmost app that is not on the allowlist must fail the suite.
 - The kill switch has been verified with the Node processes stopped.
