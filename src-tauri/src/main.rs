@@ -76,7 +76,51 @@ fn set_api_key(app: tauri::AppHandle, key: String) -> Result<(), String> {
     Ok(())
 }
 
+/// SIGTERM and SIGINT, blocked here and consumed by `watch_exit_signals`.
+///
+/// tao's event loop installs no signal handler, so before this existed a
+/// `kill -TERM` on the tray — launchd's shutdown timeout, a script, a logout
+/// path that falls back to signals — terminated it without ever reaching
+/// `RunEvent::Exit`, and **both children survived as orphans**. Observed on
+/// 2026-08-27, on the day the run-event comment below claimed otherwise:
+/// the app child held port 3117 and the worker held its lease. Blocking must
+/// happen before any other thread spawns, because a signal mask is inherited
+/// and delivery to the `sigwait` thread depends on every other thread having
+/// it blocked.
+fn block_exit_signals() {
+    unsafe {
+        let mut set: libc::sigset_t = std::mem::zeroed();
+        libc::sigemptyset(&mut set);
+        libc::sigaddset(&mut set, libc::SIGTERM);
+        libc::sigaddset(&mut set, libc::SIGINT);
+        libc::pthread_sigmask(libc::SIG_BLOCK, &set, std::ptr::null_mut());
+    }
+}
+
+/// One thread, parked in `sigwait`, that turns a signal into the same drain
+/// the Quit item runs. Not a signal handler — `sigwait` returns on an
+/// ordinary thread, so `shutdown()`'s locks and logging are safe here.
+fn watch_exit_signals(hold: Arc<RuntimeHold>) {
+    std::thread::spawn(move || unsafe {
+        let mut set: libc::sigset_t = std::mem::zeroed();
+        libc::sigemptyset(&mut set);
+        libc::sigaddset(&mut set, libc::SIGTERM);
+        libc::sigaddset(&mut set, libc::SIGINT);
+        let mut which: libc::c_int = 0;
+        if libc::sigwait(&set, &mut which) == 0 {
+            hold.logger.line(
+                "tray",
+                "asked to exit by a signal — draining the children first",
+            );
+            hold.shutdown();
+            std::process::exit(0);
+        }
+    });
+}
+
 fn main() {
+    block_exit_signals();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|_, _, _| {}))
         .plugin(tauri_plugin_opener::init())
@@ -124,6 +168,7 @@ fn main() {
             light::start(handles.status.clone(), Arc::clone(&hold));
             app.manage(Arc::clone(&hold));
             app.manage(handles);
+            watch_exit_signals(Arc::clone(&hold));
 
             // The blocking half of the launch, off the main thread so the tray
             // appears immediately with the light on Starting.
@@ -152,8 +197,12 @@ fn main() {
         .expect("the tray app could not be built")
         .run(|app, event| {
             // Quit from the menu already shut the supervisor down; this catches
-            // every other way out, so no exit path leaves an orphaned worker
-            // holding a lease.
+            // the event-loop exits — and `watch_exit_signals` catches the
+            // signals, which never reach this handler. ~~no exit path leaves an
+            // orphaned worker~~ Corrected 2026-08-27, the day it was written:
+            // a SIGTERM proved otherwise, and the sigwait thread above is the
+            // fix. A SIGKILL still orphans, which is what the worker's lease
+            // sweep exists to absorb.
             if let tauri::RunEvent::Exit = event {
                 app.state::<Arc<RuntimeHold>>().shutdown();
             }

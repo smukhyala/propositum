@@ -1,0 +1,52 @@
+# The tray crate's own check, beside `verify` rather than inside it.
+#
+# `ci.yml` runs on ubuntu and stays untouched: every tray *guard* is a vitest
+# file reading config and source text, and those already run there. What ubuntu
+# cannot do is tell whether the Rust compiles — Tauri's macOS backend does not
+# build on a Linux runner without a webkit2gtk detour that would verify the
+# wrong platform. So this job is macOS, path-filtered, and check-only.
+#
+# Deliberately absent, because they are stage 2 of docs/todo/01-menu-bar-app.md:
+# no `tauri build`, no artefact upload, no signing, no notarisation, no release.
+
+name: tray
+on:
+  push:
+    branches: [main]
+    paths: ['src-tauri/**']
+  pull_request:
+    paths: ['src-tauri/**']
+
+concurrency:
+  group: tray-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: tray-${{ runner.os }}-${{ hashFiles('src-tauri/Cargo.lock') }}
+
+      - name: Format
+        run: cargo fmt --check
+        working-directory: src-tauri
+
+      - name: Check
+        run: cargo check --locked
+        working-directory: src-tauri
+
+      - name: Unit tests
+        run: cargo test --locked
+        working-directory: src-tauri
