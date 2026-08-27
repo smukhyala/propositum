@@ -62,11 +62,20 @@ was decided.~~ **Corrected 2026-08-26, the same day this file was written.** `do
 was **patched, not rewritten** — item 9 below says so, and ADR-0025 asks for a rewrite precisely
 because patching leaves true-sounding sentences that are no longer true.
 
-**`docs/ARCHITECTURE.md` was not touched at all.** `grep -c '0024\|0025\|0026' docs/ARCHITECTURE.md`
+~~**`docs/ARCHITECTURE.md` was not touched at all.** `grep -c '0024\|0025\|0026' docs/ARCHITECTURE.md`
 returns **0**: its layer table still describes a product where the agent lives in one Chrome tab and
 cannot send a `POST`. That is a gap rather than an oversight worth shrugging at, because that file's
 own *honest limits* admit *"nothing checks the status column"* — no test will ever go red over it, so
-it is corrected by somebody remembering or not at all. **Add it to item 9.**
+it is corrected by somebody remembering or not at all. **Add it to item 9.**~~
+
+**Struck 2026-08-27 — the prose half is done and the table half is not, and the difference matters.**
+Four passages were re-marked where they stated the old bounds as permanent: State Ingestion,
+Delegation / Policy, Execution Runtime and *Where computer use sits*, the last being the one ADR-0025
+outright reverses. **No Status cell moved**, deliberately — nothing is built, and a cell that moves
+ahead of the code is the exact failure that column exists to prevent. So item 9 keeps its
+`docs/ARCHITECTURE.md` clause: what is left there is the **table**, on the day this file is built.
+
+`AGENTS.md` gained a rule in the same change, so the next ADR does not need somebody to remember.
 
 **Read the documents as the specification and the code as the truth**; where they disagree today,
 they are describing this file.
@@ -181,7 +190,9 @@ Numbered, but read it as four groups: the words, the fence, the perception loop,
   Prisma, in a prompt or in a ledger row** — the only thing that touched the password was Chrome.
 - `CONTEXT.md` has entries for every new word, without the specification fence.
 - `docs/ARCHITECTURE.md`'s layer table and `docs/SECURITY_AND_PRIVACY.md` describe what runs rather
-  than what was decided.
+  than what was decided. **Narrowed 2026-08-27: the layer table only.** That file's prose was
+  corrected the day before this line was read; the Status cells still say *partial — one sensor,
+  browser only* and *built*, and they are right until this file is built.
 
 ---
 

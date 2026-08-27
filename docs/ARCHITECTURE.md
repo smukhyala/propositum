@@ -13,7 +13,8 @@ have to exist first**, which is usually more informative than the layer's name.
 Section references of the form **§8** point at the direction document these layer names come from,
 archived verbatim at
 [`docs/superpowers/specs/2026-08-16-direction-update-source.md`](./superpowers/specs/2026-08-16-direction-update-source.md).
-§8 is its *do not build yet* list, and it is binding here.
+§8 is its *do not build yet* list, and it is binding here — **less one entry, struck 2026-08-26 by
+[ADR-0025](./adr/0025-computer-use-beyond-the-browser.md)**; see *Where computer use sits*.
 
 **A second direction document arrived on 2026-08-20** and is archived beside it at
 [`2026-08-20-everyday-intelligence-direction-source.md`](./superpowers/specs/2026-08-20-everyday-intelligence-direction-source.md).
@@ -30,6 +31,17 @@ added. The layer that gets built is re-marked **by the wave that builds it** —
 *Self-correcting* note under Outcome / Learning asked for and did not get on its first pass. A
 status cell moved in advance of the code is exactly the failure this column exists to prevent, and
 it would be the easiest one to commit on the day three ADRs land at once.
+
+**Three more landed on 2026-08-26 and not one cell moved for them either** — ADR-0024, ADR-0025 and
+ADR-0026, re-marked here 2026-08-27. They decide that Propositum may buy inside a ratified
+[`PurchaseAuthorization`](./adr/0024-purchases-within-a-ratified-authorisation.md), may
+[drive macOS rather than one Chrome tab](./adr/0025-computer-use-beyond-the-browser.md), and may
+[read a one-time code](./adr/0026-reading-a-one-time-code.md) out of `~/Library/Messages/chat.db`.
+`grep -rn 'approvedApplications\|purchaseAuthorization' src/` returns nothing, so the column is
+unchanged and correct. What was **not** correct is that four passages below stated the old bounds as
+permanent rather than as current: **State Ingestion**, **Delegation / Policy**, **Execution Runtime**
+and **Where computer use sits**. Each now carries the correction beside the claim. Read the ADRs for
+what was decided and the code for what runs; where they disagree, the code is right.
 
 ---
 
@@ -179,7 +191,13 @@ in `attested`; anything a page could have authored travels in `untrusted`, carri
 than by a per-field flag.
 
 **Not built.** Email, calendar, Slack, GitHub, Notion, docs, local files, and every other event source
-the direction document lists. All of it is on §8's do-not-build list.
+the direction document lists. ~~All of it is on §8's do-not-build list.~~ **Corrected 2026-08-27: all
+of it but one file, and one pair of per-turn observations.**
+[ADR-0026](./adr/0026-reading-a-one-time-code.md) admits a single read-only reader over
+`~/Library/Messages/chat.db`, called only while a run is parked waiting for a code;
+[ADR-0025](./adr/0025-computer-use-beyond-the-browser.md) adds a screenshot and an `AXUIElement` tree
+as observations, both untrusted. **Neither is written** — `grep -rn 'chat\.db' src/ --include='*.ts'`
+returns nothing — so *one sensor, browser only* is still the true status and the cell has not moved.
 
 **The structural fact that makes this hard to change by accident.**
 `ObservationEvent.sessionId` is **required** in `prisma/schema.prisma`, its relation to `WorkSession`
@@ -254,6 +272,13 @@ types are constructed so they cannot receive prose, and the `@ts-expect-error` d
 That file ends in `-test.ts` rather than `.test.ts`, so vitest never runs it — **`npm run typecheck`
 is the assertion.** Neither command is a superset of the other.
 
+**Not built: two fields decided 2026-08-26.** `ContractScope` gains `purchaseAuthorization`
+([ADR-0024](./adr/0024-purchases-within-a-ratified-authorisation.md)) and `approvedApplications`
+([ADR-0025](./adr/0025-computer-use-beyond-the-browser.md)). Both are optional and **absence is the
+deny**; neither exists in `src/` or `prisma/`, and `CONTEXT.md` carries both entries behind its
+*specification rather than a description* fence. The second replaces the bound ADR-0010 had, and it
+is weaker — that one was Chrome refusing, this one is our code remembering.
+
 **Not built: the durable half.** Every policy today is per-handoff and dies with its
 `HandoffContract`. `WorkingAgreement` — a standing agreement that outlives a handoff — is a
 **reserved name with no object behind it**: reserved in `CONTEXT.md` so it is not spent a third time,
@@ -327,6 +352,15 @@ no bypass for a confirmed action, so a landing kind would be a claim the transpo
 `external-effect` outcome can occur. The consequence, stated because it is surprising: **a confirmed
 click whose page posts still fails**, with `blocked-request`. Propositum can operate a page and cannot
 send from it.
+
+**That is still what runs, and it is no longer what was decided.**
+[ADR-0024](./adr/0024-purchases-within-a-ratified-authorisation.md) spends the unconditional block:
+one branch at `extension/src/cdp.js:553`, a deterministic amount parse at `Fetch.requestPaused`, and
+a landing kind behind a ratified ceiling. **Nothing of it is built** —
+`grep -n 'export const LANDING_ACTION_KINDS' src/domain/handoff/policy.ts` still returns an empty
+`Set`. The alarm is already armed: `tests/architecture.test.ts` couples `src/ui/agreement.tsx`'s
+*"Buy anything"* promise to the transport, so the day the branch lands the guard goes red and names
+the screen that has started lying about money.
 
 **Honest limit: every mutating browser action asks.** `RunContext.targetEvidence` has no supplier, so
 the classifier escalates every `click-element`, `type-text` and `press-key`. That is the cautious
@@ -493,9 +527,25 @@ already honours:
    page.
 4. Visual computer use — a screenshot, requested only when the tree is not enough.
 
-**Computer use is the fallback tier under structured APIs, not the goal.** It is the least inspectable
-and least reversible way to act, and both properties are load-bearing. Propositum never runs its own
-JavaScript inside a page you are signed into.
+~~**Computer use is the fallback tier under structured APIs, not the goal.**~~ **Reversed 2026-08-26
+by [ADR-0025](./adr/0025-computer-use-beyond-the-browser.md), and re-marked here 2026-08-27.** The
+ordering above still holds — a native API is still preferred to a screenshot — but computer use is now
+**the product** rather than the tier of last resort, and the blast radius stops being a browser tab
+and becomes the machine. *Unrestricted* computer use remains forbidden, and the restrictions are
+ADR-0025 §3 rather than §8: no shell, no `osascript`, no AppleScript, no filesystem read outside
+ADR-0026's one reader, no keychain, no enumeration of what is running, and every mutating action
+checked against an application allowlist the person ratified. It is the only entry ever removed from
+§8's list, and it is struck there rather than deleted.
+
+What is unchanged, and is the reason the tier ordering survives its own reversal: computer use is the
+least inspectable and least reversible way to act, both properties are load-bearing, and **Propositum
+never runs its own JavaScript inside a page you are signed into.** ADR-0025 §3 carries that last
+sentence to the desktop unspent.
+
+**None of it is built.** `grep -rn 'approvedApplications' src/` returns nothing, there is no
+`tests/desktop-scope.test.ts`, and there is no native binary to hold a TCC permission — which is
+[`docs/todo/07-off-the-browser.md`](./todo/07-off-the-browser.md), the largest single piece of work
+in the project.
 
 **The tension with the direction document, stated rather than resolved.** Direction §4 files Computer
 Use under *Later — fallback when structured APIs/integrations are unavailable*. This repository shipped
