@@ -65,6 +65,16 @@ fixes this. Read that section before you score, not after.
 
 ## The work
 
+**One thing that used to be a hazard here and is not.** Every flag below is
+typed after a `--`, and a mistyped one — `--dry-run`, `--dryrun`, `-d`,
+`--reprot` — used to fall straight through to the LIVE path and run the paid
+corpus without saying anything first
+([#112](https://github.com/smukhyala/propositum/issues/112)). `scripts/eval.ts`
+now refuses an unrecognised flag by name, before the key is read, and
+`tests/eval.test.ts` holds it there. **`--help` prints the usage block** rather
+than a sentence about credentials. So a typo below costs nothing; only the
+commands that say they cost money do.
+
 1. **Check the seals have not moved.** Free, no API calls.
    ```bash
    npm run eval -- --check
