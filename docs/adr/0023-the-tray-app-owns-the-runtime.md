@@ -61,9 +61,20 @@ filesystem outside its own configuration, and adds no sensor.**
 |---|---|
 | **Supervises** | spawns `next` and `scripts/worker.ts` as child processes, restarts them on crash, kills them on quit. `npm run dev` and `npm run worker` stay as they are, for anyone who wants them |
 | **Configures** | one field for `ANTHROPIC_API_KEY`, written to `.env` |
-| **Pairs the extension** | the `bad-origin` refusal, which today is a dead end in a JSON body, becomes a prompt naming the id that knocked. One click writes `PROPOSITUM_EXTENSION_ID` |
+| **Pairs the extension** | ~~the `bad-origin` refusal, which today is a dead end in a JSON body, becomes a prompt naming the id that knocked. One click writes `PROPOSITUM_EXTENSION_ID`~~ **Corrected 2026-08-27:** the prompt landed on `/welcome` first (2026-08-26) and the click writes a `pairing` row, restart-free. The tray writes nothing here — `resolveExtensionOrigin` reads the env var *ahead of* the row, so a tray-written `PROPOSITUM_EXTENSION_ID` would silently outrank every later click the person makes on that screen, which is the exact failure `extension-pairing.ts` opens by refusing. Its Pairs job is a *Finish setting up* link |
 | **Shows one light** | rendered from `intentionState()`, which already folds `working \| delegated \| needs-you \| sleeping \| done` and already carries the consumer labels. **Not a second implementation** — two stores for one truth is the failure `CONTEXT.md` names about this exact function |
 | **Opens deep links** | every control opens a page at `127.0.0.1:3117`. Nothing is decided in the menu bar |
+
+**Stage 1 built, 2026-08-27** (`src-tauri/`): supervision with the backoff `scripts/dev.ts` lacks,
+the light polling `GET /api/intention-state`, the key field writing `.env` through the file's first
+and only writer, logs at `~/Library/Logs/Propositum/`, `prisma db push` before either child on every
+launch — and [ADR-0025](0025-computer-use-beyond-the-browser.md) §2's kill switch scoped to what
+exists: a global hotkey and a menu item, handled in the Tauri process, that **SIGKILL** the two
+children. SIGKILL rather than SIGTERM because §2's verification is `kill -STOP` on the children and
+then pressing it, and a stopped process cannot run a SIGTERM handler; a run killed this way surfaces
+as interrupted through the worker's startup lease sweep, which is what the sweep is for. There is no
+input synthesis yet and the menu claims no more than it does (*Stop Propositum now*). Signing,
+notarisation and a bundled runtime are stage 2 ([`docs/todo/01`](../todo/01-menu-bar-app.md)).
 
 ### What it may never do
 

@@ -1,9 +1,9 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "enables the default permissions",
+  "description": "what the settings window may reach: core defaults only",
   "windows": [
-    "main"
+    "settings"
   ],
   "permissions": [
     "core:default"

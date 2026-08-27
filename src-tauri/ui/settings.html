@@ -1,0 +1,60 @@
+<!doctype html>
+<!-- The one window, holding the one field. Everything else on the tray is a
+     link to a page at 127.0.0.1:3117 (ADR-0023: the tray decides nothing);
+     this exists because a menu cannot take text, and it configures this
+     machine's own runtime rather than deciding anything about the person's
+     work. The key goes to the set_api_key command, is written to .env with
+     0600, and never comes back - not in an error, not in this page. -->
+<html lang="en">
+<meta charset="utf-8">
+<title>Propositum</title>
+<style>
+  body {
+    font: 13px -apple-system, system-ui, sans-serif;
+    margin: 0;
+    padding: 24px 28px;
+    background: transparent;
+    color: inherit;
+  }
+  h1 { font-size: 14px; margin: 0 0 6px; }
+  p { margin: 0 0 14px; opacity: 0.75; }
+  form { display: flex; gap: 8px; }
+  input {
+    flex: 1;
+    font: inherit;
+    padding: 6px 8px;
+    border: 1px solid rgba(128, 128, 128, 0.5);
+    border-radius: 6px;
+    background: transparent;
+    color: inherit;
+  }
+  button { font: inherit; padding: 6px 14px; }
+  #said { margin-top: 12px; min-height: 1.2em; opacity: 0.9; }
+</style>
+<body>
+  <h1>The API key</h1>
+  <p>Written to this checkout's <code>.env</code>, and read by nothing but the
+     runtime on this machine. Saving restarts both halves.</p>
+  <form id="form">
+    <input id="key" type="password" autocomplete="off" autofocus
+           aria-label="Anthropic API key" placeholder="sk-ant-…">
+    <button type="submit">Save</button>
+  </form>
+  <div id="said" role="status"></div>
+  <script>
+    const form = document.getElementById('form')
+    const field = document.getElementById('key')
+    const said = document.getElementById('said')
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault()
+      try {
+        await window.__TAURI__.core.invoke('set_api_key', { key: field.value })
+        field.value = ''
+        said.textContent = 'Saved. Propositum is restarting with it…'
+      } catch (refusal) {
+        said.textContent = String(refusal)
+      }
+    })
+  </script>
+</body>
+</html>
