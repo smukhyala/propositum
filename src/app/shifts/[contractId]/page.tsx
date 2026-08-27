@@ -318,6 +318,37 @@ export default async function ShiftPage({ params }: { params: Promise<{ contract
     findingsByChange.set(finding.changeId, list)
   }
 
+  /**
+   * The same second pass, about a whole production rather than one change.
+   *
+   * `review@2` shows the reviewer outcome handles `O1…On` and tells it to cite
+   * the most specific handle it can, so a finding about a collection or a draft
+   * is stored with `outcomeId` set and `changeId` null. `forChangeset` joins
+   * through `changeId` and cannot see one, which is why these rows were written
+   * for weeks and rendered nowhere — `tests/reachability.test.ts` asserted that
+   * absence in its deferred block until this query got wired.
+   *
+   * Read per run rather than per outcome because that is the query that exists
+   * and because one round-trip is right for a page that already makes several.
+   * Findings from every run of this Shift are merged: `runId` distinguishes the
+   * worker from the reviewer, and only the reviewer writes findings at all, so
+   * merging cannot mix two voices.
+   *
+   * A finding that cites neither a change nor an outcome — the reviewer talking
+   * about the run as a whole — is deliberately still dropped here. It has no
+   * card to sit on, and inventing one would be this screen deciding the review
+   * has a section that `review@2` never promised.
+   */
+  const outcomeFindings = new Map<string, Array<{ kind: string; detail: string }>>()
+  for (const run of runs) {
+    for (const finding of await repos.findings.forRun(run.id)) {
+      if (finding.outcomeId === null) continue
+      const list = outcomeFindings.get(finding.outcomeId) ?? []
+      list.push({ kind: finding.kind, detail: finding.detail })
+      outcomeFindings.set(finding.outcomeId, list)
+    }
+  }
+
   const changes: ChangeView[] = (changeset?.changes ?? []).map((change) => {
     const scale = scales.get(change.startOffset) ?? scaleOfPair(change.exact, change.replacement)
     const verdict = change.verdict?.verdict
@@ -381,6 +412,7 @@ export default async function ShiftPage({ params }: { params: Promise<{ contract
       // document changes while its changeset failed to write, which is exactly
       // when "0 changes below" would appear.
       changeCount: kind === 'document-changes' && changes.length > 0 ? changes.length : null,
+      findings: outcomeFindings.get(shiftOutcome.id) ?? [],
     }
   })
 
@@ -496,6 +528,7 @@ export default async function ShiftPage({ params }: { params: Promise<{ contract
     question: decision.question,
     whyStopped: decision.whyStopped,
     needs: decision.needs,
+    answer: decision.answer,
   }))
 
   const stopped = whereItStopped({
@@ -731,7 +764,7 @@ function Missing() {
       <BackLink href="/">&larr; All projects</BackLink>
       <Masthead
         kicker="Propositum"
-        title="There is no shift here"
+        title="There is nothing to report here"
         mark={<Away size={20} />}
         subtitle="This working agreement doesn't exist any more, or the link is wrong."
       />
@@ -765,7 +798,7 @@ function NotStarted({
         kicker={title}
         title="Nothing has happened yet"
         mark={<Away size={20} />}
-        subtitle="This agreement hasn't been handed over, so there is no shift to report on."
+        subtitle="This agreement hasn't been handed over, so there is nothing to report on yet."
       />
       <Empty
         title="Propositum hasn't started."

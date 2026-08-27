@@ -161,8 +161,26 @@ read "Every change is reversible" and rested on absence of capability. It is the
 this list that got weaker, and the weakening is stated here rather than in a footnote.)*
 
 The base is immutable for the whole review. An **irreversible** capability may exist only as a
-landing `ActionKind`, which the gate refuses unless the human acknowledged **that action
-individually** — not via a dial — and whose outcome is **reported rather than reviewed**.
+landing `ActionKind`, which the gate refuses unless the human acknowledged ~~**that action
+individually**~~ — not via a dial — and whose outcome is **reported rather than reviewed**.
+
+*(Amended again 2026-08-26 — [ADR-0024](./adr/0024-purchases-within-a-ratified-authorisation.md).
+**The second time this principle has got weaker, and the first strike it has carried** — the
+2026-08-11 weakening was recorded as an amendment note and left the sentence intact. Both are said
+here rather than in a footnote.)*
+
+**For a purchase the acknowledgement is per instruction, not per action.** A `PurchaseAuthorization`
+— an origin, a ceiling, a count, an expiry — drafted by a model from what the person asked for and
+ratified by them on the screen they already ratify. Per-action confirmation was argued at its
+strongest and refused on ADR-0010's own evidence about itself: habituation is real, a confirmation
+storm is attacker-triggerable, and somebody interrupted once per errand has not been left alone.
+
+**What survives, and it is the clause that was load-bearing:** *not via a dial*, unchanged. A
+`PurchaseAuthorization` is a structured object a person ratified — not a setting, not a default, not
+a timeout, not a model — and ADR-0024 §3 cites this principle to forbid any control relaxing
+`maxAmount`. *Reported rather than reviewed* is unchanged. So is principle 6, whose wording turns out
+to have been exact: what it forbids is pre-approval **by a mechanism that is not a person**, and *in
+advance* was never the forbidden part.
 
 **Forbids:** in-place edits · deleting anything the person created · any action outside the
 `ActionKind` enum · **a dial, a default, a timeout, or a model that can approve an irreversible
@@ -172,6 +190,14 @@ action** · a verdict control rendered beside something that already happened.
 the page; the word list over a button's own label can only escalate; a `ConfirmationVerdict` has no
 `expired` member, so a question that times out produces no permission; the server refuses a verdict
 against a `landed` outcome before it checks anything else.
+
+*(Qualified 2026-08-26 — [ADR-0025](./adr/0025-computer-use-beyond-the-browser.md).* **"Decided by
+what Chrome is about to send" holds for actions in a browser and for nothing else.** For a desktop
+action there is no paused request and no attestation, so the only thing deciding irreversibility is
+the escalation-only lexicon in `src/domain/execution/reversibility.ts` — our code, English-only, over
+an accessible name the application wrote. That is the *secondary* mechanism doing a primary job, and
+its two stated gaps get correspondingly larger: the lexicon now has to cover every approved
+application, and `GET`-shaped destruction has a desktop analogue with nothing behind it at all.*)*
 
 **Honest limit:** absence of capability was the strongest prohibition available, and a confirmation
 is weaker than an absence — it can be misconfigured, and it can be clicked through. `ActionKind` now
@@ -416,9 +442,17 @@ The interface says what a person would say.
 | copy, working copy | *(nothing is copied — the `Changeset` is the copy)* |
 | task | *(banned outright)* |
 | approve / authorise (for an irreversible action) | *"Yes, do it"* — the human **confirms** |
+| take over | *(added 2026-08-26)* **hand over** — the person is always the subject |
+| shift, claim | *(added 2026-08-26)* *"While you were away"* · the sentences themselves |
 
-**Four verbs, never interchangeable:** the gate **refuses** · the human **rejects** · the model
-**declines** · the human **confirms**. Rejecting is a decision about work already held; confirming is
-permission for something that has not happened and cannot be undone once it has.
+~~**Four verbs, never interchangeable:**~~ **Five, 2026-08-26** ([ADR-0022](./adr/0022-the-fourth-verdict.md)):
+the gate **refuses** · the human **rejects** · the model **declines** · the human **confirms** · the
+human **answers**. Rejecting is a decision about work already held; confirming is permission for
+something that has not happened and cannot be undone once it has; **answering** is prose in reply to
+a `DecisionNeeded` and grants nothing at all — it is the only one of the five that is not a
+permission, which is why its control is a text field and never a pair of buttons.
+
+Struck rather than renumbered, because source comments cite this section and `CONTEXT.md` had already
+moved to five while this table still said four.
 
 Full list in [`CONTEXT.md`](../CONTEXT.md).

@@ -3,7 +3,7 @@
  *
  * ── Why the flow lives in this file ──────────────────────────────────────
  *
- * Taking over is one act in two stages: read what Propositum understood, then
+ * Handing over is one act in two stages: read what Propositum understood, then
  * settle the agreement drafted FROM that understanding. The second stage cannot
  * exist without the first — `draftContract` takes a reading id — and the draft
  * is held in memory between them, because `draftContract` is not idempotent and
@@ -12,7 +12,7 @@
  * across two routes would mean either a second model call on every back-button
  * press or a contract id smuggled through the URL.
  *
- * So: `page.tsx` loads, `TakeOver` sequences, and the agreement itself is
+ * So: `page.tsx` loads, `HandOver` sequences, and the agreement itself is
  * `src/ui/agreement.tsx`.
  *
  * ── Three things here are load-bearing rather than presentational ────────
@@ -88,7 +88,7 @@ export interface SourceView {
   readonly originPattern: string
 }
 
-export interface TakeOverProps {
+export interface HandOverProps {
   readonly sessionId: string
   readonly projectName: string
   /** `observing | away | ended`. */
@@ -211,7 +211,7 @@ export interface Handed {
   readonly documentTitle: string | null
 }
 
-export function TakeOver(props: TakeOverProps) {
+export function HandOver(props: HandOverProps) {
   const [stage, setStage] = useState<Stage>('reading')
   const [draft, setDraft] = useState<ContractDrafted | null>(null)
   const [defaults, setDefaults] = useState<AutonomyControls | null>(null)
@@ -357,7 +357,7 @@ export function TakeOver(props: TakeOverProps) {
  *
  * Exported for `tests/handover-honesty.test.ts`, which renders it directly. The
  * sentence below is decided entirely by props, so a render with no interaction
- * reads exactly what a person reads — and the alternative, driving `TakeOver`
+ * reads exactly what a person reads — and the alternative, driving `HandOver`
  * far enough to reach this state, would test the flow rather than the claim.
  */
 export function HandedOver({ handed }: { readonly handed: Handed }) {
@@ -383,7 +383,7 @@ export function HandedOver({ handed }: { readonly handed: Handed }) {
   const whyNoText = handed.draftingWasOnOffer
     ? 'You asked for research only, so it will come back with findings, questions and next steps — and no text for your document.'
     : handed.documentTitle === null
-      ? 'This shift has no document under it, so there is nothing to draft — it will come back with what it found rather than text for a document.'
+      ? 'There is no document under this agreement, so there is nothing to draft — it will come back with what it found rather than text for a document.'
       : 'Drafting is not part of this agreement, so it will come back with findings, questions and next steps — and no text for your document.'
 
   return (
@@ -467,7 +467,7 @@ function NoReadingYet({
           {dropped === 1
             ? 'One quotation Propositum offered did not match anything it actually saw, so it was thrown away.'
             : `${dropped} quotations Propositum offered did not match anything it actually saw, so they were thrown away.`}{' '}
-          The claims they were meant to support are still here — read them with that in mind.
+          What they were meant to support is still here — read it with that in mind.
         </p>
       ) : null}
     </Section>
@@ -503,7 +503,7 @@ function Reading({ claims, readOnly, pending, problem, onContinue }: ReadingProp
         <Section title="What you're aiming at" index={index++}>
           <Empty
             title="Propositum recorded no objective for this session."
-            next="Nothing can be handed over without one. Read the claims below, then start the agreement and say what you're aiming for yourself."
+            next="Nothing can be handed over without one. Read what Propositum did record below, then start the agreement and say what you're aiming for yourself."
           />
         </Section>
       )}

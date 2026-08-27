@@ -3,7 +3,7 @@
  *
  * ── Why this one is worth a file of its own ──────────────────────────────
  *
- * `TakeOver` renders the surface H1 is scored against. `docs/MVP.md` scores
+ * `HandOver` renders the surface H1 is scored against. `docs/MVP.md` scores
  * the reading on six components, and the sixth is *Uncertainties* — "none
  * surfaced, or noise" scores 0. So the confidence band and the per-claim
  * evidence are not decoration on this screen; they are the measurement. A
@@ -27,8 +27,8 @@ import { describe, expect, it } from 'vitest'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 
-import { TakeOver } from '../src/ui/reading'
-import type { ClaimView, TakeOverProps } from '../src/ui/reading'
+import { HandOver } from '../src/ui/reading'
+import type { ClaimView, HandOverProps } from '../src/ui/reading'
 
 function claim(over: Partial<ClaimView> = {}): ClaimView {
   return {
@@ -49,8 +49,8 @@ function claim(over: Partial<ClaimView> = {}): ClaimView {
   }
 }
 
-function screen(over: Partial<TakeOverProps> = {}): string {
-  const props: TakeOverProps = {
+function screen(over: Partial<HandOverProps> = {}): string {
+  const props: HandOverProps = {
     sessionId: 'session-1',
     projectName: 'Kauai',
     phase: 'observing',
@@ -63,7 +63,7 @@ function screen(over: Partial<TakeOverProps> = {}): string {
     ...over,
   }
 
-  return renderToStaticMarkup(createElement(TakeOver, props))
+  return renderToStaticMarkup(createElement(HandOver, props))
 }
 
 describe('the reading keeps the surface H1 is scored on', () => {

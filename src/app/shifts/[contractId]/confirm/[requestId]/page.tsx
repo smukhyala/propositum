@@ -52,9 +52,10 @@ export default async function ConfirmPage({
   if (view.verdict !== null || view.expired) {
     return (
       <Sheet>
-        <BackLink href={back}>Back to the shift</BackLink>
+        <BackLink href={back}>&larr; While you were away</BackLink>
         <SettledConfirmation summary={view.summary} verdict={view.verdict}>
-          Nothing on this page can be changed now. What happened next is on the shift.{' '}
+          Nothing on this page can be changed now. What happened next is in &ldquo;While you were
+          away&rdquo;.{' '}
           <Link href={back}>Go and look.</Link>
         </SettledConfirmation>
       </Sheet>
@@ -92,7 +93,7 @@ export default async function ConfirmPage({
 
   return (
     <Sheet>
-      <BackLink href={back}>Back to the shift</BackLink>
+      <BackLink href={back}>&larr; While you were away</BackLink>
       <ConfirmationScreen
         detail={{
           summary: view.summary,

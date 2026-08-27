@@ -58,6 +58,7 @@ export interface Repositories {
   readonly changesets: ChangesetRepository
   readonly findings: ReviewFindingRepository
   readonly reports: ShiftReportRepository
+  readonly plans: PlanStepRepository
   readonly offers: WorkOfferRepository
   readonly outcomes: ShiftOutcomeRepository
   readonly confirmations: ConfirmationRepository
@@ -83,6 +84,16 @@ export interface Repositories {
    */
   readonly offerTally: OfferTallyRepository
   readonly reticence: OfferReticenceRepository
+  /**
+   * The paired message channel, and the extension this install answers to.
+   *
+   * Beside `calendar` in spirit rather than in the ledger: one holds a
+   * credential a person created, the other holds which browser extension they
+   * said was theirs. Neither is about the work, and the day either is removed
+   * nothing else here changes.
+   */
+  readonly thread: ThreadConnectionRepository
+  readonly pairing: ExtensionPairingRepository
 }
 
 export function createRepositories(prisma: PrismaClient): Repositories {
@@ -99,6 +110,7 @@ export function createRepositories(prisma: PrismaClient): Repositories {
     changesets: changesetRepository(prisma),
     findings: reviewFindingRepository(prisma),
     reports: shiftReportRepository(prisma),
+    plans: planStepRepository(prisma),
     offers: workOfferRepository(prisma),
     outcomes: shiftOutcomeRepository(prisma),
     confirmations: confirmationRepository(prisma),
@@ -107,6 +119,8 @@ export function createRepositories(prisma: PrismaClient): Repositories {
     calendar: calendarConnectionRepository(prisma),
     offerTally: offerTallyRepository(prisma),
     reticence: offerReticenceRepository(prisma),
+    thread: threadConnectionRepository(prisma),
+    pairing: extensionPairingRepository(prisma),
   }
 }
 
@@ -183,9 +197,26 @@ export interface IntentionStateFacts {
    *  `ConfirmationVerdict` of any kind; expiry is the domain's to apply. */
   readonly unansweredConfirmationsAskedAt: readonly Date[]
   /**
-   * `DecisionNeeded` rows this reader can say are still open — **which is none
-   * of them, and always zero. Amended 2026-08-16; the count was live for one
-   * wave and is the reason this docblock is long.**
+   * `DecisionNeeded` rows with no `DecisionVerdict`.
+   *
+   * **Amended 2026-08-26 ([ADR-0022](../../../docs/adr/0022-the-fourth-verdict.md)):
+   * this counts again, and everything below is kept because it is the argument
+   * that earned the column.** ~~which is none of them, and always zero. Amended
+   * 2026-08-16; the count was live for one wave and is the reason this docblock
+   * is long.~~
+   *
+   * What changed is one word in the reasoning below. It said *"There is nothing
+   * to count"* — true of a table with no answer column, and false of this one.
+   * A `DecisionNeeded` now has a verdict, the verdict is UNIQUE per question,
+   * and a person can write one from the re-entry note or from a paired thread.
+   * So the count can go **down**, which is the entire property the 2026-08-16
+   * amendment was missing: it was never that the count was wrong, it was that it
+   * could only ever rise, and *Needs you* that is always on is *Needs you*
+   * nobody reads.
+   *
+   * The cost recorded below — a missed `needs-you` on a Shift that stopped to
+   * ask and produced nothing else — is **no longer being paid**, and that is the
+   * point of the change rather than a side effect of it.
    *
    * The count was `contract.report.decisions.length` over every accepted
    * contract, all-time. `intentionState` ranks `openDecisions > 0` above every
@@ -194,7 +225,10 @@ export interface IntentionStateFacts {
    * a note where nothing can be done about it. That is the failure the docblock
    * one function up already names for outcomes, reproduced for decisions.
    *
-   * ── Why it cannot be fixed by counting better ────────────────────────────
+   * ── Why it could not be fixed by counting better ─────────────────────────
+   *
+   * **Struck 2026-08-26. Every sentence in this section was true when it was
+   * written and the first one is now false, which is why it stays visible.**
    *
    * There is nothing to count. A `DecisionNeeded` has `question`, `whyStopped`,
    * `needs` and `ordinal` and no answered, resolved or verdict column; nothing
@@ -297,16 +331,25 @@ export interface WorkSoFarRows {
    *  person wrote, or null while it is undecided. */
   readonly changeVerdicts: readonly (string | null)[]
   /**
-   * `DecisionNeeded` rows raised under this Intention — all of which are open,
-   * because nothing in the schema can close one.
+   * `DecisionNeeded` rows raised under this Intention that nobody has answered.
    *
-   * **This is where this reader and `factsForEveryProject` deliberately
+   * ~~All of which are open, because nothing in the schema can close one.~~
+   * ~~**This is where this reader and `factsForEveryProject` deliberately
    * disagree.** `IntentionStateFacts.openDecisions` is always zero and its
    * docblock argues why at length: a count that can only go up, ranked above
-   * every other member, pins *Needs you* onto a Project permanently. Nothing
-   * here ranks anything. It is one sentence in a paragraph a person reads once
-   * before starting, and *a question was raised and nothing has closed it* is
-   * simply true.
+   * every other member, pins *Needs you* onto a Project permanently.~~
+   *
+   * **Struck 2026-08-26 — ADR-0022 removed both halves.** A `DecisionVerdict`
+   * closes a question, so `openDecisions` is no longer always zero, and the two
+   * readers no longer disagree about anything. The disagreement had a reason
+   * while it lasted and the reason is gone.
+   *
+   * What did not move with it was this reader's query, which kept selecting
+   * every decision and counting answered ones. The sentence it feeds — *"A
+   * question is still waiting on you."* — is the only thing in *Where you left
+   * off* that asks a person for something, so over-counting it is the expensive
+   * direction. The `where` is on the select now, and
+   * `tests/intention-facts.test.ts` asserts both readers reach zero together.
    */
   readonly openQuestions: number
   /** The newest ended AgentRun under this Intention. Null when Propositum has
@@ -511,7 +554,20 @@ function intentionRepository(prisma: PrismaClient): IntentionRepository {
               changesets: {
                 select: { changes: { select: { verdict: { select: { verdict: true } } } } },
               },
-              report: { select: { decisions: { select: { id: true } } } },
+              /**
+               * Unanswered only, since 2026-08-26 (ADR-0022).
+               *
+               * This had no `where` and counted every question ever raised, so
+               * *Where you left off* went on saying *"A question is still
+               * waiting on you."* after somebody had answered it — the one
+               * sentence in that paragraph that asks a person for something.
+               * `factsForEveryProject` took the filter in the commit that made
+               * a question answerable; this reader did not, and the pair test
+               * only checked the two agreed while it was open.
+               */
+              report: {
+                select: { decisions: { where: { verdict: { is: null } }, select: { id: true } } },
+              },
             },
           },
         },
@@ -613,7 +669,12 @@ function intentionRepository(prisma: PrismaClient): IntentionRepository {
                 outcomes: { where: UNSETTLED, select: { id: true } },
               },
             },
-            report: { select: { decisions: { select: { id: true } } } },
+            // Unanswered only. ADR-0022 gave `DecisionNeeded` a verdict, which
+            // is what lets this count go DOWN — and a count that can go down is
+            // the whole difference between a status word and a permanent badge.
+            report: {
+              select: { decisions: { where: { verdict: { is: null } }, select: { id: true } } },
+            },
           },
         },
       },
@@ -628,18 +689,18 @@ function intentionRepository(prisma: PrismaClient): IntentionRepository {
       if (row.projectId === null) continue
 
       let liveAcceptedContracts = 0
+      let openDecisions = 0
       let undecidedHeldOutcomes = 0
       const unansweredConfirmationsAskedAt: Date[] = []
       let waitingContractId: string | null = null
 
       for (const contract of row.contracts) {
         let live = false
-        // Toward WHICH note, never toward whether one is waiting. Nothing can
-        // clear a `DecisionNeeded`, so counting it into `openDecisions` pins
-        // *Needs you* on this Project for good — the argument is at
-        // `IntentionStateFacts.openDecisions` and it is longer than this line
-        // because it ends in a cost rather than in a fix.
-        let waitingHere = contract.report === null ? 0 : contract.report.decisions.length
+        // Counts toward WHICH note and, since 2026-08-26, toward whether one is
+        // waiting at all. The `where` above filters to questions with no answer,
+        // so answering the last one takes *Needs you* back off.
+        const openHere = contract.report === null ? 0 : contract.report.decisions.length
+        let waitingHere = openHere
 
         for (const run of contract.runs) {
           if (LIVE_RUN_STATUSES.has(run.status)) live = true
@@ -653,6 +714,7 @@ function intentionRepository(prisma: PrismaClient): IntentionRepository {
           waitingHere += run.outcomes.length
         }
 
+        openDecisions += openHere
         if (live) liveAcceptedContracts += 1
         if (waitingContractId === null && waitingHere > 0) waitingContractId = contract.id
       }
@@ -664,9 +726,7 @@ function intentionRepository(prisma: PrismaClient): IntentionRepository {
         openSessions: row.sessions.map((sitting) => ({ id: sitting.id, phase: sitting.phase })),
         liveAcceptedContracts,
         unansweredConfirmationsAskedAt,
-        // Zero, always, and the field is kept rather than removed so the
-        // reasoning has somewhere to live. See its docblock.
-        openDecisions: 0,
+        openDecisions,
         undecidedHeldOutcomes,
         waitingContractId: waitingContractId ?? row.contracts[0]?.id ?? null,
       })
@@ -700,6 +760,15 @@ export interface ProjectRepository {
     projectId: string,
   ): Promise<Array<{ id: string; originPattern: string; label: string; grantState: string }>>
   /**
+   * How many origins this install may look at, across every project.
+   *
+   * For the welcome screen, which asks *"has anything been approved yet"* and
+   * not *"which"*. A count rather than a list because that is the whole question
+   * at that moment, and a screen that listed them would be listing the sites
+   * somebody reads on the one page they show a colleague.
+   */
+  approvedSourceCount(): Promise<number>
+  /**
    * Chrome is authoritative about grants; this mirrors a withdrawal.
    *
    * Nothing wrote this for the whole build — only `'granted'` was ever set — so
@@ -730,6 +799,8 @@ function projectRepository(prisma: PrismaClient): ProjectRepository {
         create: { projectId, originPattern, label },
         select: { id: true },
       }),
+    approvedSourceCount: () => prisma.approvedSource.count({ where: { grantState: 'granted' } }),
+
     approvedSources: (projectId) =>
       prisma.approvedSource.findMany({
         where: { projectId },
@@ -1833,6 +1904,72 @@ function reviewFindingRepository(prisma: PrismaClient): ReviewFindingRepository 
   }
 }
 
+/* ── PlanStep ──────────────────────────────────────────────────────────── */
+
+/**
+ * What a run said it would do, beside what came of each part.
+ *
+ * ── Read-only, because the writer is somewhere else ──────────────────────
+ *
+ * `recordSteps` in `src/server/execute-run.ts` writes these through
+ * `ctx.db.prisma` directly, and this repository deliberately does not offer a
+ * `create` that would make two writers for one table. It exists for the one
+ * thing no other query can answer: which of the run's stated steps produced an
+ * action that succeeded.
+ *
+ * ── Why the join rather than a status column ─────────────────────────────
+ *
+ * `PlanStep` has no status and should not gain one. A step is what the model
+ * SAID it would do; whether it happened is a fact about `ActionIntent` and
+ * `ActionOutcome`, which are append-only and are the receipt. A status column
+ * would be a second, mutable opinion about the same question, kept in step by
+ * hand — and the first time the two disagreed the wrong one would be the one
+ * on screen.
+ *
+ * So this returns the rows and decides nothing. The split into done and not
+ * done is `splitSteps` in `src/domain/outcome/plan-progress.ts`, which is pure
+ * and reads no clock.
+ */
+export interface PlanStepRepository {
+  forRun(runId: string): Promise<
+    Array<{
+      ordinal: number
+      intent: string
+      intents: Array<{ authorized: boolean; result: string | null }>
+    }>
+  >
+}
+
+function planStepRepository(prisma: PrismaClient): PlanStepRepository {
+  return {
+    forRun: async (runId) => {
+      const rows = await prisma.planStep.findMany({
+        where: { runId },
+        orderBy: { ordinal: 'asc' },
+        select: {
+          ordinal: true,
+          intent: true,
+          intents: {
+            select: { authorized: true, outcome: { select: { result: true } } },
+          },
+        },
+      })
+
+      return rows.map((row) => ({
+        ordinal: row.ordinal,
+        intent: row.intent,
+        // Flattened here rather than in the caller, so `result: null` says one
+        // thing — no outcome row — instead of the caller having to tell a
+        // missing join from a missing column.
+        intents: row.intents.map((intent) => ({
+          authorized: intent.authorized,
+          result: intent.outcome?.result ?? null,
+        })),
+      }))
+    },
+  }
+}
+
 /* ── ShiftReport ───────────────────────────────────────────────────────── */
 
 export interface ShiftReportRepository {
@@ -1852,7 +1989,59 @@ export interface ShiftReportRepository {
   forContract(contractId: string): Promise<{
     id: string
     narrative: string | null
-    decisions: Array<{ id: string; question: string; whyStopped: string; needs: string }>
+    decisions: Array<{
+      id: string
+      question: string
+      whyStopped: string
+      needs: string
+      /** The person's own words, or null while the question is still open. */
+      answer: string | null
+      answeredAt: Date | null
+    }>
+  } | null>
+  /**
+   * Answer one raised decision. ADR-0022.
+   *
+   * Returns `already-answered` rather than throwing, because every seam in this
+   * codebase reports failure as a value — and because a second answer is an
+   * ordinary thing for a person to attempt from two surfaces, not an exception.
+   * The UNIQUE on `decisionNeededId` is what makes it impossible rather than
+   * merely checked; this is the readable half of the same rule.
+   *
+   * `source` records which surface it came from. ADR-0021 permits exactly one of
+   * the verdict tables to be written from a message channel, and a row that
+   * cannot say where it came from cannot show that the rule held.
+   */
+  /**
+   * The newest notes, for a feed that has to notice one appeared.
+   *
+   * Bounded and newest-first rather than "since a timestamp", because the caller
+   * dedupes on a message key and a clock comparison would be a second answer to
+   * the same question — one of which goes wrong when a process restarts with a
+   * skewed clock. A bound of a handful is enough: this runs every few seconds,
+   * and anything older than the last few notes has already been said or has
+   * already been read on a screen.
+   */
+  recent(limit: number): Promise<
+    Array<{
+      contractId: string
+      narrative: string | null
+      decisions: Array<{ id: string; question: string; whyStopped: string; answer: string | null }>
+    }>
+  >
+  answer(input: {
+    decisionNeededId: string
+    answer: string
+    source: 'screen' | 'thread'
+    at: Date
+  }): Promise<{ ok: true } | { ok: false; reason: 'not-found' | 'already-answered' }>
+  /** One decision by id, with the contract it belongs to. For the thread. */
+  decisionById(id: string): Promise<{
+    id: string
+    question: string
+    whyStopped: string
+    contractId: string
+    answered: boolean
   } | null>
 }
 
@@ -1875,10 +2064,103 @@ function shiftReportRepository(prisma: PrismaClient): ShiftReportRepository {
           narrative: true,
           decisions: {
             orderBy: { ordinal: 'asc' },
-            select: { id: true, question: true, whyStopped: true, needs: true },
+            select: {
+              id: true,
+              question: true,
+              whyStopped: true,
+              needs: true,
+              verdict: { select: { answer: true, decidedAt: true } },
+            },
           },
         },
-      }),
+      }).then((row) =>
+        row === null
+          ? null
+          : {
+              ...row,
+              decisions: row.decisions.map(({ verdict, ...decision }) => ({
+                ...decision,
+                answer: verdict?.answer ?? null,
+                answeredAt: verdict?.decidedAt ?? null,
+              })),
+            },
+      ),
+
+    recent: (limit) =>
+      prisma.shiftReport
+        .findMany({
+          orderBy: { createdAt: 'desc' },
+          take: limit,
+          select: {
+            contractId: true,
+            narrative: true,
+            decisions: {
+              orderBy: { ordinal: 'asc' },
+              select: {
+                id: true,
+                question: true,
+                whyStopped: true,
+                verdict: { select: { answer: true } },
+              },
+            },
+          },
+        })
+        .then((rows) =>
+          rows.map((row) => ({
+            ...row,
+            decisions: row.decisions.map(({ verdict, ...decision }) => ({
+              ...decision,
+              answer: verdict?.answer ?? null,
+            })),
+          })),
+        ),
+
+    answer: async ({ decisionNeededId, answer, source, at }) => {
+      const decision = await prisma.decisionNeeded.findUnique({
+        where: { id: decisionNeededId },
+        select: { id: true, verdict: { select: { id: true } } },
+      })
+      if (decision === null) return { ok: false, reason: 'not-found' }
+      if (decision.verdict !== null) return { ok: false, reason: 'already-answered' }
+
+      /**
+       * A race between two surfaces loses to the UNIQUE index, not to the check
+       * above, and that is the design. The read is for the message; the
+       * constraint is for the truth.
+       */
+      try {
+        await prisma.decisionVerdict.create({
+          data: { decisionNeededId, answer, source, decidedAt: at },
+        })
+      } catch {
+        return { ok: false, reason: 'already-answered' }
+      }
+      return { ok: true }
+    },
+
+    decisionById: (id) =>
+      prisma.decisionNeeded
+        .findUnique({
+          where: { id },
+          select: {
+            id: true,
+            question: true,
+            whyStopped: true,
+            report: { select: { contractId: true } },
+            verdict: { select: { id: true } },
+          },
+        })
+        .then((row) =>
+          row === null
+            ? null
+            : {
+                id: row.id,
+                question: row.question,
+                whyStopped: row.whyStopped,
+                contractId: row.report.contractId,
+                answered: row.verdict !== null,
+              },
+        ),
   }
 }
 
@@ -3044,6 +3326,184 @@ function calendarConnectionRepository(prisma: PrismaClient): CalendarConnectionR
 
     forget: async (provider) => {
       await prisma.calendarConnection.deleteMany({ where: { provider } })
+    },
+  }
+}
+
+/* ── ThreadConnection ──────────────────────────────────────────────────── */
+
+/** What a screen may know about a paired channel. Never the token. */
+export interface ThreadConnectionStatus {
+  readonly provider: string
+  readonly pairedAt: Date
+  /** The transport's own cursor, so a restart does not re-read replies. */
+  readonly lastUpdateId: number | null
+}
+
+/**
+ * The paired message channel. ADR-0021.
+ *
+ * Shaped exactly like `CalendarConnectionRepository` and for exactly its
+ * reasons, which `src/server/calendar.ts` states: the application's own
+ * credentials live in `.env`, and a credential that identifies A PERSON is data
+ * and lives in their database. A bot token is the second kind — the person
+ * created it, it is revocable by them, and it must vanish when they unpair.
+ *
+ * `status()` has no token field and `botTokenFor()` is the one door, so a
+ * reviewer can find every place a bot token is reachable by searching for one
+ * identifier. `console.log(status)` is not one keystroke from a leak.
+ */
+export interface ThreadConnectionRepository {
+  status(provider: string): Promise<ThreadConnectionStatus | null>
+  /** The ONE door to the secret, named after the fact that it hands one over. */
+  botTokenFor(provider: string): Promise<string | null>
+  /** Where to send. Separate from the token so a sender needs only this. */
+  chatIdFor(provider: string): Promise<string | null>
+  save(input: { provider: string; botToken: string; chatId: string }): Promise<void>
+  /**
+   * Claim a message key before sending it.
+   *
+   * Returns `false` when this key has already been said. **Claim, not check** —
+   * the UNIQUE index decides, so two feeds racing on the same key produce one
+   * send and one `false` rather than two sends and a green test. A read followed
+   * by a write would leave exactly that gap, and the two feeds run in different
+   * processes where the gap is widest.
+   *
+   * A send that then fails leaves the row behind, so that message is not
+   * retried. That is the deliberate direction: this channel's messages are all
+   * *something happened, come and look*, and the durable record is on a screen
+   * either way. Saying a thing twice is worse than not saying it once.
+   */
+  claimSend(provider: string, key: string): Promise<boolean>
+  /** Record the transport's id for a sent message, so a reply can find it. */
+  noteProviderMessageId(key: string, providerMessageId: string): Promise<void>
+  /** Which message key a reply is answering, or null. */
+  keyForProviderMessageId(provider: string, providerMessageId: string): Promise<string | null>
+  /** Advance the transport's read cursor. */
+  markRead(provider: string, updateId: number): Promise<void>
+  /** Unpair. A real DELETE — the credential goes, not a flag. */
+  forget(provider: string): Promise<void>
+}
+
+function threadConnectionRepository(prisma: PrismaClient): ThreadConnectionRepository {
+  const STATUS = {
+    provider: true,
+    pairedAt: true,
+    lastUpdateId: true,
+  } as const
+
+  return {
+    status: (provider) => prisma.threadConnection.findUnique({ where: { provider }, select: STATUS }),
+
+    // The only `select` in this file that names a bot token, narrowed to the
+    // scalar so that even here nothing else comes along with it.
+    botTokenFor: async (provider) => {
+      const row = await prisma.threadConnection.findUnique({
+        where: { provider },
+        select: { botToken: true },
+      })
+      return row?.botToken ?? null
+    },
+
+    chatIdFor: async (provider) => {
+      const row = await prisma.threadConnection.findUnique({
+        where: { provider },
+        select: { chatId: true },
+      })
+      return row?.chatId ?? null
+    },
+
+    save: async ({ provider, botToken, chatId }) => {
+      await prisma.threadConnection.upsert({
+        where: { provider },
+        create: { provider, botToken, chatId },
+        // Re-pairing clears the read cursor. A new chat has read nothing.
+        update: { botToken, chatId, lastUpdateId: null },
+        select: { id: true },
+      })
+      // And forgets what was said, for the same reason: a new thread has been
+      // told nothing, and carrying the old keys over would silence the first
+      // message on it — which is the one that matters most.
+      await prisma.threadMessageSent.deleteMany({ where: { provider } })
+    },
+
+    claimSend: async (provider, key) => {
+      try {
+        await prisma.threadMessageSent.create({ data: { provider, key }, select: { id: true } })
+        return true
+      } catch {
+        // The UNIQUE index refused, which is the answer rather than an error.
+        return false
+      }
+    },
+
+    noteProviderMessageId: async (key, providerMessageId) => {
+      await prisma.threadMessageSent.updateMany({ where: { key }, data: { providerMessageId } })
+    },
+
+    keyForProviderMessageId: async (provider, providerMessageId) => {
+      const row = await prisma.threadMessageSent.findFirst({
+        where: { provider, providerMessageId },
+        select: { key: true },
+      })
+      return row?.key ?? null
+    },
+
+    markRead: async (provider, updateId) => {
+      await prisma.threadConnection.updateMany({
+        where: { provider },
+        data: { lastUpdateId: updateId },
+      })
+    },
+
+    forget: async (provider) => {
+      // The sent rows first: they point at the connection, and a foreign key
+      // that outlives its target is how a DELETE that should have been a real
+      // one becomes a half of one.
+      await prisma.threadMessageSent.deleteMany({ where: { provider } })
+      await prisma.threadConnection.deleteMany({ where: { provider } })
+    },
+  }
+}
+
+/* ── ExtensionPairing ──────────────────────────────────────────────────── */
+
+/**
+ * Which extension this install answers to, once a person said so.
+ *
+ * Not a credential, and the repository is shaped to make that obvious: there is
+ * no one-door method here because there is no secret. An extension id is public
+ * — it is in the browser's own address bar — and what this row records is a
+ * DECISION, not a proof.
+ */
+export interface ExtensionPairingRepository {
+  /** The paired id, or null. */
+  current(browser: string): Promise<string | null>
+  pair(browser: string, extensionId: string): Promise<void>
+  forget(browser: string): Promise<void>
+}
+
+function extensionPairingRepository(prisma: PrismaClient): ExtensionPairingRepository {
+  return {
+    current: async (browser) => {
+      const row = await prisma.extensionPairing.findUnique({
+        where: { browser },
+        select: { extensionId: true },
+      })
+      return row?.extensionId ?? null
+    },
+
+    pair: async (browser, extensionId) => {
+      await prisma.extensionPairing.upsert({
+        where: { browser },
+        create: { browser, extensionId },
+        update: { extensionId, pairedAt: new Date() },
+        select: { browser: true },
+      })
+    },
+
+    forget: async (browser) => {
+      await prisma.extensionPairing.deleteMany({ where: { browser } })
     },
   }
 }

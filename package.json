@@ -8,9 +8,10 @@
     "node": ">=22"
   },
   "scripts": {
-    "dev": "next dev -p 3117",
+    "dev": "tsx scripts/dev.ts -H 127.0.0.1 -p 3117",
+    "dev:web": "next dev -H 127.0.0.1 -p 3117",
     "build": "next build",
-    "start": "next start -p 3117",
+    "start": "next start -H 127.0.0.1 -p 3117",
     "worker": "tsx scripts/worker.ts",
     "typecheck": "tsc --noEmit",
     "format": "tsx scripts/format.ts",
@@ -23,7 +24,9 @@
     "db:studio": "prisma studio",
     "verify:model": "tsx scripts/verify-model.ts",
     "eval": "tsx scripts/eval.ts",
-    "capture:afternoon": "tsx src/fixtures/capture-afternoon.ts"
+    "capture:afternoon": "tsx src/fixtures/capture-afternoon.ts",
+    "seed:shift": "tsx scripts/seed-shift.ts",
+    "seed:offer": "tsx scripts/seed-offer.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.71.0",

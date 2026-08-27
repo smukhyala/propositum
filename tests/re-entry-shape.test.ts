@@ -71,6 +71,7 @@ function outcome(over: Partial<OutcomeView> = {}): OutcomeView {
     whatYouCanDo: null,
     verdict: null,
     changeCount: null,
+    findings: [],
     ...over,
   }
 }
@@ -107,7 +108,12 @@ const DECISION = {
   question: 'Which shore did you mean?',
   whyStopped: 'The page covers four of them.',
   needs: 'Say which one and I can finish.',
+  /** Open. ADR-0022 — `null` is what "still waiting on you" looks like now. */
+  answer: null,
 }
+
+/** The same question, answered. What the note shows on a second visit. */
+const ANSWERED_DECISION = { ...DECISION, answer: 'The north one, the one with the ferry.' }
 
 /** `renderToStaticMarkup` gives the first paint: no interaction, and every
  *  `useState` at its initial value. That is exactly the arrival state a person
@@ -187,6 +193,72 @@ describe('accept all stays inert while a question is open', () => {
   })
 })
 
+/* ── what I need from you, once it can be answered ───────────────────────── */
+
+describe('a question can be answered, and the answer is kept', () => {
+  /**
+   * The regression this exists for is the one the OLD copy admitted to.
+   *
+   * Until 2026-08-26 this section carried a toggle under the sentence
+   * *"Propositum doesn't keep your answer — settling this only unlocks accepting
+   * the changes together. Write the answer into the document yourself."* That was
+   * client state and nothing was written anywhere. ADR-0022 gave the row a
+   * verdict; these assert the screen stopped saying otherwise.
+   */
+  it('offers a field to answer in, not a pair of buttons', () => {
+    const markup = html(report({ decisions: [DECISION], changes: [change()] }))
+
+    expect(markup).toContain('Tell it')
+    expect(markup).toContain('textarea')
+    /* A Yes and a No here would be a confirmation control one heading away from
+     * the real one, and a DecisionNeeded exists precisely because the worker
+     * could not reduce the question to a choice. */
+    expect(markup).not.toContain('Go ahead')
+  })
+
+  it('no longer tells the person their answer goes nowhere', () => {
+    const markup = html(report({ decisions: [DECISION], changes: [change()] }))
+    expect(markup).not.toContain('doesn&#x27;t keep your answer')
+    expect(markup).not.toContain('Write the answer into the document yourself')
+    expect(markup).not.toContain("I've settled this")
+  })
+
+  it('reads the answer back when there is one', () => {
+    const markup = html(report({ decisions: [ANSWERED_DECISION], changes: [change()] }))
+
+    expect(markup).toContain('The north one, the one with the ferry.')
+    expect(markup).toContain('You said:')
+    /* Answered means settled. The field is gone rather than disabled — there is
+     * nothing left to type. */
+    expect(markup).not.toContain('Tell it')
+  })
+
+  /**
+   * The gate ADR-0019 keeps, now cleared by saying something rather than by
+   * pressing a toggle that recorded nothing.
+   */
+  it('unblocks accept all once every question has an answer', () => {
+    const open = html(report({ decisions: [DECISION], changes: [change(), change({ id: 'c2' })] }))
+    const openButton = open.slice(open.indexOf('Accept all') - 400, open.indexOf('Accept all'))
+    expect(openButton).toContain('disabled')
+
+    const answered = html(
+      report({ decisions: [ANSWERED_DECISION], changes: [change(), change({ id: 'c2' })] }),
+    )
+    const answeredButton = answered.slice(
+      answered.indexOf('Accept all') - 400,
+      answered.indexOf('Accept all'),
+    )
+    expect(answeredButton).not.toContain('disabled')
+  })
+
+  /** Principle 11: it says what it will not do with the answer. */
+  it('says the answer acts on nothing by itself', () => {
+    const markup = html(report({ decisions: [ANSWERED_DECISION], changes: [change()] }))
+    expect(markup).toContain('Nothing acts on it on its own')
+  })
+})
+
 /* ── the decidable unit, which is what H2 counts ─────────────────────────── */
 
 describe('a verdict control appears once per decidable unit and never beside a landed one', () => {
@@ -248,6 +320,54 @@ describe('a verdict control appears once per decidable unit and never beside a l
 })
 
 /* ── the summary leads, the diff is the evidence ─────────────────────────── */
+
+/**
+ * The second pass, on a production rather than on a change.
+ *
+ * A finding citing an outcome handle has been storable since `review@2` and
+ * was rendered by nothing: the only reader was `findings.forChangeset`, which
+ * joins through `changeId`. So the reviewer said something true about a
+ * collection and the person never saw it — indistinguishable, in a green
+ * suite, from the reviewer never having said it.
+ */
+describe('an outcome-scoped finding reaches the person', () => {
+  it('renders what the second pass said about a whole production', () => {
+    const markup = renderToStaticMarkup(
+      createElement(WhatIMade, {
+        outcomes: [
+          outcome({
+            id: 'o1',
+            kind: 'collection',
+            items: ['4.1%', '4.4%'],
+            body: null,
+            findings: [
+              { kind: 'unsupported', detail: 'Two of these rates are from the same page.' },
+            ],
+          }),
+        ],
+        busy: false,
+        onDecide: () => undefined,
+      }),
+    )
+
+    expect(markup).toContain('A second pass flagged this')
+    expect(markup).toContain('Two of these rates are from the same page.')
+  })
+
+  it('says nothing at all when the reviewer flagged nothing', () => {
+    // The reviewer not running is a supported outcome, not a degraded one, so
+    // an empty heading would be this screen inventing a section.
+    const markup = renderToStaticMarkup(
+      createElement(WhatIMade, {
+        outcomes: [outcome({ id: 'o1', findings: [] })],
+        busy: false,
+        onDecide: () => undefined,
+      }),
+    )
+
+    expect(markup).not.toContain('A second pass flagged this')
+  })
+})
 
 describe('a change reads as a summary with the diff behind it', () => {
   it('puts why it was proposed above the changed text', () => {

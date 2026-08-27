@@ -64,7 +64,12 @@ import type { ChangeVerdict, ChangeView } from './diff'
 import { WhatIMade } from './outcome'
 import type { OutcomeVerdict, OutcomeView } from './outcome'
 import { Away, Done, Refused, Unknown, Wrote } from './sprites'
-import { finishShift, recordOutcomeVerdict, recordVerdict } from '../server/actions'
+import {
+  answerDecision,
+  finishShift,
+  recordOutcomeVerdict,
+  recordVerdict,
+} from '../server/actions'
 
 /* ── the one stylesheet ─────────────────────────────────────────────────── */
 
@@ -81,6 +86,11 @@ const CSS = `
 .ps-needs strong { font-weight: 600; }
 .ps-settle { display: flex; gap: 0.75rem; align-items: baseline; flex-wrap: wrap; }
 .ps-settle-note { margin: 0; font-size: 0.8125rem; color: var(--muted); max-width: 34rem; }
+/* The answer field is a textarea and not an input, because the questions this
+   asks are not one-line questions. ADR-0022. */
+.ps-answer-field { flex-basis: 100%; font: inherit; font-size: 0.9375rem; padding: 0.5rem 0.6rem; border: 1px solid var(--ink); background: var(--paper); color: var(--ink); resize: vertical; }
+.ps-answered { margin: 0; flex-basis: 100%; font-size: 0.9375rem; max-width: 42rem; }
+.ps-answered strong { font-weight: 600; }
 .ps-decision + .ps-decision { margin-top: 2rem; padding-top: 1.75rem; border-top: 1px solid var(--attention); }
 
 .ps-resume { margin-top: 3.25rem; padding-top: 1.5rem; border-top: 2px solid var(--ink); }
@@ -140,6 +150,14 @@ export interface DecisionView {
   readonly whyStopped: string
   /** What it would need in order to carry on. */
   readonly needs: string
+  /**
+   * The person's own words, or null while the question is still open.
+   *
+   * Added 2026-08-26 ([ADR-0022](../../docs/adr/0022-the-fourth-verdict.md)).
+   * Before it, this screen showed a question and offered a toggle whose own copy
+   * admitted the answer went nowhere.
+   */
+  readonly answer: string | null
 }
 
 /**
@@ -345,46 +363,111 @@ function WhereIStopped({ stopped }: { readonly stopped: ShiftReportProps['stoppe
 
 /* ── what I need from you ───────────────────────────────────────────────── */
 
+/**
+ * One question, and the field that answers it. ADR-0022.
+ *
+ * ── What this replaced, and why the old copy is worth remembering ─────────
+ *
+ * Until 2026-08-26 the control here was a toggle reading *"I've settled this"*,
+ * under a sentence that said out loud: *"Propositum doesn't keep your answer —
+ * settling this only unlocks accepting the changes together. Write the answer
+ * into the document yourself."* That was honest and it was the product telling
+ * somebody, in its own interface copy, that it was not listening. The toggle was
+ * client state; nothing was written anywhere.
+ *
+ * It is a text field and not two buttons, and that is the decision rather than a
+ * styling choice. A `DecisionNeeded` exists precisely because the worker met
+ * something it could not reduce to a choice — reducing it here would be the
+ * model's failure to enumerate, papered over by ours, and a Yes and a No on this
+ * screen would be a confirmation control sitting one heading away from the real
+ * one.
+ *
+ * Answering IS settling now. There is no separate toggle, because a second
+ * control that unlocks the changes without recording anything is the old
+ * affordance with the honest sentence removed.
+ */
+function OneDecision({
+  decision,
+  answered,
+  onAnswer,
+}: {
+  readonly decision: DecisionView
+  /** The answer as it stands now — the row's, or the one just given. */
+  readonly answered: string | null
+  readonly onAnswer?: ((id: string, answer: string) => void) | undefined
+}) {
+  const [draft, setDraft] = useState('')
+
+  return (
+    <div className="ps-decision">
+      <p className="ps-question">{decision.question}</p>
+      <p className="ps-stakes">{decision.whyStopped}</p>
+      <p className="ps-needs">
+        <strong>What I&rsquo;d need:</strong> {decision.needs}
+      </p>
+
+      {answered !== null ? (
+        <div className="ps-settle">
+          <p className="ps-answered">
+            <strong>You said:</strong> {answered}
+          </p>
+          <p className="ps-settle-note">
+            Kept with this note. Nothing acts on it on its own &mdash; the next time you hand this
+            work over, you decide what goes in the agreement.
+          </p>
+        </div>
+      ) : onAnswer === undefined ? null : (
+        <div className="ps-settle">
+          <label className="ps-settle-note" htmlFor={`answer-${decision.id}`}>
+            Tell it what you want, in your own words.
+          </label>
+          <textarea
+            id={`answer-${decision.id}`}
+            className="ps-answer-field"
+            rows={3}
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+          />
+          <Button
+            onClick={() => {
+              const clean = draft.trim()
+              if (clean !== '') onAnswer(decision.id, clean)
+            }}
+          >
+            Tell it
+          </Button>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function Decisions({
   decisions,
-  settled,
-  onSettle,
+  answers,
+  onAnswer,
 }: {
   readonly decisions: readonly DecisionView[]
-  /** Which questions the person has said they have settled. */
-  readonly settled?: ReadonlySet<string> | undefined
+  /** Answers given on this screen, over the top of the ones already on the row. */
+  readonly answers?: Readonly<Record<string, string>> | undefined
   /**
-   * Absent on the drifted screen. The toggle exists only to unlock accepting
-   * the changes together, and there are no changes there — a control whose
-   * whole purpose is missing should not be on the page.
+   * Absent on the drifted screen. The field exists to unblock reviewing the
+   * changes, and there are none there — a control whose whole purpose is missing
+   * should not be on the page. The question and the answer still render.
    */
-  readonly onSettle?: ((id: string) => void) | undefined
+  readonly onAnswer?: ((id: string, answer: string) => void) | undefined
 }) {
   if (decisions.length === 0) return null
-  const isSettled = (id: string) => settled?.has(id) ?? false
 
   return (
     <Section title="What I need from you" tone="attention">
       {decisions.map((decision) => (
-        <div className="ps-decision" key={decision.id}>
-          <p className="ps-question">{decision.question}</p>
-          <p className="ps-stakes">{decision.whyStopped}</p>
-          <p className="ps-needs">
-            <strong>What I&rsquo;d need:</strong> {decision.needs}
-          </p>
-
-          {onSettle === undefined ? null : (
-            <div className="ps-settle">
-              <Button pressed={isSettled(decision.id)} onClick={() => onSettle(decision.id)}>
-                {isSettled(decision.id) ? 'Settled' : "I've settled this"}
-              </Button>
-              <p className="ps-settle-note">
-                Propositum doesn&rsquo;t keep your answer &mdash; settling this only unlocks
-                accepting the changes together. Write the answer into the document yourself.
-              </p>
-            </div>
-          )}
-        </div>
+        <OneDecision
+          key={decision.id}
+          decision={decision}
+          answered={answers?.[decision.id] ?? decision.answer}
+          {...(onAnswer === undefined ? {} : { onAnswer })}
+        />
       ))}
     </Section>
   )
@@ -397,7 +480,15 @@ export function ShiftReport(props: ShiftReportProps) {
   const [decidedOutcomes, setDecidedOutcomes] = useState<Readonly<Record<string, OutcomeVerdict>>>(
     {},
   )
-  const [settled, setSettled] = useState<ReadonlySet<string>>(new Set())
+  /**
+   * Answers given on this screen, keyed by decision.
+   *
+   * Was `settled: Set<string>` — client state that unlocked a button and wrote
+   * nothing. It holds prose now, over the top of what the row already carries,
+   * for the same reason `recorded` and `decidedOutcomes` exist beside their
+   * props: the server action has written, and the page has not re-rendered yet.
+   */
+  const [answers, setAnswers] = useState<Readonly<Record<string, string>>>({})
   const [problem, setProblem] = useState<string | null>(null)
   const [finished, setFinished] = useState<
     { ordinal: number; kept: number; discarded: number } | 'no-document' | null
@@ -438,7 +529,17 @@ export function ShiftReport(props: ShiftReportProps) {
     (o) => !o.landed && o.kind !== 'document-changes' && o.verdict === null,
   )
   const places = new Set(changes.map((c) => c.where ?? '')).size
-  const openQuestions = props.decisions.filter((d) => !settled.has(d.id))
+  /**
+   * Questions with no answer, from either source.
+   *
+   * These gate accepting the changes together — ADR-0019 keeps per-change
+   * verdicts per-change, and *Accept all* stays inert while a question is open,
+   * because some of the changes assume an answer to it. The gate is unchanged;
+   * what changed is that clearing it now requires saying something.
+   */
+  const openQuestions = props.decisions.filter(
+    (d) => (answers[d.id] ?? d.answer) === null || (answers[d.id] ?? d.answer) === undefined,
+  )
 
   /**
    * Does the document review belong on this screen at all?
@@ -565,12 +666,15 @@ export function ShiftReport(props: ShiftReportProps) {
     })
   }
 
-  function settle(id: string) {
-    setSettled((prev) => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
+  function answer(id: string, text: string) {
+    startWriting(async () => {
+      const result = await answerDecision(id, text)
+      if (!result.ok) {
+        setProblem(result.problem.message)
+        return
+      }
+      setProblem(null)
+      setAnswers((prev) => ({ ...prev, [id]: text }))
     })
   }
 
@@ -587,7 +691,7 @@ export function ShiftReport(props: ShiftReportProps) {
         tally={props.tally}
       />
 
-      <Decisions decisions={props.decisions} settled={settled} onSettle={settle} />
+      <Decisions decisions={props.decisions} answers={answers} onAnswer={answer} />
 
       <WhatIMade outcomes={made} busy={busy} onDecide={decideOutcome} />
 

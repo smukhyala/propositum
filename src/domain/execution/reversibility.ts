@@ -62,10 +62,35 @@
  * This is the SECONDARY mechanism. The primary one is browser-attested and sits
  * at the network: a non-`GET` request caught at `Fetch.requestPaused`, which is
  * Chrome telling us what is actually about to leave the machine rather than us
- * guessing from a button's label. Another unit builds it. When both exist this
- * one is the early, legible warning — it can name *what* is about to happen
- * while the person can still recognise it — and the network check is the one
- * that cannot be talked out of firing.
+ * guessing from a button's label. ~~Another unit builds it.~~ **It is built —
+ * `classifyPausedRequest` in `extension/src/cdp.js`, called from the paused-request
+ * handler. That clause was stale well before the corrections below.** When both
+ * exist this one is the early, legible warning — it can name *what* is about to
+ * happen while the person can still recognise it — and the network check is the
+ * one that cannot be talked out of firing.
+ *
+ * ── Two corrections, 2026-08-26, and the second one promotes this file ───
+ *
+ * **ADR-0024 makes the network check CONDITIONAL.** A non-`GET` covered by a
+ * ratified `PurchaseAuthorization` — an origin, a ceiling, a count, an expiry —
+ * will be allowed. So *"cannot be talked out of firing"* becomes *"cannot be
+ * talked out of firing without a structured authorisation a person ratified"*.
+ * Still not a dial, still not a model, and still weaker than what it replaced.
+ *
+ * **ADR-0025 makes this file the PRIMARY mechanism for anything outside a
+ * browser.** There is no paused request on a desktop action, no Chrome, and
+ * nothing attested. The whole of what decides irreversibility there is the
+ * English-only, escalation-only lexicon below, matched against an accessible
+ * name the APPLICATION wrote. That is the secondary mechanism doing a primary
+ * job, and the two gaps stated at the end of this header get correspondingly
+ * larger: the lexicon has to cover every approved application rather than every
+ * approved web page, and `GET`-shaped destruction acquires a desktop analogue
+ * with no mechanism behind it at all.
+ *
+ * Neither ADR is implemented as this is written. Both are decisions, and the
+ * reason they are recorded here rather than only in `docs/adr/` is that this is
+ * the file whose importance changes, and a file that quietly becomes
+ * load-bearing is how a mechanism erodes without anybody choosing it.
  *
  * Two gaps, stated rather than implied:
  *

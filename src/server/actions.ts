@@ -32,9 +32,12 @@
 import { revalidatePath } from 'next/cache'
 
 import { appContext, existingAppContext } from './db'
+import { pairExtension } from './extension-pairing'
+import { beginPairing, completePairing, unpair } from './thread'
 import { readableCause } from './problem'
 import { confirmRequest, haltRun, rejectRequest } from './confirmations'
 import { ambientStore, captureStore } from './capture-store'
+import { startGapWatch, stopGapWatch } from './gap-watch'
 import { countQuietly, dayBucket } from './offer-tally'
 import { whereYouLeftOffIn, whereYouLeftOffOn } from './work-so-far'
 import { describeWork, signatureOf } from './ambient-store'
@@ -1201,6 +1204,7 @@ export async function startFromSuggestion(
     const session = await repos.sessions.start(project.id, intentionId)
     const startedAtMs = Date.now()
     captureStore().start(session.id, startedAtMs)
+    startGapWatch()
 
     /**
      * Accepting forgets every decline of this strand.
@@ -2127,6 +2131,7 @@ export async function startSession(projectId: string): Promise<ActionResult<Sess
 
     const session = await repos.sessions.start(projectId, intention?.id ?? null)
     captureStore().start(session.id, Date.now())
+    startGapWatch()
 
     const sources = await repos.projects.approvedSources(projectId)
     refresh()
@@ -2161,7 +2166,10 @@ export async function endSession(sessionId: string): Promise<ActionResult<Sessio
     // else's live capture because a stale tab posted an old id would lose events
     // with no trace.
     const live = captureStore().current()
-    if (live && live.sessionId === sessionId) captureStore().end()
+    if (live && live.sessionId === sessionId) {
+      captureStore().end()
+      stopGapWatch()
+    }
 
     refresh()
     return ok({ sessionId, endedAt: endedAt.toISOString() })
@@ -2903,6 +2911,94 @@ export async function forgetCalendar(): Promise<void> {
   refresh()
 }
 
+/* ── setting Propositum up ─────────────────────────────────────────────── */
+
+export interface ExtensionPaired {
+  readonly extensionId: string
+}
+
+/**
+ * Say that the extension which just knocked is yours. ADR-0021's onboarding half.
+ *
+ * ── What this is not, and the screen says the same ───────────────────────
+ *
+ * Not authentication. Anything on this machine can knock, and a forged `Origin`
+ * was always possible from a non-browser client — `src/capture/transport.ts`
+ * says exactly that about the check this feeds. What changes is only where the
+ * person expresses the decision: on a screen, having been shown the id, rather
+ * than by pasting it into `.env`. The person clicking is the authorisation, on
+ * the same terms as the extension's own **Allow** gesture.
+ *
+ * The id must be one that is actually knocking, which is an honesty check rather
+ * than a security one: pairing with a typo produces an afternoon of wondering
+ * why nothing is captured, which is the exact failure this whole path exists to
+ * end.
+ */
+export async function pairExtensionAction(
+  extensionId: string,
+): Promise<ActionResult<ExtensionPaired>> {
+  return attempt(async () => {
+    const result = await pairExtension(extensionId)
+    if (!result.ok) {
+      return no<ExtensionPaired>(
+        result.reason === 'malformed' ? 'invalid-input' : 'not-found',
+        result.reason === 'malformed'
+          ? "That is not a Chrome extension id."
+          : 'Nothing with that id has called here in the last few minutes. Reload the extension and try again.',
+      )
+    }
+    refresh()
+    return ok({ extensionId: result.extensionId })
+  })
+}
+
+export interface PairingStarted {
+  /** What the bot is called, so a person can see they pasted the right token. */
+  readonly handle: string
+}
+
+/** Half one of pairing a phone: check the token and read back the bot's name. */
+export async function beginThreadPairing(
+  botToken: string,
+): Promise<ActionResult<PairingStarted>> {
+  return attempt(async () => {
+    const started = await beginPairing(botToken)
+    if (!started.ok) {
+      return no<PairingStarted>(
+        started.problem === 'no-token' ? 'invalid-input' : 'blocked',
+        started.detail,
+      )
+    }
+    refresh()
+    return ok({ handle: started.handle })
+  })
+}
+
+/** Half two: whoever pressed Start is the person this thread belongs to. */
+export async function completeThreadPairing(): Promise<ActionResult<PairingStarted>> {
+  return attempt(async () => {
+    const ctx = await appContext()
+    const done = await completePairing(ctx)
+    if (!done.ok) return no<PairingStarted>('blocked', done.detail)
+    refresh()
+    return ok({ handle: done.handle })
+  })
+}
+
+/**
+ * Unpair. A real DELETE, like `forgetCalendar`.
+ *
+ * Returns `void` for the same reason that one does — there is nothing to report
+ * and nothing that can usefully fail. What it must do is actually remove the
+ * credential, and `thread.forget` deletes the sent rows first so the foreign key
+ * cannot outlive its target.
+ */
+export async function forgetThread(): Promise<void> {
+  const ctx = await appContext()
+  await unpair(ctx)
+  refresh()
+}
+
 /**
  * The dials as they arrive on screen, before the person touches them.
  *
@@ -3279,6 +3375,81 @@ export async function recordOutcomeVerdict(
 
     refresh()
     return ok({ outcomeId, verdict })
+  })
+}
+
+export interface DecisionAnswered {
+  readonly decisionId: string
+}
+
+/**
+ * Answer one raised decision. ADR-0022 — the fifth verb.
+ *
+ * ── Why this one is a text field and not two buttons ──────────────────────
+ *
+ * A `DecisionNeeded` exists precisely because the worker met something it could
+ * not reduce to a choice. Reducing it to a choice HERE would be the model's
+ * failure to enumerate, papered over by ours — and a Yes and a No on this screen
+ * would be a `ConfirmationVerdict` with the safety filed off, sitting one heading
+ * away from the real one.
+ *
+ * ── Why it is safe from a phone, when a confirmation is not ───────────────
+ *
+ * It grants nothing. No `AuthorizedAction` is minted, no `ContractScope` widens,
+ * no `ActionKind` becomes allowed, no budget moves. The run that raised the
+ * question has already ended, so nothing is holding a control token or driving a
+ * browser. An answer enters the product on the footing `guidance` already has —
+ * human prose that informs work and authorises none of it.
+ *
+ * That is the whole of ADR-0021's argument for why this is the one verdict a
+ * message channel may carry, and `tests/thread-scope.test.ts` is what holds it:
+ * the answer reaches a row and never a prompt, never `compilePolicy`, never a
+ * `ContractScope`.
+ *
+ * ── What it does NOT do, said here because it looks finished ──────────────
+ *
+ * Nothing reads it. No worker, no boundary, no next agreement. Carrying an
+ * answer into the next Shift's `StatedIntent` would be a path from a worker's
+ * own question to the next agreement's text with no human ratification in
+ * between, which is what ADR-0006 §5 exists to refuse. The carry-forward is a
+ * separate decision that starts a new Shift with an agreement a person reads.
+ */
+export async function answerDecision(
+  decisionId: string,
+  answer: string,
+): Promise<ActionResult<DecisionAnswered>> {
+  return attempt(async () => {
+    const { repos } = await appContext()
+
+    const clean = answer.trim()
+    if (!clean) {
+      return no<DecisionAnswered>('invalid-input', 'Write what you want it to do.')
+    }
+
+    const result = await repos.reports.answer({
+      decisionNeededId: decisionId,
+      answer: clean,
+      source: 'screen',
+      at: new Date(),
+    })
+
+    if (!result.ok) {
+      if (result.reason === 'not-found') {
+        return no<DecisionAnswered>('not-found', "That isn't there any more.")
+      }
+      /**
+       * Refreshed even though nothing was written, and BECAUSE nothing was
+       * written — the same move `recordOutcomeVerdict` makes. Reaching here
+       * means the durable record holds an answer this screen does not know
+       * about, most likely because it was given on a phone. The screen is the
+       * stale half.
+       */
+      refresh()
+      return no<DecisionAnswered>('already-done', "You've already answered this one.")
+    }
+
+    refresh()
+    return ok({ decisionId })
   })
 }
 

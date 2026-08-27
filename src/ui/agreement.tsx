@@ -424,7 +424,7 @@ export function Agreement({ draft, defaults, sourceLabels, onBack, onHandedOver 
   const whyDraftingIsOff = draftingWasOnOffer
     ? 'You chose research only, so Propositum will come back with findings, questions and next steps — and no text for your document.'
     : draft.documentTitle === null
-      ? 'This shift has no document under it, so there is nothing to draft — Propositum will come back with what it found rather than text for a document.'
+      ? 'There is no document under this agreement, so there is nothing to draft — Propositum will come back with what it found rather than text for a document.'
       : NOT_IN_THIS_AGREEMENT
 
   function handOver(): void {
@@ -584,7 +584,7 @@ export function Agreement({ draft, defaults, sourceLabels, onBack, onHandedOver 
             allowlist rather than by which one reads better. */}
           <p className="ag-hint-tight">
             {draft.documentTitle === null ? (
-              <>Nothing yet — this shift has no document under it. </>
+              <>Nothing yet — there is no document under this agreement. </>
             ) : (
               <>
                 In <strong>{draft.documentTitle}</strong>, and nowhere else.{' '}
@@ -810,7 +810,7 @@ export function Agreement({ draft, defaults, sourceLabels, onBack, onHandedOver 
 
         <div className="ag-foot-actions">
           <Button variant="primary" onClick={handOver} disabled={pending || !ready}>
-            {pending ? 'Handing over…' : 'Take over'}
+            {pending ? 'Handing over…' : 'Hand over'}
           </Button>
           <Button onClick={onBack} disabled={pending}>
             Back to what I read

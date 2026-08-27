@@ -90,7 +90,7 @@ export async function GET(request: Request) {
 
   const admission = admitControl(
     { headers, body: null },
-    { from: 'extension', expectedOrigin: expectedOrigin() },
+    { from: 'extension', expectedOrigin: await expectedOrigin() },
     { kind: 'none' },
   )
 

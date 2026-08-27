@@ -14,12 +14,15 @@
 
 import { randomBytes } from 'node:crypto'
 import { createDatabase } from '../src/persistence/client'
+import { SchemaBehindError } from '../src/persistence/append-only'
+import { EX_CONFIG } from '../src/runtime/exit-codes'
 import { createRepositories } from '../src/persistence/repositories/index'
 import { createLedgerWriter } from '../src/persistence/ledger-writer'
 import { createModelClient } from '../src/model/provider'
 import { startWorkerProcess, installSignalHandlers } from '../src/runtime/worker-process'
 import { executeRun } from '../src/server/execute-run'
 import { admitRun, expireConfirmations, sweepAbandonedIntents } from '../src/server/confirmations'
+import { readReplies, sayWhatIsOutstanding } from '../src/server/thread'
 import { createPlaywrightFetcher } from '../src/policy/playwright-fetcher'
 import { sweepActionEvidence } from '../src/server/evidence-sweep'
 import { sweepReticence } from '../src/server/reticence-sweep'
@@ -30,15 +33,71 @@ try {
   /* the key may come from the environment */
 }
 
-const apiKey = process.env['ANTHROPIC_API_KEY']
-if (!apiKey) {
-  console.error('No ANTHROPIC_API_KEY. The worker needs one to run a shift.')
-  process.exit(1)
+/**
+ * ~~No key, no worker.~~ **Amended 2026-08-26: no key, no SHIFTS.**
+ *
+ * The hard exit was right while the worker only drained runs. It stopped being
+ * right when the phone thread landed on this process's tick
+ * ([ADR-0021](../docs/adr/0021-a-thread-on-the-persons-phone.md)): nothing about
+ * saying *"a shift ended"* or *"I need a decision"* reaches a model, so a keyless
+ * install was one where a person could pair a phone on `/welcome` and it would
+ * never say anything, with nothing anywhere explaining why. That is the swallowed
+ * notification again, one process out.
+ *
+ * The shape is the one `src/server/calendar.ts` already uses for a missing client
+ * id: **the feature is absent, not broken.** With no key this process starts,
+ * tends the thread, and claims no runs — and says so once rather than dying.
+ * `/welcome` step 1 tells the person what to add and what is missing until they
+ * do, so the two halves agree about the same fact.
+ */
+/**
+ * Normalised once, because three places ask about it and they must agree.
+ *
+ * `ANTHROPIC_API_KEY=` with nothing after it — which is what `.env.example`
+ * ships and what a half-finished setup looks like — is an empty STRING, not
+ * `undefined`. The startup check below is `!apiKey` and catches it; a later
+ * `apiKey === undefined` does not. Measured: with the variable set and empty,
+ * the process correctly said it had no key and then correctly reported itself
+ * draining runs, which are two different answers to one question.
+ *
+ * So it is `undefined` or a real key, and nothing in between reaches the rest of
+ * this file.
+ */
+const apiKey = process.env['ANTHROPIC_API_KEY']?.trim() || undefined
+if (apiKey === undefined) {
+  console.log('[worker] No ANTHROPIC_API_KEY, so no shift can run. Set one in .env — see /welcome.')
+  console.log('[worker] Staying up anyway: a paired phone still gets what happened and what needs deciding.')
 }
 
-// The worker creates its OWN database handle. It never imports src/server/db,
-// which memoises one for the Next process — two processes, two lifetimes.
-const db = await createDatabase({})
+/**
+ * The worker creates its OWN database handle. It never imports src/server/db,
+ * which memoises one for the Next process — two processes, two lifetimes.
+ *
+ * ── Why this one failure is caught and the rest are not ──────────────────
+ *
+ * `createDatabase` installs and verifies the append-only guards, and there are
+ * two ways that ends badly. A guard that will not install means the ledger is
+ * unprotected and this process must die loudly with everything it knows. A
+ * MISSING TABLE means somebody has not run `npx prisma db push` since the schema
+ * changed — a setup step, with a one-line fix, and an unhandled rejection is the
+ * worst possible way to deliver one.
+ *
+ * Measured before this existed: three crash-loops, three walls of minified
+ * Prisma client, and the actual instruction appearing nowhere in the output.
+ */
+let db: Awaited<ReturnType<typeof createDatabase>>
+try {
+  db = await createDatabase({})
+} catch (error) {
+  if (error instanceof SchemaBehindError) {
+    console.error(`[worker] ${error.message}`)
+    // EX_CONFIG. Restarting cannot fix a table that does not exist, and
+    // `scripts/dev.ts` reads this code as "do not try again" — so the
+    // instruction above is printed once instead of three times.
+    process.exit(EX_CONFIG)
+  }
+  throw error
+}
 const ctx = {
   db,
   repos: createRepositories(db.prisma),
@@ -149,6 +208,67 @@ async function sweepRetention(): Promise<void> {
 await sweepRetention()
 setInterval(() => void sweepRetention(), SWEEP_INTERVAL_MS).unref()
 
+/**
+ * How often the phone is told anything. ADR-0021.
+ *
+ * ── Why this is a second clock and not a deps entry ──────────────────────
+ *
+ * The same argument `SWEEP_INTERVAL_MS` makes above, and it lands the same way.
+ * `startWorkerProcess`'s deps are a run-draining loop; this is a channel, with a
+ * different cadence and no relationship to draining beyond sharing a process.
+ *
+ * It is also the only shape that WORKS here. The loop's idle branch is the only
+ * place a deps entry could hang, and the idle branch is reached exactly when
+ * `claimNext` returns nothing — so a feed wired there goes quiet for the whole
+ * of a shift, which is precisely the window in which a run stops to ask a
+ * question. A confirmation raised at minute three would be announced whenever
+ * the run finally ended, which is the opposite of the point.
+ *
+ * Five seconds. Not one, because nothing here is urgent enough to poll a third
+ * party twelve times a minute, and every pass costs one indexed insert per
+ * outstanding message that has already been said. Not a minute, because
+ * `CONFIRMATION_EXPIRY_HOURS` is counting from the moment a run parks and the
+ * person is not at the desk.
+ */
+const THREAD_INTERVAL_MS = 5_000
+
+/**
+ * Say what is outstanding, and read what came back.
+ *
+ * Its own `try`, for the reason the two retention sweeps have one each: a throw
+ * from the send would jump past the read, so a provider that is refusing sends —
+ * a revoked token, a blocked bot — would silently stop answers being collected
+ * too, and the only line on the console would be about sending.
+ *
+ * Both halves are no-ops when nothing is paired, which is the ordinary state.
+ *
+ * `offerOpen` is null here and that is not a gap. A composed offer lives in the
+ * Next app process's memory and ADR-0008 refuses it a row, so this process
+ * genuinely cannot see one — a `yes` arriving on this feed is `unrecognised`,
+ * which is the honest answer from a process with nothing to accept.
+ */
+async function tendTheThread(): Promise<void> {
+  try {
+    const said = await sayWhatIsOutstanding(ctx, Date.now())
+    if (said > 0) console.log(`[worker] said ${said} thing(s) on the thread`)
+  } catch (error) {
+    console.error(
+      `[worker] could not reach the thread: ${error instanceof Error ? error.message : String(error)}`,
+    )
+  }
+
+  try {
+    const heard = await readReplies(ctx, Date.now())
+    if (heard.answered > 0) console.log(`[worker] recorded ${heard.answered} answer(s) from the thread`)
+  } catch (error) {
+    console.error(
+      `[worker] could not read the thread: ${error instanceof Error ? error.message : String(error)}`,
+    )
+  }
+}
+
+setInterval(() => void tendTheThread(), THREAD_INTERVAL_MS).unref()
+
 const handle = startWorkerProcess(
   {
     /**
@@ -205,7 +325,20 @@ const handle = startWorkerProcess(
      * `complete`, `sweepExpiredLeases` and the confirmation paths clear it.
      */
     claimNext: (lease) =>
-      ctx.repos.runs.claim({ ...lease, controlToken: randomBytes(32).toString('base64url') }),
+      /**
+       * With no key, nothing is ever claimed — so `execute` below is
+       * unreachable and the loop idles for ever, which is exactly what a worker
+       * that cannot run a shift should do.
+       *
+       * Refusing HERE rather than at startup is what keeps the rest of this
+       * process alive: the thread interval below needs no model, and a keyless
+       * install that could not tell a person their shift ended was the bug this
+       * replaced. A run enqueued in that state simply waits, and the moment a
+       * key appears and this process restarts, it is drained.
+       */
+      apiKey === undefined
+        ? Promise.resolve(null)
+        : ctx.repos.runs.claim({ ...lease, controlToken: randomBytes(32).toString('base64url') }),
     /** The coordinator's decision, at the only point it can be honoured: a
      *  continuation whose shift already ended never enters the loop. */
     admit: (runId) => admitRun(ctx, runId, new Date()),
@@ -225,14 +358,21 @@ const handle = startWorkerProcess(
     // only in scope here, and it is what makes this the ONE construction site
     // whose `ModelCallRecord` rows can be joined back to what they were for.
     // The other four call sites have no run to name.
-    execute: (runId, fence) =>
-      executeRun(runId, {
+    execute: (runId, fence) => {
+      // Unreachable without a key, because `claimNext` above hands back nothing.
+      // Narrowed rather than asserted: the day somebody changes that refusal,
+      // this is a compile error instead of a client built with `undefined`.
+      if (apiKey === undefined) {
+        throw new Error('a run was claimed with no ANTHROPIC_API_KEY — claimNext should have refused')
+      }
+      return executeRun(runId, {
         fence,
         ctx,
         model: createModelClient({ apiKey, runId, record: ctx.repos.modelCalls.create }),
         fetcher,
         now: () => Date.now(),
-      }),
+      })
+    },
     now: () => new Date(),
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     log: (message) => console.log(`[worker] ${message}`),
@@ -248,5 +388,9 @@ installSignalHandlers(handle, (code) => {
   void Promise.allSettled([fetcher.close(), db.close()]).then(() => process.exit(code))
 })
 
-console.log('[worker] draining runs — ctrl-c to stop')
+console.log(
+  apiKey === undefined
+    ? '[worker] up, tending the thread. Not draining runs — there is no key.'
+    : '[worker] draining runs — ctrl-c to stop',
+)
 await handle.done

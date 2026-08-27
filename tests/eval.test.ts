@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -1987,4 +1987,79 @@ describe('the day a count lands in', () => {
 
     expect(dayBucket(evening)).toBe('2026-08-18')
   })
+})
+
+/**
+ * The flag guard on the one script that spends money.
+ *
+ * ── Why this is spawned rather than imported ─────────────────────────────
+ *
+ * `scripts/eval.ts` is a CLI: it runs its work at the top level, so importing
+ * it to test it would BE the run. The behaviour under test is what the process
+ * does with an argument, and the only honest way to observe that is to give it
+ * one.
+ *
+ * ── Why the key is cleared, and why exit code alone proves nothing ───────
+ *
+ * If the guard were removed, an unrecognised flag would fall through to the
+ * live path — four scenarios against the real API. A test that could do that on
+ * a developer's machine or in CI is a worse bug than the one it guards, so the
+ * child is spawned with `ANTHROPIC_API_KEY` cleared and the corpus is
+ * unreachable either way.
+ *
+ * That mitigation is exactly why these assert on the MESSAGE. Without a key the
+ * script already exits non-zero with *"No ANTHROPIC_API_KEY"*, so an exit-code
+ * assertion would stay green with the guard deleted — passing for the reason
+ * the guard exists to prevent. `Unrecognised` is the word only the guard says.
+ */
+describe('an unrecognised eval flag is refused before anything is spent', () => {
+  const root = join(dirname(fileURLToPath(import.meta.url)), '..')
+
+  /** Returns what the process said and how it exited, never throwing. */
+  function evalWith(args: readonly string[]): { code: number; output: string } {
+    const result = spawnSync('npx', ['tsx', 'scripts/eval.ts', ...args], {
+      cwd: root,
+      encoding: 'utf8',
+      // Cleared, not merely absent: an inherited key would put the paid corpus
+      // one deleted branch away from this test.
+      env: { ...process.env, ANTHROPIC_API_KEY: '' },
+    })
+
+    return { code: result.status ?? -1, output: `${result.stdout ?? ''}${result.stderr ?? ''}` }
+  }
+
+  it('names the flag it did not know, and exits non-zero', () => {
+    // The four near-misses from the issue. `--` in `npm run eval -- --flag`
+    // invites a mistake about where the flag boundary is, which is what makes
+    // this likely rather than exotic.
+    for (const typo of ['--dry-run', '--dryrun', '-d', '--reprot']) {
+      const { code, output } = evalWith([typo])
+
+      expect(code, `${typo} should refuse`).not.toBe(0)
+      expect(output, `${typo} should be named back`).toContain('Unrecognised')
+      expect(output).toContain(typo)
+    }
+  }, 60_000)
+
+  it('prints the usage block rather than a sentence about credentials', () => {
+    // `--help` used to reach the key check and answer a question nobody asked.
+    const { code, output } = evalWith(['--help'])
+
+    expect(code).toBe(0)
+    expect(output).toContain('--dry')
+    expect(output).toContain('--report')
+    expect(output).not.toContain('ANTHROPIC_API_KEY')
+  }, 30_000)
+
+  it('lets a known flag past the guard', () => {
+    /**
+     * Non-vacuous in the other direction: a guard that refused everything
+     * would satisfy both tests above. `--check` verifies seals, runs nothing
+     * and needs no key, so it is the one flag that can be exercised end to end
+     * here for free.
+     */
+    const { output } = evalWith(['--check'])
+
+    expect(output).not.toContain('Unrecognised')
+  }, 60_000)
 })

@@ -226,8 +226,20 @@ describe('the manifest asks for nothing frightening', () => {
       string
     >
 
-    const devPort = /-p\s+(\d+)/.exec(scripts['dev'] ?? '')?.[1]
-    const startPort = /-p\s+(\d+)/.exec(scripts['start'] ?? '')?.[1]
+    const portIn = (script: string | undefined) => /-p\s+(\d+)/.exec(script ?? '')?.[1]
+
+    const devPort = portIn(scripts['dev'])
+    const startPort = portIn(scripts['start'])
+    /**
+     * Added 2026-08-26 with the one-terminal `dev` script.
+     *
+     * `dev` now reads `tsx scripts/dev.ts -p 3117` and the supervisor hands the
+     * port to Next — so the port is written in a THIRD place, and a third place
+     * a number is written gets an assertion in the same change. `dev:web` runs
+     * the web half alone and would otherwise be free to drift to 3000, which is
+     * precisely the drift the comment above records having already happened.
+     */
+    const webPort = portIn(scripts['dev:web'])
     const workerOrigin = /const APP_ORIGIN = '([^']+)'/.exec(
       readFileSync(join(repo, 'extension/src/service-worker.js'), 'utf8'),
     )?.[1]
@@ -235,6 +247,106 @@ describe('the manifest asks for nothing frightening', () => {
     expect(devPort, 'the dev script must pin a port the extension can be told about').toBeDefined()
     expect(workerOrigin).toBe(`http://127.0.0.1:${devPort}`)
     expect(startPort, 'start and dev must agree, or a built app is unreachable').toBe(devPort)
+    expect(webPort, 'dev:web serves a different port from dev — capture would be off').toBe(devPort)
+  })
+
+  /**
+   * The app listens on this machine and nowhere else.
+   *
+   * ── The failure this exists for ──────────────────────────────────────────
+   *
+   * Every start script read `next dev -p 3117` with no `-H`, so Next bound `::`
+   * — every interface — while the whole product assumed loopback:
+   * `next.config.ts` allows `127.0.0.1` as a dev origin, the extension pins
+   * `http://127.0.0.1:3117`, and every sentence a person reads says `127.0.0.1`.
+   * `scripts/dev.ts` said so out loud in a docblock about probing for a taken
+   * port, which is the one place nobody reads for a security property.
+   *
+   * Why it matters more than an ordinary bind: `/api/act/next`, `/api/act/report`
+   * and `/api/act/halt` are guarded by `admitControl({ from: 'extension' })`,
+   * which proves a CLASS of caller and never an identity — a content type, a
+   * custom header, and an origin check that also accepts `Sec-Fetch-Site: none`.
+   * `src/act/channel.ts` accepts that deliberately, as a bound on a LOCAL
+   * process: *"a local process that can lie to the worker is a local process
+   * that can choose what the worker clicks next."* Binding every interface
+   * turned "a local process" into "anything on the same network", which is not
+   * the risk that argument accepted.
+   *
+   * ── Why the host lives in package.json ───────────────────────────────────
+   *
+   * The same reason the port does, in the test above: it is duplicated in the
+   * extension's `APP_ORIGIN`, which is buildless and cannot read config. A
+   * duplication is only safe if something notices when it drifts, and the greps
+   * here are that something. `scripts/dev.ts` reads `-H` from its own argv for
+   * the same reason it reads `-p` — burying it in the supervisor would make
+   * this regex find nothing and the guard would go QUIET rather than red.
+   *
+   * ── What this does NOT cover ─────────────────────────────────────────────
+   *
+   * That the process actually bound what it was told to. This reads scripts, not
+   * sockets. `lsof -nP -iTCP:<port> -sTCP:LISTEN` is the check that proves it,
+   * and it needs a running server, so it stays a manual step.
+   */
+  it('binds the app to loopback, not to every interface', () => {
+    const scripts = JSON.parse(readFileSync(join(repo, 'package.json'), 'utf8')).scripts as Record<
+      string,
+      string
+    >
+
+    const hostIn = (script: string | undefined) => /-H\s+(\S+)/.exec(script ?? '')?.[1]
+
+    const workerOrigin = /const APP_ORIGIN = '([^']+)'/.exec(
+      readFileSync(join(repo, 'extension/src/service-worker.js'), 'utf8'),
+    )?.[1]
+    const expected = new URL(workerOrigin ?? 'http://invalid').hostname
+
+    for (const name of ['dev', 'dev:web', 'start'] as const) {
+      expect(
+        hostIn(scripts[name]),
+        `${name} passes no -H, so Next binds every interface and the control routes — ` +
+          'which authenticate a class of caller and never an identity — are reachable off this machine',
+      ).toBe(expected)
+    }
+
+    // The supervisor spawns Next itself, so a host in `package.json` it never
+    // forwards would satisfy the greps above and bind nothing. Assert it is
+    // passed on, the same way `-p` is.
+    const supervisor = readFileSync(join(repo, 'scripts/dev.ts'), 'utf8')
+    expect(
+      supervisor,
+      'scripts/dev.ts does not forward -H to Next, so the dev script binds every interface anyway',
+    ).toMatch(/'-H',\s*host/)
+  })
+
+  /**
+   * The supervisor refuses BEFORE it starts anything, and the order is the rule.
+   *
+   * ── The failure this exists for ──────────────────────────────────────────
+   *
+   * A dev server left running from earlier makes `next dev` exit 1 with
+   * `EADDRINUSE`. The supervisor read that as a crash worth retrying, printed
+   * the same Node stack three times, then gave up saying *"the message above it
+   * is the one to read"* — which was a stack trace, not an instruction. Worse,
+   * the worker started fine beside it and kept draining runs against an app that
+   * was never there.
+   *
+   * The port is knowable in advance and the answer does not change on retry, so
+   * it is a precondition. Moving the check below the spawns would restore every
+   * word of the paragraph above while leaving both greps here satisfied — which
+   * is why this asserts the ORDER rather than the presence.
+   */
+  it('checks the port before it starts anything', () => {
+    const supervisor = readFileSync(join(repo, 'scripts/dev.ts'), 'utf8')
+
+    const checked = supervisor.indexOf('await inUse(')
+    const spawned = supervisor.indexOf("running.push(start('the app'")
+
+    expect(checked, 'the supervisor no longer checks whether the port is free').toBeGreaterThan(-1)
+    expect(spawned, 'the supervisor no longer starts the app').toBeGreaterThan(-1)
+    expect(
+      checked,
+      'the port check moved below the spawns — a taken port would crash-loop again, and the worker would run against an app that is not there',
+    ).toBeLessThan(spawned)
   })
 })
 

@@ -155,12 +155,31 @@ const DRAFTS = [
 
 const NO_FINDINGS = { kind: 'ok' as const, value: { findings: [] } }
 
+/**
+ * Boundary 6 now runs at the end of every completed run, so every script
+ * through this helper needs one more reply than it used to.
+ *
+ * Appended HERE rather than in each test, because the narrative is not what any
+ * of these files is about: they test what a run produces and what the reviewer
+ * says about it, and threading a handover sentence through thirty fixtures
+ * would put a call nobody is asserting on into thirty places that would then
+ * have to be kept in step.
+ *
+ * A trailing unused reply is harmless — the fake only refuses to run OUT of
+ * them — and several runs here never reach the call at all, because
+ * `narrateShift` returns early when there is nothing to narrate.
+ */
+const NARRATIVE = {
+  kind: 'ok' as const,
+  value: { narrative: 'I got through the scoping and left the tier question for you.' },
+}
+
 async function run(contractId: string, replies: ReadonlyArray<unknown>) {
   const enqueued = await repos.runs.enqueue({ contractId, role: 'worker' })
   await repos.runs.claim({ leaseUntil: new Date(Date.now() + 60_000), startedAt: new Date() })
   await executeRun(enqueued.id, {
     ctx,
-    model: new FakeModelClient(replies as never),
+    model: new FakeModelClient([...replies, NARRATIVE] as never),
     fetcher: fixtureFetcher({}),
     // The claim fence, which `executeRun` now requires. These tests do not
     // exercise a stale claim, so it always says proceed — spelled out rather
@@ -318,7 +337,7 @@ describe('a shift that pins no document runs to completion', () => {
 /* ── 3. citations are intersected against this run's own ledger ─────────── */
 
 describe('a citation is a join, not a claim', () => {
-  it("drops an intent id belonging to another run, and keeps one belonging to this one", async () => {
+  it('drops an intent id belonging to another run, and keeps one belonging to this one', async () => {
     const mine = await acceptedContract(true)
     const theirs = await acceptedContract(true)
 
@@ -381,7 +400,12 @@ describe('a citation is a join, not a claim', () => {
       contract: { id: contractId },
       workspace,
       produced: [
-        { kind: 'landed', intentId: 'anything', what: 'Sent the reply', where: 'their contact form' },
+        {
+          kind: 'landed',
+          intentId: 'anything',
+          what: 'Sent the reply',
+          where: 'their contact form',
+        },
       ],
     })
 
@@ -437,6 +461,50 @@ describe('a citation is a join, not a claim', () => {
     expect(report?.narrative).toContain('could not be kept')
   })
 
+  it('opens the note with what boundary 6 wrote, not with a stop-rule label', async () => {
+    /**
+     * The defect this closes.
+     *
+     * `execute-run` stored `narrative: stopLabel` — a consumer label from the
+     * stop rule, in the field model prose belongs in — and stored `null` for a
+     * clean run that hit no stop rule at all, leaving the top of the re-entry
+     * screen a bare time window. `shiftReportBoundary` was written and tested
+     * from the start and called by nothing.
+     *
+     * Asserted on the narrative rather than on the call, because a call that
+     * happens and whose answer is discarded is the same defect wearing a green
+     * tick — which is exactly what `finishedSummary` was doing in this slot.
+     */
+    const { contractId } = await acceptedContract(true)
+    await run(contractId, [...DRAFTS, NO_FINDINGS])
+
+    const report = await repos.reports.forContract(contractId)
+    expect(report?.narrative).toContain('I got through the scoping')
+  })
+
+  it('keeps a note when boundary 6 fails, because it fails open', async () => {
+    /**
+     * The boundary's own header: *"If this boundary fails, the report renders
+     * without it. Nothing else is lost."* So a refusal must cost the sentence
+     * and nothing more — not the report, and not the run.
+     *
+     * The cost is named there too, from the prototype findings: with the
+     * narrative gone the top of the screen is the least useful version of
+     * itself. That is still the right trade, because the alternative is no
+     * report at all on the outcome that most needs one.
+     */
+    const { contractId } = await acceptedContract(true)
+    await run(contractId, [
+      ...DRAFTS,
+      NO_FINDINGS,
+      { kind: 'fail' as const, failure: 'refusal' as const },
+    ])
+
+    const report = await repos.reports.forContract(contractId)
+    expect(report, 'the report is what the person came back for').not.toBeNull()
+    expect(report?.narrative ?? '').not.toContain('I got through the scoping')
+  })
+
   it('says nothing about drops when there were none', async () => {
     const { contractId } = await acceptedContract(true)
     await run(contractId, [...DRAFTS, NO_FINDINGS])
@@ -458,7 +526,12 @@ describe('a citation is a join, not a claim', () => {
       contract: { id: contractId },
       workspace,
       produced: [
-        { kind: 'section-prose', intentId: 'anything', section: 'Commercials', prose: 'Gold tier.' },
+        {
+          kind: 'section-prose',
+          intentId: 'anything',
+          section: 'Commercials',
+          prose: 'Gold tier.',
+        },
       ],
     })
 

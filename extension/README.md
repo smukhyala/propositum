@@ -78,6 +78,21 @@ Three things carry the weight now:
   Stop"* chip; the side panel has the same Stop. All three detach first and
   tell the app afterwards, so stopping works with the app closed.
 
+  **All three are true of this extension and 2026-08-26 decided they will stop
+  being the whole story.** [ADR-0025](../docs/adr/0025-computer-use-beyond-the-browser.md)
+  takes Propositum out of the browser, and none of these three stops a
+  synthesised keystroke going to a native application: Chrome's Cancel covers a
+  debugger attachment that is no longer how it works, and the chip and the panel
+  both live in a tab there may not be. The replacement is a global hotkey and a
+  menu-bar item handled in the signed Tauri process, so it works when the app is
+  wedged — verified by `kill -STOP` on the Node processes and then pressing it.
+
+  **The thing being lost is worth naming.** ADR-0010 leaned on Chrome's infobar
+  *precisely because it was not ours to break* — it cannot be suppressed, cannot
+  be styled, and does not depend on our code being correct. Its replacement is
+  ours, and a kill switch you wrote yourself is a kill switch that can have a bug
+  in it. Not built as this is written.
+
 `tests/extension-cdp.test.ts` is the enforcement: the extension has no build
 step, so the file under review is the file Chrome runs, and a grep over it is a
 real guard rather than a proxy for one.
@@ -112,23 +127,53 @@ first-class event with `service_worker_terminated` as one of its reasons.
 
 ## Setting it up for real work
 
-1. `npm run dev` and `npm run worker` in the repo. The app serves on **port
+1. ~~`npm run dev` and `npm run worker` in the repo.~~ **One command since
+   2026-08-26** — `npm run dev` spawns the app and the worker as siblings
+   ([ADR-0001](../docs/adr/0001-worker-runtime.md), amended). `npm run worker`
+   still starts one on its own and is unchanged. The app serves on **port
    3117**, which `manifest.json` and `service-worker.js` both hardcode — a test
    asserts the two agree, because when they drifted capture was silently off and
    the badge blamed Local Network Access.
 2. `chrome://extensions` → Developer mode → **Load unpacked** → select `extension/`.
-3. Copy the extension **ID** Chrome shows, and put it in `.env`:
-   ```
-   PROPOSITUM_EXTENSION_ID=<the id>
-   ```
-   Restart `npm run dev`. Without this the app rejects every request with
-   `bad-origin` — the response says so explicitly rather than failing silently.
-4. In the app, create a project, paste in your document, and approve the sources
-   you want watched.
+3. ~~Copy the extension **ID** Chrome shows, and put it in `.env`:~~
+   ~~```~~
+   ~~PROPOSITUM_EXTENSION_ID=<the id>~~
+   ~~```~~
+   ~~Restart `npm run dev`.~~ **Struck 2026-08-26.** Open
+   [`/welcome`](http://127.0.0.1:3117/welcome) instead. The extension knocks on
+   its own heartbeat, the page says *"Something just knocked."* and shows the id
+   verbatim so you can compare it against `chrome://extensions`, and one click
+   pairs it. No file to edit and **no restart**:
+   `src/server/extension-pairing.ts` writes a row, and `resolveExtensionOrigin`
+   reads it on the next request. A knock lasts five minutes — the heartbeat
+   fires every thirty seconds, so anything that has stopped knocking is gone,
+   and pairing with something no longer there would be a decision nobody can
+   check.
+
+   Two things about that page worth knowing before you trust it. **`.env` still
+   wins** — a clone that already sets `PROPOSITUM_EXTENSION_ID` behaves exactly
+   as it did before the page existed, and a pinned id is never quietly
+   overridden by a click. And **pairing is not authentication**: anything on
+   this machine can claim to be an extension, and a forged `Origin` was always
+   possible from a non-browser client. What changed is only *where* the person
+   expresses the decision.
+
+   Unpaired, the app still rejects every request with `bad-origin` — the
+   response says so explicitly rather than failing silently. That hint used to
+   be the only place it was said, buried in a JSON body nobody reads, which is
+   what `/welcome` exists to stop.
+4. ~~In the app, create a project, paste in your document, and approve the
+   sources you want watched.~~ **Struck 2026-08-26 — the first clause describes
+   a flow that was deleted.** Nothing in the product creates a project any more:
+   `createProject` is private and reached only by accepting an offer, on the
+   owner's instruction that *"the user shouldn't have to create it."* What is
+   still true is the rest — paste in your document and approve the sources you
+   want watched, both on the project screen once a project exists.
 5. Press **Start session**. The extension picks up the session and its token
    from `GET /api/session/current` on its next heartbeat.
 6. **Open the side panel** (click the Propositum toolbar icon) and press
-   **Allow** next to each approved source. Chrome shows its own permission
+   **Allow** next to each approved source. `/welcome` names this as its own step
+   and links here; it cannot do it for you, for the reason below. Chrome shows its own permission
    prompt; the grant is Chrome's, visible and revocable in Chrome's own UI, not
    ours.
 

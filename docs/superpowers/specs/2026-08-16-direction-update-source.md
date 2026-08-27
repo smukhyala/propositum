@@ -143,7 +143,7 @@ Continuous autonomous background scheduling.
 Learned trust/autonomy models.
 Multi-provider quality/cost routing beyond clean interfaces.
 Large multi-agent swarms.
-Unrestricted computer use.
+~~Unrestricted computer use.~~ **Struck 2026-08-26 — [ADR-0025](../../adr/0025-computer-use-beyond-the-browser.md).** Computer use is the product: Propositum **will** drive macOS inside an application allowlist the person ratified. **Decided, not built** — no desktop code exists as this is struck. The word this line turned on was *unrestricted*, and ADR-0025 §3 is what remains restricted — no shell, no `osascript`, no filesystem beyond one reader, no keychain, no enumeration of what is running. This is the first entry ever removed from this list; it is struck rather than deleted so that the next removal has to argue against something.
 Automatic multi-intention compute allocation.
 Cross-device continuity.
 Proactive consequential action without established permission policy.

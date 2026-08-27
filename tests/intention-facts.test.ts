@@ -261,22 +261,29 @@ describe('a person is told when something is waiting on them', () => {
   })
 
   /**
-   * The decision a run declined to make, and why it cannot say *Needs you*.
+   * The decision a run declined to make, and the word it may now say.
    *
-   * A `DecisionNeeded` has no answered, resolved or verdict column; nothing
-   * deletes one; the contract carrying it never leaves `accepted`. So a count
-   * of them can only go up, and `intentionState` ranks `openDecisions > 0`
-   * above everything — which put *Needs you* on that Project's front door
-   * permanently, for a question the person read weeks ago, with a link to a
-   * note where nothing can be done about it.
+   * ── What this test asserted until 2026-08-26, kept because the trade was
+   *    the point ─────────────────────────────────────────────────────────
    *
-   * Both halves are asserted because the trade is the point: the count is zero,
-   * AND the note is still the one a person would want if anything else brings
-   * them back. What is lost is named in `IntentionStateFacts.openDecisions` and
-   * is not small: a Shift that stopped to ask and produced nothing else now
-   * reads `sleeping`.
+   * It asserted `openDecisions` was **zero** and the word was **sleeping**,
+   * under a docblock reading: *"A `DecisionNeeded` has no answered, resolved or
+   * verdict column; nothing deletes one; the contract carrying it never leaves
+   * `accepted`. So a count of them can only go up … which put Needs you on that
+   * Project's front door permanently, for a question the person read weeks ago,
+   * with a link to a note where nothing can be done about it."*
+   *
+   * Every clause of that was true and the first one is not any more.
+   * [ADR-0022](../docs/adr/0022-the-fourth-verdict.md) gave the row a verdict, so
+   * the count can go **down**, so `needs-you` stops being a word that is never
+   * right again after the first question. The cost the old version named — *"a
+   * Shift that stopped to ask and produced nothing else now reads sleeping"* —
+   * is no longer paid, and that is the change rather than a side effect of it.
+   *
+   * Both directions are asserted here, because a count that can only rise and a
+   * count that can only fall are the same defect facing opposite ways.
    */
-  it('does not sit on needs-you forever for a decision nothing can clear', async () => {
+  it('says needs-you for an open question, and stops once it is answered', async () => {
     const shift = await shiftOn('A question for you')
     await repos.reports.create({
       contractId: shift.contractId,
@@ -294,13 +301,81 @@ describe('a person is told when something is waiting on them', () => {
     // under test is the decision alone.
     await repos.runs.complete(shift.runId, 'succeeded', new Date(NOW))
 
-    const facts = await factsFor(shift.projectId)
+    const open = await factsFor(shift.projectId)
 
-    expect(facts.openDecisions).toBe(0)
-    expect(wordFor(facts)).toBe('sleeping')
-    // It still decides WHICH note is worth opening, on the same terms an
-    // expired confirmation does one field down.
-    expect(facts.waitingContractId).toBe(shift.contractId)
+    expect(open.openDecisions).toBe(1)
+    expect(wordFor(open)).toBe('needs-you')
+    // It also decides WHICH note is worth opening, on the same terms an expired
+    // confirmation does one field down.
+    expect(open.waitingContractId).toBe(shift.contractId)
+
+    // The half that could not happen before this ADR.
+    const report = await repos.reports.forContract(shift.contractId)
+    const question = report?.decisions[0]
+    expect(question, 'the seeded question is not there').toBeDefined()
+
+    const answered = await repos.reports.answer({
+      decisionNeededId: question!.id,
+      answer: 'The middle tier, and say why in a line.',
+      source: 'screen',
+      at: new Date(NOW),
+    })
+    expect(answered.ok).toBe(true)
+
+    const after = await factsFor(shift.projectId)
+    expect(after.openDecisions).toBe(0)
+    expect(wordFor(after)).toBe('sleeping')
+    // Still the note worth opening. Answering a question does not make the
+    // Shift stop being the last thing that happened here.
+    expect(after.waitingContractId).toBe(shift.contractId)
+  })
+
+  /** One answer per question, and the second attempt says so rather than throwing. */
+  it('refuses a second answer to the same question', async () => {
+    const shift = await shiftOn('A question answered twice')
+    await repos.reports.create({
+      contractId: shift.contractId,
+      narrative: null,
+      decisions: [
+        { question: 'Annual or monthly?', whyStopped: 'Both defensible', needs: 'Your call', ordinal: 1 },
+      ],
+    })
+    const report = await repos.reports.forContract(shift.contractId)
+    const id = report!.decisions[0]!.id
+
+    const first = await repos.reports.answer({
+      decisionNeededId: id,
+      answer: 'Annual.',
+      source: 'screen',
+      at: new Date(NOW),
+    })
+    expect(first.ok).toBe(true)
+
+    // From the other surface, which is the realistic way this happens.
+    const second = await repos.reports.answer({
+      decisionNeededId: id,
+      answer: 'Actually monthly.',
+      source: 'thread',
+      at: new Date(NOW),
+    })
+    expect(second).toEqual({ ok: false, reason: 'already-answered' })
+
+    // And the first answer is what stands. An append-only table plus a UNIQUE
+    // index means changing your mind is a thing the interface has to say out
+    // loud, not something a second silent write papers over.
+    const after = await repos.reports.forContract(shift.contractId)
+    expect(after!.decisions[0]!.answer).toBe('Annual.')
+  })
+
+  it('reports not-found for a question that is not there', async () => {
+    expect(
+      await repos.reports.answer({
+        decisionNeededId: 'nope',
+        answer: 'x',
+        source: 'screen',
+        at: new Date(NOW),
+      }),
+    ).toEqual({ ok: false, reason: 'not-found' })
   })
 
   it('counts an unanswered confirmation, and leaves expiry to the domain', async () => {
@@ -625,7 +700,17 @@ describe('the rows behind where you left off', () => {
     )
   })
 
-  it('counts a question the front door has to report as zero', async () => {
+  /**
+   * ~~counts a question the front door has to report as zero~~
+   *
+   * **Renamed 2026-08-26.** The two readers disagreed on purpose: `workSoFar`
+   * counted the question because the sentence it writes is history, and the
+   * front door reported zero because its number decided a status word that could
+   * never go off again. ADR-0022 removes the reason for the disagreement, and
+   * the assertion is now that they AGREE — which is the state this pair was
+   * always meant to reach.
+   */
+  it('counts a question in both readers, now that one of them can clear it', async () => {
     const shift = await shiftOn('A question that cannot be closed')
     await repos.reports.create({
       contractId: shift.contractId,
@@ -644,8 +729,57 @@ describe('the rows behind where you left off', () => {
     const rows = await repos.intentions.workSoFarFacts(shift.intentionId)
 
     expect(rows?.openQuestions).toBe(1)
-    // The same rows, read by the front door, which must say zero. Both are
-    // right; the difference is what each number is allowed to change.
+    // ~~The same rows, read by the front door, which must say zero.~~ The same
+    // rows, read by the front door, which now says one — and would say zero
+    // again the moment somebody answered.
+    expect((await factsFor(shift.projectId)).openDecisions).toBe(1)
+  })
+
+  /**
+   * And both go back to zero, which is the half the rename did not check.
+   *
+   * The test above asserts the two readers AGREE while a question is open, and
+   * its own comment says the front door *"would say zero again the moment
+   * somebody answered"*. That was true of the front door and was never true
+   * here: `workSoFarFacts` selected `report.decisions` with no `where`, so it
+   * counted answered questions too, and *Where you left off* went on saying *"A
+   * question is still waiting on you."* after somebody had answered it.
+   *
+   * That is the expensive direction. A sentence telling a person they still owe
+   * an answer they have already given is the failure ADR-0022 exists to end,
+   * arriving one reader later.
+   */
+  it('stops counting a question in both readers once it is answered', async () => {
+    const shift = await shiftOn('A question that can now be closed')
+    await repos.reports.create({
+      contractId: shift.contractId,
+      narrative: null,
+      decisions: [
+        {
+          question: 'Which tier should the proposal offer?',
+          whyStopped: 'This commits us to a price',
+          needs: 'Your call on the tier',
+          ordinal: 1,
+        },
+      ],
+    })
+    await repos.runs.complete(shift.runId, 'succeeded', new Date(NOW))
+
+    const report = await repos.reports.forContract(shift.contractId)
+    const question = report?.decisions[0]
+    expect(question, 'the seeded question is not there').toBeDefined()
+
+    const answered = await repos.reports.answer({
+      decisionNeededId: question!.id,
+      answer: 'The middle tier, and say why in a line.',
+      source: 'screen',
+      at: new Date(NOW),
+    })
+    expect(answered.ok).toBe(true)
+
+    const rows = await repos.intentions.workSoFarFacts(shift.intentionId)
+
+    expect(rows?.openQuestions).toBe(0)
     expect((await factsFor(shift.projectId)).openDecisions).toBe(0)
   })
 

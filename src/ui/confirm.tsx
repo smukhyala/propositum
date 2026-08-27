@@ -271,7 +271,7 @@ export function ConfirmationScreen({ detail, goAhead, dont }: ConfirmationScreen
         {/*
           The two clocks, said out loud BEFORE the buttons.
 
-          A question stays answerable for a day; a shift credits back at most
+          A question stays answerable for a day; Propositum credits back at most
           four hours of waiting. Those disagree on purpose, and the gap is a
           real state somebody can land in. Saying so here rather than after
           they press is the difference between a decision and a surprise: they
@@ -280,7 +280,7 @@ export function ConfirmationScreen({ detail, goAhead, dont }: ConfirmationScreen
         */}
         {detail.pastDeadline ? (
           <p className="cf-warn">
-            The time you gave this shift has already run out. You can still answer, and Propositum
+            The time you gave Propositum has already run out. You can still answer, and Propositum
             will record it &mdash; but it will not carry on afterwards. Hand the work over again if
             you want it finished.
           </p>

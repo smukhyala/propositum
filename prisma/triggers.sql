@@ -352,6 +352,39 @@ BEGIN
   SELECT RAISE(ABORT, 'confirmation_verdict is append-only: REPLACE forbidden');
 END;
 
+-- decision_verdict — the fifth verb, and the one that grants nothing (ADR-0022).
+--
+-- Guarded on the same three edges as every other verdict table, and for a reason
+-- that is worth stating because it is NOT the usual one. The other verdicts are
+-- immutable because a rewritten permission is a permission nobody gave. This one
+-- grants nothing at all, so the argument has to be different: an answer a person
+-- gave to a question their software asked is a record of what they thought at the
+-- time, and a record that can be edited afterwards is not one. The UNIQUE on
+-- decisionNeededId is what stops a second answer; these three stop the first one
+-- being changed into it.
+
+DROP TRIGGER IF EXISTS decision_verdict_no_update;
+CREATE TRIGGER decision_verdict_no_update
+BEFORE UPDATE ON decision_verdict
+BEGIN
+  SELECT RAISE(ABORT, 'decision_verdict is append-only: UPDATE forbidden');
+END;
+
+DROP TRIGGER IF EXISTS decision_verdict_no_delete;
+CREATE TRIGGER decision_verdict_no_delete
+BEFORE DELETE ON decision_verdict
+BEGIN
+  SELECT RAISE(ABORT, 'decision_verdict is append-only: DELETE forbidden');
+END;
+
+DROP TRIGGER IF EXISTS decision_verdict_no_replace;
+CREATE TRIGGER decision_verdict_no_replace
+BEFORE INSERT ON decision_verdict
+WHEN EXISTS (SELECT 1 FROM decision_verdict WHERE id = NEW.id)
+BEGIN
+  SELECT RAISE(ABORT, 'decision_verdict is append-only: REPLACE forbidden');
+END;
+
 -- ═══════════════════════════════════════════════════════ action_evidence
 --
 -- IMMUTABLE, BUT NOT UNDELETABLE. The one table in this file with two guards

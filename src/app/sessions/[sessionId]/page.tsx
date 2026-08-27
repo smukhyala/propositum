@@ -28,7 +28,7 @@ import { notFound, redirect } from 'next/navigation'
 import { appContext } from '@/server/db'
 import { splitIntoNewProject } from '@/server/actions'
 import { BackLink, Empty, Masthead, Section, Sheet } from '@/ui/primitives'
-import { TakeOver } from '@/ui/reading'
+import { HandOver } from '@/ui/reading'
 import type { ClaimView, EvidenceView, SourceView } from '@/ui/reading'
 
 export const dynamic = 'force-dynamic'
@@ -229,7 +229,7 @@ export default async function SessionPage({
         </Section>
       )}
 
-      <TakeOver
+      <HandOver
         sessionId={sessionId}
         projectName={loaded.projectName}
         phase={loaded.phase}

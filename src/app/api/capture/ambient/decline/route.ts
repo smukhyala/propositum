@@ -43,7 +43,7 @@ export async function POST(request: Request) {
   if (request.headers.get(CUSTOM_HEADER) !== '1') {
     return NextResponse.json({ ok: false, reason: 'missing-custom-header' }, { status: 403 })
   }
-  if (!fromOurExtension((name) => request.headers.get(name) ?? undefined, expectedOrigin())) {
+  if (!fromOurExtension((name) => request.headers.get(name) ?? undefined, await expectedOrigin())) {
     return NextResponse.json({ ok: false, reason: 'bad-origin' }, { status: 403 })
   }
 

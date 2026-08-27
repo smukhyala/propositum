@@ -1,6 +1,14 @@
 # ADR-0010 — Acting in the person's own browser
 
-**Status:** accepted · 2026-08-11
+**Status:** accepted · 2026-08-11 · **amended and partly reversed 2026-08-26**
+**Amended by:** [ADR-0024](0024-purchases-within-a-ratified-authorisation.md) — §3's account of the
+network mechanism. It stays, and stops being unconditional: a non-`GET` covered by a ratified
+`PurchaseAuthorization` is allowed. The section headed *"`LANDING_ACTION_KINDS` is still empty"* is
+superseded rather than merely dated — though **as of the day this line was written the set is still
+empty and no code has been changed**, because ADR-0024 is a decision and nobody has built it
+**Reversed by:** [ADR-0025](0025-computer-use-beyond-the-browser.md) — §1, the bound to one tab
+Propositum opened. There is no tab bound because there is no tab. §2's *"no `Runtime` domain, ever"*
+is **carried forward unchanged** and becomes the desktop's *no shell, no `osascript`*
 **Reverses:** [ADR-0002](0002-observation-capture.md) — the refusal of the `debugger` permission, and
 the separate Playwright process
 **Amends:** [ADR-0004](0004-policy-gate.md) (what `ActionKind` enumerates, and what the plan bounds)

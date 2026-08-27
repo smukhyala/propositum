@@ -10,6 +10,7 @@
 import { createCaptureSessionStore } from './capture-session'
 import type { CaptureSessionStore } from './capture-session'
 import { createAmbientStore } from './ambient-store'
+import { resolveExtensionOrigin } from './extension-pairing'
 import type { AmbientStore } from './ambient-store'
 
 declare global {
@@ -36,10 +37,23 @@ export function ambientStore(): AmbientStore {
   return globalThis.__propositumAmbient
 }
 
-/** The extension id we accept events from. Pinned by the manifest `key`; until
- *  that is set, an env override keeps local development possible without
- *  loosening the check itself. */
-export function expectedOrigin(): string {
-  const id = process.env['PROPOSITUM_EXTENSION_ID']
-  return id ? `chrome-extension://${id}` : 'chrome-extension://unset'
+/**
+ * The extension id we accept events from.
+ *
+ * ~~Pinned by the manifest `key`; until that is set, an env override keeps local
+ * development possible without loosening the check itself.~~ **Amended
+ * 2026-08-26.** Still true, and there is now a second source: a person can pair
+ * an extension on `/welcome` instead of hand-editing `.env`, which writes a row.
+ *
+ * **`.env` still wins**, so a clone that sets `PROPOSITUM_EXTENSION_ID` behaves
+ * exactly as it did. The check is not loosened in either case — with neither
+ * source the sentinel is unmatched by anything and every request is refused,
+ * which is the state a fresh clone is in.
+ *
+ * Async because the second source is a row. The argument for why a row is the
+ * right home, and for why this is not authentication, is in
+ * `src/server/extension-pairing.ts` rather than repeated here.
+ */
+export function expectedOrigin(): Promise<string> {
+  return resolveExtensionOrigin()
 }

@@ -62,6 +62,7 @@ import { loadWorkspace } from './outcomes/workspace'
 import { recordOutcomes } from './outcomes/index'
 import { sectionTitleFor } from './outcomes/document-changes'
 import { createBrowserControl } from '../runtime/browser-control'
+import { narrateShift } from './shift-narrative'
 import type { BrowserDeps } from '../policy/tools'
 import type { AppContext } from './db'
 import type { ModelClient } from '../model/client'
@@ -834,6 +835,15 @@ export async function executeRun(runId: string, deps: ExecuteDeps): Promise<void
     boundaryDetail,
     recorded.dropped,
     result.summary,
+    // The one call site that narrates. The cancelled and crashed paths above
+    // pass nothing, which is what stops them — see `Narratable`.
+    {
+      model: deps.model,
+      runId,
+      sessionId: contract.sessionId,
+      objective: contract.objective,
+      endTimeIsApproximate: result.terminalReason === 'lease-expired',
+    },
   )
 
   // The session goes back to the person. Without this it stays `away` forever,
@@ -993,6 +1003,23 @@ async function review(
   }
 }
 
+/**
+ * `narrated` is what boundary 6 needs and `writeReport` cannot derive.
+ *
+ * Optional, and its absence is the deny: the two call sites that must NOT
+ * narrate — the cancelled run and the crashed run — simply do not pass it, so
+ * there is no flag to get wrong and no branch to forget. That is the same
+ * *prefer absence to a rule* shape the rest of this repository uses; see
+ * `AGENTS.md`.
+ */
+interface Narratable {
+  readonly model: ModelClient
+  readonly runId: string
+  readonly sessionId: string
+  readonly objective: string
+  readonly endTimeIsApproximate: boolean
+}
+
 async function writeReport(
   ctx: AppContext,
   contractId: string,
@@ -1017,20 +1044,24 @@ async function writeReport(
    * What the run said when it declared itself finished.
    *
    * **This is not boundary 6.** `shiftReportBoundary` narrates a whole Shift
-   * from the ledger, after the fact, and is still unwired — `tests/
-   * reachability.test.ts` asserts that. This is one sentence the worker wrote at
-   * the moment it stopped, in the same call where it declined to continue, and
-   * it is used only where the narrative would OTHERWISE BE NULL: a run that
-   * finished cleanly and hit no stop rule currently produces a blank note, which
-   * is the "the software knew something and told no one" shape this file already
-   * fixes twice above.
+   * from the ledger, after the fact. ~~and is still unwired — `tests/
+   * reachability.test.ts` asserts that.~~ **Wired 2026-08-27**, in
+   * `./shift-narrative.ts`; that assertion now says the opposite. This is one
+   * sentence the worker wrote at the moment it stopped, in the same call where
+   * it declined to continue.
    *
-   * It is model prose about model work and nothing branches on it. When boundary
-   * 6 lands it narrates from the ledger and this stops being read — which is the
-   * right order, because a narrative built from rows can say what happened even
-   * when the run died before it could say anything at all.
+   * ~~it is used only where the narrative would OTHERWISE BE NULL~~ **and it
+   * still is — the order this docblock predicted is exactly the order that
+   * happened.** Boundary 6 narrates from rows and is tried first; this is the
+   * fallback under it, and the deterministic `stopLabel` is the fallback under
+   * that. A narrative built from rows can say what happened even when the run
+   * died before it could say anything at all, which is why it goes first.
+   *
+   * It is model prose about model work and nothing branches on it.
    */
   finishedSummary?: string,
+  /** Present only where narrating is correct — see `Narratable`. */
+  narratable?: Narratable,
 ): Promise<void> {
   const existing = await ctx.repos.reports.forContract(contractId)
   if (existing) return
@@ -1039,6 +1070,38 @@ async function writeReport(
     dropped === undefined || dropped === 0
       ? ''
       : ` ${dropped === 1 ? 'One thing it made' : `${dropped} things it made`} could not be kept, so ${dropped === 1 ? 'it is' : 'they are'} not below.`
+
+  /**
+   * Boundary 6, tried first and allowed to fail.
+   *
+   * Ordered above `finishedSummary` and `stopLabel` because it narrates from
+   * rows: it can say what a run DID even when the run died before it could say
+   * anything about itself. The two below it are what to fall back to, in that
+   * order, and both were the whole answer until this line existed.
+   *
+   * A crash never gets here — `failureDetail` short-circuits below — and a
+   * cancelled run never gets here because its call site passes no `narratable`.
+   *
+   * `lost` is appended to whichever sentence wins, deliberately. The dropped
+   * count is a fact the model was not told, because it is about what the
+   * OUTCOME WRITERS could not keep rather than about what the run did, and a
+   * model handed it would fold it into prose where it belongs at the end as
+   * itself.
+   */
+  const narrated =
+    narratable === undefined || failureDetail !== undefined
+      ? null
+      : await narrateShift({
+          ctx,
+          model: narratable.model,
+          runId: narratable.runId,
+          contractId,
+          sessionId: narratable.sessionId,
+          objective: narratable.objective,
+          stoppedBecause: stopLabel,
+          endTimeIsApproximate: narratable.endTimeIsApproximate,
+          decisions,
+        })
 
   await ctx.repos.reports.create({
     contractId,
@@ -1056,13 +1119,15 @@ async function writeReport(
      */
     narrative: failureDetail
       ? `Propositum stopped before it could finish, and nothing was changed. (${readableCause(failureDetail)})`
-      : stopLabel === null
-        ? finishedSummary === undefined
-          ? lost === ''
-            ? null
-            : lost.trim()
-          : `${finishedSummary}${lost}`
-        : `${stopLabel}${lost}`,
+      : narrated !== null
+        ? `${narrated}${lost}`
+        : stopLabel === null
+          ? finishedSummary === undefined
+            ? lost === ''
+              ? null
+              : lost.trim()
+            : `${finishedSummary}${lost}`
+          : `${stopLabel}${lost}`,
     decisions: decisions.map((d, i) => ({
       question: d.question,
       whyStopped: d.whyItMatters,

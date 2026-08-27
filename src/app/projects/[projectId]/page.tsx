@@ -64,6 +64,7 @@ import { captureStore } from '@/server/capture-store'
 import { frontDoorRow, statusWordFor } from '@/server/front-door'
 import { whereYouLeftOffIn } from '@/server/work-so-far'
 import { WhereYouLeftOff } from '@/ui/work-so-far'
+import { DocumentDraft, DocumentWorkbench } from '@/ui/document'
 import { appContext } from '@/server/db'
 
 // In-memory capture state and a local database file. Nothing here is cacheable,
@@ -92,7 +93,6 @@ const CSS = `
 .pj-input { font: inherit; font-size: 0.9375rem; padding: 0.45rem 0.65rem; border: 1px solid var(--rule); background: var(--ground); color: var(--ink); border-radius: 3px; width: 100%; }
 .pj-input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .pj-field-wide { flex: 1 1 100%; }
-.pj-textarea { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.875rem; line-height: 1.6; resize: vertical; min-height: 9rem; }
 .pj-submit { font: inherit; font-size: 0.8125rem; line-height: 1.4; padding: 0.45rem 0.9rem; border: 1px solid var(--rule); background: var(--ground); color: var(--ink); border-radius: 3px; cursor: pointer; }
 .pj-submit:hover { border-color: var(--accent); }
 .pj-submit:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -125,12 +125,6 @@ function clock(at: Date): string {
 
 function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : {}
-}
-
-/** Size in the person's terms. Never a character count — that is the retention
- *  budget's unit, and reusing it here would imply the two are related. */
-function countWords(content: string): number {
-  return content.split(/\s+/).filter((word) => word.length > 0).length
 }
 
 export default async function ProjectPage({
@@ -642,7 +636,14 @@ export default async function ProjectPage({
             Approve
           </button>
           <p className="pj-hint">
-            Stored as an origin like <code>https://northwind.example.com/*</code> &mdash; the whole
+            {/* The trailing star is an entity rather than the two characters,
+                and that is not fussiness. `/` followed by `*` in JSX text opens
+                a block comment as far as every comment stripper in this
+                repository is concerned, and `tests/reachability.test.ts` reads
+                this file through one — it lost the twenty-five lines after this
+                one, including a whole component render, and every reachability
+                check over them silently passed. Rendered output is unchanged. */}
+            Stored as an origin like <code>https://northwind.example.com/&#42;</code> &mdash; the whole
             site, every page on it, and nothing off it. Approving a site grants access, not trust:
             what a page says is evidence about what you read, never an instruction to Propositum.
           </p>
@@ -654,49 +655,22 @@ export default async function ProjectPage({
           <>
             <Empty
               title="There is no document in this project."
-              next="Paste in what you are working on. Propositum works on your words — it never starts from a blank page, and it never reads a file you did not hand it."
+              next="Paste in what you are working on, or open a Markdown or text file. Propositum works on your words — it never starts from a blank page, and it never reads a file you did not hand it."
             />
-            <form className="pj-form" action={pasteDocument}>
-              <label className="pj-field">
-                <span className="pj-label">What to call it</span>
-                <input
-                  className="pj-input"
-                  name="title"
-                  type="text"
-                  required
-                  autoComplete="off"
-                  placeholder="Northwind partnership proposal"
-                />
-              </label>
-              <label className="pj-field pj-field-wide">
-                <span className="pj-label">The text</span>
-                <textarea
-                  className="pj-input pj-textarea"
-                  name="content"
-                  required
-                  rows={12}
-                  placeholder={'## Scope\n\nWhat the partnership covers.'}
-                />
-              </label>
-              <button className="pj-submit" type="submit">
-                Save it
-              </button>
-              <p className="pj-hint">
-                Markdown. Propositum lays it out one sentence per line when it saves, so a change
-                can point at the sentence it changed &mdash; no words are altered. Every save keeps
-                the previous version, and a shift always works against the version it pinned.
-              </p>
-            </form>
+            <DocumentDraft action={pasteDocument} />
           </>
         ) : (
           <>
             <div className="pj-row">
               <div>
                 <p className="pj-name">{document.title}</p>
+                {/* The version and the word count moved onto the editor
+                    itself on 2026-08-26, because only the editor can say
+                    whether the words on screen are the saved ones. Two lines
+                    both naming a version, one of which could not tell, is the
+                    pair that drifts. */}
                 <p className="pj-origin">
-                  {base === null
-                    ? 'No text saved yet.'
-                    : `Version ${base.ordinal} · ${countWords(base.content)} words`}
+                  {base === null ? 'No text saved yet.' : 'Yours, and never locked.'}
                 </p>
               </div>
               <span className="pj-state" data-revoked="false">
@@ -704,27 +678,18 @@ export default async function ProjectPage({
               </span>
             </div>
 
-            <form className="pj-form" action={editDocument}>
-              <input type="hidden" name="documentId" value={document.id} />
-              <label className="pj-field pj-field-wide">
-                <span className="pj-label">Edit it</span>
-                <textarea
-                  className="pj-input pj-textarea"
-                  name="content"
-                  required
-                  rows={14}
-                  defaultValue={base?.content ?? ''}
-                />
-              </label>
-              <button className="pj-submit" type="submit">
-                Save a new version
-              </button>
-              <p className="pj-hint">
-                Your edit always wins. Propositum never locks your document &mdash; if a shift is
-                running against an older version, its changes are refused rather than applied over
-                the top of yours.
-              </p>
-            </form>
+            {/* Keyed on the version so a save remounts it. Without the key the
+                box would keep the words that were in it before the redirect,
+                and the "changes you have not saved" line would go on saying so
+                about a version that is now the saved one. */}
+            <DocumentWorkbench
+              key={base?.id ?? 'empty'}
+              documentId={document.id}
+              title={document.title}
+              saved={base?.content ?? ''}
+              ordinal={base?.ordinal ?? 0}
+              action={editDocument}
+            />
           </>
         )}
       </Section>

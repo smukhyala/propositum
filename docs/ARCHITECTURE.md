@@ -13,7 +13,8 @@ have to exist first**, which is usually more informative than the layer's name.
 Section references of the form **§8** point at the direction document these layer names come from,
 archived verbatim at
 [`docs/superpowers/specs/2026-08-16-direction-update-source.md`](./superpowers/specs/2026-08-16-direction-update-source.md).
-§8 is its *do not build yet* list, and it is binding here.
+§8 is its *do not build yet* list, and it is binding here — **less one entry, struck 2026-08-26 by
+[ADR-0025](./adr/0025-computer-use-beyond-the-browser.md)**; see *Where computer use sits*.
 
 **A second direction document arrived on 2026-08-20** and is archived beside it at
 [`2026-08-20-everyday-intelligence-direction-source.md`](./superpowers/specs/2026-08-20-everyday-intelligence-direction-source.md).
@@ -30,6 +31,17 @@ added. The layer that gets built is re-marked **by the wave that builds it** —
 *Self-correcting* note under Outcome / Learning asked for and did not get on its first pass. A
 status cell moved in advance of the code is exactly the failure this column exists to prevent, and
 it would be the easiest one to commit on the day three ADRs land at once.
+
+**Three more landed on 2026-08-26 and not one cell moved for them either** — ADR-0024, ADR-0025 and
+ADR-0026, re-marked here 2026-08-27. They decide that Propositum may buy inside a ratified
+[`PurchaseAuthorization`](./adr/0024-purchases-within-a-ratified-authorisation.md), may
+[drive macOS rather than one Chrome tab](./adr/0025-computer-use-beyond-the-browser.md), and may
+[read a one-time code](./adr/0026-reading-a-one-time-code.md) out of `~/Library/Messages/chat.db`.
+`grep -rn 'approvedApplications\|purchaseAuthorization' src/` returns nothing, so the column is
+unchanged and correct. What was **not** correct is that four passages below stated the old bounds as
+permanent rather than as current: **State Ingestion**, **Delegation / Policy**, **Execution Runtime**
+and **Where computer use sits**. Each now carries the correction beside the claim. Read the ADRs for
+what was decided and the code for what runs; where they disagree, the code is right.
 
 ---
 
@@ -179,7 +191,13 @@ in `attested`; anything a page could have authored travels in `untrusted`, carri
 than by a per-field flag.
 
 **Not built.** Email, calendar, Slack, GitHub, Notion, docs, local files, and every other event source
-the direction document lists. All of it is on §8's do-not-build list.
+the direction document lists. ~~All of it is on §8's do-not-build list.~~ **Corrected 2026-08-27: all
+of it but one file, and one pair of per-turn observations.**
+[ADR-0026](./adr/0026-reading-a-one-time-code.md) admits a single read-only reader over
+`~/Library/Messages/chat.db`, called only while a run is parked waiting for a code;
+[ADR-0025](./adr/0025-computer-use-beyond-the-browser.md) adds a screenshot and an `AXUIElement` tree
+as observations, both untrusted. **Neither is written** — `grep -rn 'chat\.db' src/ --include='*.ts'`
+returns nothing — so *one sensor, browser only* is still the true status and the cell has not moved.
 
 **The structural fact that makes this hard to change by accident.**
 `ObservationEvent.sessionId` is **required** in `prisma/schema.prisma`, its relation to `WorkSession`
@@ -253,6 +271,13 @@ types are constructed so they cannot receive prose, and the `@ts-expect-error` d
 `tests/policy-gate.type-test.ts` fail `npm run typecheck` the moment a line they guard becomes legal.
 That file ends in `-test.ts` rather than `.test.ts`, so vitest never runs it — **`npm run typecheck`
 is the assertion.** Neither command is a superset of the other.
+
+**Not built: two fields decided 2026-08-26.** `ContractScope` gains `purchaseAuthorization`
+([ADR-0024](./adr/0024-purchases-within-a-ratified-authorisation.md)) and `approvedApplications`
+([ADR-0025](./adr/0025-computer-use-beyond-the-browser.md)). Both are optional and **absence is the
+deny**; neither exists in `src/` or `prisma/`, and `CONTEXT.md` carries both entries behind its
+*specification rather than a description* fence. The second replaces the bound ADR-0010 had, and it
+is weaker — that one was Chrome refusing, this one is our code remembering.
 
 **Not built: the durable half.** Every policy today is per-handoff and dies with its
 `HandoffContract`. `WorkingAgreement` — a standing agreement that outlives a handoff — is a
@@ -328,6 +353,15 @@ no bypass for a confirmed action, so a landing kind would be a claim the transpo
 click whose page posts still fails**, with `blocked-request`. Propositum can operate a page and cannot
 send from it.
 
+**That is still what runs, and it is no longer what was decided.**
+[ADR-0024](./adr/0024-purchases-within-a-ratified-authorisation.md) spends the unconditional block:
+one branch at `extension/src/cdp.js:553`, a deterministic amount parse at `Fetch.requestPaused`, and
+a landing kind behind a ratified ceiling. **Nothing of it is built** —
+`grep -n 'export const LANDING_ACTION_KINDS' src/domain/handoff/policy.ts` still returns an empty
+`Set`. The alarm is already armed: `tests/architecture.test.ts` couples `src/ui/agreement.tsx`'s
+*"Buy anything"* promise to the transport, so the day the branch lands the guard goes red and names
+the screen that has started lying about money.
+
 **Honest limit: every mutating browser action asks.** `RunContext.targetEvidence` has no supplier, so
 the classifier escalates every `click-element`, `type-text` and `press-key`. That is the cautious
 state by construction rather than by care, and the extraction that would quieten it is deliberately
@@ -353,9 +387,12 @@ check is the one it cannot make: `sourcesRead` is empty and stays empty until so
 fetched page text, so it can judge internal support and vagueness and **cannot compare a draft against
 the source it cites**.
 
-**Honest limit: outcome-scoped findings are written and never shown.** A finding citing a whole
+~~**Honest limit: outcome-scoped findings are written and never shown.** A finding citing a whole
 production is stored with `outcomeId` set and `changeId` null, and the only reader on the re-entry
-screen joins through `changeId`. `findings.forRun` is pinned at zero callers in the deferred block.
+screen joins through `changeId`. `findings.forRun` is pinned at zero callers in the deferred block.~~
+**Struck 2026-08-27.** The shift page reads `findings.forRun`, and the outcome card renders what it
+returns under the same *"A second pass flagged this"* heading the per-change block uses. The pin has
+moved into the reachable section and now asserts the opposite.
 
 **Honest limit: `unverified` is the routine value.** Under the "leave your desk, not the building"
 constraint a local worker stops when the Mac sleeps, so an effect that landed with no check after it
@@ -439,9 +476,16 @@ do-not-build list; trust history can recommend a setting and can never create pe
 *Self-correcting:* `tests/reachability.test.ts` ~~pins `modelCallRecord.create` and `findings.forRun` at
 zero callers~~ *(2026-08-16: `modelCalls.create` moved into the reachable section and its needle was
 corrected there — the old one named a string only the repository's own Prisma delegate matched, so it
-could never have gone red; `findings.forRun` is still pinned)*. When a reader lands, that suite goes
-red **by design**, the claim is relocated into the reachable section rather than deleted, and this
-section's status marker moves with it.
+could never have gone red; ~~`findings.forRun` is still pinned~~ **2026-08-27: `findings.forRun` was
+promoted too, so this sentence now names two symbols that are both reachable and pins neither**)*.
+When a reader lands, that suite goes red **by design**, the claim is relocated into the reachable
+section rather than deleted, and this section's status marker moves with it.
+
+**The mechanism was exercised three times on 2026-08-27** and it worked the way this paragraph
+promises: boundary 6, the gap sweeper and the outcome-scoped finding were all wired, this file went
+red on each, and each claim moved up rather than being deleted. The status marker did **not** move —
+*read, and still learning nothing* is unchanged, because rendering a finding is not learning from
+one.
 
 ---
 
@@ -458,11 +502,38 @@ from `AgentRun.status` and `terminalReason`. Rendered by `src/ui/shift-report.ts
 **decisions, never documents**, and a document is a pure fold over the immutable base
 ([ADR-0003](./adr/0003-artifact-versioning-ledger.md)).
 
-**Not built: the narrative.** `shiftReportBoundary` in `src/model/boundaries/shift-report.ts` is
+~~**Not built: the narrative.** `shiftReportBoundary` in `src/model/boundaries/shift-report.ts` is
 unwired, and `ShiftReport.narrative` currently holds a stop-rule label — a consumer string sitting in
-the field where model prose belongs. Pinned in the deferred block.
+the field where model prose belongs. Pinned in the deferred block.~~
+
+**Built 2026-08-27.** `src/server/shift-narrative.ts` gathers the facts from rows — the contract's
+stated objective, `PlanStep`s joined to their outcomes, the counts, the stop rule's own label — and
+`writeReport` tries the boundary first. **It still fails open**: a boundary failure falls back to
+exactly what the field held before, so the cost of a refusal is the sentence and nothing else, which
+is what the boundary's own header asks for.
+
+Two things it deliberately does not narrate, both because the answer would be less trustworthy than
+the silence: a **crashed** run, where the least reliable component would be explaining its own
+outage, and a **cancelled** one, where *"You stopped me, so I put everything down where it was."* is
+already exact.
 
 **One shift per session.** Re-entry ends at accept or reject. No *keep going*, no *redirect*.
+
+**The word `shift` is not on any of those screens, from 2026-08-26.** It is a layer-level and
+schema-level term; `CONTEXT.md` fixes its consumer wording as *"While you were away"*, and it had
+leaked into consumer copy in twelve places — including the front door's count sentence and the
+agreement's permission panel. `tests/consumer-vocabulary.test.ts` is the guard, and it is the sixth
+one: it extracts what a person can read out of `src/ui`, `src/app` and `extension/src/panel.html`
+and fails on `take over`, `shift`, `claim` and `task`. It is worth knowing what it does **not** do —
+it reads source text, so a sentence assembled at runtime and a component that computes the right
+words while rendering others both pass.
+
+**Two route boundaries landed the same day** — `src/app/loading.tsx` and `src/app/not-found.tsx`,
+beside the existing `src/app/error.tsx`. Every page here is `force-dynamic` and awaits the database,
+so before these a cold start painted nothing and a stale id got the framework's own 404.
+`notFound()` already had three callers, so the second is reached by the product rather than only by
+mistyped URLs. `tests/route-boundaries.test.ts` renders all three and asserts those callers still
+exist.
 
 ---
 
@@ -477,9 +548,25 @@ already honours:
    page.
 4. Visual computer use — a screenshot, requested only when the tree is not enough.
 
-**Computer use is the fallback tier under structured APIs, not the goal.** It is the least inspectable
-and least reversible way to act, and both properties are load-bearing. Propositum never runs its own
-JavaScript inside a page you are signed into.
+~~**Computer use is the fallback tier under structured APIs, not the goal.**~~ **Reversed 2026-08-26
+by [ADR-0025](./adr/0025-computer-use-beyond-the-browser.md), and re-marked here 2026-08-27.** The
+ordering above still holds — a native API is still preferred to a screenshot — but computer use is now
+**the product** rather than the tier of last resort, and the blast radius stops being a browser tab
+and becomes the machine. *Unrestricted* computer use remains forbidden, and the restrictions are
+ADR-0025 §3 rather than §8: no shell, no `osascript`, no AppleScript, no filesystem read outside
+ADR-0026's one reader, no keychain, no enumeration of what is running, and every mutating action
+checked against an application allowlist the person ratified. It is the only entry ever removed from
+§8's list, and it is struck there rather than deleted.
+
+What is unchanged, and is the reason the tier ordering survives its own reversal: computer use is the
+least inspectable and least reversible way to act, both properties are load-bearing, and **Propositum
+never runs its own JavaScript inside a page you are signed into.** ADR-0025 §3 carries that last
+sentence to the desktop unspent.
+
+**None of it is built.** `grep -rn 'approvedApplications' src/` returns nothing, there is no
+`tests/desktop-scope.test.ts`, and there is no native binary to hold a TCC permission — which is
+[`docs/todo/07-off-the-browser.md`](./todo/07-off-the-browser.md), the largest single piece of work
+in the project.
 
 **The tension with the direction document, stated rather than resolved.** Direction §4 files Computer
 Use under *Later — fallback when structured APIs/integrations are unavailable*. This repository shipped
@@ -513,12 +600,26 @@ a green suite cannot be read as a wired one.~~ **Amended 2026-08-16, in the wave
 caller: something calls it, and the five consumer labels below are on the front door.**
 `src/server/front-door.ts` derives each row and `src/app/page.tsx` renders the label, with the
 re-entry link on `needs-you`; the reachability claim moved into the reachable section and now names
-`front-door.ts`. **One of the three routes into `needs-you` is unreachable from production data:**
+`front-door.ts`. ~~**One of the three routes into `needs-you` is unreachable from production data:**
 nothing supplies a non-zero `openDecisions`, because a `DecisionNeeded` cannot be cleared and a count
 that can only go up would pin the word on permanently — see `CONTEXT.md`'s `IntentionState` entry,
-where the cost of that decision is written down rather than talked down. The argument
-for five members below is unchanged, and it was written down before the union was rather than after
-somebody had already typed six.
+where the cost of that decision is written down rather than talked down.~~
+**Struck 2026-08-26 by [ADR-0022](./adr/0022-the-fourth-verdict.md), which is the day that entry
+predicted in its own text.** `CONTEXT.md`'s struck `DecisionNeeded` row said the rule *"becomes
+reachable the day the row can be answered"*; a `DecisionVerdict` is that answer, the shift report
+carries a field to type it into, and `factsForEveryProject` now counts only questions with no answer
+— so **answering the last one takes *Needs you* back off, and the third route is reachable.** It was
+unreachable for ten days, during which a person could enter that state and never leave it beside a
+button whose own copy said *"Propositum doesn't keep your answer."*
+
+The argument for five members below is unchanged, and it was written down before the union was rather
+than after somebody had already typed six.
+
+**Two docblocks in `src/` still carry the struck claim** and are not corrected here because this is
+not their file: `src/persistence/repositories/index.ts` (*"`IntentionStateFacts.openDecisions` is
+always zero"*, on the `openQuestions` reader) and `src/domain/intention/work-so-far.ts` (*"reports
+zero"*). Both describe the reader they sit on rather than the schema, and both read as stronger than
+they are now. Fix them in the next change that touches those files.
 
 Computed, not stored, following unanimous precedent — `EnforcedPolicy`, `Shift` and `ActionStatus` are
 all computed views on the argument that **two stores for one truth is exactly how a UI comes to

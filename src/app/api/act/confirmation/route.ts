@@ -45,12 +45,12 @@ export async function GET(request: Request) {
     return NextResponse.json({ ok: false, reason: 'missing-custom-header' }, { status: 403 })
   }
 
-  if (!fromOurExtension((name) => request.headers.get(name) ?? undefined, expectedOrigin())) {
+  if (!fromOurExtension((name) => request.headers.get(name) ?? undefined, await expectedOrigin())) {
     return NextResponse.json(
       {
         ok: false,
         reason: 'bad-origin',
-        hint: `Expected ${expectedOrigin()}. Set PROPOSITUM_EXTENSION_ID in .env to your unpacked extension's id.`,
+        hint: `Expected ${await expectedOrigin()}. Set PROPOSITUM_EXTENSION_ID in .env to your unpacked extension's id.`,
       },
       { status: 403 },
     )

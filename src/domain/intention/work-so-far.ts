@@ -131,18 +131,28 @@ export interface WorkSoFarFacts {
    */
   readonly changeVerdicts: readonly (string | null)[]
   /**
-   * `DecisionNeeded` rows raised under this Intention that are still open —
-   * **which is all of them, and the caller owns knowing that.**
+   * `DecisionNeeded` rows raised under this Intention that nobody has answered.
    *
-   * Nothing in the schema can close one: there is no answered, resolved or
-   * verdict column, nothing deletes one, and the contract carrying it never
-   * leaves `accepted`. `IntentionStateFacts.openDecisions` reports zero for
-   * exactly that reason, and this field does not, because the two drive
-   * different things. There, a non-zero count pins the lifecycle word
-   * `needs-you` onto a Project permanently — a status word that is always on is
-   * a status word nobody reads. Here it is one sentence in a paragraph a person
-   * reads once before starting, and *a question was raised and nothing has
-   * closed it* is simply true.
+   * ~~**Which is all of them, and the caller owns knowing that.** Nothing in the
+   * schema can close one: there is no answered, resolved or verdict column,
+   * nothing deletes one, and the contract carrying it never leaves `accepted`.
+   * `IntentionStateFacts.openDecisions` reports zero for exactly that reason,
+   * and this field does not, because the two drive different things.~~
+   *
+   * **Struck 2026-08-26 — [ADR-0022](../../../docs/adr/0022-the-fourth-verdict.md).**
+   * A `DecisionVerdict` closes one. There IS a verdict row now, `openDecisions`
+   * does not report zero, and the two fields no longer drive different things.
+   *
+   * The argument that survives is the one about ranking, and it is worth keeping
+   * because it is why the two readers were ever allowed to differ: a count that
+   * could only go up, ranked above every other member, would pin `needs-you`
+   * onto a Project permanently — **a status word that is always on is a status
+   * word nobody reads.** That was a reason to filter, not a reason to disagree,
+   * and both readers filter now.
+   *
+   * Here it is one sentence in a paragraph a person reads once before starting.
+   * `questionsLine` below returns null at zero, so an answered question stops
+   * asking.
    */
   readonly openQuestions: number
   /**

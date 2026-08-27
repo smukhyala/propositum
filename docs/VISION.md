@@ -314,8 +314,32 @@ recorded at all.** That absence is why `IntentionState` ships with five members 
 it is the whole content of the repository's **Stage 2 — Event-Driven Understanding**
 ([`ROADMAP.md`](./ROADMAP.md)).
 
-**Not planned, at any horizon.** Full-screen recording. Keystroke logging. Automatic access to
-every application. These are not sequencing decisions.
+~~**Not planned, at any horizon.** Full-screen recording. Keystroke logging. Automatic access to
+every application. These are not sequencing decisions.~~
+
+**Struck in two of three, 2026-08-26 — [ADR-0025](./adr/0025-computer-use-beyond-the-browser.md).**
+Taken clause by clause, because they were never one claim:
+
+- ~~Full-screen recording.~~ **Screen Recording is taken.** Propositum sees the whole screen, per
+  turn, while acting under a ratified contract — notifications, other windows, a message preview.
+  What survives is [ADR-0012](./adr/0012-screen-capture-refused.md)'s actual subject: there is still
+  no ambient rolling screenshot buffer, observation still gets no screenshots, and the two ledgers
+  stay disjoint.
+- **Keystroke logging. Unchanged and still true.** Propositum synthesises input; it does not read
+  yours. There is no capability, and no ADR proposing one.
+- ~~Automatic access to every application.~~ **Access to an allowlist of applications you ratified**,
+  checked against the frontmost app's bundle identifier before every mutating action. The word doing
+  the work was *automatic* and it still holds — nothing derives the allowlist, a person ratifies it.
+  But *"at any horizon"* was wrong, and the honest reading of this clause for a person is that it is
+  gone.
+
+*"These are not sequencing decisions"* was the strongest sentence in this document, and one of the
+three turned out to be a sequencing decision after all. Recorded rather than smoothed, per
+[principle 11](./PRODUCT_PRINCIPLES.md).
+
+**Decided, not built.** No desktop code exists as this is struck; `grep -rn 'approvedApplications'
+src/` returns nothing. The bullet is struck anyway, because what a reader of a promise is entitled to
+know is that the promise has been withdrawn — not that the withdrawal has shipped.
 
 *(Argued rather than amended, 2026-08-17
 ([ADR-0012](./adr/0012-screen-capture-refused.md)). A rolling screenshot cache of the person's own
@@ -453,7 +477,13 @@ it pretends to undo.
 - ~~Everything is local. There is no cloud, no telemetry, and no account.~~ **Struck 2026-08-18
   ([ADR-0014](./adr/0014-reading-free-busy.md)), and left here rather than deleted so the promise is
   visible beside what replaced it.** There is still no cloud, no telemetry and no server of ours, and
-  nothing about what you read or wrote leaves this machine except the prompts a boundary needs. **But
+  ~~nothing about what you read or wrote leaves this machine except the prompts a boundary needs.~~
+  **Struck again 2026-08-26 ([ADR-0021](./adr/0021-a-thread-on-the-persons-phone.md)).** Pair a phone
+  thread and Propositum sends you sentences about your own work — that is what the channel is for, and
+  those sentences pass through Telegram, who can read them. *No server of ours* survives literally: the
+  worker long-polls and there is no host, no webhook and no relay to operate. *Nothing about what you
+  read leaves this machine* does not survive at all. This is the second time this bullet has been
+  struck and the first time the exposure was the subject rather than the schedule. **But
   there is now an account**, optionally: a Google calendar, connected by you, for one question —
   `calendar.freebusy`, *"View your availability in your calendars"*, which returns busy intervals as
   bare start and end times and cannot return a title, an attendee or a description. It is off unless
