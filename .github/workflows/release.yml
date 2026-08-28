@@ -1,0 +1,99 @@
+# The release: a v* tag becomes a signed, notarised, stapled .dmg on a GitHub
+# Release.
+#
+# This is the only workflow holding Apple credentials. `tray.yml` stays the
+# pull-request check and holds none; `ci.yml` stays ubuntu. The build itself
+# is one entry point — `npm run tray:build` — shared verbatim with the dev
+# machine, so this file stays thin and the order of staging, signing,
+# bundling, notarising and auditing lives in scripts/release-tray.ts, once.
+#
+# What this deliberately does not do: no auto-update feed (deferred, dated
+# 2026-08-28 in docs/todo/01 item 10 — a URL the shipped binary trusts for
+# new code deserves its own argued change), no universal binary (Apple
+# Silicon only for now, same date, same place).
+
+name: release
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write # gh release create
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false # never kill a half-notarised release
+
+jobs:
+  release:
+    # Pinned rather than -latest so a runner image migration is a diff, not a
+    # surprise mid-release.
+    runs-on: macos-15
+    # Notarisation is minutes normally and has been hours on Apple's bad days.
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: The tag names the version Cargo.toml states
+        run: |
+          V=$(sed -n 's/^version = "\(.*\)"/\1/p' src-tauri/Cargo.toml | head -1)
+          [ "v$V" = "$GITHUB_REF_NAME" ] || { echo "tag $GITHUB_REF_NAME does not match Cargo.toml's $V"; exit 1; }
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+
+      - name: Rust for aarch64-apple-darwin
+        run: rustup target add aarch64-apple-darwin
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: release-${{ runner.os }}-${{ hashFiles('src-tauri/Cargo.lock') }}
+
+      - name: Import the signing certificate into a job keychain
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/release.keychain-db"
+          PASS=$(uuidgen)
+          security create-keychain -p "$PASS" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$PASS" "$KEYCHAIN"
+          echo "$APPLE_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" \
+            -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          rm "$RUNNER_TEMP/cert.p12"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$PASS" "$KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN" login.keychain-db
+
+      - name: Write the notary key
+        env:
+          APPLE_API_KEY_CONTENT: ${{ secrets.APPLE_API_KEY_CONTENT }}
+        run: echo "$APPLE_API_KEY_CONTENT" | base64 --decode > "$RUNNER_TEMP/AuthKey.p8"
+
+      - name: Build, sign, notarise, staple, audit
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_PATH: ${{ runner.temp }}/AuthKey.p8
+          # APPLE_CERTIFICATE is deliberately NOT exported to this step: with
+          # it set the tauri CLI builds a second throwaway keychain; without
+          # it, the CLI and scripts/sign-runtime.ts both resolve
+          # APPLE_SIGNING_IDENTITY against the keychain imported above. One
+          # keychain, two signers.
+        run: npm run tray:build
+
+      - name: Publish the .dmg
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes \
+            src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg

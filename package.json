@@ -14,7 +14,8 @@
     "start": "next start -H 127.0.0.1 -p 3117",
     "worker": "tsx scripts/worker.ts",
     "tray:dev": "tauri dev",
-    "tray:build": "tauri build",
+    "tray:stage": "tsx scripts/stage-runtime.ts",
+    "tray:build": "tsx scripts/release-tray.ts",
     "typecheck": "tsc --noEmit",
     "format": "tsx scripts/format.ts",
     "format:check": "tsx scripts/format.ts --check",
@@ -35,8 +36,11 @@
     "@prisma/client": "^6.17.0",
     "motion": "^13.0.0",
     "next": "^16.3.0",
+    "playwright": "^1.62.1",
+    "prisma": "^6.17.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
+    "tsx": "^4.20.0",
     "zod": "^4.1.0"
   },
   "devDependencies": {
@@ -44,10 +48,7 @@
     "@types/node": "^22.18.0",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
-    "playwright": "^1.62.1",
     "prettier": "^3.9.6",
-    "prisma": "^6.17.0",
-    "tsx": "^4.20.0",
     "typescript": "^5.9.0",
     "vitest": "^3.2.0"
   }

@@ -140,10 +140,15 @@ log line and no backup ever contains the terms in readable form**, and that one 
 be correlated against another's. That is a real improvement over storing the words and **it is not
 anonymity**. Where the salt ought to live is the macOS Keychain, which ~~needs a signed native helper
 this product does not have ([ADR-0012](./adr/0012-screen-capture-refused.md))~~ **is refused rather
-than unreachable — corrected 2026-08-26.** The signed binary exists and holds three TCC grants
-([ADR-0023](./adr/0023-the-tray-app-owns-the-runtime.md) as amended by
-[ADR-0025](./adr/0025-computer-use-beyond-the-browser.md)); reaching the Keychain from it is a
-credential-storage decision nobody has taken. Still the same gap the calendar token is stuck in, one
+than unreachable — corrected 2026-08-26.** ~~The signed binary exists and holds three TCC grants~~
+**Re-corrected 2026-08-28, because that sentence ran ahead of the code on both halves and only one
+has caught up: the pipeline that signs and notarises the binary landed with
+([ADR-0027](./adr/0027-a-sealed-bundle-and-where-the-state-moves.md)) — the first signed artefact
+waits on the credential steps [`docs/todo/01`](./todo/01-menu-bar-app.md) records as open — and it
+holds NO TCC grant —
+the three are decided by [ADR-0025](./adr/0025-computer-use-beyond-the-browser.md) and arrive with
+[`docs/todo/07`](./todo/07-off-the-browser.md), which is unbuilt.** Reaching the Keychain from it
+is a credential-storage decision nobody has taken. Still the same gap the calendar token is stuck in, one
 section below, and now for a different reason.
 
 **The cost, named rather than rounded past.** `src/server/ambient-store.ts` says in writing that
@@ -609,9 +614,14 @@ needs a signed native helper this product does not have and is not building
 ([ADR-0012](./adr/0012-screen-capture-refused.md))~~.
 
 **Corrected 2026-08-26: the helper exists and the Keychain is still refused, which is a different and
-more deliberate sentence.** [ADR-0023](./adr/0023-the-tray-app-owns-the-runtime.md) is a signed Tauri
+more deliberate sentence.** ~~[ADR-0023](./adr/0023-the-tray-app-owns-the-runtime.md) is a signed Tauri
 app and [ADR-0025](./adr/0025-computer-use-beyond-the-browser.md) gives it Accessibility, Screen
-Recording and Full Disk Access. So *no keychain read* has stopped being a missing capability and
+Recording and Full Disk Access.~~ **Re-corrected 2026-08-28: half of that also ran ahead. The app has a signing and notarisation
+pipeline as of [ADR-0027](./adr/0027-a-sealed-bundle-and-where-the-state-moves.md), with the first
+signed artefact waiting on the credential steps [`docs/todo/01`](./todo/01-menu-bar-app.md) records
+as open; the three TCC grants are ADR-0025's decision and
+[`docs/todo/07`](./todo/07-off-the-browser.md)'s
+unbuilt work, and today it holds none.** So *no keychain read* has stopped being a missing capability and
 become a decision: ADR-0023's prohibition 3 and ADR-0025 §3 both name it, and ADR-0025 §5 refuses a
 credential vault at its strongest — it would create a secret that does not exist, on a machine whose
 database is not encrypted, to solve a problem Chrome has already solved.

@@ -1,7 +1,6 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Propositum",
-  "version": "0.1.0",
   "identifier": "com.propositum.app",
   "build": {
     "frontendDist": "./ui"
@@ -24,6 +23,16 @@
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns"
-    ]
+    ],
+    "resources": {
+      "../dist-runtime/runtime": "runtime"
+    },
+    "externalBin": [
+      "../dist-runtime/bin/node"
+    ],
+    "macOS": {
+      "minimumSystemVersion": "14.0",
+      "entitlements": "./entitlements.plist"
+    }
   }
 }

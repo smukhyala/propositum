@@ -3,9 +3,20 @@
 **Status:** ~~not started — no code exists.~~ **Corrected 2026-08-27: stage 1
 built** — scaffold, supervision with backoff, the light, the key field, the
 kill switch, launch preflights and the log file all exist in `src-tauri/`.
-What remains is stage 2: signing, notarisation, bundling the runtime, release
+~~What remains is stage 2: signing, notarisation, bundling the runtime, release
 CI (item 10), and the *Done when* below, which is written for a stranger's
-`.dmg` and stays open until one exists. ~~**Narrowed twice on 2026-08-26:**
+`.dmg` and stays open until one exists.~~ **Corrected 2026-08-28: stage 2
+built** ([ADR-0027](../adr/0027-a-sealed-bundle-and-where-the-state-moves.md),
+[#125](https://github.com/smukhyala/propositum/issues/125)) — the runtime is
+staged and bundled (`scripts/stage-runtime.ts`), the crate is dual-mode with an
+installed copy's state in Application Support, the hardened-runtime
+entitlements entered over `tests/tray-permissions.test.ts`'s objection and
+re-pinned it, `scripts/release-tray.ts` signs, notarises, staples and audits,
+and a `v*` tag runs `release.yml`. **What stays open:** the two credential
+steps only a person can do (the *What you have to do yourself* table — minutes,
+now that enrolment is approved), the first tagged release, and the *Done when*
+below, which stays open until a stranger has installed one. The update feed
+half of item 10 is **deferred, not built** — ADR-0027 §4 is the argument. ~~**Narrowed twice on 2026-08-26:**
 three of ADR-0023's four jobs now have answers that are not a native binary —
 see *What already landed* below. What is left is the part only a native binary
 can do, and it is smaller than this file was written to describe.~~
@@ -60,6 +71,10 @@ belongs here is the binary, the signature and the permissions it holds.
 find . -name Cargo.toml -not -path './node_modules/*'
 find . -name 'tauri.conf.json' -not -path './node_modules/*'
 grep -c 'tauri' package.json
+# stage 2 — each returns a hit when that half exists (added 2026-08-28):
+grep -n 'entitlements' src-tauri/tauri.conf.json
+ls scripts/stage-runtime.ts scripts/sign-runtime.ts scripts/release-tray.ts .github/workflows/release.yml
+gh release list   # the one that stays empty until the first tag ships
 ```
 
 ~~**As of 2026-08-26 all three return nothing.**~~ **Corrected 2026-08-27: the
@@ -67,8 +82,12 @@ scaffold exists — all three commands find `src-tauri/`.** Still no packaging, 
 signing, no notarisation, no auto-update, and ~~`.github/workflows/ci.yml` runs typecheck, format and tests
 with no build, no release job and no artefact upload~~ **corrected 2026-08-27:
 CI runs typecheck, tests *and* `npm run build`, and does not run `format:check`.
-What holds is the absence — no release job, no artefact upload, no macOS
-runner.**
+~~What holds is the absence — no release job, no artefact upload, no macOS
+runner.~~** **Corrected 2026-08-28, in two steps this file never recorded the
+first of: `tray.yml` (a macOS check job) landed with stage 1 on 2026-08-27, so
+"no macOS runner" was already false the day it was written here; and
+`release.yml` now builds, signs, notarises and uploads the `.dmg` on a `v*`
+tag. What holds today: the release list is empty until the first tag.**
 
 ### What already landed, 2026-08-26
 
@@ -113,9 +132,9 @@ This section is the reason this file is three weeks and not two.
 | | What | Cost | Lead time |
 |---|---|---|---|
 | **Account** | **Apple Developer Program membership.** Required for a *Developer ID Application* certificate. Without one, macOS Gatekeeper refuses the app on any machine but yours, and there is no way around it. | **$99/year** | **hours to days** — Apple verifies identity, and an individual enrolment sometimes asks for ID |
-| **Certificate** | A *Developer ID Application* certificate and a *Developer ID Installer* certificate, created in the Apple Developer portal and downloaded into your login keychain. | included | minutes, once enrolled |
+| **Certificate** | A *Developer ID Application* certificate, created in the Apple Developer portal and downloaded into your login keychain. ~~and a *Developer ID Installer* certificate~~ **Corrected 2026-08-28: Installer signs `.pkg` installers only — a `.dmg` needs nothing but the Application certificate, which signs the dmg too.** | included | minutes, once enrolled |
 | **Credential** | An **App Store Connect API key** (`.p8`, issuer id, key id) for `notarytool`. An app-specific password works too and is worse — it expires and it is tied to your Apple ID. | free | minutes |
-| **Toolchain** | **Rust is not installed on this machine.** `which cargo` returns nothing. `rustup` install, then the `aarch64-apple-darwin` and `x86_64-apple-darwin` targets if you want a universal binary. | free | ~15 min |
+| **Toolchain** | ~~**Rust is not installed on this machine.** `which cargo` returns nothing.~~ **Struck 2026-08-28 — falsified by the commit this row was written beside: stage 1 was built with `~/.cargo/bin/cargo` (installed 2026-08-27, the same day), which a non-login shell's `which` misses.** The `x86_64-apple-darwin` target for a universal binary is still uninstalled, and universal is deferred (ADR-0027). | free | done |
 | **Toolchain** | Xcode Command Line Tools — **already present** (`/Library/Developer/CommandLineTools`). | free | done |
 | **Decision** | A name for the signed bundle and a bundle identifier (`com.<something>.propositum`). Once shipped, changing it orphans everybody's install. | — | think about it once |
 
@@ -221,9 +240,19 @@ resisting a fifth.
    cache layout, not a launch test, so a corrupt install still fails at first
    fetch exactly as before.
 
-10. **Release CI.** Build, sign, notarise, staple, produce a `.dmg`, and publish
+10. ~~**Release CI.** Build, sign, notarise, staple, produce a `.dmg`, and publish
     an update feed. Tauri's updater needs its own signing keypair — that is
-    separate from the Apple certificate and is generated locally.
+    separate from the Apple certificate and is generated locally.~~ **Split
+    2026-08-28, because the two halves earned different fates.** The first half
+    is **done**: `scripts/release-tray.ts` builds, signs, notarises, staples and
+    audits — the `.dmg` itself, not just the `.app` inside it — and
+    `release.yml` runs it on a `v*` tag, publishing the `.dmg` as a GitHub
+    Release asset. The update feed is **deferred, not built**
+    ([ADR-0027](../adr/0027-a-sealed-bundle-and-where-the-state-moves.md) §4):
+    a feed is a URL the shipped binary polls for new code, which is the first
+    phone-home this product would ever make, and that deserves its own ADR
+    rather than a row in a build script. Until then, updating is downloading
+    the next `.dmg`.
 
 ---
 
@@ -234,8 +263,13 @@ resisting a fifth.
 - Quitting the app leaves no orphaned Node process.
 - Killing either child brings it back.
 - `spctl -a -vvv` and `xcrun stapler validate` both pass on the shipped `.dmg`.
+  *(2026-08-28: `scripts/release-tray.ts` runs both on every signed build and
+  fails it when either fails — so this bullet closes with the first tagged
+  release, and stays closed by machine rather than by memory.)*
 - **Then hand it to a stranger and time them to first offer.** That number is the
-  product metric that does not exist today.
+  product metric that does not exist today. *(Still open, 2026-08-28 — the code
+  half of this file is done and this bullet is deliberately not struck: nothing
+  above it counts until somebody who is not the owner has done it.)*
 
 ---
 

@@ -6,8 +6,14 @@
 # build on a Linux runner without a webkit2gtk detour that would verify the
 # wrong platform. So this job is macOS, path-filtered, and check-only.
 #
-# Deliberately absent, because they are stage 2 of docs/todo/01-menu-bar-app.md:
-# no `tauri build`, no artefact upload, no signing, no notarisation, no release.
+# ~~Deliberately absent, because they are stage 2 of docs/todo/01-menu-bar-app.md:
+# no `tauri build`, no artefact upload, no signing, no notarisation, no release.~~
+# Corrected 2026-08-28 — stage 2 landed and those things now exist in
+# release.yml, which runs on a v* tag and holds the Apple credentials. What is
+# still deliberately absent HERE is unchanged and now has a sharper reason:
+# this job runs on pull requests, and a job that runs a stranger's diff must
+# hold no secret a stranger's diff could exfiltrate. Check-only,
+# credential-free.
 
 name: tray
 on:

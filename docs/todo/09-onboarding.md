@@ -7,7 +7,10 @@ already true, and attempts none of the design — a placeholder that pretends to
 a shape would be the exact ahead-of-the-code failure this folder documents
 catching three times.
 **Blocked by:** nothing, for the design pass itself. The *stranger's* path runs
-through [`01`](./01-menu-bar-app.md) stage 2 (a signed install) and
+through ~~[`01`](./01-menu-bar-app.md) stage 2 (a signed install) and~~
+**— the signed install's machinery exists as of 2026-08-28
+([ADR-0027](../adr/0027-a-sealed-bundle-and-where-the-state-moves.md)); what remains of `01` is a
+credential step and a first tag, so the long pole is —**
 [`05`](./05-chrome-web-store.md) (an extension that is not Developer mode) —
 but deciding what the experience should be needs neither.
 **Blocks:** nothing named yet. It will say what it blocks when it has a shape.

@@ -26,7 +26,7 @@ use tauri_plugin_opener::OpenerExt;
 
 use crate::origin;
 use crate::preflight;
-use crate::repo;
+use crate::runtime::{Mode, Runtime};
 use crate::supervisor::RuntimeHold;
 
 /// The two items other hands need after the build: the light keeps `status`
@@ -40,6 +40,7 @@ pub fn build(
     app: &App<Wry>,
     hold: Arc<RuntimeHold>,
     chromium_missing: bool,
+    runtime: Arc<Runtime>,
 ) -> tauri::Result<TrayHandles> {
     let status = MenuItemBuilder::with_id("state", "Starting…")
         .enabled(false)
@@ -76,9 +77,16 @@ pub fn build(
     if chromium_missing {
         builder = builder.item(&browser);
     }
+    // A sealed bundle ships `.next` prebuilt and cannot write into itself, so
+    // there is nothing for *Rebuild and restart* to do there — the item exists
+    // only where the code can have moved under the binary, which is a checkout.
+    if runtime.mode == Mode::Checkout {
+        builder = builder.item(&rebuild);
+    }
+    if chromium_missing || runtime.mode == Mode::Checkout {
+        builder = builder.separator();
+    }
     let menu = builder
-        .item(&rebuild)
-        .separator()
         .item(&version)
         .item(&diagnostics)
         .separator()
@@ -110,11 +118,12 @@ pub fn build(
             "set-key" => settings_window(app),
             "install-browser" => {
                 let hold = Arc::clone(&hold);
+                let runtime = Arc::clone(&runtime);
                 let browser = browser.clone();
                 let _ = browser.set_text("Installing the background browser…");
                 let _ = browser.set_enabled(false);
                 std::thread::spawn(move || {
-                    let done = preflight::install_chromium(&hold.logger);
+                    let done = preflight::install_chromium(&hold.logger, &runtime);
                     let _ = browser.set_text(if done {
                         "The background browser is installed"
                     } else {
@@ -125,13 +134,16 @@ pub fn build(
             }
             "rebuild" => {
                 let hold = Arc::clone(&hold);
+                let runtime = Arc::clone(&runtime);
                 let status = status.clone();
                 let app = app.clone();
                 let _ = status.set_text("Rebuilding…");
                 std::thread::spawn(move || {
                     hold.shutdown();
-                    match repo::node_binary() {
-                        Some(node) if preflight::build_app(&hold.logger, &node) => app.restart(),
+                    match runtime.node() {
+                        Some(node) if preflight::build_app(&hold.logger, &node, &runtime) => {
+                            app.restart()
+                        }
                         _ => {
                             let _ = status.set_text("The rebuild failed — see the log");
                         }

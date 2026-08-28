@@ -27,10 +27,15 @@ while you're gone. You come back to what changed, why, and what it couldn't deci
 > This README says plainly where the gaps are rather than rounding them up.
 >
 > **The gap that shrank and the one that did not.** Setup is no longer the reason a second person
-> cannot run this — `/welcome` pairs the extension and explains the key. Two terminals still are,
+> cannot run this — `/welcome` pairs the extension and explains the key. ~~Two terminals still are,
 > and [ADR-0023](./docs/adr/0023-the-tray-app-owns-the-runtime.md) decides the menu-bar app that
-> would end them without building a line of it. `docs/todo/` carries what is left, with the
-> external, non-software parts named.
+> would end them without building a line of it.~~ **Corrected 2026-08-28, in two steps this
+> paragraph never recorded: stage 1 built that app on 2026-08-27, and stage 2
+> ([ADR-0027](./docs/adr/0027-a-sealed-bundle-and-where-the-state-moves.md)) built the pipeline
+> that ships it as a signed, notarised `.dmg` — the first release waits on the signing
+> credentials [`docs/todo/01`](docs/todo/01-menu-bar-app.md) records as open, and the terminals
+> are for developers.** `docs/todo/` carries what is
+> left, with the external, non-software parts named.
 
 ---
 
@@ -46,7 +51,7 @@ while you're gone. You come back to what changed, why, and what it couldn't deci
 | [`docs/PRODUCT_PRINCIPLES.md`](./docs/PRODUCT_PRINCIPLES.md) | ~~Ten principles~~ **15 principles, corrected 2026-08-16**, each stating what it concretely forbids. PRODUCT_PRINCIPLES.md's own header carries the count and is the authority on it — and says the header had been wrong since principle 11 arrived. Fourth stale count in this table, in the document that tells the others to say the true thing. |
 | [`docs/research/`](./docs/research/) | The long answers to the questions the architecture waited on. ~~\~4,900 lines~~ **The number is deleted rather than corrected, 2026-08-20.** It was right on the day it was written, 2026-08-06, and was a little over half the truth by 2026-08-18 — `intent-signals.md` arrived and `intent-suggestion-quality.md` grew, and neither moved this cell. `tests/counts.test.ts` has no rule for the noun *lines*, so this is the one count in this table nothing checks, and the row two below says the ADR count went stale *"because nothing counted them. Something counts them now"* — true of that row and never true of this one. `wc -l docs/research/*.md` is the only version of this figure that stays true. |
 | [`docs/FOUNDING_BRIEF.md`](./docs/FOUNDING_BRIEF.md) | The originating brief, kept as history. |
-| [`docs/adr/`](./docs/adr/) | ~~Seven decisions~~ ~~eleven, corrected 2026-08-16~~ ~~15 decisions, corrected 2026-08-19~~ ~~18 decisions — three landed 2026-08-20 with the everyday-computing direction~~ ~~19 decisions — [ADR-0019](./docs/adr/0019-disclosure-and-what-may-never-fold.md) landed 2026-08-22 with the interface simplification and is the newest~~ ~~20 decisions — [ADR-0020](./docs/adr/0020-remembering-a-decline.md) landed 2026-08-22 with offer reticence and is the newest~~ ~~23 decisions — three landed together 2026-08-26 with the phone thread and the menu-bar app: [ADR-0021](./docs/adr/0021-a-thread-on-the-persons-phone.md), [ADR-0022](./docs/adr/0022-the-fourth-verdict.md) and [ADR-0023](./docs/adr/0023-the-tray-app-owns-the-runtime.md), the last of which is the newest~~ **26 decisions — three more landed the same day, and together they are the largest reversal in the series: [ADR-0024](./docs/adr/0024-purchases-within-a-ratified-authorisation.md) lets Propositum buy things, [ADR-0025](./docs/adr/0025-computer-use-beyond-the-browser.md) takes it out of the browser and onto the machine, and [ADR-0026](./docs/adr/0026-reading-a-one-time-code.md) lets it read a 2FA code out of Messages. ADR-0023 was amended by them ~~two days after~~ the same day it was accepted**, each with the option it rejected and why. The number went stale four ADRs ago, was corrected, and went stale again by four within three days — because nothing counted them. Something counts them now, which is why this correction was made in the same commit as the ADR rather than three days after it. |
+| [`docs/adr/`](./docs/adr/) | ~~Seven decisions~~ ~~eleven, corrected 2026-08-16~~ ~~15 decisions, corrected 2026-08-19~~ ~~18 decisions — three landed 2026-08-20 with the everyday-computing direction~~ ~~19 decisions — [ADR-0019](./docs/adr/0019-disclosure-and-what-may-never-fold.md) landed 2026-08-22 with the interface simplification and is the newest~~ ~~20 decisions — [ADR-0020](./docs/adr/0020-remembering-a-decline.md) landed 2026-08-22 with offer reticence and is the newest~~ ~~23 decisions — three landed together 2026-08-26 with the phone thread and the menu-bar app: [ADR-0021](./docs/adr/0021-a-thread-on-the-persons-phone.md), [ADR-0022](./docs/adr/0022-the-fourth-verdict.md) and [ADR-0023](./docs/adr/0023-the-tray-app-owns-the-runtime.md), the last of which is the newest~~ ~~26 decisions — three more landed the same day, and together they are the largest reversal in the series: [ADR-0024](./docs/adr/0024-purchases-within-a-ratified-authorisation.md) lets Propositum buy things, [ADR-0025](./docs/adr/0025-computer-use-beyond-the-browser.md) takes it out of the browser and onto the machine, and [ADR-0026](./docs/adr/0026-reading-a-one-time-code.md) lets it read a 2FA code out of Messages. ADR-0023 was amended by them (struck earlier: "two days after") the same day it was accepted~~ **27 decisions — [ADR-0027](./docs/adr/0027-a-sealed-bundle-and-where-the-state-moves.md) landed 2026-08-28 with the signed `.dmg`, seals the bundle, moves an installed copy's state to Application Support, and refuses the update feed for now; it is the newest**, each with the option it rejected and why. The number went stale four ADRs ago, was corrected, and went stale again by four within three days — because nothing counted them. Something counts them now, which is why this correction was made in the same commit as the ADR rather than three days after it. |
 | Runtime | Next 16, TypeScript strict, Prisma + SQLite, Zod 4, Vitest. ~~336 tests.~~ ~~1,028 across 40 files, measured 2026-08-16.~~ ~~1,124 across 44 files, measured 2026-08-16 after the Intention slice.~~ **The number is gone, 2026-08-19.** It was stale by a factor of three, then stale within the day, then stale again — three corrections making the same argument, which this cell has finally taken: `npm test` prints it, nothing here can check it, so nothing here says it. `tests/counts.test.ts` fails if it comes back. |
 | The product | Chrome MV3 capture, the reading with per-claim evidence, the editable agreement, the unbypassable gate, the worker and reviewer, the diff, the shift report, per-change accept/reject, and the fold into a new version. **Added 2026-08-26:** the `/welcome` setup screen, the optional phone thread ([ADR-0021](./docs/adr/0021-a-thread-on-the-persons-phone.md)), and **an answer to a `DecisionNeeded` that is actually kept** ([ADR-0022](./docs/adr/0022-the-fourth-verdict.md)) — the screen used to offer a button beside the words *"Propositum doesn't keep your answer"*, so `needs-you` could be entered and never left. **Later the same day: a document can be opened from a `.md` or `.txt` file, copied, and downloaded**, and the editor is prose rather than monospace. The file is read in your browser and lands in the box on screen before anything is stored — there is no upload endpoint, and `tests/document-import.test.ts` pins that as an absence rather than a promise. |
 | [`extension/`](./extension/) | The capture extension. See its README — the host grant is a step only you can do, from the side panel. |
@@ -165,6 +170,16 @@ Work is tracked on the [wayfinder map](https://github.com/smukhyala/propositum/i
 
 ## Setup
 
+**Installing, without this repository** *(the path built 2026-08-28,
+[ADR-0027](./docs/adr/0027-a-sealed-bundle-and-where-the-state-moves.md) — and the release list
+is empty until the first `v*` tag ships, which waits on the signing credentials
+[`docs/todo/01`](docs/todo/01-menu-bar-app.md) records as open)*: download the `.dmg`
+from the [releases page](https://github.com/smukhyala/propositum/releases), drag Propositum to
+Applications, launch it, and paste an API key into *Set the API key…* on its menu-bar icon — no
+terminal, no Node, no clone. Apple Silicon, macOS 14 or later. The extension still has to be
+sideloaded until [`docs/todo/05`](docs/todo/05-chrome-web-store.md) is done. Everything below is
+the developer's path.
+
 Requires **Node ≥ 22** and npm. macOS.
 
 ```bash
@@ -179,11 +194,22 @@ npm run dev                   # serves on 3117, and starts the worker beside it
 `npm run tray:dev` puts both halves under a supervisor that restarts a crashed child with backoff,
 shows one status light, and writes both children's output to
 `~/Library/Logs/Propositum/Propositum.log` — the first log this product has had that survives the
-terminal closing. It supervises this checkout in production mode (`next start`), takes no macOS
+terminal closing. ~~It supervises this checkout in production mode (`next start`), takes no macOS
 permission (`tests/tray-permissions.test.ts` holds it to none), and every control on it is a link to
 a page here. What it does not yet do: hold the key field, run `prisma db push` at launch, or ship as
 a signed `.dmg` — that is [`docs/todo/01-menu-bar-app.md`](docs/todo/01-menu-bar-app.md)'s remaining
-half.
+half.~~ **Corrected 2026-08-28 — that sentence went stale twice.** The key field and the per-launch
+`prisma db push` landed with stage 1 itself, on the day the sentence was written; and stage 2
+([ADR-0027](./docs/adr/0027-a-sealed-bundle-and-where-the-state-moves.md)) bundles the runtime
+and, from the first `v*` tag once the signing credentials exist, ships a signed, notarised `.dmg`
+— the pipeline is built and verified unsigned end to end, and
+[`docs/todo/01`](docs/todo/01-menu-bar-app.md) records exactly what stays open. An installed copy
+keeps its `.env` and
+database in `~/Library/Application Support/Propositum/`, while `tray:dev` still supervises this
+checkout. It takes no TCC permission; what it does hold, since stage 2, are two hardened-runtime
+JIT carve-outs for the bundled Node, and `tests/tray-permissions.test.ts` pins that distinction —
+TCC vocabulary banned, the entitlements file pinned to exactly those two keys. Every control on it
+is still a link to a page here.
 
 **Then open [`/welcome`](http://127.0.0.1:3117/welcome), added 2026-08-26.** Five steps, each
 reading what is actually true rather than tracking a cursor — the key, a paired extension, an

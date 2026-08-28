@@ -1,9 +1,14 @@
 # 05 — Get the extension out of Developer mode
 
 **Status:** not started
-**Blocked by:** [`01`](./01-menu-bar-app.md) and item 7 of
-[`04`](./04-quick-fixes.md). Do not submit before the id is pinned and the
-desktop app can pair it.
+**Blocked by:** ~~[`01`](./01-menu-bar-app.md) and~~ item 7 of
+[`04`](./04-quick-fixes.md). ~~Do not submit before the id is pinned and the
+desktop app can pair it.~~ **Corrected 2026-08-28, in two halves: `01` stage 2
+is done ([ADR-0027](../adr/0027-a-sealed-bundle-and-where-the-state-moves.md)),
+and the second condition was never real — the desktop app deliberately pairs
+nothing (`/welcome` pairs, restart-free; ADR-0023's own table row records why
+a tray-written id would be a regression). What still holds: do not submit
+before the id is pinned.**
 **Blocks:** anybody installing this who is not you.
 
 This is the file with the longest wall-clock time and the least work in it. Most

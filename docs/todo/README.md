@@ -46,7 +46,7 @@ or what would make the file **deletable** rather than done
 | | File | Rough size | Costs money |
 |---|---|---|---|
 | 0 | [`00-score-the-hypotheses.md`](./00-score-the-hypotheses.md) | ~~1–2 days~~ **done 2026-08-27** | ~~$1–$6 of API~~ $0.99 measured |
-| 1 | [`01-menu-bar-app.md`](./01-menu-bar-app.md) | ~~2–3 weeks, **narrowed**~~ **stage 1 done 2026-08-27; stage 2 (signing, bundling, release) open** | $99/yr Apple Developer |
+| 1 | [`01-menu-bar-app.md`](./01-menu-bar-app.md) | ~~2–3 weeks, **narrowed**~~ ~~stage 1 done 2026-08-27; stage 2 (signing, bundling, release) open~~ **stage 2's code landed 2026-08-28 ([ADR-0027](../adr/0027-a-sealed-bundle-and-where-the-state-moves.md)); what stays open in the file: the credential steps and first tagged release, the stranger-timing metric, and the update feed (refused for now)** | ~~$99/yr Apple Developer~~ **enrolment approved, owner-reported** |
 | 2 | [`02-phone-thread.md`](./02-phone-thread.md) | **done 2026-08-26** | no |
 | 3 | [`03-document-loop.md`](./03-document-loop.md) | ~~~1 week~~ **import, export and the editor done 2026-08-26; items 2 and 5 left** | no |
 | 4 | [`04-quick-fixes.md`](./04-quick-fixes.md) | ~~half a day~~ ~~done 2026-08-26, except item 7~~ **and item 10, added 2026-08-27** | no |

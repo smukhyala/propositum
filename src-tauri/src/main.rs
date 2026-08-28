@@ -28,7 +28,7 @@ mod logs;
 mod menu;
 mod origin;
 mod preflight;
-mod repo;
+mod runtime;
 mod supervisor;
 
 use std::net::TcpListener;
@@ -39,6 +39,7 @@ use tauri::Manager;
 use tauri_plugin_global_shortcut::ShortcutState;
 
 use logs::Logger;
+use runtime::Runtime;
 use supervisor::{RuntimeHold, Supervisor};
 
 const KILL_SWITCH: &str = "CmdOrCtrl+Shift+Escape";
@@ -54,11 +55,14 @@ fn port_taken() -> bool {
 
 /// The one writer `.env` has ever had, reachable only from the settings
 /// window. A refusal comes back as the sentence the window renders; the key
-/// itself never appears in a log, an error, or a return value.
+/// itself never appears in a log, an error, or a return value. Where the file
+/// lives is the mode's decision (`runtime.env_path()`): the checkout's own
+/// `.env`, or the state dir a sealed bundle keeps its configuration in.
 #[tauri::command]
 fn set_api_key(app: tauri::AppHandle, key: String) -> Result<(), String> {
     let hold = Arc::clone(&*app.state::<Arc<RuntimeHold>>());
-    env_file::write_key(&repo::repo_root().join(".env"), &key)?;
+    let held_runtime = Arc::clone(&*app.state::<Arc<Runtime>>());
+    env_file::write_key(&held_runtime.env_path(), &key)?;
     hold.logger.line(
         "tray",
         ".env ANTHROPIC_API_KEY updated — restarting both halves for it",
@@ -161,24 +165,44 @@ fn main() {
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
 
             let logger = Arc::new(Logger::open()?);
+            let held_runtime = Arc::new(Runtime::resolve());
             logger.line(
                 "tray",
-                &format!("Propositum {} starting", env!("CARGO_PKG_VERSION")),
+                &format!(
+                    "Propositum {} starting ({} mode, runtime at {})",
+                    env!("CARGO_PKG_VERSION"),
+                    match held_runtime.mode {
+                        runtime::Mode::Bundled => "bundled",
+                        runtime::Mode::Checkout => "checkout",
+                    },
+                    held_runtime.root.display()
+                ),
             );
 
             let hold = RuntimeHold::new(
                 Arc::clone(&logger),
                 Supervisor::pending(Arc::clone(&logger)),
             );
-            let handles = menu::build(app, Arc::clone(&hold), preflight::chromium_missing())?;
+            let handles = menu::build(
+                app,
+                Arc::clone(&hold),
+                preflight::chromium_missing(),
+                Arc::clone(&held_runtime),
+            )?;
             light::start(handles.status.clone(), Arc::clone(&hold));
             app.manage(Arc::clone(&hold));
+            app.manage(Arc::clone(&held_runtime));
             app.manage(handles);
             watch_exit_signals(Arc::clone(&hold));
 
             // The blocking half of the launch, off the main thread so the tray
             // appears immediately with the light on Starting.
             std::thread::spawn(move || {
+                if let Err(reason) = held_runtime.ensure_state_dir() {
+                    logger.line("tray", &format!("{reason}. Nothing was started."));
+                    hold.replace(Supervisor::parked(logger, reason));
+                    return;
+                }
                 if port_taken() {
                     let reason = format!(
                         "something else has port {} — `lsof -i :{}` names it",
@@ -189,8 +213,10 @@ fn main() {
                     hold.replace(Supervisor::parked(logger, reason));
                     return;
                 }
-                match preflight::run(&logger) {
-                    preflight::Outcome::Ready => hold.replace(Supervisor::start(logger)),
+                match preflight::run(&logger, &held_runtime) {
+                    preflight::Outcome::Ready => {
+                        hold.replace(Supervisor::start(logger, &held_runtime))
+                    }
                     preflight::Outcome::Parked(reason) => {
                         hold.replace(Supervisor::parked(logger, reason))
                     }
