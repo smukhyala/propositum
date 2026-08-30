@@ -14,7 +14,9 @@
  * The staged tree itself (its own script asserts the load-bearing paths and
  * the zero-symlink invariant after staging), signing, and anything that
  * needs the darwin-arm64 artefacts — this file must pass on the ubuntu CI
- * runner and on a clone with no build.
+ * runner and on a clone with no build. It therefore never asserts that
+ * anything under `dist-runtime/` EXISTS; the last test below is about the two
+ * paths `tray.yml` fabricates, not about a runtime.
  */
 
 import { describe, expect, it } from 'vitest'
@@ -54,5 +56,26 @@ describe('staging stands on things that exist', () => {
     expect(config.bundle.externalBin).toHaveLength(1)
     const [external] = config.bundle.externalBin
     expect(`../${SIDECAR_RELATIVE}`).toBe(`${external}-aarch64-apple-darwin`)
+  })
+
+  it('the tray check fabricates exactly the paths the bundle reads from', () => {
+    // tauri-build resolves resources and externalBin in its BUILD SCRIPT, so
+    // `cargo check` on a checkout that has never staged needs both paths to
+    // exist. `tray.yml` makes them empty rather than spending minutes staging
+    // a runtime it will not use. That workflow is YAML on a runner with no
+    // Node, so it cannot import these constants — the agreement is asserted
+    // here instead, and a rename that misses it goes red on ubuntu in seconds
+    // rather than on macOS after a cargo build.
+    //
+    // Comment lines are dropped first, so a docblock naming a path cannot
+    // stand in for the step that creates it. `tests/support/strip-comments.ts`
+    // is deliberately not used: it is a JS/HTML scanner and knows nothing of
+    // `#`.
+    const steps = readFileSync(join(repo, '.github', 'workflows', 'tray.yml'), 'utf8')
+      .split('\n')
+      .filter((line) => !line.trimStart().startsWith('#'))
+      .join('\n')
+    expect(steps).toContain(`mkdir -p ${TREE_RELATIVE} `)
+    expect(steps).toContain(`> ${SIDECAR_RELATIVE}`)
   })
 })

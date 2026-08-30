@@ -257,6 +257,22 @@ resisting a fifth.
     rather than a row in a build script. Until then, updating is downloading
     the next `.dmg`.
 
+    **Corrected 2026-08-30 — sealing the runtime in broke the check job for two
+    days, and nothing here said so.** Giving `tauri.conf.json` a `resources`
+    map and an `externalBin` pointed both at `dist-runtime/`, which is
+    gitignored and produced only by `npm run tray:stage`. tauri-build resolves
+    those two paths in its *build script*, not at bundle time, so every
+    `cargo check` on a fresh checkout failed — `tray.yml` went red on all four
+    runs from 2026-08-28 while `ci.yml` stayed green on the same commits, which
+    is why it took two days to notice. The fix is not to stage: `tray.yml` now
+    fabricates the two paths empty in about a second, and
+    `tests/stage-runtime.test.ts` reads that workflow and fails if the paths
+    ever drift from `TREE_RELATIVE` and `SIDECAR_RELATIVE`. **What the check
+    therefore does not verify is unchanged and now stated in the workflow: that
+    the runtime stages, that the sidecar runs, that the bundle is whole.
+    `npm run tray:build` on a `v*` tag remains the only place any of that is
+    true.**
+
 ---
 
 ## Done when
