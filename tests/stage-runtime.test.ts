@@ -25,6 +25,8 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import {
+  BUNDLED_KEY_RELATIVE,
+  bundledKeyFrom,
   INVENTORY,
   NODE_VERSION,
   SIDECAR_RELATIVE,
@@ -56,6 +58,22 @@ describe('staging stands on things that exist', () => {
     expect(config.bundle.externalBin).toHaveLength(1)
     const [external] = config.bundle.externalBin
     expect(`../${SIDECAR_RELATIVE}`).toBe(`${external}-aarch64-apple-darwin`)
+  })
+
+  it('takes the bundled key from the environment, or leaves the floor', () => {
+    // ADR-0028 §3: absence is the floor (the first run asks), never an error.
+    expect(bundledKeyFrom({ PROPOSITUM_BUNDLED_KEY: 'sk-capped' })).toBe('sk-capped')
+    expect(bundledKeyFrom({ PROPOSITUM_BUNDLED_KEY: '  sk-capped\n' })).toBe('sk-capped')
+    expect(bundledKeyFrom({})).toBeNull()
+    expect(bundledKeyFrom({ PROPOSITUM_BUNDLED_KEY: '' })).toBeNull()
+    expect(bundledKeyFrom({ PROPOSITUM_BUNDLED_KEY: '   ' })).toBeNull()
+  })
+
+  it('names the bundled-key file the same on both sides of the language gap', () => {
+    // The staging script writes it, the Rust crate reads it, and neither can
+    // import the other — the origin.rs/capture.test.ts pin idiom.
+    const crate = readFileSync(join(repo, 'src-tauri', 'src', 'runtime.rs'), 'utf8')
+    expect(crate).toContain(`join("${BUNDLED_KEY_RELATIVE}")`)
   })
 
   it('the tray check fabricates exactly the paths the bundle reads from', () => {

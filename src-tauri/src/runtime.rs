@@ -167,6 +167,21 @@ impl Runtime {
                     .into_iter()
                     .filter(|(key, _)| owned.iter().all(|(ours, _)| ours != key))
                     .collect();
+                // ADR-0028's bundled key, the INVERSE of the owned layer: a
+                // default seeded only when the person's own `.env` lacks the
+                // key, so their key wins by construction rather than by env
+                // ordering. Written by `scripts/stage-runtime.ts` from the
+                // builder's environment; absent in a keyless build, and then
+                // the first run asks — the floor. The value reaches the
+                // children's environment and nothing else: no log, no error.
+                if !pairs.iter().any(|(key, _)| key == "ANTHROPIC_API_KEY") {
+                    if let Ok(bundled) = std::fs::read_to_string(self.root.join("bundled-key")) {
+                        let bundled = bundled.trim();
+                        if !bundled.is_empty() {
+                            pairs.push(("ANTHROPIC_API_KEY".to_string(), bundled.to_string()));
+                        }
+                    }
+                }
                 pairs.extend(owned);
                 pairs
             }
@@ -282,6 +297,77 @@ mod tests {
                 ("CHECKPOINT_DISABLE".to_string(), "1".to_string()),
             ]
         );
+    }
+
+    fn bundled_home_and_app(name: &str, env_line: Option<&str>) -> (PathBuf, PathBuf) {
+        let app = scratch(&format!("{name}-app"));
+        std::fs::create_dir_all(app.join("Contents/Resources/runtime")).unwrap();
+        let home = scratch(&format!("{name}-home"));
+        std::fs::create_dir_all(home.join("Library/Application Support/Propositum")).unwrap();
+        if let Some(line) = env_line {
+            std::fs::write(
+                home.join("Library/Application Support/Propositum/.env"),
+                line,
+            )
+            .unwrap();
+        }
+        (app, home)
+    }
+
+    #[test]
+    fn a_bundled_key_seeds_under_an_absent_env_line() {
+        let (app, home) = bundled_home_and_app("seed", Some("PROPOSITUM_EXTENSION_ID=x\n"));
+        std::fs::write(
+            app.join("Contents/Resources/runtime/bundled-key"),
+            "sk-bundled\n",
+        )
+        .unwrap();
+        let resolved = resolve_from(None, &app.join("Contents/MacOS/Propositum"), &home);
+        let env = resolved.child_env();
+        let found: Vec<_> = env
+            .iter()
+            .filter(|(key, _)| key == "ANTHROPIC_API_KEY")
+            .collect();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].1, "sk-bundled");
+        assert!(env
+            .iter()
+            .any(|(key, value)| key == "PROPOSITUM_EXTENSION_ID" && value == "x"));
+    }
+
+    #[test]
+    fn the_persons_key_outranks_the_bundled_one() {
+        let (app, home) = bundled_home_and_app("outrank", Some("ANTHROPIC_API_KEY=sk-mine\n"));
+        std::fs::write(
+            app.join("Contents/Resources/runtime/bundled-key"),
+            "sk-bundled\n",
+        )
+        .unwrap();
+        let resolved = resolve_from(None, &app.join("Contents/MacOS/Propositum"), &home);
+        let env = resolved.child_env();
+        let found: Vec<_> = env
+            .iter()
+            .filter(|(key, _)| key == "ANTHROPIC_API_KEY")
+            .collect();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].1, "sk-mine");
+    }
+
+    #[test]
+    fn a_missing_or_empty_bundled_key_file_adds_nothing() {
+        let (app, home) = bundled_home_and_app("floor", None);
+        let resolved = resolve_from(None, &app.join("Contents/MacOS/Propositum"), &home);
+        assert!(!resolved
+            .child_env()
+            .iter()
+            .any(|(key, _)| key == "ANTHROPIC_API_KEY"));
+
+        std::fs::write(app.join("Contents/Resources/runtime/bundled-key"), "  \n").unwrap();
+        let resolved = resolve_from(None, &app.join("Contents/MacOS/Propositum"), &home);
+        assert!(!resolved
+            .child_env()
+            .iter()
+            .any(|(key, _)| key == "ANTHROPIC_API_KEY"));
     }
 
     #[test]

@@ -604,7 +604,7 @@ of thing, which is why they live in different places:
 
 | Credential                                                     | Where                        | What it is                                                                                         |
 | -------------------------------------------------------------- | ---------------------------- | -------------------------------------------------------------------------------------------------- |
-| `ANTHROPIC_API_KEY`                                            | `.env`, gitignored           | **the application's own.** The same string for every copy of Propositum; it says nothing about you |
+| `ANTHROPIC_API_KEY`                                            | `.env`, gitignored           | **the application's own.** The same string for every copy of Propositum; it says nothing about you. *(Since 2026-08-30, [ADR-0028](./adr/0028-a-capped-key-ships-in-the-bundle.md): a tester build may also carry a spend-capped bundled default inside the sealed `.app` — public by design, the ADR's cost section owns that — which the person's own `.env` key outranks by construction and which appears in no log, error or return value.)* |
 | The Google refresh token, **only if you connected a calendar** | a row in your local database | **yours.** It names you, it is issued to you, and it is revocable by you                           |
 
 The token is not in `.env`, deliberately: configuration is where the software's own credentials go,

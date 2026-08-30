@@ -138,9 +138,11 @@ Changing one of these is an ADR, not a diff.
 - **Nothing is ever copied.** The `Changeset` is the copy, and "copy" is banned from the interface.
 - **No cloud, no telemetry, no server of ours.** `ANTHROPIC_API_KEY` is the only credential needed; the
   optional Google scope is `calendar.freebusy` and nothing else (ADR-0014). *(Amended 2026-08-29,
-  [ADR-0028](docs/adr/0028-a-capped-key-ships-in-the-bundle.md), accepted and unbuilt: a tester
+  [ADR-0028](docs/adr/0028-a-capped-key-ships-in-the-bundle.md), ~~accepted and unbuilt~~
+  **built 2026-08-30**: a tester
   build may carry a spend-capped bundled key, so in that build the credential stops being the
-  person's. The person's own key always outranks it, and asking remains the fallback.)*
+  person's. The person's own key always outranks it — by construction, in
+  `src-tauri/src/runtime.rs`'s seeding, unit-tested — and asking remains the fallback.)*
 
 **The heuristic all of these express:** prefer absence to a rule, and a type to a convention. *"There
 is no field for it"* beats *"must not"*, and a compile error beats a review note. Extend that pattern

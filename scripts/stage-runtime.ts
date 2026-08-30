@@ -108,6 +108,19 @@ export const LOAD_BEARING = [
 export const TREE_RELATIVE = 'dist-runtime/runtime'
 export const SIDECAR_RELATIVE = 'dist-runtime/bin/node-aarch64-apple-darwin'
 
+/** Where ADR-0028's bundled key rides inside the staged tree, when the
+ * builder's environment carries one. `src-tauri/src/runtime.rs` reads the
+ * same literal — the test pins the two spellings to each other. */
+export const BUNDLED_KEY_RELATIVE = 'bundled-key'
+
+/** Pure, so the test needs no environment: the capped tester key from
+ * `PROPOSITUM_BUNDLED_KEY`, or null when the build should ask instead —
+ * absence is ADR-0028 §3's floor, not an error. */
+export function bundledKeyFrom(env: Record<string, string | undefined>): string | null {
+  const key = env['PROPOSITUM_BUNDLED_KEY']?.trim()
+  return key === undefined || key === '' ? null : key
+}
+
 const repo = fileURLToPath(new URL('..', import.meta.url))
 const staging = join(repo, 'dist-runtime')
 const tree = join(repo, TREE_RELATIVE)
@@ -206,6 +219,18 @@ export async function stage() {
   }
   rmSync(join(tree, 'src', 'fixtures', 'afternoons'), { recursive: true, force: true })
 
+  // ADR-0028: the capped tester key, from the builder's environment and never
+  // from git. The say lines deliberately interpolate nothing — the value
+  // reaches the file and nowhere else. Public-by-design inside the bundle
+  // (the ADR's cost section owns that argument), so no special mode.
+  const bundledKey = bundledKeyFrom(process.env)
+  if (bundledKey !== null) {
+    writeFileSync(join(tree, BUNDLED_KEY_RELATIVE), bundledKey + '\n')
+    say('a bundled key rides in this build (ADR-0028) — the first run will not ask for one')
+  } else {
+    say('no bundled key in the environment — this build asks for a key, which is the floor')
+  }
+
   say('npm ci --omit=dev (the dependency graph is the inventory)')
   run('npm', ['ci', '--omit=dev'], tree)
 
@@ -260,6 +285,7 @@ export async function stage() {
         gitSha: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim(),
         nodeVersion: NODE_VERSION,
         nextBuildId: readFileSync(join(tree, '.next', 'BUILD_ID'), 'utf8').trim(),
+        carriesBundledKey: bundledKey !== null,
       },
       null,
       2,
