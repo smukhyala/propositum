@@ -95,6 +95,22 @@ impl Runtime {
             .join("Propositum")
     }
 
+    /// macOS App Translocation runs a quarantined app from a randomised,
+    /// read-only mount when Finder never moved it — double-clicked straight
+    /// off the dmg is the usual way. Found by the first quarantine launch
+    /// test, 2026-08-30: `prisma db push` died on EROFS inside the mount,
+    /// visible only in the log. The launch parks instead, with the one
+    /// instruction that fixes it. Path-text detection, because that is what
+    /// translocation actually changes; a false negative just falls through
+    /// to the same EROFS park with a worse sentence.
+    pub fn translocated(&self) -> bool {
+        self.mode == Mode::Bundled
+            && self
+                .root
+                .components()
+                .any(|part| part.as_os_str() == "AppTranslocation")
+    }
+
     /// Bundled mode's one write outside the log: the state dir, 0700, made
     /// before anything asks for `.env` or the database. A checkout has no
     /// state dir and this is a no-op there.
@@ -266,6 +282,28 @@ mod tests {
                 ("CHECKPOINT_DISABLE".to_string(), "1".to_string()),
             ]
         );
+    }
+
+    #[test]
+    fn a_translocated_launch_is_recognised_by_its_path() {
+        let app = scratch("transloc");
+        std::fs::create_dir_all(
+            app.join("AppTranslocation/1D-2E/d/P.app/Contents/Resources/runtime"),
+        )
+        .unwrap();
+        let exe = app.join("AppTranslocation/1D-2E/d/P.app/Contents/MacOS/Propositum");
+        let resolved = resolve_from(None, &exe, Path::new("/Users/person"));
+        assert_eq!(resolved.mode, Mode::Bundled);
+        assert!(resolved.translocated());
+
+        let plain = scratch("not-transloc");
+        std::fs::create_dir_all(plain.join("P.app/Contents/Resources/runtime")).unwrap();
+        let resolved = resolve_from(
+            None,
+            &plain.join("P.app/Contents/MacOS/Propositum"),
+            Path::new("/Users/person"),
+        );
+        assert!(!resolved.translocated());
     }
 
     #[test]

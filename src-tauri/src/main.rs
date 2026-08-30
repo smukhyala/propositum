@@ -198,6 +198,17 @@ fn main() {
             // The blocking half of the launch, off the main thread so the tray
             // appears immediately with the light on Starting.
             std::thread::spawn(move || {
+                if held_runtime.translocated() {
+                    logger.line(
+                        "tray",
+                        "macOS is running this app from a temporary read-only place (App Translocation) — it was opened without being moved into Applications first. Nothing was started.",
+                    );
+                    hold.replace(Supervisor::parked(
+                        logger,
+                        "move Propositum into Applications, then open it again".into(),
+                    ));
+                    return;
+                }
                 if let Err(reason) = held_runtime.ensure_state_dir() {
                     logger.line("tray", &format!("{reason}. Nothing was started."));
                     hold.replace(Supervisor::parked(logger, reason));
