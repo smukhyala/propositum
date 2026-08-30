@@ -46,7 +46,7 @@ pub fn build(
         .enabled(false)
         .build(app)?;
     let open = MenuItemBuilder::with_id("open", "Open Propositum").build(app)?;
-    let welcome = MenuItemBuilder::with_id("welcome", "Finish setting up").build(app)?;
+    let welcome = MenuItemBuilder::with_id("first-run", "Finish setting up").build(app)?;
     let set_key = MenuItemBuilder::with_id("set-key", "Set the API key…").build(app)?;
     let browser = MenuItemBuilder::with_id(
         "install-browser",
@@ -110,11 +110,11 @@ pub fn build(
             "open" => {
                 let _ = app.opener().open_url(origin::page("/"), None::<&str>);
             }
-            "welcome" => {
-                let _ = app
-                    .opener()
-                    .open_url(origin::page("/welcome"), None::<&str>);
-            }
+            // The window, not a browser tab: the settings window is the
+            // precedent for what cannot be a link, and one native surface is
+            // the todo 09 design's whole point. A second click focuses the
+            // one that exists.
+            "first-run" => first_run_window(app),
             "set-key" => settings_window(app),
             "install-browser" => {
                 let hold = Arc::clone(&hold);
@@ -180,6 +180,39 @@ pub fn build(
         .build(app)?;
 
     Ok(handles)
+}
+
+/// The first-run window: the app's own page at `/first-run`, in a frame
+/// without browser chrome, opened on launch while setup is unfinished and
+/// from *Finish setting up*. Everything in it is the page deciding on the
+/// app's own facts, so ADR-0023 prohibition 5 stands — and the label
+/// `first-run` matches no capability, so the window has no IPC at all;
+/// `tests/tray-permissions.test.ts`'s pins hold untouched.
+pub fn first_run_window(app: &AppHandle<Wry>) {
+    if let Some(existing) = app.get_webview_window("first-run") {
+        let _ = existing.show();
+        let _ = existing.set_focus();
+        return;
+    }
+    let Ok(url) = origin::page("/first-run").parse() else {
+        return;
+    };
+    // External links — t.me for the phone card — belong in the person's real
+    // browser, not trapped in this frame. Anything on our own origin stays.
+    let opener = app.clone();
+    let _ = WebviewWindowBuilder::new(app, "first-run", WebviewUrl::External(url))
+        .title("Propositum")
+        .inner_size(720.0, 800.0)
+        .on_navigation(move |navigated| {
+            if navigated.as_str().starts_with(&origin::app_origin()) {
+                return true;
+            }
+            let _ = opener
+                .opener()
+                .open_url(navigated.to_string(), None::<&str>);
+            false
+        })
+        .build();
 }
 
 /// The one window: a field for the key, because a menu cannot take text. It

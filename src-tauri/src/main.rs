@@ -122,6 +122,48 @@ fn watch_exit_signals(hold: Arc<RuntimeHold>) {
     });
 }
 
+/// Open the first-run window once per launch, and only when setup is
+/// unfinished — the tiny tray icon is easy to miss and a fresh install
+/// deserves a surface, which is todo 09's whole argument. The tray learns
+/// "unfinished" from `GET /api/first-run`, one bit, served by the app so the
+/// derivation stays where `tests/first-run.test.ts` can hold it (ADR-0023
+/// prohibition 5: the tray decides nothing, so it receives nothing it could
+/// decide with). One poll per second until the children serve; gives up when
+/// the runtime stops, parks, or ten minutes pass — a checkout's first build
+/// can be slow, and a parked launch must never get a window.
+fn open_first_run_when_unfinished(handle: tauri::AppHandle, hold: Arc<RuntimeHold>) {
+    std::thread::spawn(move || {
+        let agent = ureq::AgentBuilder::new()
+            .timeout_connect(Duration::from_secs(2))
+            .timeout(Duration::from_secs(4))
+            .build();
+        let url = origin::page("/api/first-run");
+        let deadline = std::time::Instant::now() + Duration::from_secs(600);
+
+        while std::time::Instant::now() < deadline {
+            match hold.overall() {
+                supervisor::Overall::Stopped | supervisor::Overall::GaveUp(_) => return,
+                _ => {}
+            }
+            if let Ok(response) = agent.get(&url).set(origin::CUSTOM_HEADER, "1").call() {
+                let unfinished = response
+                    .into_json::<serde_json::Value>()
+                    .ok()
+                    .and_then(|body| body.get("unfinished").and_then(|bit| bit.as_bool()))
+                    .unwrap_or(false);
+                if unfinished {
+                    let _ = handle.run_on_main_thread({
+                        let handle = handle.clone();
+                        move || menu::first_run_window(&handle)
+                    });
+                }
+                return;
+            }
+            std::thread::sleep(Duration::from_secs(1));
+        }
+    });
+}
+
 fn main() {
     block_exit_signals();
 
@@ -194,6 +236,7 @@ fn main() {
             app.manage(Arc::clone(&held_runtime));
             app.manage(handles);
             watch_exit_signals(Arc::clone(&hold));
+            let app_handle = app.handle().clone();
 
             // The blocking half of the launch, off the main thread so the tray
             // appears immediately with the light on Starting.
@@ -226,7 +269,8 @@ fn main() {
                 }
                 match preflight::run(&logger, &held_runtime) {
                     preflight::Outcome::Ready => {
-                        hold.replace(Supervisor::start(logger, &held_runtime))
+                        hold.replace(Supervisor::start(logger, &held_runtime));
+                        open_first_run_when_unfinished(app_handle, hold);
                     }
                     preflight::Outcome::Parked(reason) => {
                         hold.replace(Supervisor::parked(logger, reason))
