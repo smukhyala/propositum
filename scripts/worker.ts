@@ -40,14 +40,14 @@ try {
  * right when the phone thread landed on this process's tick
  * ([ADR-0021](../docs/adr/0021-a-thread-on-the-persons-phone.md)): nothing about
  * saying *"a shift ended"* or *"I need a decision"* reaches a model, so a keyless
- * install was one where a person could pair a phone on `/welcome` and it would
+ * install was one where a person could pair a phone on `/first-run` and it would
  * never say anything, with nothing anywhere explaining why. That is the swallowed
  * notification again, one process out.
  *
  * The shape is the one `src/server/calendar.ts` already uses for a missing client
  * id: **the feature is absent, not broken.** With no key this process starts,
  * tends the thread, and claims no runs — and says so once rather than dying.
- * `/welcome` step 1 tells the person what to add and what is missing until they
+ * `/first-run` tells the person what to add and what is missing until they
  * do, so the two halves agree about the same fact.
  */
 /**
@@ -65,7 +65,7 @@ try {
  */
 const apiKey = process.env['ANTHROPIC_API_KEY']?.trim() || undefined
 if (apiKey === undefined) {
-  console.log('[worker] No ANTHROPIC_API_KEY, so no shift can run. Set one in .env — see /welcome.')
+  console.log('[worker] No ANTHROPIC_API_KEY, so no shift can run. Set one in .env — see /first-run.')
   console.log('[worker] Staying up anyway: a paired phone still gets what happened and what needs deciding.')
 }
 

@@ -43,7 +43,7 @@ export function ambientStore(): AmbientStore {
  * ~~Pinned by the manifest `key`; until that is set, an env override keeps local
  * development possible without loosening the check itself.~~ **Amended
  * 2026-08-26.** Still true, and there is now a second source: a person can pair
- * an extension on `/welcome` instead of hand-editing `.env`, which writes a row.
+ * an extension on `/first-run` instead of hand-editing `.env`, which writes a row.
  *
  * **`.env` still wins**, so a clone that sets `PROPOSITUM_EXTENSION_ID` behaves
  * exactly as it did. The check is not loosened in either case — with neither

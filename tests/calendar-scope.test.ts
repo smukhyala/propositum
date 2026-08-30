@@ -341,8 +341,11 @@ describe('the feature is reachable from the product', () => {
   it('a screen renders the row, and it is the front door', () => {
     // Not the agreement screen, deliberately. The one calendar failure a person
     // can fix belongs on a screen they chose to open, never where a suggestion
-    // would have been.
-    expect(called('calendarRow', 'src/server/calendar.ts')).toEqual(['src/app/page.tsx'])
+    // would have been. The first run joined 2026-08-30 — its calendar card is
+    // Connect-only, so `forgetCalendar`'s pin above does not move with it.
+    expect(called('calendarRow', 'src/server/calendar.ts').sort()).toEqual(
+      ['src/app/first-run/page.tsx', 'src/app/page.tsx'].sort(),
+    )
     expect(called('calendarRow', 'src/server/calendar.ts')).not.toContain('src/ui/agreement.tsx')
   })
 

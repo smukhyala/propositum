@@ -16,8 +16,8 @@
 
 import { describe, it, expect } from 'vitest'
 
-import { WELCOME_STEPS, stepFrom } from '../src/server/welcome'
-import type { SetupFacts, WelcomeStep } from '../src/server/welcome'
+import { FIRST_RUN_STEPS, consentOrder, stepFrom } from '../src/server/first-run'
+import type { SetupFacts, FirstRunStep } from '../src/server/first-run'
 
 const NOTHING: SetupFacts = {
   keySet: false,
@@ -69,7 +69,7 @@ describe('a fresh install and a finished one', () => {
 })
 
 describe('the order, one step at a time', () => {
-  const cases: Array<[WelcomeStep, Partial<SetupFacts>]> = [
+  const cases: Array<[FirstRunStep, Partial<SetupFacts>]> = [
     ['key', {}],
     ['extension', { keySet: true }],
     ['sources', { keySet: true, extensionPaired: true }],
@@ -104,7 +104,7 @@ describe('over every combination there is', () => {
   it('always points at the first thing that is not done', () => {
     for (const facts of everyCombination()) {
       const { at, done } = stepFrom(facts)
-      const firstUndone = WELCOME_STEPS.find((step) => !done[step]) ?? null
+      const firstUndone = FIRST_RUN_STEPS.find((step) => !done[step]) ?? null
       expect(at, JSON.stringify(facts)).toBe(firstUndone)
     }
   })
@@ -121,7 +121,7 @@ describe('over every combination there is', () => {
   it('is never null while anything is unfinished', () => {
     for (const facts of everyCombination()) {
       const { at, done } = stepFrom(facts)
-      const anythingLeft = WELCOME_STEPS.some((step) => !done[step])
+      const anythingLeft = FIRST_RUN_STEPS.some((step) => !done[step])
       expect(at === null, JSON.stringify(facts)).toBe(!anythingLeft)
     }
   })
@@ -129,7 +129,7 @@ describe('over every combination there is', () => {
   /** `done` reports every step, not only the ones behind the cursor. */
   it('reports every step regardless of where it is', () => {
     for (const facts of everyCombination()) {
-      expect(Object.keys(stepFrom(facts).done).sort()).toEqual([...WELCOME_STEPS].sort())
+      expect(Object.keys(stepFrom(facts).done).sort()).toEqual([...FIRST_RUN_STEPS].sort())
     }
   })
 
@@ -145,6 +145,23 @@ describe('over every combination there is', () => {
     for (const facts of everyCombination()) {
       if (stepFrom(facts).at !== 'phone') continue
       expect(facts.anythingToOffer, JSON.stringify(facts)).toBe(true)
+    }
+  })
+})
+
+describe('the opening ask routes the cards, and only the cards', () => {
+  it('orders every answer completely, and the unanswered ask renders itself', () => {
+    // Each answer must name all three sources exactly once — a card an
+    // ordering forgot would be a consent nobody is shown.
+    expect(consentOrder('act')).toEqual(['extension', 'phone', 'calendar'])
+    expect(consentOrder('watch')).toEqual(['extension', 'calendar', 'phone'])
+    expect(consentOrder('connect')).toEqual(['calendar', 'extension', 'phone'])
+    expect(consentOrder(null)).toBeNull()
+  })
+
+  it('every ordering is a permutation of the same three sources', () => {
+    for (const ask of ['act', 'watch', 'connect'] as const) {
+      expect([...(consentOrder(ask) ?? [])].sort()).toEqual(['calendar', 'extension', 'phone'])
     }
   })
 })

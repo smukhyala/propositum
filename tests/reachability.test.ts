@@ -1661,10 +1661,10 @@ describe('a raised decision can be answered', () => {
 describe('setting Propositum up', () => {
   it('is linked from the front door', () => {
     const home = stripImports(stripComments(readFileSync(join(repo, 'src/app/page.tsx'), 'utf8')))
-    // The path, however it is quoted — JSX writes `href="/welcome"` and a
+    // The path, however it is quoted — JSX writes `href="/first-run"` and a
     // needle that assumed one quoting style would go red on a formatter run.
-    expect(home, 'nothing links to /welcome — a setup screen nobody finds').toMatch(
-      /['"]\/welcome['"]/,
+    expect(home, 'nothing links to /first-run — a setup screen nobody finds').toMatch(
+      /['"]\/first-run['"]/,
     )
   })
 
@@ -1674,10 +1674,21 @@ describe('setting Propositum up', () => {
    * does not live in a `.tsx` file."*
    */
   it('decides which step somebody is on outside the page', () => {
-    expect(callersOf('welcomeState(', 'src/server/welcome.ts').sort()).toEqual(
-      [join('src', 'app', 'page.tsx'), join('src', 'app', 'welcome', 'page.tsx')].sort(),
+    // Three callers since 2026-08-30: the front door, the first-run page, and
+    // the route the tray polls — the one HTTP door setup state has.
+    expect(callersOf('firstRunState(', 'src/server/first-run.ts').sort()).toEqual(
+      [
+        join('src', 'app', 'page.tsx'),
+        join('src', 'app', 'first-run', 'page.tsx'),
+        join('src', 'app', 'api', 'first-run', 'route.ts'),
+      ].sort(),
     )
-    expect(callersOf('stepFrom(', 'src/server/welcome.ts')).toEqual([])
+    expect(callersOf('stepFrom(', 'src/server/first-run.ts')).toEqual([])
+    // The ask's ordering is the same kind of silent decision, held the same
+    // way: computed in the module, rendered by exactly the page.
+    expect(callersOf('consentOrder(', 'src/server/first-run.ts')).toEqual([
+      join('src', 'app', 'first-run', 'page.tsx'),
+    ])
   })
 
   /** Pairing writes through one door, so there is one thing to read. */

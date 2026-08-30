@@ -17,7 +17,7 @@
 //!
 //! Why the supervisor owns this and not a Next page: a route that writes
 //! `.env` hands every local page an HTTP door to the credential file, and
-//! `/welcome` deliberately *detects, never collects* the key. The write forces
+//! `/first-run` deliberately *detects, never collects* the key. The write forces
 //! a restart of both children (each reads `.env` once at startup), and the
 //! process that owns the restart is the process that owns the write.
 
