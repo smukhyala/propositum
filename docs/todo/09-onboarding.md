@@ -21,8 +21,12 @@ but deciding what the experience should be needs neither.
 ## Is this already done?
 
 ```bash
-ls src/app/welcome/page.tsx src/server/welcome.ts
+ls src/app/first-run/page.tsx src/server/first-run.ts
 grep -rn 'Finish setting up' src/app/page.tsx src-tauri/src/menu.rs
+grep -n 'first_run_window' src-tauri/src/main.rs   # the window opens itself
+# history: until 2026-08-30 the first two greps named src/app/welcome/ and
+# src/server/welcome.ts, which existed and were the point — the pieces
+# without the experience. Both now 404/gone by design.
 ```
 
 **Both return hits, and that is the point of this file: the pieces exist and
@@ -90,24 +94,27 @@ than a failure.
 
 ## The work
 
-1. The assistant window in the tray (open on first launch while setup is
-   unfinished, reusing the `welcome.ts` derivation so returning lands where
-   the truth is), rendering the first-run page.
-2. The first-run page itself — successor to `/welcome`'s five steps,
-   restructured around the opening ask and the consent cards. `/welcome`
-   stays until the page replaces it, then the route folds.
-3. The guided extension sideload, sourced from the installed bundle's
-   `extension/` folder (shipped since
-   [ADR-0027](../adr/0027-a-sealed-bundle-and-where-the-state-moves.md)) —
-   the page tells the person where it is and what Developer mode will say.
-4. ADR-0028's key mechanics: stage-time injection from the builder's env in
-   `scripts/stage-runtime.ts`, precedence under the person's own key in
-   `src-tauri/src/runtime.rs`'s layered child env, the keyless fallback.
-5. Naming: whatever the first-run surface is called enters `CONTEXT.md`
-   before it names a route or a schema field. Consumer wording comes from
-   `CONTEXT.md`, and `tests/consumer-vocabulary.test.ts` (app + side panel)
-   and `tests/tray-strings.test.ts` (tray) will read whatever screens this
-   touches.
+**All five built 2026-08-30 ([#127](https://github.com/smukhyala/propositum/issues/127)),
+in the order the naming rule demanded — the glossary entry first.**
+
+1. ~~The assistant window in the tray~~ **Done** — `menu.rs`'s `first_run_window`
+   renders `/first-run` in a chrome-less frame; `main.rs` polls
+   `GET /api/first-run` once per launch after the children serve and opens it
+   only while setup is unfinished. The label matches no capability, so the
+   window has no IPC and `tests/tray-permissions.test.ts` held untouched.
+2. ~~The first-run page itself~~ **Done** — `src/app/first-run/page.tsx`: the
+   opening ask routes consent cards through a pure `consentOrder`, the ask
+   lives in the URL and persists nothing, and `/welcome` folded (the module is
+   `src/server/first-run.ts` now; `stepFrom`'s thirty-two-combination table
+   moved intact).
+3. ~~The guided extension sideload~~ **Done** — the watching card names the
+   real absolute `extension/` folder, the bundle's own in an installed copy.
+4. ~~ADR-0028's key mechanics~~ **Done** — stage-time injection from
+   `PROPOSITUM_BUNDLED_KEY`, seeded under the person's own key by
+   construction, asking as the floor; unit-tested in both directions.
+5. ~~Naming~~ **Done** — `FirstRun` entered `CONTEXT.md` in the commit before
+   any file used it. Consumer wording stayed the shipped set; the vocabulary
+   guards read every new screen automatically.
 
 ## Done when
 
