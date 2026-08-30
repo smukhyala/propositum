@@ -12,9 +12,12 @@ staged and bundled (`scripts/stage-runtime.ts`), the crate is dual-mode with an
 installed copy's state in Application Support, the hardened-runtime
 entitlements entered over `tests/tray-permissions.test.ts`'s objection and
 re-pinned it, `scripts/release-tray.ts` signs, notarises, staples and audits,
-and a `v*` tag runs `release.yml`. **What stays open:** the two credential
+and a `v*` tag runs `release.yml`. **What stays open:** ~~the two credential
 steps only a person can do (the *What you have to do yourself* table — minutes,
-now that enrolment is approved), the first tagged release, and the *Done when*
+now that enrolment is approved),~~ **done 2026-08-30 — the certificate and
+notary key exist, the first signed, notarised, stapled `.app` and `.dmg` both
+passed `spctl` and `stapler validate` locally, and the six CI secrets are
+set** — the first tagged release, and the *Done when*
 below, which stays open until a stranger has installed one. The update feed
 half of item 10 is **deferred, not built** — ADR-0027 §4 is the argument. ~~**Narrowed twice on 2026-08-26:**
 three of ADR-0023's four jobs now have answers that are not a native binary —
@@ -321,6 +324,14 @@ now fixed or recorded, none of which any item above named:
 - **The switch worked in silence.** The person pressed it three times
   believing nothing had happened, because no pixel moved. The tray now
   writes *Stopped* beside its ring.
+- **Opened straight off the dmg, the app ran somewhere read-only and died in
+  a log.** The first quarantine launch test (2026-08-30, the day of the first
+  signed build) double-clicked the app without Finder ever moving it, and
+  macOS App Translocation ran it from a randomised read-only mount —
+  `prisma db push` died on EROFS with nothing on screen. Fixed the same day:
+  a translocated launch parks before the preflight with *move Propositum into
+  Applications, then open it again* beside the ring. The drag-to-Applications
+  flow the dmg window suggests was never affected.
 - **A signal-terminated tray orphaned both children** — tao installs no
   signal handler, so `kill -TERM` never reached the run-event handler. A
   `sigwait` thread now turns a signal into the same drain the Quit item runs.
