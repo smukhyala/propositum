@@ -114,7 +114,7 @@ In pipeline order, because the order is the design:
 | `src/runtime/` | The worker loop and process, drained by `scripts/worker.ts` in its own OS process (ADR-0001, amended — `npm run dev` now spawns it as a sibling), plus the browser control channel and `thread-channel.ts`, **the one file that knows Telegram exists**. A second transport is a new file here and a test enforces that. |
 | `src/persistence/` | Repositories, the single ledger writer, and `append-only.ts`. The only Prisma consumer. |
 | `src/server/` | Route-facing orchestration and the server actions. |
-| `src/app/`, `src/ui/` | Next.js routes and client components. `src/app/welcome/` is the setup screen, added 2026-08-26 — five steps, each reading what is actually true rather than tracking a cursor, so there is no progress row to get out of step with the truth. Its derivation lives in `src/server/welcome.ts` because a `.tsx` server component is the one thing here nothing can assert against. |
+| `src/app/`, `src/ui/` | Next.js routes and client components. ~~`src/app/welcome/` is the setup screen, added 2026-08-26~~ **`src/app/first-run/` since 2026-08-30 (todo 09 built)** — an opening ask routing consent cards, each fact read rather than a cursor tracked, so there is no progress row to get out of step with the truth. Its derivation lives in `src/server/first-run.ts` because a `.tsx` server component is the one thing here nothing can assert against. |
 | `src/eval/`, `src/fixtures/` | The offline harness and its scenarios. |
 
 Prisma's SQLite provider has **no enums**. Every closed set is a `String` whose authoritative

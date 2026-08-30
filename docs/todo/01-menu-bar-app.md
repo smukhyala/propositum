@@ -96,7 +96,8 @@ tag. What holds today: the release list is empty until the first tag.**
 
 While this folder was being written, `/welcome` arrived — a state machine over
 facts rather than a wizard, in `src/server/welcome.ts` and
-`src/app/welcome/page.tsx`. It already does two of ADR-0023's four jobs:
+`src/app/welcome/page.tsx` *(both renamed to `first-run` 2026-08-30, when the
+todo 09 build folded the route)*. It already did two of ADR-0023's four jobs:
 
 - **Runs both processes from one command** (`npm run dev` → `scripts/dev.ts`),
   which is ADR-0023's *Supervises* row minus the restart and minus production.
@@ -198,14 +199,14 @@ resisting a fifth.
    `bad-origin` visible only inside an HTTP 403 JSON body
    (`src/app/api/session/current/route.ts:181`).~~ **Struck 2026-08-27 — this
    item was overtaken on 2026-08-26 and doing it as written would be a
-   regression.** `/welcome` already pairs in one click by writing a `pairing`
+   regression.** `/welcome` *(now `/first-run`)* already pairs in one click by writing a `pairing`
    row, restart-free, and `resolveExtensionOrigin` reads the env var *ahead
    of* that row — so a tray-written `PROPOSITUM_EXTENSION_ID` would silently
    outrank every later click the person makes on the screen. The tray
    deliberately writes nothing here; its Pairs job shrank to the *Finish
    setting up* link, and ADR-0023's table row carries the same dated
    correction. (The `bad-origin` hint has also moved to `:198` and now points
-   at `/welcome` itself.)
+   at `/welcome` itself — `/first-run` since 2026-08-30.)
 
 6. ~~**One status light**, off `intentionState()`. Five members —
    `working`, `delegated`, `needs-you`, `sleeping`, `done`. Not a dashboard.
@@ -262,8 +263,8 @@ resisting a fifth.
     map and an `externalBin` pointed both at `dist-runtime/`, which is
     gitignored and produced only by `npm run tray:stage`. tauri-build resolves
     those two paths in its *build script*, not at bundle time, so every
-    `cargo check` on a fresh checkout failed — `tray.yml` went red on all four
-    runs from 2026-08-28 while `ci.yml` stayed green on the same commits, which
+    `cargo check` on a fresh checkout failed — `tray.yml` went red on every
+    run from 2026-08-28 until the fix while `ci.yml` stayed green on the same commits, which
     is why it took two days to notice. The fix is not to stage: `tray.yml` now
     fabricates the two paths empty in about a second, and
     `tests/stage-runtime.test.ts` reads that workflow and fails if the paths

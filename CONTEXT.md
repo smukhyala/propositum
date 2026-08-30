@@ -245,7 +245,7 @@ blocked · waiting (as a member).
 ### FirstRun — *computed view, like IntentionState*
 The app's launch while setup is unfinished, and the surface that answers it: the page at
 `/first-run`, rendered in the window the tray opens. Derived from five facts — the key, a paired
-extension, an approved source, whether pages arrive, the phone — never a stored cursor; refreshing,
+extension, an approved source, a composed offer, the phone — never a stored cursor; refreshing,
 arriving by a link and coming back tomorrow all land in the same place, because there is no place
 but the truth. Decided in the todo 09 design sitting, 2026-08-29, and built against
 [ADR-0028](docs/adr/0028-a-capped-key-ships-in-the-bundle.md): when a tester build carries the
@@ -254,7 +254,9 @@ capped bundled key, the key fact is simply true and the person never reads about
 **Displaces:** welcome · onboarding · wizard · setup flow · getting started. A wizard has a cursor;
 this has facts. The consumer wording is the shipped one — *Finish setting up* — and the consent
 verbs on its cards are the ones already ratified elsewhere: **Pair** (extension, phone),
-**Connect** (calendar), and Chrome's own **Allow**, which only the person can click. The shape
+**Connect** (calendar), and Chrome's own **Allow**, which only the person can click. Its three consent cards — the extension, the calendar, the phone — are **cards, not
+sources**: `ApprovedSource` keeps that word, and the calendar is deliberately not an observation
+source of any kind (`BusyInterval`). The shape
 answers [ADR-0019](docs/adr/0019-disclosure-and-what-may-never-fold.md) (a decision needs a page)
 and ADR-0023 prohibition 5 (the tray decides nothing): the tray opens a window, and everything in
 the window is the app's own page deciding on the app's own facts.

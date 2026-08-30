@@ -46,7 +46,7 @@ pub fn build(
         .enabled(false)
         .build(app)?;
     let open = MenuItemBuilder::with_id("open", "Open Propositum").build(app)?;
-    let welcome = MenuItemBuilder::with_id("first-run", "Finish setting up").build(app)?;
+    let first_run = MenuItemBuilder::with_id("first-run", "Finish setting up").build(app)?;
     let set_key = MenuItemBuilder::with_id("set-key", "Set the API key…").build(app)?;
     let browser = MenuItemBuilder::with_id(
         "install-browser",
@@ -71,7 +71,7 @@ pub fn build(
         .item(&status)
         .separator()
         .item(&open)
-        .item(&welcome)
+        .item(&first_run)
         .item(&set_key)
         .separator();
     if chromium_missing {
@@ -198,18 +198,27 @@ pub fn first_run_window(app: &AppHandle<Wry>) {
         return;
     };
     // External links — t.me for the phone card — belong in the person's real
-    // browser, not trapped in this frame. Anything on our own origin stays.
+    // browser, not trapped in this frame. Ours is an exact scheme-host-port
+    // match, never a string prefix (a prefix admits :31170 and userinfo
+    // tricks into a chrome-less frame titled Propositum); and only web
+    // schemes go to the opener, so a file: or custom-scheme URL reaches no
+    // OS handler from here.
     let opener = app.clone();
     let _ = WebviewWindowBuilder::new(app, "first-run", WebviewUrl::External(url))
         .title("Propositum")
         .inner_size(720.0, 800.0)
         .on_navigation(move |navigated| {
-            if navigated.as_str().starts_with(&origin::app_origin()) {
+            let ours = navigated.scheme() == "http"
+                && navigated.host_str() == Some(origin::HOST)
+                && navigated.port() == Some(origin::PORT);
+            if ours {
                 return true;
             }
-            let _ = opener
-                .opener()
-                .open_url(navigated.to_string(), None::<&str>);
+            if navigated.scheme() == "https" || navigated.scheme() == "http" {
+                let _ = opener
+                    .opener()
+                    .open_url(navigated.to_string(), None::<&str>);
+            }
             false
         })
         .build();

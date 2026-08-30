@@ -41,7 +41,7 @@ import { redirect } from 'next/navigation'
 import { Sheet, Button, Disclosure } from '@/ui/primitives'
 import { Watching, Handover, Done } from '@/ui/sprites'
 import { firstRunState, consentOrder } from '@/server/first-run'
-import type { FirstRunState, FirstRunStep, ConsentSource } from '@/server/first-run'
+import type { FirstRunState, FirstRunStep, ConsentCard } from '@/server/first-run'
 import { calendarRow } from '@/server/calendar'
 import type { CalendarRow } from '@/server/calendar'
 import { pairingInFlight } from '@/server/thread'
@@ -143,7 +143,7 @@ function ExtensionCard({
   const paired = state.pairedExtension !== null
   return (
     <section className="fr-card">
-      <p className="fr-card-state">{paired ? 'Watching — allowed' : 'Watching — not yet'}</p>
+      <p className="fr-card-state">{paired ? 'Watching — paired' : 'Watching — not yet'}</p>
       <h2 className="fr-card-say">What may Propositum watch?</h2>
 
       {!paired && state.knocking.length === 0 ? (
@@ -302,7 +302,7 @@ function PhoneCard({
         <>
           <p className="fr-then">
             The whole point is that you are not at the desk: it sends what it noticed, what it
-            stopped on, and what it needs decided. Pairing sends nothing by itself.
+            stopped on, and what it needs from you. Pairing sends nothing by itself.
           </p>
 
           {handle === null ? (
@@ -341,7 +341,7 @@ function PhoneCard({
           <Disclosure summary="What goes through Telegram">
             <p className="fr-note" style={{ marginTop: 0 }}>
               Sentences Propositum writes about your own work &mdash; what it thinks you are on, why
-              it stopped, what it needs decided. They sit on Telegram&rsquo;s servers and are not
+              it stopped, what it needs from you. They sit on Telegram&rsquo;s servers and are not
               encrypted end to end. The bot is yours: you made it, nobody else holds it, and
               unpairing deletes the token from this machine. Leave this card and nothing is sent
               anywhere.
@@ -503,14 +503,14 @@ export default async function FirstRun({
               </section>
             ) : null}
 
-            {order.map((source: ConsentSource) =>
-              source === 'extension' ? (
-                <ExtensionCard key={source} state={state} pair={pair} />
-              ) : source === 'calendar' ? (
-                <CalendarCard key={source} calendar={calendar} />
+            {order.map((card: ConsentCard) =>
+              card === 'extension' ? (
+                <ExtensionCard key={card} state={state} pair={pair} />
+              ) : card === 'calendar' ? (
+                <CalendarCard key={card} calendar={calendar} />
               ) : (
                 <PhoneCard
-                  key={source}
+                  key={card}
                   state={state}
                   handle={handle}
                   startPairing={startPairing}

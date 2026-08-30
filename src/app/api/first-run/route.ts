@@ -26,5 +26,8 @@ export async function GET(request: Request) {
     return NextResponse.json({ ok: false }, { status: 400 })
   }
   const state = await firstRunState()
-  return NextResponse.json({ unfinished: state.at !== null })
+  // `unfinished`, never `at`: the durable-grants bit. Deriving from `at`
+  // reopened the window on every launch of a working install and leaked
+  // offer presence — `unfinishedFrom`'s docblock carries the argument.
+  return NextResponse.json({ unfinished: state.unfinished })
 }

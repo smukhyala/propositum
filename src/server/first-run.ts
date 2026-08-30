@@ -98,6 +98,10 @@ export interface FirstRunState {
   /** The phone thread, once paired. */
   readonly threadPaired: boolean
 
+  /** `unfinishedFrom` over the same facts — see its docblock for why this is
+   * not `at !== null`. */
+  readonly unfinished: boolean
+
   /**
    * Where the extension folder actually is, absolute, for the guided
    * sideload. The children run with the runtime tree as cwd
@@ -154,8 +158,25 @@ export function stepFrom(facts: SetupFacts): {
   return { at: FIRST_RUN_STEPS.find((step) => !done[step]) ?? null, done }
 }
 
-/** The three sources a card can grant, in the order the ask decides. */
-export type ConsentSource = 'extension' | 'calendar' | 'phone'
+/**
+ * Whether the durable grants are all in place — the key, the extension, a
+ * source. THIS is the only bit that may open a window or render a setup
+ * link. `at` would be the obvious derivation and it is wrong twice over:
+ * `watching` reads the in-memory ambient store, empty at every restart, so
+ * an install that is completely set up would reopen the first run on every
+ * launch forever; and serving `at`-derived state over HTTP would leak
+ * whether a composed offer exists through a bit that only needed to say
+ * "is anything missing". Found by review, 2026-08-30. `phone` is optional
+ * by design and never makes an install unfinished.
+ */
+export function unfinishedFrom(facts: SetupFacts): boolean {
+  return !(facts.keySet && facts.extensionPaired && facts.anySourceApproved)
+}
+
+/** The three consent cards, in the order the ask decides. Not "sources" —
+ * that word belongs to ApprovedSource, and the calendar is deliberately not
+ * an observation source of any kind (BusyInterval's entry). */
+export type ConsentCard = 'extension' | 'calendar' | 'phone'
 
 /**
  * Which card comes first, from the opening ask.
@@ -170,7 +191,7 @@ export type ConsentSource = 'extension' | 'calendar' | 'phone'
  */
 export function consentOrder(
   ask: 'act' | 'watch' | 'connect' | null,
-): readonly ConsentSource[] | null {
+): readonly ConsentCard[] | null {
   switch (ask) {
     case 'act':
       return ['extension', 'phone', 'calendar']
@@ -228,13 +249,14 @@ export async function firstRunState(nowMs: number = Date.now()): Promise<FirstRu
 
   const threadPaired = (await repos.thread.status(TELEGRAM)) !== null
 
-  const { at, done } = stepFrom({
+  const facts = {
     keySet,
     extensionPaired: pairedExtension !== null,
     anySourceApproved: approvedSources > 0,
     anythingToOffer: offer !== null,
     threadPaired,
-  })
+  }
+  const { at, done } = stepFrom(facts)
 
   return {
     at,
@@ -248,6 +270,7 @@ export async function firstRunState(nowMs: number = Date.now()): Promise<FirstRu
     bar: { intent: INTENT_REQUIRED, investment: INVESTMENT_REQUIRED },
     offer,
     threadPaired,
+    unfinished: unfinishedFrom(facts),
     extensionFolder: join(process.cwd(), 'extension'),
   }
 }

@@ -34,8 +34,8 @@ go to Anthropic — but attribution stops being per-person.
    key…*) wins over the bundled default, using the same precedence mechanics ADR-0027 §2
    established — explicit and layered, nothing guessed. The key appears in no log, no error and
    no return value, which is `env_file.rs`'s standing discipline.
-3. **Asking remains the floor.** When the bundled key is absent, revoked or exhausted, the first
-   run falls back to asking for a key exactly as `/welcome` does today — worse-looking and still
+3. **Asking remains the floor.** When the bundled key is absent~~, revoked or exhausted~~, the first
+   run falls back to asking for a key exactly as `/welcome` *(now `/first-run`)* does — worse-looking and still
    working beats sleek and dead.
 4. **Tester circle only.** The moment distribution is aimed at people the owner has not met,
    this ADR's premise is spent and the *Revisit when* below fires.
@@ -60,8 +60,8 @@ as the obvious middle ground when the circle grows.
 | | |
 |---|---|
 | The workspace spend cap | Set in Anthropic's console, outside this repository — **discipline, not code**; nothing here can verify it exists |
-| Stage-time injection from env | The key has no home in git; `scripts/stage-runtime.ts` carries the mechanism when built (todo 09's work list) |
-| Precedence under the person's key | ADR-0027 §2's layered child-env mechanics, unit-tested in `src-tauri/src/runtime.rs` when the layer lands |
+| Stage-time injection from env | The key has no home in git; `scripts/stage-runtime.ts` carries the mechanism *(built 2026-08-30)* |
+| Precedence under the person's key | ADR-0027 §2's layered child-env mechanics, unit-tested in `src-tauri/src/runtime.rs` *(built 2026-08-30; detection is presence, not validity — a revoked or exhausted bundled key still reads as set, and that failure surfaces at the model call, one menu from the tray's* Set the API key… *item)* |
 
 ## Revisit when
 

@@ -41,8 +41,11 @@ EventKit and the right answer"* once a helper exists. That string is now the who
 
 **What is bought.** Setting Propositum up today means two terminals, hand-editing `.env` with an
 extension id copied out of `chrome://extensions`, and diagnosing a `bad-origin` hint buried in a
-JSON response body. There is no onboarding route, no first-run screen, and no welcome flow — grep
-for `onboard|first-run|welcome` across `src/` returns nothing product-facing. A new person's entire
+JSON response body. ~~There is no onboarding route, no first-run screen, and no welcome flow — grep
+for `onboard|first-run|welcome` across `src/` returns nothing product-facing.~~ *(True when
+accepted; `/welcome` arrived 2026-08-26 and the todo 09 build made it `/first-run` on
+2026-08-30 — opened by this tray in its own window, one bit read, nothing decided, so
+prohibition 5 held.)* A new person's entire
 introduction is `/` rendering *"Go and read about something for a while."*
 
 `README.md`'s own status paragraph says what is missing is evidence, and that `eval-scores.json` is a

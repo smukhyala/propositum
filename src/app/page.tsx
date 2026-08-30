@@ -475,7 +475,7 @@ export default async function Home({
    * with it, which is a worse outcome than not offering a link.
    */
   const setupUnfinished = await firstRunState()
-    .then((state) => state.at !== null)
+    .then((state) => state.unfinished)
     .catch(() => false)
 
   /**
@@ -1037,7 +1037,8 @@ export default async function Home({
               standing suggestion that something is wrong — the same reason
               `calendarRow` renders NOTHING rather than a greyed control when
               there is nothing to offer. `setupUnfinished` is a boolean off
-              `firstRunState`, computed in `src/server/first-run.ts` where a test
+              `firstRunState().unfinished`, the durable-grants bit computed in
+              `src/server/first-run.ts` where a test
               can reach it. */}
           {setupUnfinished ? (
             <div className="hm-cal">

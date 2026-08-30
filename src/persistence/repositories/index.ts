@@ -762,7 +762,7 @@ export interface ProjectRepository {
   /**
    * How many origins this install may look at, across every project.
    *
-   * For the welcome screen, which asks *"has anything been approved yet"* and
+   * For the first-run page, which asks *"has anything been approved yet"* and
    * not *"which"*. A count rather than a list because that is the whole question
    * at that moment, and a screen that listed them would be listing the sites
    * somebody reads on the one page they show a colleague.

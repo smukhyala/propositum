@@ -14,7 +14,7 @@ Yes. Verified 2026-08-26:
 
 ```bash
 ls src/runtime/thread-channel.ts          # exists
-grep -rn 'repos.thread' src/server        # src/server/thread.ts, src/server/welcome.ts
+grep -rn 'repos.thread' src/server        # src/server/thread.ts, src/server/first-run.ts
 grep -n 'the channel can speak' tests/reachability.test.ts
 ```
 
@@ -30,7 +30,7 @@ What shipped, and it is more than this file asked for:
 |---|---|
 | The transport, provider behind one file | `src/runtime/thread-channel.ts` — a test asserts `api.telegram.org` appears nowhere else |
 | The orchestrator, the only sender and the only parser | `src/server/thread.ts` |
-| Pairing UI, with the BotFather steps written out | `src/app/welcome/page.tsx` |
+| Pairing UI, with the BotFather steps written out | ~~`src/app/welcome/page.tsx`~~ `src/app/first-run/page.tsx`, the phone card *(renamed 2026-08-30)* |
 | The loudness coupling | `sayOffer(` sits inside `newlyShown(` in the poll route, so a send and ADR-0015's count fire on **one gate** |
 | The disclosure | *"What goes through Telegram"* — that the sentences sit on Telegram's servers and are **not encrypted end to end** |
 

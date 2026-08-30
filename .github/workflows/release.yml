@@ -80,6 +80,9 @@ jobs:
 
       - name: Build, sign, notarise, staple, audit
         env:
+          # ADR-0028: absent secret means an empty value, which the staging
+          # script treats as the keyless floor — the build asks for a key.
+          PROPOSITUM_BUNDLED_KEY: ${{ secrets.PROPOSITUM_BUNDLED_KEY }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}

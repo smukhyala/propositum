@@ -13,7 +13,7 @@
  *
  * ── What this is, said narrowly ───────────────────────────────────────────
  *
- * **Not authentication, and the welcome screen must not imply otherwise.**
+ * **Not authentication, and the first-run page must not imply otherwise.**
  * Anything running on this machine can call the app claiming to be an extension,
  * and a forged `Origin` was always possible from a non-browser client —
  * `src/capture/transport.ts` says exactly that about the check this feeds. What

@@ -27,7 +27,7 @@ while you're gone. You come back to what changed, why, and what it couldn't deci
 > This README says plainly where the gaps are rather than rounding them up.
 >
 > **The gap that shrank and the one that did not.** Setup is no longer the reason a second person
-> cannot run this — `/welcome` pairs the extension and explains the key. ~~Two terminals still are,
+> cannot run this — ~~`/welcome`~~ **`/first-run` (renamed 2026-08-30, todo 09 built)** pairs the extension and explains the key. ~~Two terminals still are,
 > and [ADR-0023](./docs/adr/0023-the-tray-app-owns-the-runtime.md) decides the menu-bar app that
 > would end them without building a line of it.~~ **Corrected 2026-08-28, in two steps this
 > paragraph never recorded: stage 1 built that app on 2026-08-27, and stage 2
@@ -53,7 +53,7 @@ while you're gone. You come back to what changed, why, and what it couldn't deci
 | [`docs/FOUNDING_BRIEF.md`](./docs/FOUNDING_BRIEF.md) | The originating brief, kept as history. |
 | [`docs/adr/`](./docs/adr/) | ~~Seven decisions~~ ~~eleven, corrected 2026-08-16~~ ~~15 decisions, corrected 2026-08-19~~ ~~18 decisions — three landed 2026-08-20 with the everyday-computing direction~~ ~~19 decisions — [ADR-0019](./docs/adr/0019-disclosure-and-what-may-never-fold.md) landed 2026-08-22 with the interface simplification and is the newest~~ ~~20 decisions — [ADR-0020](./docs/adr/0020-remembering-a-decline.md) landed 2026-08-22 with offer reticence and is the newest~~ ~~23 decisions — three landed together 2026-08-26 with the phone thread and the menu-bar app: [ADR-0021](./docs/adr/0021-a-thread-on-the-persons-phone.md), [ADR-0022](./docs/adr/0022-the-fourth-verdict.md) and [ADR-0023](./docs/adr/0023-the-tray-app-owns-the-runtime.md), the last of which is the newest~~ ~~26 decisions — three more landed the same day, and together they are the largest reversal in the series: [ADR-0024](./docs/adr/0024-purchases-within-a-ratified-authorisation.md) lets Propositum buy things, [ADR-0025](./docs/adr/0025-computer-use-beyond-the-browser.md) takes it out of the browser and onto the machine, and [ADR-0026](./docs/adr/0026-reading-a-one-time-code.md) lets it read a 2FA code out of Messages. ADR-0023 was amended by them (struck earlier: "two days after") the same day it was accepted~~ ~~27 decisions — [ADR-0027](./docs/adr/0027-a-sealed-bundle-and-where-the-state-moves.md) landed 2026-08-28 with the signed `.dmg`, seals the bundle, moves an installed copy's state to Application Support, and refuses the update feed for now; it is the newest~~ **28 decisions — [ADR-0028](./docs/adr/0028-a-capped-key-ships-in-the-bundle.md) landed 2026-08-29 with the todo 09 design: a tester build may carry a spend-capped bundled key, so the first run stops asking for one; it is the newest**, each with the option it rejected and why. The number went stale four ADRs ago, was corrected, and went stale again by four within three days — because nothing counted them. Something counts them now, which is why this correction was made in the same commit as the ADR rather than three days after it. |
 | Runtime | Next 16, TypeScript strict, Prisma + SQLite, Zod 4, Vitest. ~~336 tests.~~ ~~1,028 across 40 files, measured 2026-08-16.~~ ~~1,124 across 44 files, measured 2026-08-16 after the Intention slice.~~ **The number is gone, 2026-08-19.** It was stale by a factor of three, then stale within the day, then stale again — three corrections making the same argument, which this cell has finally taken: `npm test` prints it, nothing here can check it, so nothing here says it. `tests/counts.test.ts` fails if it comes back. |
-| The product | Chrome MV3 capture, the reading with per-claim evidence, the editable agreement, the unbypassable gate, the worker and reviewer, the diff, the shift report, per-change accept/reject, and the fold into a new version. **Added 2026-08-26:** the `/welcome` setup screen, the optional phone thread ([ADR-0021](./docs/adr/0021-a-thread-on-the-persons-phone.md)), and **an answer to a `DecisionNeeded` that is actually kept** ([ADR-0022](./docs/adr/0022-the-fourth-verdict.md)) — the screen used to offer a button beside the words *"Propositum doesn't keep your answer"*, so `needs-you` could be entered and never left. **Later the same day: a document can be opened from a `.md` or `.txt` file, copied, and downloaded**, and the editor is prose rather than monospace. The file is read in your browser and lands in the box on screen before anything is stored — there is no upload endpoint, and `tests/document-import.test.ts` pins that as an absence rather than a promise. |
+| The product | Chrome MV3 capture, the reading with per-claim evidence, the editable agreement, the unbypassable gate, the worker and reviewer, the diff, the shift report, per-change accept/reject, and the fold into a new version. **Added 2026-08-26:** the ~~`/welcome`~~ setup screen *(since 2026-08-30: `/first-run`, an opening ask routing consent cards — todo 09 built)*, the optional phone thread ([ADR-0021](./docs/adr/0021-a-thread-on-the-persons-phone.md)), and **an answer to a `DecisionNeeded` that is actually kept** ([ADR-0022](./docs/adr/0022-the-fourth-verdict.md)) — the screen used to offer a button beside the words *"Propositum doesn't keep your answer"*, so `needs-you` could be entered and never left. **Later the same day: a document can be opened from a `.md` or `.txt` file, copied, and downloaded**, and the editor is prose rather than monospace. The file is read in your browser and lands in the box on screen before anything is stored — there is no upload endpoint, and `tests/document-import.test.ts` pins that as an absence rather than a promise. |
 | [`extension/`](./extension/) | The capture extension. See its README — the host grant is a step only you can do, from the side panel. |
 
 ~~**Built but not yet wired**, and asserted as such in `tests/reachability.test.ts` so it cannot be
@@ -150,7 +150,7 @@ Work is tracked on the [wayfinder map](https://github.com/smukhyala/propositum/i
    offer, on the owner's instruction that *"the user shouldn't have to create it."* Propositum
    watches, notices a subject, offers, and the project is made in your name when you say yes.
    Approving sources is still yours to do, on the project screen and in the extension's side panel.
-   **First run starts at [`/welcome`](http://127.0.0.1:3117/welcome)**, which reads what is actually
+   **First run starts at ~~`/welcome`~~ [`/first-run`](http://127.0.0.1:3117/first-run)** *(renamed 2026-08-30)*, which reads what is actually
    true — key, paired extension, approved source, pages arriving, phone — and shows the first step
    whose answer is no.
 2. **Start session.** You research and draft normally.
@@ -211,7 +211,7 @@ JIT carve-outs for the bundled Node, and `tests/tray-permissions.test.ts` pins t
 TCC vocabulary banned, the entitlements file pinned to exactly those two keys. Every control on it
 is still a link to a page here.
 
-**Then open [`/welcome`](http://127.0.0.1:3117/welcome), added 2026-08-26.** Five steps, each
+**Then open ~~`/welcome`~~ [`/first-run`](http://127.0.0.1:3117/first-run)** *(2026-08-30 — the tray now opens it in its own window on first launch, as an opening ask routing consent cards; before that, since 2026-08-26, five steps at `/welcome`)*. ~~Five steps, each~~ Facts, each
 reading what is actually true rather than tracking a cursor — the key, a paired extension, an
 approved source, whether pages are arriving, and the phone — so refreshing, arriving by a link and
 coming back tomorrow all land in the same place. There is no progress row to get out of step with
@@ -233,9 +233,9 @@ which is why it could not stand here.
 
 `ANTHROPIC_API_KEY` is still the only credential **needed** — everything in the block above runs on
 it alone, and that is the state of a fresh clone. *(Amended 2026-08-29,
-[ADR-0028](./docs/adr/0028-a-capped-key-ships-in-the-bundle.md), accepted and unbuilt: a tester
+[ADR-0028](./docs/adr/0028-a-capped-key-ships-in-the-bundle.md), ~~accepted and unbuilt~~ **built 2026-08-30**: a tester
 build may carry a spend-capped bundled key, which stops being the person's credential — the ADR
-says that cost plainly.)* There is still no cloud, no telemetry and no
+says that cost plainly, and the person's own key outranks it by construction.)* There is still no cloud, no telemetry and no
 server of ours — **and as of 2026-08-26 that clause is doing more work than it used to.**
 [ADR-0021](./docs/adr/0021-a-thread-on-the-persons-phone.md) adds an optional phone thread, and what
 it sends is *derived prose about your own work*: what Propositum thinks you are on, why it stopped,
@@ -250,7 +250,7 @@ title, an attendee or a description. Leave the two variables blank and the featu
 nothing is read and no request leaves the machine. ADR-0014 opens on what it costs.
 
 ~~**For real capture** you also need the extension loaded and its id in `.env`~~ **Amended
-2026-08-26 — there is a setup screen now.** Open **`/welcome`** and it walks the rest: it says whether
+2026-08-26 — there is a setup screen now.** Open **~~`/welcome`~~ `/first-run`** *(renamed 2026-08-30)* and it walks the rest: it says whether
 the key is there, offers to pair whichever extension has just knocked (no copying an id into a file),
 counts the sites you have allowed, says what it is waiting for, and — once there is a real offer —
 pairs your phone. `PROPOSITUM_EXTENSION_ID` still wins over anything paired there, so a clone that

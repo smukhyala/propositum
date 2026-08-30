@@ -116,7 +116,7 @@ export async function sayOnce(
 /* ── pairing ───────────────────────────────────────────────────────────── */
 
 /**
- * A token pasted on the welcome screen, held between the two halves of pairing.
+ * A token pasted on the first-run page, held between the two halves of pairing.
  *
  * ── Why memory and not a row ─────────────────────────────────────────────
  *
@@ -205,7 +205,7 @@ export type CompletePairing =
  * ── What identifies them, said plainly ───────────────────────────────────
  *
  * The first chat to say anything to this bot. That is not a proof of identity
- * and the welcome screen must not imply it is: it is a bot the person made
+ * and the first-run page must not imply it is: it is a bot the person made
  * seconds ago and told nobody about, so the first person to message it is them.
  * If they hand the token around, the first stranger to press Start gets the
  * thread — which is a property of the token, not of this check, and the screen

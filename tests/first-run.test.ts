@@ -16,7 +16,7 @@
 
 import { describe, it, expect } from 'vitest'
 
-import { FIRST_RUN_STEPS, consentOrder, stepFrom } from '../src/server/first-run'
+import { FIRST_RUN_STEPS, consentOrder, stepFrom, unfinishedFrom } from '../src/server/first-run'
 import type { SetupFacts, FirstRunStep } from '../src/server/first-run'
 
 const NOTHING: SetupFacts = {
@@ -163,5 +163,26 @@ describe('the opening ask routes the cards, and only the cards', () => {
     for (const ask of ['act', 'watch', 'connect'] as const) {
       expect([...(consentOrder(ask) ?? [])].sort()).toEqual(['calendar', 'extension', 'phone'])
     }
+  })
+})
+
+describe('the bit that may open a window reads only durable facts', () => {
+  it('ignores watching and the phone, which are ephemeral and optional', () => {
+    // watching lives in the in-memory ambient store — empty at every
+    // restart — and the phone is a card somebody may deliberately skip.
+    // Deriving "unfinished" from `at` reopened the first run on every
+    // launch of a working install; this table is why it cannot again.
+    const granted = { keySet: true, extensionPaired: true, anySourceApproved: true }
+    expect(unfinishedFrom({ ...granted, anythingToOffer: false, threadPaired: false })).toBe(false)
+    expect(unfinishedFrom({ ...granted, anythingToOffer: true, threadPaired: true })).toBe(false)
+    expect(
+      unfinishedFrom({ ...granted, keySet: false, anythingToOffer: true, threadPaired: true }),
+    ).toBe(true)
+    expect(
+      unfinishedFrom({ ...granted, extensionPaired: false, anythingToOffer: false, threadPaired: false }),
+    ).toBe(true)
+    expect(
+      unfinishedFrom({ ...granted, anySourceApproved: false, anythingToOffer: false, threadPaired: false }),
+    ).toBe(true)
   })
 })
