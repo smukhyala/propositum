@@ -112,13 +112,16 @@ async function build() {
   signRuntime(tree)
 
   say('tauri build (bundle, sign, and — when the notary env is set — notarise the .app)')
-  // A failed earlier run leaves bundle_dmg.sh's intermediate rw.*.dmg beside
-  // the .app, and the script trips over its own leftovers on the retry.
-  if (existsSync(join(bundleDir, 'macos'))) {
-    for (const leftover of readdirSync(join(bundleDir, 'macos'))) {
-      if (leftover.startsWith('rw.') && leftover.endsWith('.dmg')) {
-        rmSync(join(bundleDir, 'macos', leftover))
-      }
+  // A failed earlier run leaves dmg debris the retry trips over, twice
+  // observed: bundle_dmg.sh's intermediate rw.*.dmg beside the .app, and —
+  // found 2026-08-30 — a stale FINAL dmg, which makes its hdiutil convert
+  // die with "File exists" and nearly shipped an old artefact under a new
+  // signature. Every .dmg under the bundle dir is a build product; sweep
+  // them all.
+  for (const dir of ['macos', 'dmg']) {
+    if (!existsSync(join(bundleDir, dir))) continue
+    for (const leftover of readdirSync(join(bundleDir, dir))) {
+      if (leftover.endsWith('.dmg')) rmSync(join(bundleDir, dir, leftover))
     }
   }
   execFileSync(
