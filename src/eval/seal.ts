@@ -37,6 +37,11 @@
  * byte-identical — checked, not assumed, and no H1 measurement was discarded by
  * that re-seal.
  *
+ * The empty list is a weaker prediction than the one it replaced, and it is
+ * still a prediction: `scoreH3` scores an explicit `[]` against a run that
+ * halted as `wrong-rule`. It was not doing so on the day of the re-seal, which
+ * is why that is said here rather than assumed.
+ *
  * It is left as one hash rather than split. Two hashes would make the common
  * case — somebody quietly improving a reference — easier to wave through by
  * pointing at the half that did not move, and the loud break is the whole

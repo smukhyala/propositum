@@ -5,8 +5,9 @@ import { startWorkerProcess } from '../src/runtime/worker-process'
 import { FakeModelClient } from '../src/model/fake'
 import type { ScriptedReply } from '../src/model/fake'
 import { allowlisted, fixtureFetcher } from '../src/policy/fetcher'
-import { ACTION_KINDS, MAX_PLAN_STEPS } from '../src/domain/handoff/policy'
+import { ACTION_KINDS, BROWSER_ACTION_KINDS, MAX_PLAN_STEPS } from '../src/domain/handoff/policy'
 import { PROGRESSING_ACTION_KINDS } from '../src/runtime/worker-loop'
+import type { BrowserControl, BrowserReport } from '../src/runtime/browser-control'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
@@ -142,6 +143,34 @@ const plan = (...intents: string[]): ScriptedReply<unknown> => ({
   kind: 'ok',
   value: { steps: intents.map((intent) => ({ intent })) },
 })
+
+/**
+ * A browser that answers `observe-page` and nothing else.
+ *
+ * Deliberately thinner than `tests/browser-loop.test.ts`'s `FakeBrowser`, which
+ * scripts a fixed list of reports and treats running out as a finding. The one
+ * test here that needs a channel is asserting a COUNT — that three looks in a
+ * row still trip a rule — so a fake that can answer indefinitely is what makes
+ * the count the only thing under test. It says nothing about how the browser
+ * path behaves, which is that file's job.
+ */
+class ObservingBrowser implements BrowserControl {
+  private looks = 0
+
+  async dispatch(): Promise<BrowserReport> {
+    this.looks += 1
+    return {
+      ok: true,
+      observation: {
+        snapshotId: `snap-${this.looks}`,
+        url: 'https://northwind.example.com/partners',
+        title: 'Northwind — Partners',
+        tree: `r${this.looks} button "Show more"`,
+        truncated: false,
+      },
+    }
+  }
+}
 
 const act = (over: Record<string, unknown>): ScriptedReply<unknown> => ({
   kind: 'ok',
@@ -641,11 +670,24 @@ describe('the worker process', () => {
  * `suggestions-only` is excluded from the denominator. A hypothesis that can
  * kill the product was sharing its explanation with an off-purpose constant.
  *
- * ── What is NOT covered here ─────────────────────────────────────────────
+ * ── Where the exemption lives, which is narrower than it first was ───────
  *
- * The browser path never had this problem and is asserted below to still stop:
- * `navigate` reports progress, so a browser research shift resets its counter
- * every time it follows a link. `tests/browser-loop.test.ts` owns that case.
+ * In the COUNTER, not in the rule. `evaluateStructuralStops` is untouched; the
+ * loop stops incrementing `consecutiveNoProgress` for a completed action that
+ * changed nothing when nothing the run may do could have changed anything.
+ *
+ * ── What is NOT exempted, and each of these is asserted below ────────────
+ *
+ * A raised question, a gate refusal and a failed action all still increment,
+ * because none of them is *"a read that could not have been anything else"* —
+ * they are a run that is asking, or being refused, or breaking, and three in a
+ * row is going in circles whatever the dial says. A research-only run that asks
+ * every turn or fails every turn still halts on `no-progress` at three.
+ *
+ * The browser path never had this problem, and it is asserted below rather than
+ * assumed: `navigate` survives `suggestions-only` and reports progress, so a
+ * browser research shift is not exempt at all and three `observe-page`s in a
+ * row still stop it. `tests/browser-loop.test.ts` owns the rest of that path.
  */
 describe('a run that may not write is not bounded by the rule about writing', () => {
   /** Research only, on a document shift: reads and nothing else survive. */
@@ -675,6 +717,74 @@ describe('a run that may not write is not bounded by the rule about writing', ()
     ])
 
     const result = await runWorker(job(), d)
+
+    expect(result.stoppedBy).toContain('no-progress')
+    expect(result.actionsTaken).toBe(3)
+  })
+
+  it('still stops a research-only run that asks a question every turn', async () => {
+    // Under `stop-only-when-blocked` a raised question does not halt, so with
+    // nothing else bounding it a model that asks every turn would call until the
+    // deadline — thirty minutes of nothing, reported as a budget the person
+    // gave it. The exemption above must not buy that, and does not: a question
+    // is not a read that could only have been a read.
+    const steps = Array.from({ length: 8 }, (_, i) => ({ intent: `ask ${i}` }))
+    const d = deps([
+      { kind: 'ok', value: { steps } },
+      ...Array.from({ length: 8 }, (_, i) =>
+        act({
+          kind: 'read-document',
+          decisionNeeded: { question: `Which hotel? (${i})`, whyItMatters: 'the budget' },
+        }),
+      ),
+    ])
+
+    const result = await runWorker(researchOnly(), d)
+
+    expect(result.stoppedBy).toContain('no-progress')
+    expect(result.decisions).toHaveLength(3)
+  })
+
+  it('still stops a research-only run whose every action fails', async () => {
+    // A source that will not resolve, three times. The action was attempted and
+    // came back with nothing, which is a run breaking rather than a run reading
+    // — and `no-progress` is the only rule that catches it.
+    const steps = Array.from({ length: 8 }, (_, i) => ({ intent: `read ${i}` }))
+    const d = deps([
+      { kind: 'ok', value: { steps } },
+      ...Array.from({ length: 8 }, () =>
+        act({ kind: 'read-approved-source', approvedSourceId: 'src-northwind' }),
+      ),
+    ])
+    d.readSource.sources.urlFor = async () => null
+
+    const result = await runWorker(researchOnly(), d)
+
+    expect(result.stoppedBy).toContain('no-progress')
+    expect(result.actionsTaken).toBe(3)
+    expect(d.recorded.outcomes.map((o) => o.result)).toEqual(['failed', 'failed', 'failed'])
+  })
+
+  it('does not exempt a browser research shift, because navigate survives the dial', async () => {
+    // `compilePolicy` leaves `observe-page`, `navigate` and `capture-screen`
+    // under `suggestions-only`, and `navigate` reports progress. So this run
+    // COULD have got somewhere and chose to look at the same page three times,
+    // which is exactly what the rule is for. This is the assertion that proves
+    // the exemption is read off the compiled allowlist rather than off the dial.
+    const steps = Array.from({ length: 8 }, (_, i) => ({ intent: `look ${i}` }))
+    const d = deps([
+      { kind: 'ok', value: { steps } },
+      ...Array.from({ length: 8 }, () => act({ kind: 'observe-page' })),
+    ])
+    d.browser = { control: new ObservingBrowser() }
+
+    const result = await runWorker(
+      job({
+        controls: { ...job().controls, output: 'suggestions-only' },
+        scope: { ...job().scope, allowedActionKinds: [...BROWSER_ACTION_KINDS] },
+      }),
+      d,
+    )
 
     expect(result.stoppedBy).toContain('no-progress')
     expect(result.actionsTaken).toBe(3)

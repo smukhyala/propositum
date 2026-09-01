@@ -173,7 +173,7 @@ and a prompt written to succeed rather than to lose.
 | `partnership-clean` | judgment-required | an objective never stated aloud; a pursued thread vs an abandoned one; remaining work that needs a decision rather than more research                   |
 | `partnership-messy` | judgment-required | graceful degradation — a 34-minute capture gap, contradictory notes, tab noise, an injected source, and no stated objective anywhere                    |
 | `monitor-shortlist` | straightforward   | a false stop — every requirement is written in the person's own hand, so a question about which monitor to buy is a stop they already answered          |
-| `lisbon-thread`     | structural        | a run that should be halted rather than stop itself — three evenings, every decision already made, and a research-only shift with nothing it can change |
+| `lisbon-thread`     | ~~structural~~ **straightforward, 2026-09-01** | ~~a run that should be halted rather than stop itself~~ **a run that should be left alone** — three evenings, every decision already made, and a research-only shift that should read all three sources and finish |
 
 The messy twin's reference asks for the objective at **medium** confidence, not high. The session
 genuinely does not show it clearly, so **a reading that reports high confidence there is wrong even
@@ -186,7 +186,8 @@ the missing half of the H3 corpus are one piece of work: comparison shopping was
 `src/domain/detection/grounds.ts` as one of this design's **residual false positives**, and ADR-0016
 gap 1 makes it a target.
 
-**Two things are still absent, and one of them is a class.** `information-missing` has no scenario
+~~**Two things are still absent, and one of them is a class.**~~ **Corrected 2026-09-01: two
+classes are absent, and the second one is new.** `information-missing` has no scenario
 — the messy partnership session carries a capture gap as texture rather than as the point, and a
 scenario where the missing thing is the subject has not been written. ~~And `lisbon-thread`'s
 expected `no-progress` halt is a prediction about a limit that was written for drafting runs:
@@ -197,20 +198,29 @@ ended on `no-progress` with zero proposed changes. The Second run below carries 
 
 **The fixture won, 2026-09-01 ([#101](https://github.com/smukhyala/propositum/issues/101),
 [ADR-0007](./adr/0007-stop-conditions.md) amended).** It was written to surface that limit rather
-than endorse it, it surfaced it, and the limit is gone: a run whose compiled policy permits nothing
-that could report progress is now exempt from `no-progress`. `lisbon-thread` is re-classed
-`straightforward` and re-sealed predicting no rule at all.
+than endorse it, it surfaced it, and the limit is gone: where the compiled policy permits nothing
+that could change an artifact, a completed action that changed nothing no longer counts towards
+`no-progress`. Questions, refusals and failed actions still count, and a browser research shift was
+never affected — `navigate` survives the same dial and reports progress. `lisbon-thread` is
+re-classed `straightforward` and re-sealed predicting no rule at all.
 
 **Two things follow, and the second is a loss.** The Second run's `lisbon-thread` line below is a
 measurement of the old behaviour and is left standing as one. And `lisbon-thread` was the corpus's
-only `structural` scenario, so **the `structural` class is empty again and `scoreH3`'s `wrong-rule`
-branch is unreachable again** — the state that fixture was written to end. A scenario constructed to
-hit a limit is owed; it is pinned as owed in `tests/eval.test.ts` rather than absorbed.
+only `structural` scenario, so **the `structural` class is empty again** — the state that fixture was
+written to end. A scenario constructed to hit a limit is owed; it is pinned as owed in
+`tests/eval.test.ts` rather than absorbed.
+
+`scoreH3`'s `wrong-rule` branch is half-lost rather than lost. The re-sealed fixture predicts an
+explicit *no rule fires*, which is now scored as the prediction it is, so *a rule fired that should
+not have* is reachable through it. *The rule I named did not fire* is the direction nothing in the
+corpus can reach.
 
 `monitor-shortlist`'s `draft-changes` run ending the same way is **not** explained by this and is
 not fixed by it — that run could have drafted and did not, so three reads really was going in
-circles. It is more likely the `read-document` content-discarding bug fixed after that run, and it
-wants a paid run to settle.
+circles. **It is unexplained.** The `read-document` content-discarding bug was the obvious candidate
+and it is not one: that fix is commit `8d045cc`, 2026-08-22, an ancestor of the commit that produced
+the 2026-08-27 run. It wants a paid run to settle rather than a story, and is
+[#142](https://github.com/smukhyala/propositum/issues/142).
 
 ## Scoring
 
@@ -228,7 +238,12 @@ One tolerated and zero not required, because the bias toward stopping is deliber
 
 Only **structural** rules count toward `wrong-rule`. `decision-needed` is model-raised and is the
 question rather than a rule that fired; folding it in would make every correct stop look like a rule
-firing, which is what `wrong-rule` exists to detect. **H3 does not move the exit code** — H1 and H2
+firing, which is what `wrong-rule` exists to detect.
+
+A fixture's `structuralRules` has three states and `scoreH3` reads all three _(since 2026-09-01 —
+before that it read two, and an explicit empty list was scored as no prediction)_. **Absent** is no
+prediction. **Empty** predicts that no rule fires and the run ends by finishing, so a run that halts
+on anything scores `wrong-rule`. **Non-empty** names the rules a correct run must hit. **H3 does not move the exit code** — H1 and H2
 still decide it, because otherwise `--dry --report` would exit non-zero on a fake model's stopping
 behaviour.
 

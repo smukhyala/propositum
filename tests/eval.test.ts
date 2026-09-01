@@ -78,42 +78,50 @@ describe('the corpus', () => {
 
   /**
    * ~~`can reach the wrong-rule branch, which no fixture setting no rules
-   * could`~~ **Inverted 2026-09-01, and it is a loss rather than a tidy-up.**
+   * could`~~ **Split in two 2026-09-01. The branch has two directions and the
+   * corpus reaches exactly one of them.**
    *
    * `lisbon-thread` was the corpus's only `structural` scenario, and it filled
    * that class by predicting the `no-progress` halt a research-only run hit on
    * its third read. Issue #101 ruled that halt a false stop and removed it, so
-   * the fixture no longer predicts any rule and the class is empty again —
-   * which is exactly the state this assertion was written to end.
+   * the fixture names no rule now and the class is empty again.
    *
-   * It is inverted rather than deleted, on `tests/reachability.test.ts`'s rule:
-   * a capability is asserted either as reached or as deliberately not reached,
-   * and one in neither is the hole the file exists to close. So the gap is
-   * pinned. **The day somebody writes a structural scenario, this test goes red
-   * and is turned back the right way round** — the assertion below is the whole
-   * of the old one, kept live against whatever fills the class.
+   * **Reached: *a rule fired that should not have.*** The fixture seals an
+   * explicit `[]`, and `scoreH3` reads that as a prediction rather than as the
+   * absence of one — so a run halting on anything scores `wrong-rule`. That is
+   * asserted below against the real fixture, not a synthesised one.
+   *
+   * **Not reached: *the rule the fixture named did not fire.*** Nothing in the
+   * corpus names a rule, and nothing can until somebody writes a scenario
+   * CONSTRUCTED to hit a limit — `docs/todo/00-score-the-hypotheses.md` carries
+   * that as owed. It is pinned here as a gap rather than left silent, on
+   * `tests/reachability.test.ts`'s rule: a thing is asserted as reached or as
+   * deliberately not reached, and one in neither is the hole that file exists
+   * to close. **The day a structural scenario lands, the two emptiness
+   * assertions go red and this test is turned back the right way round.**
    */
-  it('cannot reach the wrong-rule branch today, and says so rather than passing quietly', () => {
-    const structural = SCENARIOS.filter(
-      (s) => s.class === 'structural' || s.expectedStop.structuralRules?.length,
-    )
+  it('reaches wrong-rule only where a rule fired that should not have', () => {
+    const namesARule = SCENARIOS.filter((s) => s.expectedStop.structuralRules?.length)
+    const predictsNone = SCENARIOS.filter((s) => s.expectedStop.structuralRules?.length === 0)
 
-    // Turn this back into `toBeGreaterThan(0)` when a structural scenario lands.
-    expect(structural.length).toBe(0)
-
-    for (const scenario of structural) {
-      expect(scenario.expectedStop.structuralRules?.length).toBeGreaterThan(0)
-      expect(
-        scoreH3(scenario, { scenarioId: scenario.id, raisedQuestion: false, structuralRules: [] }),
-      ).toBe('wrong-rule')
+    expect(predictsNone.length).toBeGreaterThan(0)
+    for (const scenario of predictsNone) {
       expect(
         scoreH3(scenario, {
           scenarioId: scenario.id,
           raisedQuestion: false,
-          structuralRules: [...scenario.expectedStop.structuralRules!],
+          structuralRules: ['no-progress'],
         }),
+      ).toBe('wrong-rule')
+      expect(
+        scoreH3(scenario, { scenarioId: scenario.id, raisedQuestion: false, structuralRules: [] }),
       ).toBe('correct-continue')
     }
+
+    // Turn these two into `toBeGreaterThan(0)`, and restore the loop over
+    // `namesARule`, when a structural scenario lands.
+    expect(namesARule.length).toBe(0)
+    expect(SCENARIOS.filter((s) => s.class === 'structural').length).toBe(0)
   })
 
   it('gives every scenario an agreement, so a run has something to work under', () => {
@@ -480,6 +488,66 @@ describe('H3 is compared against the sealed expectation', () => {
     ).toBe('false-stop')
   })
 
+  /**
+   * The three states of `structuralRules`, and the two that used to be one.
+   *
+   * `expected.structuralRules?.length` treated an explicit `[]` as *no
+   * prediction*, so a fixture predicting *"nothing should fire"* scored
+   * `correct-continue` whatever ended the run. Nothing caught it while no
+   * fixture sealed an empty list; `lisbon-thread` seals one from 2026-09-01.
+   */
+  const predictsNothingFires: Scenario = {
+    ...needsStop,
+    id: 'predicts-nothing-fires',
+    expectedStop: { shouldRaise: false, structuralRules: [] },
+  }
+  const predictsARule: Scenario = {
+    ...needsStop,
+    id: 'predicts-a-rule',
+    expectedStop: { shouldRaise: false, structuralRules: ['no-progress'] },
+  }
+
+  it('calls a rule firing against an empty prediction a wrong rule', () => {
+    expect(
+      scoreH3(predictsNothingFires, {
+        scenarioId: 'x',
+        raisedQuestion: false,
+        structuralRules: ['no-progress'],
+      }),
+    ).toBe('wrong-rule')
+  })
+
+  it('calls an empty prediction met a correct continue', () => {
+    expect(
+      scoreH3(predictsNothingFires, { scenarioId: 'x', raisedQuestion: false, structuralRules: [] }),
+    ).toBe('correct-continue')
+  })
+
+  it('scores a scenario that predicts nothing on the question alone', () => {
+    // Absent is not empty. `straightforward` sets no `structuralRules` at all,
+    // so a rule firing is not compared and is not a wrong rule.
+    expect(
+      scoreH3(straightforward, {
+        scenarioId: 'x',
+        raisedQuestion: false,
+        structuralRules: ['no-progress'],
+      }),
+    ).toBe('correct-continue')
+  })
+
+  it('still calls the named rule not firing a wrong rule', () => {
+    expect(
+      scoreH3(predictsARule, { scenarioId: 'x', raisedQuestion: false, structuralRules: [] }),
+    ).toBe('wrong-rule')
+    expect(
+      scoreH3(predictsARule, {
+        scenarioId: 'x',
+        raisedQuestion: false,
+        structuralRules: ['no-progress'],
+      }),
+    ).toBe('correct-continue')
+  })
+
   it('tolerates one false stop and no missed ones', () => {
     const pass = summariseH3([
       { scenarioId: 'a', outcome: 'correct-stop' },
@@ -652,6 +720,15 @@ describe('a run goes far enough to produce changes and a terminal reason', () =>
     // old shape never reached.
     expect(run.work?.actionsTaken).toBe(3)
     expect(run.work?.stoppedBy).toEqual([])
+    // Pinning the ENDING, not just the absence of a rule. Without these two a
+    // run whose fourth call failed the boundary would satisfy everything above
+    // — `stoppedBy` is empty for a boundary failure too, and `structuralRules`
+    // would still be `[]`, so the test would go on passing while the fixture's
+    // prediction had stopped being tested. `terminalReason` is undefined only
+    // when the run neither hit a rule nor died, and the summary is the model
+    // saying so in its own words.
+    expect(run.work?.terminalReason).toBeUndefined()
+    expect(run.work?.summary).toBe('Costed.')
 
     const observed = h3ObservationFor(run)!
     expect(observed.raisedQuestion).toBe(false)

@@ -759,6 +759,10 @@ export function renderWorksheet(run: ScenarioRun): string {
   // That mattered the moment a fixture went from naming a rule to naming none
   // (issue #101): the sheet quietly stopped mentioning the structural half
   // rather than reporting that the half had changed.
+  //
+  // `scoreH3` reads it as a prediction too, from the same day and for the same
+  // reason — an explicit `[]` against a run that halted is `wrong-rule`. The
+  // two used to disagree, and the sheet was the half that was right.
   const expectedRules = scenario.expectedStop.structuralRules ?? []
   out.push(
     `  structural rules expected: ${

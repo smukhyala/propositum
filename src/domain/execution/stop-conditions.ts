@@ -55,9 +55,14 @@
  *
  * **"Before a draft" is load-bearing, and was not read that way until
  * 2026-09-01.** Where the run has no draft to be working towards — because the
- * compiled policy permits nothing that could report progress — this limit is
- * counting something it was never about, and `evaluateStructuralStops` skips
- * the rule rather than lowering the number. See `progressIsPossible`.
+ * compiled policy permits nothing that could report progress — a completed
+ * action that changed nothing is not evidence of a circle, and the worker stops
+ * counting that one thing towards this limit.
+ *
+ * The number is not lowered and this rule is not conditional: the exemption is
+ * in the counter rather than here, and it is deliberately narrow. See
+ * `progressIsPossible` in `src/runtime/worker-loop.ts` for the argument and for
+ * the three increments it leaves alone.
  */
 export const NO_PROGRESS_LIMIT = 3
 
@@ -233,42 +238,6 @@ export interface RunProgress {
   /** `EnforcedPolicy.maxActions`. Passed rather than imported so this file
    *  stays a rule set over facts and never reaches for a policy. */
   readonly maxActions?: number | undefined
-
-  /**
-   * Whether ANY kind this run is permitted could report progress at all.
-   *
-   * Passed rather than derived, for the same reason `maxActions` is: this file
-   * is a rule set over facts and never reaches for a policy. The caller owns
-   * the mapping from an allowlist to this boolean.
-   *
-   * ── Why the rule needs it ────────────────────────────────────────────
-   *
-   * `no-progress` counts completed actions that changed no artifact, and the
-   * counter resets only on one that did. Under `suggestions-only` on a document
-   * shift, `compilePolicy` removes `draft-section` and what survives is reads —
-   * so nothing the run is permitted to do could ever reset it, and the halt
-   * landed on the third action every time, on the arithmetic rather than on
-   * anything the run did wrong. `NO_PROGRESS_LIMIT`'s own comment says it was
-   * written for research *before a draft*; there is no draft here for the
-   * research to be a prelude to.
-   *
-   * ── ABSENCE MEANS THE RULE STILL FIRES, unlike its neighbours ────────
-   *
-   * The two optional fields above are absent-means-cannot-fire: an unwired
-   * caller gets the behaviour it had before those rules existed. This one is
-   * the other way round, and the asymmetry is the point. Absent here means
-   * *"nobody told me, so assume the run could have made progress"* — which
-   * keeps today's stop. Reading it the neighbours' way would turn a missing
-   * field into a run with no loop detection at all, and ADR-0007's asymmetry
-   * says which of those two errors is the dangerous one.
-   *
-   * ── What it does NOT do ──────────────────────────────────────────────
-   *
-   * It does not unbound such a run. `budget-exhausted` and `action-limit` both
-   * still apply and are both still set by the person on the dials; this removes
-   * one rule that could not do its job here, not the ceiling.
-   */
-  readonly progressIsPossible?: boolean | undefined
 }
 
 /**
@@ -281,10 +250,7 @@ export function evaluateStructuralStops(progress: RunProgress): StopRuleId[] {
   const fired: StopRuleId[] = []
 
   if (progress.nowEpochMs >= progress.deadlineEpochMs) fired.push('budget-exhausted')
-  // `!== false` rather than a truthiness test: absent means fire. See the field.
-  if (progress.progressIsPossible !== false && progress.consecutiveNoProgress >= NO_PROGRESS_LIMIT) {
-    fired.push('no-progress')
-  }
+  if (progress.consecutiveNoProgress >= NO_PROGRESS_LIMIT) fired.push('no-progress')
   if (progress.consecutiveRefusals >= REFUSAL_LOOP_LIMIT) fired.push('refusal-loop')
   if (progress.controlLost === true) fired.push('control-lost')
 

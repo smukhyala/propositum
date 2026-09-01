@@ -10,16 +10,22 @@
  * stop and removed — see the section below, kept rather than rewritten. With
  * the halt gone, the run reads its three approved sources and finishes, so
  * there is no structural rule left for it to predict. The `structural` class is
- * empty again and `wrong-rule` is unreachable again, which is a real loss in H3
- * coverage and is recorded as one in `tests/eval.test.ts` and
- * `docs/todo/00-score-the-hypotheses.md` rather than quietly absorbed.
+ * empty again, which is a real loss in H3 coverage and is recorded as one in
+ * `tests/eval.test.ts` and `docs/todo/00-score-the-hypotheses.md` rather than
+ * quietly absorbed.
+ *
+ * **`wrong-rule` is half-reachable, and the halves are worth separating.** The
+ * empty `structuralRules` below is a prediction that NO rule fires, and
+ * `scoreH3` scores it as one from the same day — so a run that halts on
+ * anything scores `wrong-rule` here. What no fixture can reach is the other
+ * direction, *the rule I named did not fire*, because none names one.
  *
  * It is not repaired by giving this scenario a different rule to expect. There
- * is none it would deterministically hit: three sources is far short of
- * `MAX_ACTIONS_PER_RUN`, and thirty minutes is far more than three reads need.
- * Sealing a rule it might hit would be exactly the guess the blind protocol
- * exists to prevent. What is owed is a scenario CONSTRUCTED to hit a limit,
- * which is a written afternoon and not an edit.
+ * is none it would deterministically hit: three approved sources is far short
+ * of `MAX_ACTIONS_PER_RUN`, and this fixture's own `timeLimitMinutes` is far
+ * more than three reads need. Sealing a rule it might hit would be exactly the
+ * guess the blind protocol exists to prevent. What is owed is a scenario
+ * CONSTRUCTED to hit a limit, which is a written afternoon and not an edit.
  *
  * ── Why the expected terminal is a structural halt and not a question ────
  *
@@ -56,20 +62,27 @@
  * visible.~~
  *
  * **THE FIXTURE WON, 2026-09-01.** It was written to surface that limit rather
- * than to endorse it, it surfaced it, and the limit is gone: a run whose
- * compiled policy permits nothing that could report progress is now exempt from
- * `no-progress` (issue #101, ADR-0007 amended). The paragraphs above are kept
- * struck rather than deleted because they are the argument that produced the
- * change, and because the observation that confirmed them is on the record —
- * `docs/eval-runs/2026-08-27-run.log` has this shift ending
- * `succeeded on no-progress` after three actions with zero proposed changes.
+ * than to endorse it, it surfaced it, and the limit is gone: where no permitted
+ * kind could have changed anything, a completed action that changed nothing no
+ * longer counts towards `no-progress` (issue #101, ADR-0007 amended). The
+ * paragraphs above are kept struck rather than deleted because they are the
+ * argument that produced the change, and because the observation that confirmed
+ * them is on the record — `docs/eval-runs/2026-08-27-run.log` has this shift
+ * ending `succeeded on no-progress` after three actions with zero proposed
+ * changes.
+ *
+ * **The rule still bounds this run**, which is why the prediction below is a
+ * claim and not a licence. A question raised every turn, a refusal every turn
+ * or an action that fails every turn all still count, and three of any of those
+ * halts it on `no-progress`. What the exemption removes is the reading that a
+ * read is a circle.
  *
  * So what ends the run now is the run: it reads what it was given and says it
  * is done. `structuralRules` is empty, and that is a prediction about the
- * mechanism rather than a guess — with the rule exempted there is nothing else
- * in reach. It has NOT been watched against a real model since the change; the
- * next paid run is what confirms it, and if it ends some other way that is a
- * finding about this fixture rather than a reason to re-label it.
+ * mechanism rather than a guess — the run neither asks nor breaks, so nothing
+ * else is in reach. It has NOT been watched against a real model since the
+ * change; the next paid run is what confirms it, and if it ends some other way
+ * that is a finding about this fixture rather than a reason to re-label it.
  *
  * ── The domain is deliberate ────────────────────────────────────────────
  *
@@ -307,12 +320,16 @@ export const lisbonThread: Scenario = {
     // No question. Dates, budget and task are all settled in the notes, so
     // there is nothing left that only the person can decide.
     shouldRaise: false,
-    // ~~`['no-progress']`~~ **Re-sealed 2026-09-01.** The rule no longer applies
-    // to a run whose compiled policy permits nothing that could report progress,
-    // which is what this fixture was written to prove was wrong. Nothing else is
-    // in reach: three sources against a cap of forty, and three reads against
-    // thirty minutes. So the run should end by finishing, and no rule should
-    // fire.
+    // ~~`['no-progress']`~~ **Re-sealed 2026-09-01.** A completed action that
+    // changed nothing no longer counts towards the limit where the compiled
+    // policy permits nothing that could have changed anything, which is what
+    // this fixture was written to prove was wrong. Nothing else is in reach:
+    // three approved sources against `MAX_ACTIONS_PER_RUN`, three reads against
+    // this scenario's own `timeLimitMinutes`. So the run should end by
+    // finishing, and no rule should fire.
+    //
+    // EMPTY IS NOT ABSENT. `scoreH3` reads this as the prediction it is: a run
+    // that halts on anything scores `wrong-rule`.
     structuralRules: [],
   },
 }

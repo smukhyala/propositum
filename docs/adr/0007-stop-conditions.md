@@ -56,7 +56,7 @@ someone deciding whether a stop was correct.
 | Rule | Origin | Fires when | The person is told |
 |---|---|---|---|
 | `budget-exhausted` | structural | `now >= acceptedAt + timeLimit` | *"I ran out of the time you gave me."* |
-| `no-progress` | structural | 3 consecutive completed actions changed no artifact **— and only where the compiled policy permits something that could change one. Amended 2026-09-01, see below.** | *"I stopped because I was going in circles without changing anything."* |
+| `no-progress` | structural | 3 consecutive completed actions changed no artifact **— a completed action counts only where the compiled policy permits something that could change one. Amended 2026-09-01, see below; questions, refusals and failures count either way.** | *"I stopped because I was going in circles without changing anything."* |
 | `refusal-loop` | structural | 3 consecutive gate refusals | *"I stopped because I kept needing things the agreement does not allow."* |
 | `decision-needed` | model-raised | the worker declines a judgment call | *"I stopped because this needs a decision only you can make."* |
 
@@ -156,7 +156,7 @@ it lives here so the decision and its measurement stay together.
 - The `no-progress` and `refusal-loop` limits are 3. Two can be legitimate research before a draft;
   a fourth refusal has never helped.
 
-## Amendment, 2026-09-01 — `no-progress` does not apply to a run that cannot write
+## Amendment, 2026-09-01 — a read is not a circle where nothing else was permitted
 
 *Ticket: [#101](https://github.com/smukhyala/propositum/issues/101).*
 
@@ -165,11 +165,16 @@ it lives here so the decision and its measurement stay together.
 > the structural rules cannot produce a false stop, only a model-raised question can.
 
 They can. `suggestions-only` is the safest position on the Output dial, and `compilePolicy`
-implements it by removing `draft-section` and everything that can operate a page. On a document
+implements it by removing `draft-section` and everything that can operate a page. On a **document**
 shift what survives is reads, every read reports no artifact change because it is one, and the
-counter resets on nothing else. So the rule fired on the third action of every research-only run —
-not on a fixture, not on a model's choice, on the arithmetic. **The safest setting on the panel was
-also a three-source cap, and nothing on that panel said so.**
+counter resets on nothing else. So the rule fired on the third action of a research-only document
+run — not on a fixture, not on a model's choice, on the arithmetic. **The safest setting on the
+panel was also a three-source cap, and nothing on that panel said so.**
+
+**It did not bite the browser path**, and the distinction is the whole shape of the fix rather than a
+detail. `navigate` survives the same dial and reports progress, so a browser research shift resets
+its counter every time it follows a link. What was capped was reading documents, which is the eval
+corpus's path and the one the 2026-08-27 run measured.
 
 That is a false stop produced by a structural rule, which the sentence above says cannot happen.
 
@@ -178,11 +183,27 @@ That is a false stop produced by a structural rule, which the sentence above say
 proposed changes — a result H2's own rule then excluded from the denominator, so a hypothesis that
 can kill the product was sharing its explanation with an off-purpose constant.
 
-**The decision.** `evaluateStructuralStops` skips `no-progress` when no kind the run is permitted
-could report progress. The number is not lowered and the rule is not deleted; it is not applied
-where it was never about anything. `NO_PROGRESS_LIMIT`'s own comment already said so — *"three,
-because two can be legitimate research before a draft"* — and where there is no draft, there is
-nothing for the research to be a prelude to.
+**The decision.** The rule is untouched. **The worker stops counting one thing towards it:** a
+completed action that changed nothing, where no kind on the compiled allowlist could have changed
+anything. The number is not lowered, `evaluateStructuralStops` is unchanged, and
+`NO_PROGRESS_LIMIT`'s own comment already said why — *"three, because two can be legitimate research
+before a draft"* — and where there is no draft, there is nothing for the research to be a prelude to.
+
+**Why the counter and not the rule.** `consecutiveNoProgress` is incremented at four places, and the
+argument above covers exactly one of them. A rule that skipped `no-progress` for such a run would
+also exempt the other three, and none of them is a read that could not have been anything else.
+
+**Stated as a cost, because it is the half that keeps the rule honest.** In a research-only run,
+these three still count and three in a row still halts it:
+
+| Still counted | Why it is not exempt |
+|---|---|
+| a `DecisionNeeded` raised under `stop-only-when-blocked` | it does not halt, so without this a model that asks every turn calls until the deadline — thirty minutes of nothing, reported as a budget the person gave it |
+| a gate refusal that is not a pause | a run proposing what the agreement forbids is stuck whether or not it could have written |
+| an action that was attempted and failed | a run breaking is not a run reading, and no other rule catches it |
+
+So the exemption buys a research run more sources and buys it nothing else. `tests/worker.test.ts`
+asserts each row.
 
 **What was rejected, and why.** Making a read count as progress under `suggestions-only` was the
 more principled option: an `OutcomeProposal` is that run's artifact, so producing one should reset
@@ -192,15 +213,23 @@ stop is the dangerous direction. Not worth spending to fix a rule that should no
 
 **Why the asymmetry does not forbid this.** *A false stop is annoying, a missed stop is dangerous*
 is about safety, and a run that cannot write cannot do the dangerous thing. Such a run is still
-bounded by `MAX_ACTIONS_PER_RUN` and the time budget — both set by the person, both on the dials.
-What the rule was preventing here was research.
+bounded by `MAX_ACTIONS_PER_RUN`, by the three rows above, and by the time budget. **Only the last
+of those is the person's** — `MAX_ACTIONS_PER_RUN` is a constant in `src/domain/handoff/policy.ts`,
+compiled unconditionally, carried by no `AutonomyControls` field and shown on no screen. Saying it
+was "set on the dials" would be flattering the panel. What the rule was preventing here was
+research.
 
-**What it costs.** `src/fixtures/scenarios/lisbon-thread.ts` was built around this halt and was the
-corpus's only `structural` scenario, so **`scoreH3`'s `wrong-rule` branch is unreachable again** —
-the state that fixture was written to end. It is not repaired by giving that scenario a different
-rule to expect: none is in reach, and sealing one it might hit is the guess the blind protocol
-exists to prevent. A scenario constructed to hit a limit is owed, and is recorded as owed in
-`tests/eval.test.ts` and `docs/todo/00-score-the-hypotheses.md` rather than absorbed.
+**What it costs the corpus.** `src/fixtures/scenarios/lisbon-thread.ts` was built around this halt
+and was the corpus's only `structural` scenario, so the class is empty again — the state that
+fixture was written to end. It is not repaired by giving that scenario a different rule to expect:
+none is in reach, and sealing one it might hit is the guess the blind protocol exists to prevent. A
+scenario constructed to hit a limit is owed, and is recorded as owed in `tests/eval.test.ts` and
+`docs/todo/00-score-the-hypotheses.md` rather than absorbed.
+
+`scoreH3`'s `wrong-rule` branch is half-lost rather than lost. The re-sealed fixture predicts an
+explicit *no rule fires*, and `scoreH3` now scores that as the prediction it is, so *a rule fired
+that should not have* is reachable through it. *The rule I named did not fire* is what nothing in
+the corpus can reach.
 
 **The exemption is only as good as the set it reads.** `PROGRESSING_ACTION_KINDS` is hand-written
 beside the handlers it describes and pinned against their source, because a kind that can make
@@ -211,8 +240,8 @@ in the dangerous direction.
 
 - ~~H3 shows false stops clustering. That points at the prompt, not the rule set — the structural
   rules cannot produce a false stop, only a model-raised question can.~~ **Half struck 2026-09-01:
-  a structural rule produced a false stop on every research-only run, and the amendment above is
-  what came of it.** Clustering still points at the prompt; *"the structural rules cannot produce a
+  a structural rule produced a false stop on every research-only run against a document, and the
+  amendment above is what came of it.** Clustering still points at the prompt; *"the structural rules cannot produce a
   false stop"* was an assumption about a rule set nobody had run under every dial setting, and the
   corpus found the counterexample rather than a reader.
 - A stop needs to be recoverable rather than terminal. Today every halt ends the `Shift`, which is
