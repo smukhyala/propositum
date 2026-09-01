@@ -248,3 +248,85 @@ describe('the panel says why drafting is off, and never invents the reason', () 
     expect(said).not.toContain('There is no document under this agreement, so there is nothing to draft')
   })
 })
+
+/**
+ * The fifth sentence, and the only one that is not a sentence.
+ *
+ * The four above were all fixed by rewriting prose. This one cannot be: every
+ * sentence under *"What you've switched off"* was already true on its own, and
+ * `NOT_IN_THIS_AGREEMENT` was written precisely so that it names no cause. What
+ * made the panel lie was the HEADING — one cause, over a list built as every
+ * kind not on the compiled allowlist, which on a browser shift is mostly kinds
+ * the person was never offered and therefore never switched off.
+ *
+ * So the assertions below are scoped to a group rather than to the page. A
+ * page-wide `toContain` cannot see this defect at all, which is why it survived
+ * two commits that both reported it.
+ */
+
+/** Every group heading on the panel, in the order a person meets them. */
+function headings(html: string): string[] {
+  return [...html.matchAll(/<h3 class="ag-group-head">(.*?)<\/h3>/g)].map((m) =>
+    words(m[1] ?? '').trim(),
+  )
+}
+
+/**
+ * The words filed under one heading, and nothing else on the screen.
+ *
+ * Sliced between this `ag-group-head` and the next one. It does NOT cover the
+ * prose after the last group — the `ag-hint` under the absence list runs to the
+ * end of the section and would be swept into it. No assertion here needs it,
+ * and `tests/agreement-density.test.ts` owns that sentence.
+ */
+function underHeading(html: string, heading: string): string {
+  const heads = [...html.matchAll(/<h3 class="ag-group-head">(.*?)<\/h3>/g)]
+  const at = heads.findIndex((h) => words(h[1] ?? '').trim() === heading)
+  if (at === -1) return ''
+  const here = heads[at]
+  if (here?.index === undefined) return ''
+  return words(html.slice(here.index + here[0].length, heads[at + 1]?.index ?? html.length))
+}
+
+const SWITCHED_OFF = "What you've switched off"
+const NOT_INCLUDED = "What this agreement doesn't include"
+
+describe('the panel files a permission under the heading that is true of it', () => {
+  it('credits the person with nothing on a browser shift, where they chose nothing', () => {
+    // The dials are untouched. Everything missing here is missing because
+    // `grantableActionKinds(false)` never offered it, so the group that names a
+    // choice has no members and must not be on the screen at all.
+    const html = screen(BROWSER)
+
+    expect(checkedOutput(html)).toBe('draft-changes')
+    expect(headings(html)).not.toContain(SWITCHED_OFF)
+    expect(underHeading(html, SWITCHED_OFF)).toBe('')
+  })
+
+  it('files what was never offered under a heading naming no cause', () => {
+    const said = underHeading(screen(BROWSER), NOT_INCLUDED)
+
+    expect(said).toContain('Draft a section of your document')
+    expect(said).toContain('Read the sources you approved')
+  })
+
+  it('keeps the choice heading for the kind a dial really did remove', () => {
+    // A document shift under research only: `draft-section` was granted and the
+    // dial took it away. This is the one case where crediting the person is true.
+    const html = screen(DOCUMENT, { output: 'suggestions-only' }, 'The supplier proposal')
+
+    expect(underHeading(html, SWITCHED_OFF)).toContain('Draft a section of your document')
+    expect(underHeading(html, NOT_INCLUDED)).not.toContain('Draft a section of your document')
+  })
+
+  it('splits one screen across both headings when the dial removed only some of it', () => {
+    // A browser shift under research only. The dial removed the three kinds
+    // that operate a page; `draft-section` was never on offer. Both groups have
+    // members, and the same panel has to get both right at once.
+    const html = screen(BROWSER, { output: 'suggestions-only' })
+
+    expect(underHeading(html, SWITCHED_OFF)).toContain('Click something on the page')
+    expect(underHeading(html, SWITCHED_OFF)).not.toContain('Draft a section of your document')
+    expect(underHeading(html, NOT_INCLUDED)).toContain('Draft a section of your document')
+  })
+})
