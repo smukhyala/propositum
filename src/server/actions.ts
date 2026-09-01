@@ -63,8 +63,14 @@ import type { Decision } from '../domain/document/changeset'
 import { normalise } from '../domain/document/normalise'
 import { isDecidable } from '../domain/outcome/shift-outcome'
 import type { WorkSoFar } from '../domain/intention/work-so-far'
-import { MUTATING_ACTION_KINDS, grantableActionKinds } from '../domain/handoff/policy'
-import type { ActionKind, AutonomyControls } from '../domain/handoff/policy'
+import {
+  MAX_PURCHASE_AMOUNT_MINOR,
+  MAX_PURCHASE_COUNT,
+  MUTATING_ACTION_KINDS,
+  currencyOf,
+  grantableActionKinds,
+} from '../domain/handoff/policy'
+import type { ActionKind, AutonomyControls, CurrencyCode } from '../domain/handoff/policy'
 import type { ClaimInput } from '../persistence/repositories/index'
 
 /* ══════════════════════════════════════════════════ results and problems ══ */
@@ -549,6 +555,27 @@ async function projectForWork(
  * cannot express a port, so accepting one would store a pattern Chrome will
  * never grant and leave the person with a source that silently sees nothing.
  */
+/**
+ * The one exact origin a stored source pattern names, or null.
+ *
+ * A `PurchaseAuthorization.originPattern` is matched EXACTLY by the transport
+ * — never by prefix, never via `patternCovers` — so it cannot be a wildcard.
+ * The stored `ApprovedSource.originPattern` is `scheme//host/*`, possibly with
+ * a `*.` host wildcard: the trailing `/*` strips to an origin, and a host
+ * wildcard refuses, because "somewhere under this domain" is not a place a
+ * ceiling can be ratified against. Named beside `normaliseOriginPattern`
+ * because the two are the same column read in opposite directions, and the
+ * drift risk of the shared field name is why this docblock exists.
+ */
+function exactOriginFor(sourcePattern: string): string | null {
+  const trimmed = sourcePattern.trim().replace(/\/\*$/, '')
+  const match = /^(https?):\/\/([a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*)$/i.exec(
+    trimmed,
+  )
+  if (!match) return null
+  return `${(match[1] ?? 'https').toLowerCase()}://${(match[2] ?? '').toLowerCase()}`
+}
+
 function normaliseOriginPattern(raw: string): string | null {
   let text = raw.trim()
   if (!text) return null
@@ -2471,6 +2498,24 @@ export interface ContractDrafted {
    * contract row was written before it was read.
    */
   readonly calendarSuggestion?: CalendarTimeSuggestion
+  /**
+   * The spend the model proposed and deterministic code resolved — ADR-0024.
+   *
+   * Optional and ABSENT when the instruction named nothing to buy, on
+   * `calendarSuggestion`'s convention and for its reason. Display values for
+   * the one line the agreement screen renders with the amount prominent;
+   * ratifying the draft is what turns the persisted columns into a granted
+   * `complete-purchase`, and `acceptContract` reads them off the ROW, never
+   * off anything a client sends back.
+   */
+  readonly purchaseAuthorization?: {
+    readonly originPattern: string
+    readonly merchantLabel: string
+    readonly whatFor: string
+    readonly maxAmountMinor: number
+    readonly currency: CurrencyCode
+    readonly maxCount: number
+  }
 }
 
 /** Time limit, initiative, progress, interruption, output — plus the two prose
@@ -2587,6 +2632,7 @@ export async function draftContract(readingId: string): Promise<ActionResult<Con
     const events = await repos.events.bySession(reading.sessionId)
     const granted = await repos.projects.approvedSources(session.projectId)
     const labelById = new Map(granted.map((s) => [s.id, s.label]))
+    const patternById = new Map(granted.map((s) => [s.id, s.originPattern]))
     const sourceByEventId = new Map(events.map((e) => [e.id, e.approvedSourceId]))
 
     const observed: Array<{ id: string; label: string }> = []
@@ -2659,6 +2705,38 @@ export async function draftContract(readingId: string): Promise<ActionResult<Con
     const approvedSourceIds = narrowed.length > 0 ? narrowed : observed.map((s) => s.id)
 
     const minutes = Math.min(480, Math.max(5, Math.round(drafted.value.suggestedTimeLimitMinutes)))
+
+    /* ── the purchase proposal, resolved deterministically or dropped ───── */
+
+    /**
+     * Every failure below drops the WHOLE proposal — absence is the deny, and
+     * the empty-narrowing fallback above is deliberately not copied here: an
+     * empty narrowing falls back to everything observed because reading widely
+     * is cheap to correct, while a defaulted authorisation would be money. The
+     * clamps are safe for the sources-clamp reason: the person ratifies the
+     * clamped numbers on the screen that shows them.
+     */
+    const purchase = (() => {
+      const p = drafted.value.purchase
+      if (p === undefined) return null
+      const merchantId = idByHandle.get(p.merchantHandle)
+      if (merchantId === undefined || !seen.has(merchantId)) return null
+      const origin = exactOriginFor(patternById.get(merchantId) ?? '')
+      if (origin === null) return null
+      const currency = currencyOf(p.currency)
+      if (currency === null) return null
+      return {
+        originPattern: origin,
+        merchantLabel: labelById.get(merchantId) ?? origin,
+        whatFor: p.whatFor,
+        maxAmountMinor: Math.min(
+          MAX_PURCHASE_AMOUNT_MINOR,
+          Math.max(1, Math.round(p.maxAmountMinor)),
+        ),
+        currency,
+        maxCount: Math.min(MAX_PURCHASE_COUNT, Math.max(1, Math.round(p.maxCount))),
+      }
+    })()
 
     /* ── the two sentences a person is asked to ratify ──────────────────── */
 
@@ -2838,6 +2916,19 @@ export async function draftContract(readingId: string): Promise<ActionResult<Con
       output: controls.output,
       interruption: controls.interruption,
       timeLimitMinutes: minutes,
+      // The five purchase columns, written at draft time or never — the frozen
+      // trigger closes this door at acceptance, like intentionId above. Spread
+      // rather than null-filled so a contract with no authorisation writes the
+      // same row it always wrote.
+      ...(purchase === null
+        ? {}
+        : {
+            purchaseOriginPattern: purchase.originPattern,
+            purchaseWhatFor: purchase.whatFor,
+            purchaseMaxAmountMinor: purchase.maxAmountMinor,
+            purchaseCurrency: purchase.currency,
+            purchaseMaxCount: purchase.maxCount,
+          }),
     })
 
     /**
@@ -2878,6 +2969,11 @@ export async function draftContract(readingId: string): Promise<ActionResult<Con
           allowedActionKinds,
           documentTitle,
           quotedConstraints,
+          // Absent rather than null when nothing was drafted — the
+          // calendarSuggestion convention, for the same reason: an absent key
+          // is how a screen with no authorisation stays byte-identical to the
+          // screen before this shipped.
+          ...(purchase === null ? {} : { purchaseAuthorization: purchase }),
         },
         calendarSuggestion,
       ),
@@ -3139,6 +3235,25 @@ export async function acceptContract(
       draft.baseVersionId !== null,
     ).filter((kind) => controls.output !== 'suggestions-only' || !MUTATING_ACTION_KINDS.has(kind))
 
+    /**
+     * The one writer that may grant `complete-purchase`, and its facts come
+     * off the PERSISTED ROW only — `HandoffChoices` has no purchase field, so
+     * a client payload cannot smuggle an authorisation in, and pressing Hand
+     * over on the screen that showed the amount is what ratification means.
+     * `grantableActionKinds` subtracts the kind by construction; this is the
+     * add-back, gated on the columns the draft was written with, and it obeys
+     * the same suggestions-only filter as every mutating kind.
+     */
+    if (
+      draft.purchaseOriginPattern != null &&
+      draft.purchaseMaxAmountMinor != null &&
+      draft.purchaseCurrency != null &&
+      draft.purchaseMaxCount != null &&
+      controls.output !== 'suggestions-only'
+    ) {
+      allowedActionKinds.push('complete-purchase')
+    }
+
     const unchanged =
       draft.objective === objective &&
       draft.definitionOfDone === definitionOfDone &&
@@ -3166,6 +3281,16 @@ export async function acceptContract(
             approvedSourceIds: draft.approvedSourceIds,
             allowedActionKinds,
             baseVersionId: draft.baseVersionId,
+            // The five purchase columns ride the superseding draft for
+            // intentionId's reason: left off here, changing a dial would
+            // silently revoke a shown authorisation — or worse, keep the grant
+            // in allowedActionKinds while dropping the ceiling it is bounded
+            // by.
+            purchaseOriginPattern: draft.purchaseOriginPattern ?? null,
+            purchaseWhatFor: draft.purchaseWhatFor ?? null,
+            purchaseMaxAmountMinor: draft.purchaseMaxAmountMinor ?? null,
+            purchaseCurrency: draft.purchaseCurrency ?? null,
+            purchaseMaxCount: draft.purchaseMaxCount ?? null,
             initiative: controls.initiative,
             progress: controls.progress,
             output: controls.output,

@@ -25,12 +25,23 @@
  * permission panel; calling the real compiler is how that stays impossible
  * rather than merely unlikely.
  *
- * The panel keeps two refusals visually distinct, and must never blur them:
+ * The panel keeps ~~two~~ **three, 2026-09-01** refusal-and-permission shapes
+ * visually distinct, and must never blur them:
  *
  *   - **switched off** — inside `ActionKind`, and your dials removed it.
+ *   - **ratified-bound** — `complete-purchase`, ADR-0024. Neither of its
+ *     neighbours: it exists in the enum, no dial can switch it ON, and it is
+ *     granted only by ratifying a drafted authorisation whose amount is on
+ *     this screen. Rendered as its own line in Section 1 with the amount
+ *     prominent, never inside either list below — filing it under *switched
+ *     off* would say a dial decides money, and under *does not exist* would be
+ *     false the day the transport lands.
  *   - **does not exist** — absent from the enum entirely. Send a message,
  *     publish, buy, delete. Absence of capability is the strongest prohibition
  *     available, and it is not something a setting could turn back on.
+ *     (*Buy* stays on this list until the extension's branch moves —
+ *     `tests/architecture.test.ts` couples the sentence to the transport, and
+ *     docs/todo/06 item 5 is the commit where both change together.)
  *
  * ── Where the two pre-filled sentences came from, said out loud ──────────
  *
@@ -122,7 +133,7 @@ import {
   compilePolicy,
   TIME_LIMIT_CHOICES,
 } from '../domain/handoff/policy'
-import type { ActionKind, AutonomyControls } from '../domain/handoff/policy'
+import type { ActionKind, AutonomyControls, CurrencyCode } from '../domain/handoff/policy'
 import type { CalendarTimeSuggestion } from '../server/calendar'
 
 export interface AgreementProps {
@@ -320,6 +331,18 @@ function minutesLabel(minutes: number): string {
   return hours === 1 ? '1 hour' : `${hours} hours`
 }
 
+/**
+ * "$40.00", "¥4,000" — the ratified ceiling in the person's money words.
+ *
+ * Never sees model prose: the amount and currency are the clamped, closed-set
+ * values the row was written with. JPY carries no minor exponent; the rest of
+ * the closed set divide by 100.
+ */
+function amountLabel(maxAmountMinor: number, currency: CurrencyCode): string {
+  const major = currency === 'JPY' ? maxAmountMinor : maxAmountMinor / 100
+  return new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(major)
+}
+
 function clockOf(when: Date): string {
   return new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit' })
     .format(when)
@@ -496,6 +519,45 @@ export function Agreement({ draft, defaults, sourceLabels, onBack, onHandedOver 
             can&rsquo;t be checked; &ldquo;Commercials and Close are drafted&rdquo; can.
           </p>
         </div>
+
+        {/*
+          The one line with the amount prominent, above the fold — ADR-0024.
+
+          Not a form: the numbers were clamped server-side and the person's
+          choice is ratify-or-go-back. `whatFor` is the draft's own prose and
+          renders attributed in quotation marks, never in Propositum's voice —
+          the quotedConstraints discipline, because a model sentence shown as
+          ours is how prose starts to read as a grant. Absent entirely when the
+          instruction named nothing to buy: an absent key is the deny, and this
+          screen stays byte-identical to the screen before buying existed.
+        */}
+        {draft.purchaseAuthorization === undefined ? null : (
+          <div style={{ marginTop: '1.6rem' }}>
+            <span className="ag-label">What you said I could buy</span>
+            <p className="ag-foot-line" style={{ marginTop: '0.4rem' }}>
+              May spend up to{' '}
+              <strong>
+                {amountLabel(
+                  draft.purchaseAuthorization.maxAmountMinor,
+                  draft.purchaseAuthorization.currency,
+                )}
+              </strong>{' '}
+              at {draft.purchaseAuthorization.merchantLabel} &mdash;{' '}
+              {draft.purchaseAuthorization.maxCount === 1
+                ? 'one charge'
+                : `at most ${draft.purchaseAuthorization.maxCount} charges`}
+              , while this agreement runs. Anything past the ceiling is refused and you are asked.
+            </p>
+            <p className="ag-hint">
+              The draft calls it &ldquo;{draft.purchaseAuthorization.whatFor}&rdquo; &mdash; its
+              words, quoted so you can check them. The words grant nothing; the ceiling is what you
+              are agreeing to.
+              {output === 'suggestions-only'
+                ? ' Suggestions only is on, so this hand-over grants no spending at all.'
+                : ''}
+            </p>
+          </div>
+        )}
       </Section>
 
       {/*
@@ -808,6 +870,19 @@ export function Agreement({ draft, defaults, sourceLabels, onBack, onHandedOver 
           canDraft={policy.actionKindAllowlist.has('draft-section')}
           stopsWhenUnsure={interruption === 'stop-when-uncertain'}
         />
+
+        {draft.purchaseAuthorization !== undefined && output !== 'suggestions-only' ? (
+          <p className="ag-foot-line">
+            Pressing Hand over also lets it spend up to{' '}
+            <strong>
+              {amountLabel(
+                draft.purchaseAuthorization.maxAmountMinor,
+                draft.purchaseAuthorization.currency,
+              )}
+            </strong>{' '}
+            at {draft.purchaseAuthorization.merchantLabel}.
+          </p>
+        ) : null}
 
         <div className="ag-foot-actions">
           <Button variant="primary" onClick={handOver} disabled={pending || !ready}>
