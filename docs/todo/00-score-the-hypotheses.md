@@ -168,6 +168,25 @@ commands that say they cost money do.
 - **`budget-exhausted` is unreachable.** The drive freezes the clock, so no
   scenario can expect it.
 - **ADR-0007's `information-missing` stop class still has no scenario at all.**
+- **And as of 2026-09-01 neither does `structural`, which is new and is a
+  regression in coverage rather than an omission.** `lisbon-thread` filled that
+  class by predicting the `no-progress` halt a research-only run hit on its
+  third read. [Issue #101](https://github.com/smukhyala/propositum/issues/101)
+  ruled that halt a false stop and removed it, so the fixture predicts no rule
+  now and **`scoreH3`'s `wrong-rule` branch is unreachable again** — the exact
+  state that fixture was written to end.
+
+  It cannot be repaired by editing `lisbon-thread`. Nothing else is in reach for
+  it: three approved sources against `MAX_ACTIONS_PER_RUN = 40`, three reads
+  against thirty minutes. Sealing a rule it *might* hit is the guess the blind
+  protocol exists to prevent.
+
+  What is owed is a scenario **constructed** to hit a limit — an afternoon with
+  more to read than the action cap allows, or one whose budget genuinely runs
+  out. That is a written fixture, not an edit, and it is the same size of job as
+  the `information-missing` one above. The gap is pinned in
+  `tests/eval.test.ts`, which asserts the class is empty and says in its own
+  docblock to turn the assertion back the right way round when it is not.
 - **Nobody ratifies the agreement in the harness.** It accepts what the handoff
   boundary drafted, unedited — so handoff correction rate stays unmeasured.
 - **Re-entry quality** — *can the person resume within about a minute* — is

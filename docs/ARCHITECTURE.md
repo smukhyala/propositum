@@ -263,7 +263,10 @@ something that decides.
 **Built.** `compilePolicy` in `src/domain/handoff/policy.ts` turns the four autonomy dials and a
 `ContractScope` into an `EnforcedPolicy`; `authorize` in `src/policy/gate.ts` is the only construction
 site for an `AuthorizedAction`, and `tests/architecture.test.ts` holds it to that by grepping the
-source. Stop conditions are structural ([ADR-0007](./adr/0007-stop-conditions.md)). The trust boundary
+source. Stop conditions are structural ([ADR-0007](./adr/0007-stop-conditions.md)) — **though not all of
+them apply under every dial: amended 2026-09-01, `no-progress` is skipped where the compiled policy
+permits nothing that could report progress, because it was firing on the third read of every
+research-only run.** The trust boundary
 is [ADR-0006](./adr/0006-trust-boundary.md); the gate is [ADR-0004](./adr/0004-policy-gate.md).
 
 **"Models never authorize" is a compile error here, not a review note.** `compilePolicy`'s parameter

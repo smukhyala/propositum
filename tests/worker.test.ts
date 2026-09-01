@@ -5,7 +5,12 @@ import { startWorkerProcess } from '../src/runtime/worker-process'
 import { FakeModelClient } from '../src/model/fake'
 import type { ScriptedReply } from '../src/model/fake'
 import { allowlisted, fixtureFetcher } from '../src/policy/fetcher'
-import { MAX_PLAN_STEPS } from '../src/domain/handoff/policy'
+import { ACTION_KINDS, MAX_PLAN_STEPS } from '../src/domain/handoff/policy'
+import { PROGRESSING_ACTION_KINDS } from '../src/runtime/worker-loop'
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+import { dirname, join } from 'node:path'
+import { stripComments } from './support/strip-comments'
 
 /* ── harness ───────────────────────────────────────────────────────────── */
 
@@ -609,5 +614,114 @@ describe('the worker process', () => {
     // The run in flight completed; the loop exited after it, not during.
     expect(started).toEqual(['run-1'])
     expect(runsCompleted).toBe(1)
+  })
+})
+
+/**
+ * A research-only run could not read more than three sources. Structurally.
+ *
+ * ── The arithmetic, which is the whole bug ───────────────────────────────
+ *
+ * `suggestions-only` is the safest position on the Output dial, and
+ * `compilePolicy` implements it by deleting `draft-section` and everything that
+ * can operate a page. On a document shift what survives is reads — and every
+ * read reports `changedSomething: false`, because it is one. The counter only
+ * ever resets on that field, so nothing the run was PERMITTED to do could reset
+ * it, and `no-progress` fired on the third action every time.
+ *
+ * Not on a fixture, not on a model's choice. The safest setting on the panel
+ * was also the one that capped the research at three sources, and nothing on
+ * that panel says so.
+ *
+ * ── What it did to the numbers ───────────────────────────────────────────
+ *
+ * `docs/eval-runs/2026-08-27-run.log` has the `suggestions-only` lisbon shift
+ * ending `succeeded on no-progress` after three actions with zero proposed
+ * changes — absorbed silently by H2's rule that a zero-change run under
+ * `suggestions-only` is excluded from the denominator. A hypothesis that can
+ * kill the product was sharing its explanation with an off-purpose constant.
+ *
+ * ── What is NOT covered here ─────────────────────────────────────────────
+ *
+ * The browser path never had this problem and is asserted below to still stop:
+ * `navigate` reports progress, so a browser research shift resets its counter
+ * every time it follows a link. `tests/browser-loop.test.ts` owns that case.
+ */
+describe('a run that may not write is not bounded by the rule about writing', () => {
+  /** Research only, on a document shift: reads and nothing else survive. */
+  const researchOnly = () =>
+    job({ controls: { ...job().controls, output: 'suggestions-only' } })
+
+  it('reads past three sources instead of halting on the arithmetic', async () => {
+    const steps = Array.from({ length: 8 }, (_, i) => ({ intent: `read ${i}` }))
+    const d = deps([
+      { kind: 'ok', value: { steps } },
+      ...Array.from({ length: 8 }, () => act({ kind: 'read-document' })),
+    ])
+
+    const result = await runWorker(researchOnly(), d)
+
+    expect(result.stoppedBy).not.toContain('no-progress')
+    expect(result.actionsTaken).toBeGreaterThan(3)
+  })
+
+  it('still stops a drafting run that reads forever, which is what the rule is for', async () => {
+    // The same plan under `draft-changes`. Here the run COULD have drafted and
+    // did not, so three reads in a row really is going in circles.
+    const steps = Array.from({ length: 8 }, (_, i) => ({ intent: `read ${i}` }))
+    const d = deps([
+      { kind: 'ok', value: { steps } },
+      ...Array.from({ length: 8 }, () => act({ kind: 'read-document' })),
+    ])
+
+    const result = await runWorker(job(), d)
+
+    expect(result.stoppedBy).toContain('no-progress')
+    expect(result.actionsTaken).toBe(3)
+  })
+})
+
+/**
+ * The exemption is only as good as the set it reads.
+ *
+ * `PROGRESSING_ACTION_KINDS` is hand-written and `perform` is the thing it
+ * describes, so it can drift — and it fails silently in the dangerous
+ * direction: a kind that CAN make progress, left out of the set, exempts a run
+ * that could go in circles from the rule that catches it. So the set is read
+ * back off `perform`'s own source.
+ *
+ * Comments are stripped first, because the block above `perform`'s browser
+ * cases discusses `changedSomething: true` in prose and a naive grep counts it.
+ */
+describe('the set that exempts a run is the set the handlers actually produce', () => {
+  const source = stripComments(
+    readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'src/runtime/worker-loop.ts'), 'utf8'),
+  )
+
+  /** Each `case '<kind>':` in `perform`, paired with the body up to the next. */
+  function bodies(): Map<string, string> {
+    const from = source.indexOf('async function perform(')
+    expect(from).toBeGreaterThan(-1)
+    const region = source.slice(from)
+    const found = new Map<string, string>()
+    const cases = [...region.matchAll(/case '([a-z-]+)': \{/g)]
+    for (const [at, match] of cases.entries()) {
+      const start = match.index ?? 0
+      const end = cases[at + 1]?.index ?? region.length
+      found.set(match[1] ?? '', region.slice(start, end))
+    }
+    return found
+  }
+
+  it('finds a handler for every ActionKind, or the rest of this proves nothing', () => {
+    expect([...bodies().keys()].sort()).toEqual([...ACTION_KINDS].sort())
+  })
+
+  it('exempts exactly the kinds whose handler never reports progress', () => {
+    const reportsProgress = [...bodies().entries()]
+      .filter(([, body]) => body.includes('changedSomething: true'))
+      .map(([kind]) => kind)
+
+    expect(reportsProgress.sort()).toEqual([...PROGRESSING_ACTION_KINDS].sort())
   })
 })

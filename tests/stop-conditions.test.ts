@@ -315,3 +315,93 @@ describe('halt timing', () => {
     expect(HALT_TIMING).toBe('next-action-boundary')
   })
 })
+
+/**
+ * `no-progress` was written for a drafting run, and a research run has no draft.
+ *
+ * ── The failure this exists for ──────────────────────────────────────────
+ *
+ * Under `suggestions-only` on a document shift, `compilePolicy` removes
+ * `draft-section` and what survives is reads — and every read reports
+ * `changedSomething: false`, because it is one. The counter only ever resets on
+ * that field, so nothing the run is PERMITTED to do could reset it, and the
+ * halt landed on the third action every time. Not on a fixture and not on a
+ * model's choice: on the arithmetic.
+ *
+ * The constant's own comment says what it was written for and it is not this —
+ * *"three, because two can be legitimate research before a draft"*. Under
+ * `suggestions-only` there is no draft for the research to be a prelude to.
+ *
+ * ── Why this is a false stop, and why that is allowed to matter ──────────
+ *
+ * ADR-0007's asymmetry is that a false stop is annoying and a missed stop is
+ * dangerous, so the brake is cheap to pull. That is about SAFETY, and a run
+ * that cannot write cannot do the dangerous thing: `suggestions-only` is still
+ * bounded by `MAX_ACTIONS_PER_RUN` and the time budget, both of which the
+ * person set on the dials. What was being prevented was research.
+ *
+ * ── The one thing here that will be misread ──────────────────────────────
+ *
+ * `progressIsPossible` is absent-means-FIRE, the opposite of `controlLost` and
+ * `actionsTaken` above, which are absent-means-cannot-fire. Deliberate, and
+ * asserted below: an unwired caller keeps the behaviour it had rather than
+ * silently losing a stop. Getting this backwards turns a missing field into a
+ * run with no loop detection at all, which is the dangerous direction.
+ */
+describe('a run that cannot change anything cannot be going in circles', () => {
+  it('does not fire when nothing the run may do could ever reset the counter', () => {
+    expect(
+      evaluateStructuralStops(
+        p({ consecutiveNoProgress: NO_PROGRESS_LIMIT, progressIsPossible: false }),
+      ),
+    ).not.toContain('no-progress')
+  })
+
+  it('stays off however long such a run goes on, because the count is not the point', () => {
+    expect(
+      evaluateStructuralStops(
+        p({ consecutiveNoProgress: NO_PROGRESS_LIMIT * 20, progressIsPossible: false }),
+      ),
+    ).toEqual([])
+  })
+
+  it('still fires when the run had a way to make progress and did not', () => {
+    expect(
+      evaluateStructuralStops(
+        p({ consecutiveNoProgress: NO_PROGRESS_LIMIT, progressIsPossible: true }),
+      ),
+    ).toContain('no-progress')
+  })
+
+  it('fires when the fact is absent, so an unwired caller does not lose the stop', () => {
+    // The opposite default from `controlLost` and `actionsTaken`, on purpose.
+    expect(evaluateStructuralStops(p({ consecutiveNoProgress: NO_PROGRESS_LIMIT }))).toContain(
+      'no-progress',
+    )
+  })
+
+  it('does not switch off the limits that still bound such a run', () => {
+    // The whole argument for removing this rule here is that two others remain.
+    const fired = evaluateStructuralStops(
+      p({
+        consecutiveNoProgress: NO_PROGRESS_LIMIT * 5,
+        progressIsPossible: false,
+        nowEpochMs: 10_000,
+        actionsTaken: 40,
+        maxActions: 40,
+      }),
+    )
+    expect(fired).toContain('budget-exhausted')
+    expect(fired).toContain('action-limit')
+  })
+
+  it('leaves the refusal loop alone, which is about a different failure', () => {
+    // A run proposing things the agreement forbids is stuck whether or not it
+    // could have written anything, so this rule keeps firing.
+    expect(
+      evaluateStructuralStops(
+        p({ consecutiveRefusals: REFUSAL_LOOP_LIMIT, progressIsPossible: false }),
+      ),
+    ).toContain('refusal-loop')
+  })
+})

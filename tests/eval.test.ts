@@ -76,10 +76,31 @@ describe('the corpus', () => {
     }
   })
 
-  it('can reach the wrong-rule branch, which no fixture setting no rules could', () => {
-    const structural = SCENARIOS.filter((s) => s.class === 'structural')
+  /**
+   * ~~`can reach the wrong-rule branch, which no fixture setting no rules
+   * could`~~ **Inverted 2026-09-01, and it is a loss rather than a tidy-up.**
+   *
+   * `lisbon-thread` was the corpus's only `structural` scenario, and it filled
+   * that class by predicting the `no-progress` halt a research-only run hit on
+   * its third read. Issue #101 ruled that halt a false stop and removed it, so
+   * the fixture no longer predicts any rule and the class is empty again —
+   * which is exactly the state this assertion was written to end.
+   *
+   * It is inverted rather than deleted, on `tests/reachability.test.ts`'s rule:
+   * a capability is asserted either as reached or as deliberately not reached,
+   * and one in neither is the hole the file exists to close. So the gap is
+   * pinned. **The day somebody writes a structural scenario, this test goes red
+   * and is turned back the right way round** — the assertion below is the whole
+   * of the old one, kept live against whatever fills the class.
+   */
+  it('cannot reach the wrong-rule branch today, and says so rather than passing quietly', () => {
+    const structural = SCENARIOS.filter(
+      (s) => s.class === 'structural' || s.expectedStop.structuralRules?.length,
+    )
 
-    expect(structural.length).toBeGreaterThan(0)
+    // Turn this back into `toBeGreaterThan(0)` when a structural scenario lands.
+    expect(structural.length).toBe(0)
+
     for (const scenario of structural) {
       expect(scenario.expectedStop.structuralRules?.length).toBeGreaterThan(0)
       expect(
@@ -604,9 +625,14 @@ describe('a run goes far enough to produce changes and a terminal reason', () =>
     expect(handoffCall.user).not.toMatch(/claiming to be a rule/)
   })
 
-  it('reports the structural rule that ended a research-only run', async () => {
-    // Three reads and nothing that changes an artifact, which is what
-    // `suggestions-only` leaves this run able to do. NO_PROGRESS_LIMIT is 3.
+  it('lets a research-only run read every source it was given, and finish', async () => {
+    // ~~Three reads and nothing that changes an artifact, which is what
+    // `suggestions-only` leaves this run able to do. NO_PROGRESS_LIMIT is 3.~~
+    // **Rewritten 2026-09-01 (issue #101).** This test used to assert the halt
+    // as correct behaviour, with the fake scripted to run out at exactly the
+    // limit — so it passed by arriving at the same number from two directions.
+    // The halt was a false stop and is gone; what is asserted now is that the
+    // run reads all three sources and ends by SAYING it is done.
     const fake = new FakeModelClient([
       readingReply('Work out what Lisbon costs.'),
       handoffReply(['S1', 'S2', 'S3']),
@@ -614,16 +640,22 @@ describe('a run goes far enough to produce changes and a terminal reason', () =>
       reads('src-skyward', 'flights'),
       reads('src-casa-alfama', 'one hotel'),
       reads('src-miradouro', 'the other hotel'),
+      {
+        kind: 'ok' as const,
+        value: { kind: 'done', reason: 'the numbers are all here', done: { summary: 'Costed.' } },
+      },
     ])
 
     const run = await runScenario(fake, lisbon)
 
-    expect(run.work?.stoppedBy).toEqual(['no-progress'])
-    expect(run.work?.terminalReason).toBe('stop-condition')
+    // The third read is past the old limit, and the fourth call is the one the
+    // old shape never reached.
+    expect(run.work?.actionsTaken).toBe(3)
+    expect(run.work?.stoppedBy).toEqual([])
 
     const observed = h3ObservationFor(run)!
     expect(observed.raisedQuestion).toBe(false)
-    expect(observed.structuralRules).toEqual(['no-progress'])
+    expect(observed.structuralRules).toEqual([])
     expect(scoreH3(lisbon, observed)).toBe('correct-continue')
   })
 
@@ -677,10 +709,12 @@ describe('a run goes far enough to produce changes and a terminal reason', () =>
     expect(sheet).toMatch(/WHAT THE SHIFT DID/)
     expect(sheet).toMatch(/fake objective for lisbon-thread/)
     expect(sheet).toMatch(/suggestions-only/)
-    expect(sheet).toMatch(/no-progress/)
-    // The sealed expectation names a structural rule. A worksheet that showed
-    // only `should raise a question` would hide half of what H3 compares.
-    expect(sheet).toMatch(/structural rules expected/)
+    // The sealed expectation predicts that NO rule fires, which is a prediction
+    // and not an absence of one. ~~`/no-progress/`~~ — this fixture stopped
+    // naming a rule on 2026-09-01, and the line stayed rather than vanishing
+    // with it, because a worksheet that showed only `should raise a question`
+    // would hide half of what H3 compares.
+    expect(sheet).toMatch(/structural rules expected: none — it should end by finishing/)
   })
 
   it('does not say the plan ran out about a run that said it was finished', async () => {

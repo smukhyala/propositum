@@ -19,6 +19,30 @@
  * If a reference really was wrong, the rule is to add a NEW scenario rather
  * than edit the old one — the mistake is itself a finding about how the
  * fixture was written.
+ *
+ * ── What a broken seal CANNOT tell you, recorded 2026-09-01 ──────────────
+ *
+ * The payload is `reference` and `expectedStop` under one hash, so a break says
+ * *"one of the two moved"* and never which. Those are not the same event. An
+ * edited `reference` is the failure this file exists to prevent — the answer key
+ * adjusted after a disappointing score. An edited `expectedStop` can be that
+ * too, and it can also be the honest opposite: the mechanism the fixture
+ * predicted was deliberately removed, so the prediction is now describing
+ * something that cannot happen.
+ *
+ * That is not hypothetical. `lisbon-thread` sealed `structuralRules:
+ * ['no-progress']` to surface a halt it explicitly did not endorse; issue #101
+ * ruled that halt a false stop and removed it, and the fixture had to be
+ * re-sealed with an empty prediction while its `reference` stayed
+ * byte-identical — checked, not assumed, and no H1 measurement was discarded by
+ * that re-seal.
+ *
+ * It is left as one hash rather than split. Two hashes would make the common
+ * case — somebody quietly improving a reference — easier to wave through by
+ * pointing at the half that did not move, and the loud break is the whole
+ * mechanism. What is owed instead is that a re-seal SAYS which half moved and
+ * why, in the commit that does it. This paragraph exists so the next person
+ * asking "does this count?" finds the question already asked.
  */
 
 import { createHash } from 'node:crypto'

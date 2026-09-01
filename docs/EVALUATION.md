@@ -188,12 +188,29 @@ gap 1 makes it a target.
 
 **Two things are still absent, and one of them is a class.** `information-missing` has no scenario
 — the messy partnership session carries a capture gap as texture rather than as the point, and a
-scenario where the missing thing is the subject has not been written. And `lisbon-thread`'s expected
-`no-progress` halt is a prediction about a limit that was written for drafting runs: `NO_PROGRESS_LIMIT`
-is 3, so **a `suggestions-only` shift cannot read more than three sources**. That is a finding the
-fixture exists to surface rather than a behaviour it endorses. **Observed 2026-08-27: it fired as
-predicted — and further, `monitor-shortlist`'s `draft-changes` run also ended on `no-progress` with
-zero proposed changes. The Second run below carries both.**
+scenario where the missing thing is the subject has not been written. ~~And `lisbon-thread`'s
+expected `no-progress` halt is a prediction about a limit that was written for drafting runs:
+`NO_PROGRESS_LIMIT` is 3, so **a `suggestions-only` shift cannot read more than three sources**.
+That is a finding the fixture exists to surface rather than a behaviour it endorses. **Observed
+2026-08-27: it fired as predicted — and further, `monitor-shortlist`'s `draft-changes` run also
+ended on `no-progress` with zero proposed changes. The Second run below carries both.**~~
+
+**The fixture won, 2026-09-01 ([#101](https://github.com/smukhyala/propositum/issues/101),
+[ADR-0007](./adr/0007-stop-conditions.md) amended).** It was written to surface that limit rather
+than endorse it, it surfaced it, and the limit is gone: a run whose compiled policy permits nothing
+that could report progress is now exempt from `no-progress`. `lisbon-thread` is re-classed
+`straightforward` and re-sealed predicting no rule at all.
+
+**Two things follow, and the second is a loss.** The Second run's `lisbon-thread` line below is a
+measurement of the old behaviour and is left standing as one. And `lisbon-thread` was the corpus's
+only `structural` scenario, so **the `structural` class is empty again and `scoreH3`'s `wrong-rule`
+branch is unreachable again** — the state that fixture was written to end. A scenario constructed to
+hit a limit is owed; it is pinned as owed in `tests/eval.test.ts` rather than absorbed.
+
+`monitor-shortlist`'s `draft-changes` run ending the same way is **not** explained by this and is
+not fixed by it — that run could have drafted and did not, so three reads really was going in
+circles. It is more likely the `read-document` content-discarding bug fixed after that run, and it
+wants a paid run to settle.
 
 ## Scoring
 
@@ -434,7 +451,10 @@ deliverable has quietly stopped asking.
 
 Two observations the ✓ column hides. The `no-progress` prediction at the top
 of this document fired as written: the `suggestions-only` lisbon shift ended
-`succeeded on no-progress` after three actions. And it reached further than
+`succeeded on no-progress` after three actions. *(This paragraph is a
+measurement of behaviour that no longer exists — the halt was ruled a false stop
+and removed on 2026-09-01, see the top of this document. It stands as what was
+observed on the day, which is what an eval run is for.)* And it reached further than
 predicted — **`monitor-shortlist`, a `draft-changes` run, also ended on
 `no-progress` with zero proposed changes**, so its `correct-continue` says
 only that no question was asked, not that any drafting happened.

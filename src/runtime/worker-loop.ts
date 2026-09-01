@@ -556,6 +556,17 @@ export async function runWorker(job: WorkerJob, deps: WorkerDeps): Promise<Worke
    */
   let controlLost = false
 
+  /**
+   * Read off the COMPILED allowlist, not off the contract's granted kinds.
+   *
+   * The dial is what removes `draft-section`, and it is the compiled set the
+   * gate evaluates — so asking the contract would answer a question about what
+   * was offered rather than about what this run can actually do.
+   */
+  const progressIsPossible = [...policy.actionKindAllowlist].some((kind) =>
+    PROGRESSING_ACTION_KINDS.has(kind),
+  )
+
   const progress = () => ({
     nowEpochMs: deps.now(),
     deadlineEpochMs: job.deadlineEpochMs,
@@ -564,6 +575,7 @@ export async function runWorker(job: WorkerJob, deps: WorkerDeps): Promise<Worke
     actionsTaken,
     maxActions: policy.maxActions,
     controlLost,
+    progressIsPossible,
   })
 
   const finish = (rules: readonly StopRuleId[], status: 'succeeded' | 'failed'): WorkerResult => ({
@@ -1251,6 +1263,35 @@ interface Performed {
    *  the snapshot. */
   readonly captured?: ScreenCapture | undefined
 }
+
+/**
+ * The kinds whose handler in `perform` can report `changedSomething: true`.
+ *
+ * This is a property OF `perform` below, not a policy and not a taste: it is
+ * the answer to *"if this run may only do these things, could the no-progress
+ * counter ever reset?"*. `src/domain/execution/stop-conditions.ts` needs the
+ * boolean and may not read a policy, so the derivation lives here beside the
+ * handlers it describes.
+ *
+ * Note what is NOT in it. `observe-page` and `capture-screen` are browser kinds
+ * and report no progress — looking at a page again is the browser's version of
+ * re-reading the same document. And `navigate` IS in it while not being a
+ * mutating kind, for the reason the block below `perform` gives: opening a page
+ * gets somewhere. So this set is neither the mutating set nor the browser set,
+ * and collapsing it into either would be wrong in both directions.
+ *
+ * `tests/worker.test.ts` pins it against `perform`'s own source, because a
+ * hand-maintained list that drifts from the handlers fails silently in the
+ * dangerous direction — a run that could make progress, exempted from the rule
+ * that catches it going in circles.
+ */
+export const PROGRESSING_ACTION_KINDS: ReadonlySet<ActionKind> = new Set<ActionKind>([
+  'draft-section',
+  'navigate',
+  'click-element',
+  'type-text',
+  'press-key',
+])
 
 /** Dispatch by kind. Exhaustive over ActionKind, so adding a capability without
  *  handling it here is a type error rather than a silent no-op. */
