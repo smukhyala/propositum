@@ -27,16 +27,21 @@
 #     `propositum.db` and false of this runner: a large share of the files under
 #     `tests/` build a temp SQLite database of their own, each spawning
 #     `npx prisma db push` and then reinstalling and verifying the append-only
-#     triggers before its first assertion. `tests/counts.test.ts` counts them and
-#     refuses the old sentence.
+#     triggers. `tests/counts.test.ts` counts them off that spawn and refuses
+#     the old sentence.
 #
 #     Why it mattered more than a tidy-up: it is the same fact that explains why
 #     a Markdown-only pull request went red on three timeouts here and passed on
-#     a re-run of the very same commit, with nothing changed but the runner. A
-#     header saying CI never touches a database is the reason nobody
-#     looked there, and a red tick that could mean either "a guard fired" or "the
-#     runner was slow" is exactly the promise this block exists to keep honest.
-#     `vitest.config.ts` now sets `testTimeout`, and states what that costs.
+#     a re-run of the very same commit, with nothing changed but the runner.
+#     Not because a database build ran ahead of a failing test's own first
+#     assertion — every push above sits in a `beforeAll(…, 120_000)`, which
+#     vitest bounds with `hookTimeout`. What ran out of time was an ordinary
+#     assertion in a sibling worker while enough of those subprocesses overlapped
+#     on two cores. A header saying CI never touches a database is the reason
+#     nobody looked there, and a red tick that could mean either "a guard fired"
+#     or "the runner was slow" is exactly the promise this block exists to keep
+#     honest. `vitest.config.ts` now sets `testTimeout`, and states what that
+#     costs.
 #
 # Verified before this file was committed: a clone with no `.env`, no
 # `prisma db push` and nothing but `npm ci` passes all four steps below.

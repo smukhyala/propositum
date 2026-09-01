@@ -32,6 +32,7 @@ import { describe, it, expect } from 'vitest'
 import { readFileSync, readdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
+import { stripComments } from './support/strip-comments'
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), '..')
 const read = (path: string): string => readFileSync(join(repo, path), 'utf8')
@@ -150,7 +151,7 @@ describe('a count is checked against the file that knows it', () => {
  *   - *"It does not touch a database."* True of the developer's own
  *     `propositum.db`, which is what `tests/support/no-real-database.ts`
  *     guarantees. False of CI, where every run builds temp SQLite databases and
- *     spawns `npx prisma db push` once per file that needs one.
+ *     spawns `npx prisma db push` once per `beforeAll` that needs one.
  *   - *"1,551 tests across 52 files"*, in a comment whose own next sentence
  *     says the number is deliberately not repeated. It was wrong on both
  *     figures, which is exactly what `AGENTS.md` forbids a hand-maintained
@@ -158,8 +159,15 @@ describe('a count is checked against the file that knows it', () => {
  *
  * The first is the load-bearing one, and not because it is untidy: it is the
  * same fact that explains why three tests time out on a 2-core runner and pass
- * on re-run. A header that says CI never touches a database is the reason
- * nobody looked there.
+ * on re-run. Not because a push runs ahead of the failing test's own first
+ * assertion — every push here sits in a `beforeAll(…, 120_000)`, which vitest
+ * bounds with `hookTimeout` and never with `testTimeout`, so no builder's own
+ * setup was ever charged to the 5000 ms that expired. It is contention: files
+ * run in parallel workers, and the ones spawning a Node process for
+ * `prisma db push` and reinstalling the append-only triggers starve the `it()`
+ * bodies running beside them, which is what all three failures in #97 were. A
+ * header that says CI never touches a database is the reason nobody looked
+ * there.
  *
  * ── What this does NOT check ─────────────────────────────────────────────
  *
@@ -173,16 +181,40 @@ describe('the CI header says what is true of CI, not of a developer', () => {
   // the page on purpose, and a guard that bound them would forbid the honesty.
   const CI = live(read('.github/workflows/ci.yml'))
 
-  /** Test files that build a database of their own, counted off the call. */
+  /**
+   * Test files that build a database of their own, counted off the spawn.
+   *
+   * Comments are stripped first, because the first version of this count did
+   * not. It matched the raw text of any file saying `prisma db push` anywhere,
+   * which caught its own regex literal and three files that only mention the
+   * phrase in a comment or an asserted string — measured 2026-09-01, twenty-four
+   * files of which twenty spawned. A count that cannot come out below its own
+   * floor makes the assertion under it a tautology, and it is the hole
+   * `tests/reachability.test.ts` strips comments to close.
+   *
+   * The self-exclusion below is belt and braces rather than load-bearing: the
+   * pattern's own source escapes the paren, so this file does not match itself
+   * today. It is there so that stops being something to reason about.
+   *
+   * WHAT IT DOES NOT COUNT: pushes. `tests/eval.test.ts` spawns three times,
+   * once per `beforeAll` that needs one, and is one file here.
+   */
+  const SPAWNS_A_PUSH = /execFileSync\(\s*'npx',\s*\[\s*'prisma',\s*'db',\s*'push'/
   const databaseBuilders = readdirSync(join(repo, 'tests'))
     .filter((name) => name.endsWith('.test.ts'))
-    .filter((name) => /'prisma',\s*'db',\s*'push'|prisma db push/.test(read(join('tests', name))))
+    .filter((name) => name !== 'counts.test.ts')
+    .filter((name) => SPAWNS_A_PUSH.test(stripComments(read(join('tests', name)))))
 
   it('has test files that build a database, or the rest of this is about nothing', () => {
     expect(databaseBuilders.length).toBeGreaterThan(0)
   })
 
-  it('does not claim CI never touches a database while that many files build one', () => {
+  it('does not claim CI never touches a database', () => {
+    // The sentence and the count are bound by the test above, not by this one:
+    // if no file spawned a push any more, that one would go red and this rule
+    // would be the wrong rule rather than a failing one. Deleting the sentence
+    // is what passes here; correcting it in place, which is what happened, is
+    // what the strike above the line does.
     expect(live(CI)).not.toMatch(/does not touch a database/i)
   })
 
@@ -193,11 +225,19 @@ describe('the CI header says what is true of CI, not of a developer', () => {
     expect(claimed(CI, 'files')).toEqual([])
   })
 
-  it('gives a suite that builds databases longer than vitest s default', () => {
-    // Not a taste question. The default is 5000ms; a file here spawns
-    // `prisma db push` and reinstalls the append-only triggers before its first
-    // assertion, and on a 2-core runner that has lost the race three times.
-    // Deleting this line puts the flake back, so the line is pinned.
-    expect(read('vitest.config.ts')).toMatch(/testTimeout:\s*[0-9_]+/)
+  it('gives a suite that builds databases longer than the vitest default', () => {
+    // Not a taste question. The default is 5000ms, and on a 2-core runner an
+    // ordinary assertion has lost that three times while sibling workers were
+    // spawning `prisma db push` and reinstalling the append-only triggers.
+    //
+    // The number is parsed rather than matched, because the first version of
+    // this rule asserted the shape only and `testTimeout: 1000` would have
+    // satisfied it — a pin that accepts a value below the default is not a pin.
+    // The floor is the value that cured it; anything under 30_000 has never
+    // been run against the contention this exists for, so raising the ceiling
+    // is free here and lowering it has to be argued.
+    const pinned = /testTimeout:\s*([0-9_]+)/.exec(read('vitest.config.ts'))
+    expect(pinned).not.toBeNull()
+    expect(Number((pinned?.[1] ?? '0').replace(/_/g, ''))).toBeGreaterThanOrEqual(30_000)
   })
 })

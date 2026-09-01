@@ -16,16 +16,26 @@ export default defineConfig({
     // timed out on CI and passed on a re-run of the same commit — a docs-only
     // PR, so nothing had changed but the runner.
     //
-    // This is a property of the SUITE, not of those three tests. A large share
-    // of the files here build a database of their own — `tests/counts.test.ts`
-    // counts them, so the number is not repeated in this comment — and each one
-    // spawns `npx prisma db push` as a subprocess before
-    // `src/persistence/append-only.ts` reinstalls and verifies its triggers,
-    // all of it ahead of the first assertion. On a 2-core `ubuntu-latest`
-    // runner that is the slow path, and the three that failed were the ones
-    // that lost the race, not the ones that are wrong. Per-test timeouts would
-    // have fixed those three and left the next database-backed test somebody
-    // writes to rediscover this.
+    // This is a property of the SUITE, not of those three tests, and the
+    // mechanism is contention rather than setup. A large share of the files
+    // here build a database of their own — `tests/counts.test.ts` counts them
+    // off the spawn, so the number is not repeated in this comment — each
+    // spawning `npx prisma db push` as a subprocess and then letting
+    // `src/persistence/append-only.ts` reinstall and verify its triggers.
+    //
+    // None of that cost is charged to THIS setting, which is the thing that is
+    // easy to get wrong: every one of those pushes sits in a
+    // `beforeAll(…, 120_000)`, and vitest bounds a hook with `hookTimeout`.
+    // What this setting covers is the ordinary `it()` body in a sibling worker
+    // running beside them, which is what all three failures were — they read
+    // "Test timed out in 5000ms", not a hook. On a 2-core `ubuntu-latest`
+    // runner enough of those subprocesses overlap to push a database-backed
+    // assertion past five seconds, and the three that failed were the ones that
+    // lost the race, not the ones that are wrong. Per-test timeouts would have
+    // fixed those three and left the next database-backed test somebody writes
+    // to rediscover this.
+    //
+    // `tests/counts.test.ts` pins this line and refuses a value below 30_000.
     //
     // WHAT IT COSTS, because a timeout is a promise in the other direction: a
     // test that genuinely hangs now takes thirty seconds to say so instead of
