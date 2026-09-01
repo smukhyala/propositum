@@ -49,11 +49,24 @@ export default async function ConfirmPage({
 
   const back = `/shifts/${contractId}`
 
-  if (view.verdict !== null || view.expired) {
+  /**
+   * Three ways this is already over, and only one of them is a verdict.
+   *
+   * `abandoned` joined on 2026-09-01. Before it, a question raised by a run
+   * that was later reaped was neither answered nor expired, so it fell past
+   * this branch into the live screen with both buttons — under a sentence
+   * promising that Propositum picks the work up again afterwards, which by then
+   * was false. The answer path turned the yes down; this screen had offered it.
+   */
+  if (view.verdict !== null || view.expired || view.abandoned) {
     return (
       <Sheet>
         <BackLink href={back}>&larr; While you were away</BackLink>
-        <SettledConfirmation summary={view.summary} verdict={view.verdict}>
+        <SettledConfirmation
+          summary={view.summary}
+          verdict={view.verdict}
+          unanswered={view.abandoned && !view.expired ? 'abandoned' : 'expired'}
+        >
           Nothing on this page can be changed now. What happened next is in &ldquo;While you were
           away&rdquo;.{' '}
           <Link href={back}>Go and look.</Link>

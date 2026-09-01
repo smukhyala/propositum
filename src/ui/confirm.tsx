@@ -385,11 +385,23 @@ export function ConfirmationScreen({ detail, goAhead, dont }: ConfirmationScreen
 export function SettledConfirmation({
   summary,
   verdict,
+  unanswered,
   children,
 }: {
   readonly summary: string
-  /** `confirmed` · `rejected` · `null` when it simply ran out of time. */
+  /** `confirmed` · `rejected` · `null` when nobody answered at all. */
   readonly verdict: string | null
+  /**
+   * Why it is closed when nobody answered. Read only when `verdict` is null.
+   *
+   * Two ways to reach a dead end without a verdict, and they are different
+   * facts a person is owed the right one of: `expired` is *"nobody answered in
+   * time"*, `abandoned` is *"the work ended before your answer arrived"*.
+   * Folding them together would tell somebody who opened the page within a
+   * minute that they had been too slow. Defaults to `expired` because that was
+   * the only one until 2026-09-01 and it is the one every existing caller means.
+   */
+  readonly unanswered?: 'expired' | 'abandoned' | undefined
   readonly children?: ReactNode | undefined
 }): ReactNode {
   return (
@@ -402,7 +414,9 @@ export function SettledConfirmation({
             ? 'You said go ahead.'
             : verdict === 'rejected'
               ? "You said don't."
-              : 'This question went unanswered for a day, so Propositum stopped waiting. Nothing was done.'}
+              : unanswered === 'abandoned'
+                ? 'Propositum stopped before anyone answered this, so there is nothing left for a yes to carry on. Nothing was done.'
+                : 'This question went unanswered for a day, so Propositum stopped waiting. Nothing was done.'}
         </p>
         <p className="cf-note">{children}</p>
       </Section>

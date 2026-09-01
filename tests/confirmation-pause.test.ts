@@ -65,7 +65,7 @@ import {
 } from '../src/domain/execution/stop-conditions'
 import { startWorkerProcess } from '../src/runtime/worker-process'
 import type { FenceVerdict, RunFence } from '../src/runtime/worker-process'
-import { ConfirmationScreen } from '../src/ui/confirm'
+import { ConfirmationScreen, SettledConfirmation } from '../src/ui/confirm'
 import { createLedgerWriter } from '../src/persistence/ledger-writer'
 import { executeRun } from '../src/server/execute-run'
 import { stripComments } from './support/strip-comments'
@@ -1907,5 +1907,126 @@ describe('a paused run is parked in one transaction', () => {
     // transaction. Either one appearing here is the bug returning.
     expect(block).not.toContain('repos.confirmations.create')
     expect(block).not.toContain('repos.runs.complete')
+  })
+})
+
+/* ═════════════════════════ 10. a question whose work is over ═════════════ */
+
+/**
+ * The half of #108 that PR #111 left open on purpose.
+ *
+ * `raiseAndPark` closed the window where a question could exist beside a run
+ * still holding a control token. It did not close the other end: `confirmRequest`
+ * checked that the request existed, had no verdict and had not expired, and
+ * never read the parent run's status. So a question raised by a run that was
+ * later reaped — `interrupted` / `lease-expired`, credential revoked, precisely
+ * because we stopped trusting it to be driving — could still be answered, and
+ * answering enqueued a continuation off the back of it.
+ *
+ * That was never a permission failure. A human really did confirm. It is a
+ * person being asked about work that had been abandoned, and not being told.
+ *
+ * ── Why the fix is symmetry rather than invention ────────────────────────
+ *
+ * Two sibling queries in `src/server/confirmations.ts` already filter on
+ * `run: { status: 'awaiting-confirmation' }` — `expireConfirmations` and
+ * `oldestPendingConfirmation`. So the question already vanished from the
+ * extension's notification while staying fully answerable by URL. The one that
+ * GRANTS something was the one not looking.
+ *
+ * ── How small the reachable population is, said rather than implied ──────
+ *
+ * `sweepExpiredLeases` matches `claimed | running` only, so since `raiseAndPark`
+ * a correctly-parked run cannot be reaped at all. What can still reach this
+ * state is a row written before that landed, and a run reaped before it got as
+ * far as parking. The hole is real and it is narrow; the tests below construct
+ * the state directly rather than pretending a live sweep produces it.
+ */
+describe('a question is not answerable once the work behind it is over', () => {
+  /** The state, however it was arrived at: a request whose run is not parked. */
+  async function reaped(): Promise<Paused> {
+    const paused = await pausedShift({
+      acceptedAt: new Date('2026-05-04T09:00:00Z'),
+      askedAt: new Date('2026-05-04T09:05:00Z'),
+    })
+    await db.prisma.agentRun.update({
+      where: { id: paused.runId },
+      data: { status: 'interrupted', terminalReason: 'lease-expired', controlToken: null },
+    })
+    return paused
+  }
+
+  it('turns the yes down rather than enqueueing work off an abandoned run', async () => {
+    const paused = await reaped()
+
+    const answered = await confirmRequest(ctx, paused.requestId, new Date('2026-05-04T09:06:00Z'))
+
+    expect(answered.ok).toBe(false)
+    if (answered.ok) return
+    expect(answered.reason).toBe('abandoned')
+  })
+
+  it('writes no verdict, so the gate sees the absence it saw before', async () => {
+    const paused = await reaped()
+    await confirmRequest(ctx, paused.requestId, new Date('2026-05-04T09:06:00Z'))
+
+    // The same property expiry has. A refusal that recorded a `confirmed` row
+    // and then declined to act on it would leave a permission on disk for the
+    // next thing that reads one.
+    const verdict = await db.prisma.confirmationVerdict.findUnique({
+      where: { requestId: paused.requestId },
+    })
+    expect(verdict).toBeNull()
+  })
+
+  it('still lets the person say no, because saying no grants nothing', async () => {
+    const paused = await reaped()
+
+    // Same asymmetry `rejectRequest` already has against expiry. A no is a
+    // record of what the person wanted, and it authorises nothing, so there is
+    // no reason to refuse it — and refusing would leave them unable to answer
+    // at all.
+    const rejected = await rejectRequest(ctx, paused.requestId, new Date('2026-05-04T09:06:00Z'))
+    expect(rejected.ok).toBe(true)
+  })
+
+  it('leaves a properly parked question answerable, or this rule eats the product', async () => {
+    const paused = await pausedShift({
+      acceptedAt: new Date('2026-05-04T09:00:00Z'),
+      askedAt: new Date('2026-05-04T09:05:00Z'),
+    })
+
+    const answered = await confirmRequest(ctx, paused.requestId, new Date('2026-05-04T09:06:00Z'))
+    expect(answered.ok).toBe(true)
+  })
+
+  it('tells the screen so, before the person is offered a button', async () => {
+    const paused = await reaped()
+
+    const view = await confirmationView(ctx, paused.requestId, Date.parse('2026-05-04T09:06:00Z'))
+    expect(view).not.toBeNull()
+    if (!view) return
+
+    // Neither answered nor expired, so without this the page falls through to
+    // the live screen with both controls — under copy promising that Propositum
+    // picks the work up again afterwards, which by then is false.
+    expect(view.verdict).toBeNull()
+    expect(view.expired).toBe(false)
+    expect(view.abandoned).toBe(true)
+  })
+
+  it('says what happened in words that name no verdict nobody gave', async () => {
+    const html = renderToStaticMarkup(
+      createElement(SettledConfirmation, {
+        summary: 'Propositum wants to press Send on mail.example.test.',
+        verdict: null,
+        unanswered: 'abandoned' as const,
+      }),
+    )
+    const said = html.replace(/<[^>]*>/g, ' ').replace(/&#x27;|&rsquo;/g, "'")
+
+    expect(said).toContain('stopped before anyone answered')
+    // The expiry sentence is a different fact and must not stand in for this one.
+    expect(said).not.toContain('went unanswered for a day')
   })
 })

@@ -226,6 +226,17 @@ export interface ConfirmationView {
   /** True once the question is older than `CONFIRMATION_EXPIRY_HOURS`. */
   readonly expired: boolean
   /**
+   * The run that raised this is no longer parked on it, so the question can no
+   * longer be confirmed however promptly the person answers.
+   *
+   * Separate from `expired` because they are different facts and the person is
+   * owed the right one: expiry is *"nobody answered in time"*, this is *"the
+   * work ended before your answer arrived"*. Neither is a verdict, and a screen
+   * that folded them together would tell somebody who answered within a minute
+   * that they were too slow.
+   */
+  readonly abandoned: boolean
+  /**
    * Even crediting the wait about to be recorded, the shift is over — so
    * answering yes will be honoured as a yes and the work will still not carry
    * on. Said on the screen, before they press anything.
@@ -331,7 +342,7 @@ export async function confirmationView(
       createdAt: true,
       evidenceId: true,
       verdict: { select: { verdict: true } },
-      run: { select: { contractId: true } },
+      run: { select: { contractId: true, status: true } },
       intent: { select: { kind: true, params: true } },
       // `image` is deliberately NOT selected. It is a multi-megabyte PNG and
       // this function only needs to know whether there is one; the page reads
@@ -385,6 +396,9 @@ export async function confirmationView(
       requestedAtEpochMs: row.createdAt.getTime(),
       nowEpochMs,
     }),
+    // The same test `confirmRequest` applies, read off the same column, so the
+    // screen cannot offer a button the answer path would turn down.
+    abandoned: row.run.status !== 'awaiting-confirmation',
     pastDeadline: creditedDeadline !== null && nowEpochMs >= creditedDeadline,
     attested: {
       origin,
@@ -433,7 +447,15 @@ export type AnswerResult =
   | { readonly ok: true; readonly continuationRunId: string | null }
   | {
       readonly ok: false
-      readonly reason: 'not-found' | 'already-answered' | 'expired'
+      /**
+       * `abandoned` — the run that raised the question is no longer parked on
+       * it. Added 2026-09-01. It is not a permission failure and it is not the
+       * person's mistake: a human really did confirm. It is that the work the
+       * question was about had already ended, so there is nothing for a yes to
+       * let carry on, and enqueueing a continuation off it would start work on
+       * the strength of a run we had stopped trusting to be driving.
+       */
+      readonly reason: 'not-found' | 'already-answered' | 'expired' | 'abandoned'
     }
 
 /**
@@ -461,11 +483,33 @@ export async function confirmRequest(
       runId: true,
       createdAt: true,
       verdict: { select: { verdict: true } },
-      run: { select: { contractId: true } },
+      run: { select: { contractId: true, status: true } },
     },
   })
   if (!request) return { ok: false, reason: 'not-found' }
   if (request.verdict) return { ok: false, reason: 'already-answered' }
+
+  /**
+   * The run has to still be parked on this question.
+   *
+   * Without it, a question raised by a run that was later reaped —
+   * `interrupted` / `lease-expired`, credential revoked, precisely because we
+   * stopped trusting it to be driving — could be answered, and answering
+   * enqueued a continuation off the back of it.
+   *
+   * This is symmetry rather than a new rule. `expireConfirmations` and
+   * `oldestPendingConfirmation` below both already carry
+   * `run: { status: 'awaiting-confirmation' }`, so the question had already
+   * vanished from the extension's notification while staying answerable by URL.
+   * The one function here that GRANTS something was the one not looking.
+   *
+   * Checked BEFORE expiry on purpose. Both refuse, so the order cannot change
+   * what is permitted — it changes what the person is told, and "the work
+   * ended" is the truer of the two about a question that was also old.
+   */
+  if (request.run.status !== 'awaiting-confirmation') {
+    return { ok: false, reason: 'abandoned' }
+  }
 
   /**
    * Expiry refuses the yes rather than converting it into one.

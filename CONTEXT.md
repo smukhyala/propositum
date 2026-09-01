@@ -1223,7 +1223,12 @@ row**: the queue is a status column and one guarded `UPDATE … RETURNING`, not 
 `leaseExpiresAt`, `cancelRequested`, `lastCompletedStepOrdinal`, `startedAt`, `endedAt`,
 `terminalReason`.
 
-`status`: `queued · running · completed · halted · interrupted · failed`.
+~~`status`: `queued · running · completed · halted · interrupted · failed`.~~
+**Corrected 2026-09-01: the code also has `pending` and `awaiting-confirmation`, and the second one
+is now load-bearing outside the worker.** `confirmRequest` refuses a yes unless the run is still
+`awaiting-confirmation`, so a value this list does not mention decides whether a person's answer is
+accepted. The divergence below already said this entry disagrees with the schema; what changed is
+that it stopped being only a specification gap and became a term a refusal turns on.
 `terminalReason` is closed, **code-assigned**, and partitions strictly by status:
 
 | Status | Reasons |
@@ -1518,6 +1523,13 @@ as an **attributed quotation**, exactly as an inferred `constraint` claim is.
 The question is never model-composed. A model that could write the words asking for its own
 permission is a model that can argue for itself, and the page-authored half is quoted with
 attribution rather than spoken in Propositum's voice.
+
+**It is answerable only while the run is still parked on it** *(added 2026-09-01)*. A question
+raised by a run that was later reaped is closed rather than live: the person is told the work ended
+before their answer arrived, and no verdict is written. This is not a fourth thing expiry does — a
+question can be closed this way one minute after it was asked, and telling somebody who answered
+promptly that they were too slow is the failure the two sentences are kept apart to prevent. Saying
+**no** is still accepted, on the standing rule that a rejection grants nothing.
 *Checked against the banned words:* not bare `action`, not `approval` (displaced by ChangeVerdict),
 not `escalation` (displaced by DecisionNeeded).
 *Displaces:* approval request · permission prompt · escalation · are-you-sure · gate prompt ·
