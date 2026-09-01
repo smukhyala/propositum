@@ -65,10 +65,13 @@ not**, because elapsed silence cannot tell a slept machine from a dead service w
 reviewer finding about a whole production is rendered on the card it belongs to instead of being
 stored and shown to nobody.
 
-**What is left in that block is one pin, and it is different in kind.** `LANDING_ACTION_KINDS` is
-empty because `extension/src/cdp.js` refuses every non-`GET` unconditionally — a mechanism, not a
-*not yet*, and spending it is [ADR-0024](./docs/adr/0024-purchases-within-a-ratified-authorisation.md)
-rather than an afternoon of wiring.
+~~**What is left in that block is one pin, and it is different in kind.**~~ **The block emptied on
+2026-09-01: the pin went red on the commit that built
+[ADR-0024](./docs/adr/0024-purchases-within-a-ratified-authorisation.md), exactly as it said it
+would, and was promoted.** `LANDING_ACTION_KINDS` holds `complete-purchase`; the extension refuses
+any non-`GET` that arrives without a one-shot landing permit a ratified authorisation armed, and
+releases exactly one covered request at or under the ceiling. The mechanism was spent by the ADR the
+old sentence named, not by an afternoon of wiring.
 
 ~~That is three.~~ ~~**Corrected 2026-08-16: the suite pins seven.**~~ ~~**The suite pins ten, and
 this paragraph accounts for six of them — corrected 2026-08-16, twice in one day.**~~
@@ -104,10 +107,12 @@ moved up: `tests/reachability.test.ts` now asserts the opposite — that every m
 written in the morning and outlived the claim by an afternoon**, which is the shortest half-life in
 this file since the Stage 1 row. What was spent: `DecisionVerdict` sat in the
 deferred block for one commit and moved up when something wrote one, which is that block working
-rather than a claim about it. `LANDING_ACTION_KINDS` — **still empty, so no irreversible outcome can occur**, which
-[ADR-0010](./docs/adr/0010-acting-in-the-browser.md) now records as a decision about the transport
-rather than caution: the extension fails every non-`GET` request unconditionally, so a landing kind
-would be a claim the channel cannot honour. [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) marks
+rather than a claim about it. `LANDING_ACTION_KINDS` — ~~**still empty, so no irreversible outcome
+can occur**~~ **holds `complete-purchase` since 2026-09-01 (ADR-0024 built): one irreversible
+outcome kind can occur, within a ratified ceiling, and only that** — which
+[ADR-0010](./docs/adr/0010-acting-in-the-browser.md) recorded as a decision about the transport:
+the extension still fails every uncovered non-`GET` request, so any other landing kind
+would still be a claim the channel cannot honour. [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) marks
 each of these against the layer it belongs to.
 
 ~~**Not measured:** the harness produces H1 material and cannot yet produce H2 or H3, and both
@@ -350,7 +355,11 @@ either version — the control channel is built and **no run yet constructs one*
 `tests/reachability.test.ts`.~~ **Struck 2026-08-20: a run constructs one.** The narrower claim was
 true for nine days and is not now — a shift whose ratified agreement grants a kind needing a live
 page drives the person's own Chrome, and the gate stops for a person before anything the browser
-attests it cannot take back. What has *not* moved is `LANDING_ACTION_KINDS`, still empty. [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) marks it layer by
+attests it cannot take back. ~~What has *not* moved is `LANDING_ACTION_KINDS`, still empty.~~
+**Moved 2026-09-01 — ADR-0024 built: it holds `complete-purchase`, and a ratified authorisation
+can land exactly one covered charge at or under its ceiling. The live purchase itself has not been
+made; [`docs/todo/06-buying-things.md`](./docs/todo/06-buying-things.md) keeps that open.**
+[`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) marks it layer by
 layer; [`docs/ROADMAP.md`](./docs/ROADMAP.md) has the stages beyond slice 0.
 
 The project's own principle applies to its README: say the true thing, including when it's

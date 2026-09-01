@@ -90,7 +90,7 @@ const run: RunContext = {
   targetEvidence: harmless,
   // Zero, not absent: the gate fails closed on an absent counter, so the base
   // fixture wires it the way the loop does.
-  chargesLanded: 0,
+  chargesSpent: 0,
 }
 
 const read: ToolProposal = {
@@ -133,7 +133,7 @@ const VALID_PARAMS: Readonly<Record<ActionKind, ActionParams>> = {
   'capture-screen': {},
   // No confirmationId, deliberately: the ratified authorisation is the consent
   // (ADR-0024 §4), and the kind is outside CONFIRMABLE_ACTION_KINDS. What makes
-  // it permitted is the base fixtures' authorisation and chargesLanded.
+  // it permitted is the base fixtures' authorisation and chargesSpent.
   'complete-purchase': { snapshotId: 'snap-1', ref: 'e12' },
 }
 
@@ -978,16 +978,16 @@ describe('a purchase is authorised by the ratified object, and by nothing else',
     expect(earlier).toEqual({ authorized: false, rule: 'purchase_expired' })
   })
 
-  it('refuses the charge past the count, and counts landings only', () => {
-    const atCount = gate(valid('complete-purchase'), {}, { chargesLanded: 2 })
+  it('refuses the charge past the count — attempts, the closed direction for money', () => {
+    const atCount = gate(valid('complete-purchase'), {}, { chargesSpent: 2 })
     expect(atCount).toEqual({ authorized: false, rule: 'purchase_count_exceeded' })
 
-    const underCount = gate(valid('complete-purchase'), {}, { chargesLanded: 1 })
+    const underCount = gate(valid('complete-purchase'), {}, { chargesSpent: 1 })
     expect(underCount.authorized).toBe(true)
   })
 
   it('fails closed on an absent counter — an unwired ledger never spends', () => {
-    const r = gate(valid('complete-purchase'), {}, { chargesLanded: undefined })
+    const r = gate(valid('complete-purchase'), {}, { chargesSpent: undefined })
     expect(r).toEqual({ authorized: false, rule: 'purchase_count_exceeded' })
   })
 

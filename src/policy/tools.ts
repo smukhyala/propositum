@@ -79,7 +79,14 @@
  *     `DOMStorage.getDOMStorageItems`. A session Propositum can act inside is
  *     not a session Propositum may copy out.
  *   - **`readResponseBody`.** Requests are inspected for method and origin —
- *     which is how irreversibility is attested — and their bodies are not read.
+ *     which is how irreversibility is attested — ~~and their bodies are not
+ *     read~~ **and, since 2026-09-01, exactly one request body class is: a
+ *     non-`GET` under an armed landing permit has its `postData` parsed for
+ *     the amount the ceiling is checked against (ADR-0024). Reading the one
+ *     request we are deciding whether to RELEASE is not reading the person's
+ *     data at rest, and `tests/extension-cdp.test.ts` pins that no `Network.*`
+ *     domain — the wholesale-read surface — is ever enabled.** Response bodies
+ *     are still never read.
  *   - **File upload and download.** No `DOM.setFileInputFiles`, no download
  *     interception. Neither the person's filesystem nor ours is reachable.
  *   - **Drag, device emulation, and clipboard.** Three separate capabilities
@@ -472,10 +479,9 @@ export interface PurchaseDeps extends BrowserDeps {
  * request left the machine" and nothing weaker, because the charge counter and
  * the landed-outcome derivation both stand on it.
  *
- * (While the transport still refuses every non-`GET` — docs/todo/06 item 5 —
- * this tool is reachable only in tests: dispatch answers `blocked-request` and
- * the throw below is the `BrowserControlError` path, which is itself the
- * asserted-inert behaviour.)
+ * ~~(While the transport still refuses every non-`GET` this tool is reachable
+ * only in tests…)~~ **Item 5 landed 2026-09-01: the transport honours the
+ * permit and this tool is live end to end.**
  */
 export async function completePurchase(
   action: AuthorizedAction<'complete-purchase'>,

@@ -119,7 +119,7 @@ import {
   shouldStop,
 } from '../domain/execution/stop-conditions'
 import type { StopRuleId } from '../domain/execution/stop-conditions'
-import { confirmationQuestion } from '../domain/execution/confirmation-question'
+import { chargeRefusedQuestion, confirmationQuestion } from '../domain/execution/confirmation-question'
 import type { ElementEvidence } from '../domain/execution/reversibility'
 import { SNAPSHOT_BUDGET_CHARS, datamark } from '../model/untrusted'
 import type { Datamarked } from '../model/untrusted'
@@ -506,7 +506,7 @@ export async function runWorker(job: WorkerJob, deps: WorkerDeps): Promise<Worke
         turns: [] as HistoryTurn[],
         actionsTaken: 0,
         mutatingActionsTaken: 0,
-        chargesLanded: 0,
+        chargesSpent: 0,
         orphanedIntentIds: [],
         confirmations: [] as ConfirmedAction[],
         confirmedRequestIds: new Set<string>(),
@@ -520,7 +520,7 @@ export async function runWorker(job: WorkerJob, deps: WorkerDeps): Promise<Worke
   let refusals = 0
   let actionsTaken = rebuilt.actionsTaken
   let mutatingActionsTaken = rebuilt.mutatingActionsTaken
-  let chargesLanded = rebuilt.chargesLanded
+  let chargesSpent = rebuilt.chargesSpent
   let consecutiveNoProgress = 0
   let consecutiveRefusals = 0
   let summary: string | undefined
@@ -892,7 +892,7 @@ export async function runWorker(job: WorkerJob, deps: WorkerDeps): Promise<Worke
         currentSnapshotId: page?.snapshotId ?? null,
         actionsTaken,
         mutatingActionsTaken,
-        chargesLanded,
+        chargesSpent,
         // Looked up against the snapshot the RUN last saw, never against the one
         // the proposal named. A proposal naming a stale snapshot is refused
         // before this matters, and looking evidence up by the model's own value
@@ -1018,6 +1018,7 @@ export async function runWorker(job: WorkerJob, deps: WorkerDeps): Promise<Worke
      */
     let performed: Performed | null = null
     let failed: string | null = null
+    let chargeRefused: { question: string; whyItMatters: string } | null = null
 
     try {
       performed = await perform(verdict.action, intentId, deps, gathered, policy.purchase)
@@ -1038,6 +1039,18 @@ export async function runWorker(job: WorkerJob, deps: WorkerDeps): Promise<Worke
       if (error instanceof BrowserControlError && error.failure === 'control-lost') {
         controlLost = true
       }
+
+      // ADR-0024 §3's "refuses and asks". The two amount refusals are the
+      // transport doing its job a moment after the person authorised charging,
+      // and they end the run with a question rather than reading as one more
+      // channel failure — the failed outcome is still written below first, so
+      // the ledger holds the attempt before the question is raised.
+      if (
+        error instanceof BrowserControlError &&
+        (error.failure === 'amount-over-ceiling' || error.failure === 'amount-unparseable')
+      ) {
+        chargeRefused = chargeRefusedQuestion({ failure: error.failure, detail: error.message })
+      }
     }
 
     // Attempted either way. An action that was authorised and dispatched counts
@@ -1046,15 +1059,16 @@ export async function runWorker(job: WorkerJob, deps: WorkerDeps): Promise<Worke
     actionsTaken += 1
     if (MUTATING_ACTION_KINDS.has(verdict.action.kind)) mutatingActionsTaken += 1
 
-    // The charge counter moves on SUCCESS ONLY, unlike the caps above, and the
-    // asymmetry is the safety: the transport's permit is one-shot and its
-    // consumption is what a success reports, so a failed attempt landed
-    // nothing — while an attempt-counted charge would let three failures spend
-    // a maxCount of three without a cent moving. The rebuild in history.ts
-    // counts the same way off durable rows, so the two never disagree.
-    if (verdict.action.kind === 'complete-purchase' && performed !== null) {
-      chargesLanded += 1
-    }
+    // The charge counter spends on the ATTEMPT, like the caps above and for
+    // the caps' own reason — a failure is not a refund. The rejected shape was
+    // success-only counting: it reads exact until a throw lands between the
+    // covered request leaving and the report arriving, where the row says
+    // failed, the charge moved, and a retry would spend the ratified count
+    // twice. Attempts fail closed across that gap; a pre-press failure
+    // consuming a count is recovered by re-ratifying, which is the cheap
+    // direction. The rebuild in history.ts counts the same way off durable
+    // rows, so the two never disagree.
+    if (verdict.action.kind === 'complete-purchase') chargesSpent += 1
 
     if (performed !== null) {
       consecutiveNoProgress = performed.changedSomething ? 0 : consecutiveNoProgress + 1
@@ -1089,6 +1103,16 @@ export async function runWorker(job: WorkerJob, deps: WorkerDeps): Promise<Worke
         detail: failed ?? 'unknown',
       })
       history.push({ kind: proposal.kind, summary: proposal.reason, outcome: `failed: ${failed}` })
+
+      // After the row, never before it: the question refers to an attempt the
+      // ledger can show. The run ends here because the extension has already
+      // halted the channel over a refused charge, and forty more proposals
+      // would each meet the plain block — the person's answer is prose, and
+      // the remedy is a re-ratification, not a retry.
+      if (chargeRefused !== null) {
+        decisions.push({ ...chargeRefused, atStep: ordinal })
+        return finish(['decision-needed'], 'succeeded')
+      }
     }
 
     const afterAction = shouldStop(progress(), job.controls.interruption, false)
@@ -1232,7 +1256,7 @@ function runContext(
     currentSnapshotId: string | null
     actionsTaken: number
     mutatingActionsTaken: number
-    chargesLanded: number
+    chargesSpent: number
     targetEvidence: ElementEvidence | null
     confirmedRequestIds: ReadonlySet<string>
   },

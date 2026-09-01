@@ -130,3 +130,56 @@ export function confirmationQuestion(facts: ConfirmationFacts): string {
       return `Do something on ${where}`
   }
 }
+
+/**
+ * The question a refused charge leaves for the person — ADR-0024 §3's
+ * "refuses and asks", said at re-entry.
+ *
+ * A SEPARATE function from `confirmationQuestion`, deliberately, so that
+ * function's docblock stays true: it says the method is not knowable because
+ * nothing has been sent, and on THIS path the opposite holds — Chrome held the
+ * request, the extension parsed the body it was deciding whether to release,
+ * and the detail below is that attested account, composed by our own code in
+ * `onIrreversibleBlocked`'s mirror. Same discipline, opposite epistemic
+ * situation, and merging them would give one function two contradictory
+ * headers.
+ *
+ * It is a `DecisionNeeded`, not a `ConfirmationRequest`, and the difference is
+ * load-bearing (ADR-0022): an answer here grants nothing, widens nothing, and
+ * reverses nothing. A yes-path would need the ceiling to travel back to the
+ * transport relaxed, which is the one thing no dial, default, or answer may do
+ * — the person's remedy is a new agreement with a ceiling they choose, ratified
+ * on the screen that shows it.
+ *
+ * Pure and total: no clock, no I/O, and the detail is OUR string (the
+ * extension's code-composed report), never page text or model prose.
+ */
+export function chargeRefusedQuestion(facts: {
+  readonly failure: 'amount-over-ceiling' | 'amount-unparseable'
+  readonly detail: string
+}): { readonly question: string; readonly whyItMatters: string } {
+  // `BrowserControlError.message` arrives as `<failure>: <detail>`; strip the
+  // machine prefix so the person reads the account, not the identifier.
+  const attested = facts.detail.replace(/^[a-z-]+:\s*/, '')
+
+  if (facts.failure === 'amount-over-ceiling') {
+    return {
+      question:
+        `The charge came to more than you authorised (${attested}), so it was refused at the ` +
+        'network. Nothing was charged.',
+      whyItMatters:
+        'The ceiling you ratified is the whole of the permission, and nothing here can raise it — ' +
+        'not a setting, not an answer to this question. If you want this bought, hand the work ' +
+        'over again with a ceiling that covers it, or buy it yourself.',
+    }
+  }
+  return {
+    question:
+      `The site's charge could not be read as one exact amount (${attested}), so the purchase ` +
+      'was refused at the network. Nothing was charged.',
+    whyItMatters:
+      'The ceiling only binds when the amount can be checked against it, so an unreadable charge ' +
+      'is refused rather than guessed at. If you want this bought, buy it yourself — the refusal ' +
+      'is the check working, not failing.',
+  }
+}

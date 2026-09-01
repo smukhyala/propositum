@@ -143,9 +143,15 @@ never start passing.
 `maxAmount` exists because *"buy 10 avocados"* must not become a $400 charge — through a wrong
 variant, a subscription upsell, a currency confusion, or a page that is not the page we thought.
 
-A charge above the ceiling **refuses and asks**. That is the one confirmation that survives this
-decision, and it is well-behaved precisely because it is rare: it fires only when something has
-already gone wrong, so a person seeing one has reason to read it. A confirmation that fires on every
+A charge above the ceiling **refuses and asks**. ~~That is the one confirmation that survives this
+decision~~ **Corrected 2026-09-01, by the build, toward the stricter verb:** what survives is a
+`DecisionNeeded`, not a `ConfirmationRequest` — the human **answers**, and per ADR-0022 an answer
+grants nothing. A confirmation here would need a yes-path, and a yes-path would need the ceiling to
+travel back to the transport relaxed, which is the relaxation §*below* forbids every dial; the
+person's remedy is a fresh agreement with a ceiling they choose, ratified on the screen that shows
+it. The rest of the paragraph holds as written: it is well-behaved precisely because it is rare — it
+fires only when something has
+already gone wrong, so a person seeing one has reason to read it. A question that fires on every
 purchase teaches people to dismiss it; one that fires when the number is wrong teaches them to look.
 
 **Per [principle 6](../PRODUCT_PRINCIPLES.md), no control may relax this.** A setting may turn

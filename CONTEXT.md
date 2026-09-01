@@ -1007,12 +1007,18 @@ tripwire answered by construction. Optional on `ContractScope`; **its absence is
 fields…~~ **The fence came off 2026-09-01: the fields exist** — `src/domain/handoff/policy.ts`
 declares the object, `prisma/schema.prisma` holds five nullable `purchase*` columns on the contract,
 and the gate refuses `complete-purchase` with `purchase_not_authorized`, `purchase_count_exceeded`
-and `purchase_expired`. **What has NOT moved: the transport.** `LANDING_ACTION_KINDS` is still
-empty, `extension/src/cdp.js` still refuses every non-`GET` unconditionally — so **Propositum still
-cannot buy anything today**, and `src/ui/agreement.tsx` is still right to say so.
-`tests/architecture.test.ts` couples that screen's promise to the transport, and the commit that
-moves the branch is the one that moves the sentence
-([`docs/todo/06-buying-things.md`](docs/todo/06-buying-things.md) item 5).
+and `purchase_expired`. ~~**What has NOT moved: the transport.**~~ **The transport moved later the
+same day: item 5 landed.** `LANDING_ACTION_KINDS` holds `complete-purchase`, and the extension
+refuses any non-`GET` without a one-shot landing permit a ratified authorisation armed — releasing
+exactly one covered request at or under the ceiling. *The landing permit is the extension-internal
+mechanism of THIS term and deliberately gets no noun of its own in the glossary: it is a
+not-persisted value in `chrome.storage.session`, armed per `complete-purchase` command from these
+fields and dead on consumption, refusal, expiry, or the tab being given up — a projection of the
+authorisation, never a second authority over it.* So **Propositum can buy exactly what a person
+ratified, and still nothing else**; the agreement screen confines *"Buy anything"* to the
+no-authorisation arm, and `tests/architecture.test.ts`'s updated guard couples the two arms the way
+the old one coupled the absolutes. The live purchase has not been made —
+[`docs/todo/06-buying-things.md`](docs/todo/06-buying-things.md) keeps its *Done when* open on it.
 
 What a person ratified about spending, for one contract. A model **drafts** it from the instruction —
 *"Buy 10 avocados from Amazon"* names a merchant, an item and a quantity, so there is something to
@@ -1929,7 +1935,13 @@ One thing the worker judged it could not safely decide:
 The centrepiece of the initial supported scenario — Propositum completes the draft **and** identifies
 one strategic decision — which is only consistent with the run continuing. So this is **not a halt
 and not a gate refusal.** It is not an ActionIntent (nothing was proposed and refused), not a
-ChangeVerdict, and not an `openThread` claim (that is a pre-handoff strand).
+ChangeVerdict, and not an `openThread` claim (that is a pre-handoff strand). *(One class is
+narrower since 2026-09-01, ADR-0024's build: a refused CHARGE — `amount-over-ceiling` or
+`amount-unparseable` at the transport — raises a `DecisionNeeded` built by `chargeRefusedQuestion`
+from the extension's attested account, and there the failed `ActionIntent`/`ActionOutcome` pair
+exists first and the run ends with the question. What made `DecisionNeeded` the right shape anyway
+is its load-bearing property, which is unchanged: the answer is prose and grants nothing — a
+confirmation would need a yes-path, and a yes-path would need the ceiling relaxed in flight.)*
 
 Naming it is not new abstraction: the brief already mandates "human decisions required" as a
 ShiftReport field, and without a name the demo's headline output is unrepresentable.
@@ -2147,11 +2159,11 @@ say that it does.
     returns `blocked-request` for every non-`GET`, and `grep -rn 'PurchaseAuthorization' src/` finds
     nothing.~~ **Re-marked 2026-09-01, the day ADR-0024's build began:** the grep finds the object
     now — the type, the gate rules and the columns exist, and `complete-purchase` is in the enum,
-    grantable only by ratification. `LANDING_ACTION_KINDS` is still empty and the extension still
-    returns `blocked-request` for every non-`GET` (the line numbers this entry used to cite have
-    moved; the facts have not), so buying still cannot happen — the build's own order is the safety
-    argument, and [`docs/todo/06-buying-things.md`](docs/todo/06-buying-things.md) item 5 is the
-    moment both facts change together. What ADR-0024 changed is the **reason** the set is empty: it
+    grantable only by ratification. ~~`LANDING_ACTION_KINDS` is still empty…~~ **Item 5 landed
+    later the same day: the set holds `complete-purchase`, the extension's refusal is
+    permit-conditional with absence meaning exactly what unconditional meant, and buying happens —
+    once per ratified authorisation, at or under its ceiling, and in no other case.** What ADR-0024
+    changed first was the **reason** the set was empty: it
     was *the transport cannot
     honour a member* and it is now *the transport has been decided against and nobody has written the
     code*. The correction is left visible rather than tidied because stating a decision in the present

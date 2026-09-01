@@ -481,8 +481,11 @@ export function flattenAXTree(nodes, options) {
  *
  * ── Two rules, and one of them is narrower than it first reads ───────────
  *
- * **Any non-`GET` is blocked.** No scoping, no exceptions. The property that
- * buys is unconditional: while Propositum holds this tab, it does not send a
+ * ~~**Any non-`GET` is blocked.** No scoping, no exceptions.~~ **One exception
+ * since 2026-09-01, and it is not a confirmation:** a single covered non-`GET`
+ * under a one-shot landing permit a ratified `PurchaseAuthorization` armed —
+ * see the five-argument form below. Everything else: while Propositum holds
+ * this tab, it does not send a
  * request that changes something ~~without a human having confirmed it~~
  * **— including after a human has confirmed it.**
  *
@@ -506,8 +509,16 @@ export function flattenAXTree(nodes, options) {
  * confirmation explicitly, on habituation grounds. Somebody reading the old
  * clause after that change would have taken it for a correct description.
  *
- * As of this correction ADR-0024 is a decision and nothing here implements it:
- * the two branches below still refuse every non-`GET`.
+ * ~~As of this correction ADR-0024 is a decision and nothing here implements it:
+ * the two branches below still refuse every non-`GET`.~~ **Built 2026-09-01.**
+ * The block is conditional now, on exactly what the ADR said and nothing else:
+ * a one-shot landing permit armed per ratified `complete-purchase` command —
+ * origin equal (never a pattern), amount parsed deterministically and at or
+ * under the ceiling, currency matching, within the permit's own window. No
+ * permit, or any mismatch, refuses as before; an unparseable or over-ceiling
+ * amount refuses AND reports its own typed failure, because those are the two
+ * refusals a person is later asked about. Still not a confirmation, still no
+ * bypass for one.
  *
  * **Off-origin is checked on the TOP-LEVEL `Document` request only** — that is,
  * on the tab navigating somewhere. This is narrower than a literal reading of
@@ -541,7 +552,7 @@ export function flattenAXTree(nodes, options) {
  * sign-in redirect to an identity provider outside the approved sources is
  * blocked, and an off-origin `GET` beacon is allowed.
  */
-export function classifyPausedRequest(paused, approvedOrigins, patternCovers, mainFrameId) {
+export function classifyPausedRequest(paused, approvedOrigins, patternCovers, mainFrameId, permit) {
   const method = String(paused?.request?.method ?? '').toUpperCase()
   const url = paused?.request?.url ?? ''
   const resourceType = String(paused?.resourceType ?? '')
@@ -550,7 +561,39 @@ export function classifyPausedRequest(paused, approvedOrigins, patternCovers, ma
   // reversibility classifier gives: the cheapest attack on a check is to
   // remove the thing it checks.
   if (method === '') return 'blocked-request'
-  if (method !== 'GET') return 'blocked-request'
+  if (method !== 'GET') {
+    /**
+     * ADR-0024, built 2026-09-01. The five-argument form: with no `permit`
+     * this is character-for-character the old unconditional refusal, which is
+     * what every existing caller and test still gets. With one, four checks,
+     * all against what Chrome is holding:
+     *
+     *  - origin EQUALS the permit's — never `patternCovers`, never a prefix.
+     *    "Somewhere like the merchant" is not a place a ceiling was ratified.
+     *  - the amount parses deterministically (see `parseChargeAmount`), in
+     *    the permit's own currency, or `amount-unparseable` — the refusal
+     *    ADR-0024 §5 predicts will be common, and the caller must report.
+     *  - the amount is AT OR UNDER the ceiling, or `amount-over-ceiling`.
+     *  - expiry is the CALLER's to enforce, by not passing a stale permit:
+     *    this function reads no clock, which is what keeps it a pure table
+     *    of its inputs.
+     */
+    if (permit === null || permit === undefined || typeof permit !== 'object') {
+      return 'blocked-request'
+    }
+    if (originOf(url) !== permit.originPattern) return 'blocked-request'
+
+    const headers = paused?.request?.headers ?? {}
+    const contentTypeKey = Object.keys(headers).find((k) => k.toLowerCase() === 'content-type')
+    const parsed = parseChargeAmount(
+      paused?.request?.postData,
+      contentTypeKey === undefined ? '' : headers[contentTypeKey],
+    )
+    if (parsed === null) return 'amount-unparseable'
+    if (parsed.currency !== permit.currency) return 'amount-unparseable'
+    if (parsed.amountMinor > permit.maxAmountMinor) return 'amount-over-ceiling'
+    return 'allow-landing'
+  }
 
   // A request Chrome described in a shape this function does not recognise is
   // checked as though it were a navigation. Failing open on a missing field,
@@ -723,6 +766,11 @@ const CONTROL_KEYS = [
   // CONTROL key deliberately, so giving up the tab always takes the permit
   // with it. { intentId, originPattern, maxAmountMinor, currency, until }.
   'landingPermit',
+  // ...and the attested record of the one it released, for the same lifetime
+  // reason: a charge stash that outlives the tab is a fact about money parked
+  // where nothing will ever read it. { intentId, amountMinor, currency,
+  // origin }, normally consumed by the command's own report path.
+  'consumedCharge',
 ]
 
 /**
@@ -769,9 +817,9 @@ export async function controlState() {
  * The fields come off the DISPATCHED COMMAND, which the app composed from the
  * ratified authorisation — the same trust story as `approvedOrigins`, and like
  * them the extension can only ever narrow. `until` bounds it exactly the way
- * `actionWindow` is bounded, and NOTHING in this commit reads it back at the
- * paused request: the non-`GET` block is untouched until docs/todo/06 item 5,
- * so arming a permit today changes no behaviour at the network.
+ * `actionWindow` is bounded. ~~NOTHING in this commit reads it back at the
+ * paused request…~~ **Item 5 landed 2026-09-01: `onRequestPaused` reads it,
+ * and one covered non-`GET` at or under the ceiling is released against it.**
  */
 export async function armLandingPermit(permit) {
   if (permit === null || typeof permit !== 'object') return
@@ -781,6 +829,41 @@ export async function armLandingPermit(permit) {
 /** Consumed or expired or given up — all three land here, one-shot either way. */
 export async function clearLandingPermit() {
   await chrome.storage.session.remove('landingPermit')
+}
+
+/**
+ * The SYNCHRONOUS half of one-shot, and the half that actually holds it.
+ *
+ * `chrome.storage.session` has no compare-and-swap, and every paused request
+ * spawns a handler whose state snapshot was read at event arrival — so two
+ * same-origin POSTs from one checkout press (order-create, then
+ * payment-confirm, milliseconds apart) can BOTH hold the armed permit before
+ * either handler's async clear commits. The storage clear alone is therefore
+ * not the one-shot property; this is: a module-level set, checked and marked
+ * with no `await` between the check and the branch that spends it, so two
+ * interleaved handlers in one service-worker lifetime cannot both pass.
+ *
+ * What it does NOT cover, said plainly: module state dies with the service
+ * worker. A worker killed in the gap between marking here and the storage
+ * clear committing, with a second covered request arriving in the NEXT
+ * lifetime, would find the storage permit still armed and an empty set. That
+ * window is milliseconds wide, requires Chrome to kill a worker mid-handler,
+ * and is bounded by the permit's own `until` (~12s) and the ceiling on each
+ * request — the count is the only bound it could breach. Recorded rather than
+ * rounded to zero.
+ */
+const spentPermitIntents = new Set()
+
+export function claimLandingPermitOnce(intentId) {
+  if (typeof intentId !== 'string' || intentId === '') return false
+  if (spentPermitIntents.has(intentId)) return false
+  spentPermitIntents.add(intentId)
+  // Bounded: one entry per complete-purchase command this lifetime, and a
+  // worker lifetime is ~30s idle. The cap is a backstop, not a policy.
+  if (spentPermitIntents.size > 64) {
+    spentPermitIntents.delete(spentPermitIntents.values().next().value)
+  }
+  return true
 }
 
 export async function clearControlState() {
@@ -986,9 +1069,14 @@ export function registerControlListeners(handlers) {
 /**
  * Answer a held request.
  *
- * Blocking is unconditional; **aborting the action is scoped to the action's
+ * Blocking is ~~unconditional~~ **permit-conditional since 2026-09-01, with
+ * absence meaning exactly what unconditional meant**; **aborting the action is
+ * scoped to the action's
  * own window**, and the split is what makes the rule both airtight and
- * survivable on a real site.
+ * survivable on a real site. The two amount refusals report OUTSIDE the window
+ * scoping, deliberately: they can only occur with a permit armed, which only a
+ * command arms, and a person must always hear about the charge that was
+ * refused a moment after they authorised charging.
  *
  *   - Unconditional block: nothing non-`GET` leaves this tab, ever. Ambient
  *     telemetry a page fires while the agent is idle is failed at the network
@@ -1004,15 +1092,84 @@ export function registerControlListeners(handlers) {
  * rather than discovered later.
  */
 async function onRequestPaused(state, params, handlers) {
-  const verdict = classifyPausedRequest(
+  /**
+   * The live permit, or nothing. Expiry is enforced HERE, on the extension's
+   * clock, because `classifyPausedRequest` is pure and reads none — a stale
+   * permit is simply not passed, and the request meets the same refusal it
+   * would have met with no permit at all.
+   */
+  const permit =
+    state.landingPermit !== null &&
+    typeof state.landingPermit.until === 'number' &&
+    Date.now() <= state.landingPermit.until
+      ? state.landingPermit
+      : null
+
+  let verdict = classifyPausedRequest(
     params,
     state.approvedOrigins,
     handlers.patternCovers,
     state.mainFrameId,
+    permit,
   )
   const requestId = params?.requestId
 
+  /**
+   * One spender per permit, decided synchronously — see
+   * `claimLandingPermitOnce`. Every verdict that SPENDS the permit (a landing
+   * or either amount refusal) must win the claim first; a handler that lost it
+   * is judging a stale snapshot of a permit another request already spent, and
+   * its request meets the plain block. No `await` sits between the classify
+   * above and this check, which is what makes the pair atomic per lifetime.
+   */
+  if (
+    (verdict === 'allow-landing' ||
+      verdict === 'amount-over-ceiling' ||
+      verdict === 'amount-unparseable') &&
+    !claimLandingPermitOnce(permit?.intentId)
+  ) {
+    verdict = 'blocked-request'
+  }
+
   if (verdict === 'allow') {
+    await chrome.debugger
+      .sendCommand({ tabId: state.tabId }, 'Fetch.continueRequest', { requestId })
+      .catch(() => {})
+    return
+  }
+
+  if (verdict === 'allow-landing') {
+    /**
+     * The one covered non-`GET`, released. What makes it ONE is the
+     * synchronous claim above — the storage clear below is hygiene, not the
+     * property: a racing handler holds a state snapshot from before any clear,
+     * and only the claim, checked with no await behind it, refuses the second
+     * spender. One permit, one charge, and the ledger's count fails closed on
+     * attempts besides.
+     *
+     * The stash re-parses rather than threading the amount through the
+     * verdict, because `classifyPausedRequest` returns a closed set of
+     * strings and widening it to carry a payload would put a number on the
+     * same channel every refusal travels. Pure function, same inputs, same
+     * answer — the re-parse cannot disagree with the check.
+     */
+    await clearLandingPermit()
+    const headers = params?.request?.headers ?? {}
+    const contentTypeKey = Object.keys(headers).find((k) => k.toLowerCase() === 'content-type')
+    const parsed = parseChargeAmount(
+      params?.request?.postData,
+      contentTypeKey === undefined ? '' : headers[contentTypeKey],
+    )
+    if (parsed !== null) {
+      await chrome.storage.session.set({
+        consumedCharge: {
+          intentId: permit.intentId,
+          amountMinor: parsed.amountMinor,
+          currency: parsed.currency,
+          origin: originOf(params?.request?.url ?? '') ?? permit.originPattern,
+        },
+      })
+    }
     await chrome.debugger
       .sendCommand({ tabId: state.tabId }, 'Fetch.continueRequest', { requestId })
       .catch(() => {})
@@ -1025,6 +1182,28 @@ async function onRequestPaused(state, params, handlers) {
       errorReason: 'Aborted',
     })
     .catch(() => {})
+
+  if (verdict === 'amount-over-ceiling' || verdict === 'amount-unparseable') {
+    // One-shot in the refusing direction too: the permit is spent by the
+    // attempt, and whatever the page retries next meets the plain block.
+    await clearLandingPermit()
+    const headers = params?.request?.headers ?? {}
+    const contentTypeKey = Object.keys(headers).find((k) => k.toLowerCase() === 'content-type')
+    const parsed = parseChargeAmount(
+      params?.request?.postData,
+      contentTypeKey === undefined ? '' : headers[contentTypeKey],
+    )
+    await handlers.onIrreversibleBlocked(verdict, {
+      method: String(params?.request?.method ?? ''),
+      origin: originOf(params?.request?.url ?? '') ?? '(unparseable)',
+      // Attested, for the question the person is asked at re-entry. Absent
+      // exactly when the amount could not be parsed, which is itself the fact.
+      ...(parsed === null
+        ? {}
+        : { attested: `${parsed.amountMinor} minor units ${parsed.currency}` }),
+    })
+    return
+  }
 
   if (Date.now() > state.actionWindow) return
 
@@ -1453,16 +1632,20 @@ export async function performCommand(command, handlers) {
          * the dispatched command, which the app composed from the ratified
          * authorisation — like `approvedOrigins`, the extension only narrows.
          *
-         * While the non-`GET` block is unconditional (docs/todo/06 item 5),
-         * nothing consumes the permit, no `consumedCharge` is ever written,
-         * and the chargeless branch below is the only reachable one — the
-         * asserted-inert behaviour the tests pin.
+         * ~~While the non-`GET` block is unconditional, nothing consumes the
+         * permit…~~ **Item 5 landed 2026-09-01: `onRequestPaused` consumes it
+         * and the charge branch below is live.**
          *
          * The permit is cleared BEFORE a chargeless report goes out, so a
-         * checkout request arriving after the report cannot land: `succeeded`
-         * with a charge and `failed` without one stay the only two endings,
-         * and "the charge landed but the ledger says failed" is not a state
-         * this ordering can produce.
+         * checkout request arriving after the report cannot land. The one path
+         * that ordering cannot cover is a THROW between the press and the
+         * report — `observePage` timing out after the request was released —
+         * which the outer catch handles: it clears the permit, and if the
+         * stash says the charge left, the failure detail says so in words, so
+         * the ledger's `failed` row names the money rather than implying none
+         * moved. That residual is also why the app counts the ratified
+         * `maxCount` against ATTEMPTS, not successes — the count fails closed
+         * across exactly this gap.
          */
         const params = command.params ?? {}
         if (
@@ -1524,20 +1707,45 @@ export async function performCommand(command, handlers) {
 
     return { ok: true, observation: await observePage(state.tabId) }
   } catch (error) {
+    /**
+     * ADR-0024: a throw must not leave the permit armed behind a failure
+     * report — that is the one window where "the charge landed but the ledger
+     * says failed" could occur, so the permit dies here too, and if the stash
+     * says the one covered request already left, the failure detail names the
+     * money in words. The app's count spends on attempts, so even this arm
+     * cannot make a ratified count reusable.
+     */
+    let landedAnyway = ''
+    if (command.kind === 'complete-purchase') {
+      await clearLandingPermit()
+      const { consumedCharge } = await chrome.storage.session.get('consumedCharge')
+      await chrome.storage.session.remove('consumedCharge')
+      if (
+        consumedCharge &&
+        typeof consumedCharge === 'object' &&
+        consumedCharge.intentId === command.intentId
+      ) {
+        landedAnyway = ` — the charge itself left first: ${consumedCharge.amountMinor} minor units ${consumedCharge.currency} at ${consumedCharge.origin}`
+      }
+    }
     if (error instanceof StaleSnapshot) {
       return {
         ok: false,
         failure: 'stale-snapshot',
-        detail: 'the page changed since Propositum last looked at it',
+        detail: `the page changed since Propositum last looked at it${landedAnyway}`,
       }
     }
     if (error instanceof TimedOut) {
-      return { ok: false, failure: 'timed-out', detail: error.message }
+      return { ok: false, failure: 'timed-out', detail: `${error.message}${landedAnyway}` }
     }
     if (error instanceof ControlLost) {
-      return { ok: false, failure: 'control-lost', detail: error.message }
+      return { ok: false, failure: 'control-lost', detail: `${error.message}${landedAnyway}` }
     }
-    return { ok: false, failure: 'not-delivered', detail: String(error?.message ?? error) }
+    return {
+      ok: false,
+      failure: 'not-delivered',
+      detail: `${String(error?.message ?? error)}${landedAnyway}`,
+    }
   }
   // No `finally` clearing `actionWindow` — see the comment where it is armed.
   // Closing it on return would blind the interceptor to exactly the requests a

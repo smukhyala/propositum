@@ -394,7 +394,11 @@ asks before anything the browser attests it cannot take back. Both pins moved ou
 asserted as deferred*. **`LANDING_ACTION_KINDS` did not**, and the reason is better than the caution
 it looks like: `classifyPausedRequest` in the extension fails every non-`GET` request
 unconditionally, with no bypass for a confirmed action anywhere in that file, so a landing kind would
-be a capability the transport refuses to carry — a claim, not a feature.
+be a capability the transport refuses to carry — a claim, not a feature. *(It moved at last on
+2026-09-01, by the only route the paragraph above permits:
+[ADR-0024](./adr/0024-purchases-within-a-ratified-authorisation.md) was built, the block became
+conditional on a one-shot permit a ratified `PurchaseAuthorization` arms — still not a confirmation
+— and the set holds `complete-purchase`. Everything else still cannot land.)*
 
 **And the honest cost is the one ADR-0010 named in its own opening, arriving on schedule.** Nothing
 here is more reversible than it was; what changed is that the pause is now something a person will

@@ -178,18 +178,29 @@ export const CONFIRMABLE_ACTION_KINDS: ReadonlySet<ActionKind> = new Set<ActionK
  * `extension/src/cdp.js`. While Propositum holds a tab, nothing that changes
  * something out there is sent from it.
  *
- * So a member added today would be a claim the transport cannot honour — a
- * `ShiftOutcome` reported `landed`, offered no verdict, and telling somebody
- * *"This already happened, outside Propositum"* about a request Chrome aborted.
- * The honest encoding of *the capability is granted and the effect still cannot
- * leave* is a kind that is not landing, which is what this is.
+ * ~~So a member added today would be a claim the transport cannot honour…~~
+ * **The set gained its first member on 2026-09-01, and the cost the paragraph
+ * below named has been paid in full.** The bypass in the extension's request
+ * handler exists — a one-shot landing permit, armed per ratified
+ * `complete-purchase` command, releasing exactly one covered non-`GET` at or
+ * under a ceiling a person ratified — and
+ * [ADR-0024](../../../docs/adr/0024-purchases-within-a-ratified-authorisation.md)
+ * is the ADR the old text said it would take. What the emptiness used to
+ * guarantee is now guaranteed narrower: every kind but this one still cannot
+ * land, `click-element` still presses Send into an aborted request, and the
+ * transport honours this member only under a permit whose absence is the
+ * refusal it always was.
  *
- * What that makes the cost of a landing kind explicit about: it is not a line
- * in this set. It is a bypass in the extension's request handler — the one
- * mechanism ADR-0010 says cannot be talked out of firing — and it belongs in
- * its own ADR for the same reason `Runtime.evaluate` does.
+ * What survives of the old argument, because it is still the design: a
+ * `ShiftOutcome` is `landed` iff a landing kind's intent SUCCEEDED, and the
+ * tool makes `succeeded` mean "the covered request left the machine" — an ok
+ * report without the attested charge throws. The set stays the one code-owned
+ * answer to *"is this run's output already out in the world?"*, which is what
+ * it was carried empty for.
  */
-export const LANDING_ACTION_KINDS: ReadonlySet<ActionKind> = new Set<ActionKind>()
+export const LANDING_ACTION_KINDS: ReadonlySet<ActionKind> = new Set<ActionKind>([
+  'complete-purchase',
+])
 
 /**
  * The kinds that drive the person's real browser.
@@ -283,11 +294,11 @@ export function grantableActionKinds(pinsDocument: boolean): readonly ActionKind
  * need the same answer: the grant path subtracts it, and `acceptContract` adds
  * it back iff the draft being accepted carries an authorisation. It is NOT
  * `LANDING_ACTION_KINDS`: that set states what the transport will honour, and
- * it stays empty until the extension's branch moves (its own docblock says a
- * member added early is a claim the transport cannot honour). This set states
- * what ratification may grant, which has to exist first — the build order is
- * the safety argument, and `docs/todo/06-buying-things.md` item 5 is where the
- * two sets converge.
+ * ~~it stays empty until the extension's branch moves~~ **the branch moved
+ * 2026-09-01 and the two sets now hold the same member** — they stay separate
+ * because they answer different questions (what ratification may grant vs
+ * what the transport honours), and the build order that kept them apart for a
+ * day was the safety argument its docblocks recorded.
  */
 export const PURCHASE_ACTION_KINDS: ReadonlySet<ActionKind> = new Set<ActionKind>([
   'complete-purchase',
@@ -574,9 +585,10 @@ export function compilePolicy(scope: ContractScope, controls: AutonomyControls):
 
     // ...and every landing kind, for the same reason rather than a related one:
     // "research only, don't write" cannot coherently permit a capability whose
-    // effects leave Propositum without a second human act. The set is empty
-    // today, so this loop removes nothing — it exists so that adding a landing
-    // kind inherits the rule instead of requiring someone to notice.
+    // effects leave Propositum without a second human act. ~~The set is empty
+    // today, so this loop removes nothing~~ — since 2026-09-01 it removes
+    // `complete-purchase`, which is exactly the day this loop was written for:
+    // the rule was inherited instead of requiring someone to notice.
     for (const kind of LANDING_ACTION_KINDS) allowed.delete(kind)
 
     // ── ...and every kind that can operate a page ────────────────────────

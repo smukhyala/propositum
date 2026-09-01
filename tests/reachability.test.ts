@@ -1335,6 +1335,73 @@ describe('the safety machinery is reachable from the product', () => {
       ).toContain('src/runtime/worker-loop.ts')
     }
   })
+
+  describe('the landing kind is reachable, end to end and by ratification only', () => {
+    /**
+     * Promoted from the deferred block on 2026-09-01, the day ADR-0024's build
+     * moved the transport branch — the emptiness pin went red and its own text
+     * said to move it. What replaces an assertion of absence is the positive
+     * chain: the set has exactly its ratified member, the tool has its caller,
+     * the grant has its one writer, and the extension knows the kind.
+     */
+    it('LANDING_ACTION_KINDS holds exactly the ratified member', () => {
+      const policy = readFileSync(join(repo, 'src/domain/handoff/policy.ts'), 'utf8')
+      const declaration = /LANDING_ACTION_KINDS[^=]*=\s*new Set<ActionKind>\(\[([\s\S]*?)\]\)/m.exec(
+        policy,
+      )
+      expect(
+        declaration,
+        'LANDING_ACTION_KINDS is not declared the way this test reads it',
+      ).not.toBeNull()
+      expect(
+        declaration?.[1]?.replace(/[\s,]/g, ''),
+        'the landing set changed — a second landing kind needs its own ADR and its own pin here',
+      ).toBe("'complete-purchase'")
+    })
+
+    it('completePurchase has its caller, or the granted kind cannot be carried out', () => {
+      expect(
+        callersOf('completePurchase(', 'src/policy/tools.ts'),
+        'completePurchase has no caller — a ratified purchase would be authorised and then thrown on',
+      ).toContain('src/runtime/worker-loop.ts')
+    })
+
+    it('only acceptContract writes the grant, off the ratified row', () => {
+      // The kind is grantable by neither default branch (pinned in
+      // tests/policy-gate.test.ts); this is the other half — the one writer
+      // that may add it exists and is the accept path.
+      const actions = stripComments(readFileSync(join(repo, 'src/server/actions.ts'), 'utf8'))
+      expect(
+        actions,
+        "nothing grants 'complete-purchase' — a ratified authorisation would authorise nothing",
+      ).toMatch(/allowedActionKinds\.push\('complete-purchase'\)/)
+    })
+
+    it('the extension carries the kind, or every purchase dies as not-delivered', () => {
+      const cdp = stripComments(readFileSync(join(repo, 'extension/src/cdp.js'), 'utf8'))
+      expect(cdp, 'performCommand has no complete-purchase arm').toContain(
+        "case 'complete-purchase'",
+      )
+      expect(
+        cdp,
+        'nothing arms the landing permit — every covered non-GET meets the plain block',
+      ).toContain('armLandingPermit(')
+    })
+
+    it('a landed intent can become an external-effect outcome', () => {
+      // The derivation ledgerFacts performs — kind membership plus a succeeded
+      // outcome — is what makes external-effect reachable at all. Pinned as a
+      // read of the deriving file rather than trusted to the docblocks that
+      // used to assert the opposite.
+      const outcomes = stripComments(
+        readFileSync(join(repo, 'src/server/outcomes/index.ts'), 'utf8'),
+      )
+      expect(
+        outcomes,
+        'nothing derives landed from LANDING_ACTION_KINDS — a landed charge would render as held work',
+      ).toContain('LANDING_ACTION_KINDS.has(')
+    })
+  })
 })
 
 /**
@@ -1831,71 +1898,30 @@ describe('deferred, and asserted as deferred', () => {
    * RED the moment something calls it, which forces the claim up into the
    * reachable section rather than leaving it ambiguous.
    *
-   * **This block held four assertions and now holds one.** Boundary 6, the gap
-   * sweeper and the outcome-scoped finding were all promoted on 2026-08-27 —
-   * boundary 6 by this file going red on the commit that wired it, which is the
-   * mechanism working rather than anybody remembering.
-   *
-   * What is left is the one that is different in kind. The other three were
-   * *not yet*: the code existed, nothing called it, and calling it was a day's
-   * work. This one is held shut by a MECHANISM — `classifyPausedRequest` fails
-   * every non-`GET` unconditionally — so it cannot be wired by wiring. Read its
-   * body before treating it as the same sort of absence.
-   *
-   * If you are here because it went red: that is the system working, and
-   * ADR-0024 is the argument you are looking for. Move it.
+   * **This block held four assertions, then one, and now holds NONE.**
+   * Boundary 6, the gap sweeper and the outcome-scoped finding were promoted
+   * on 2026-08-27. The last and most different — the emptiness of
+   * `LANDING_ACTION_KINDS`, held shut by the transport's unconditional
+   * non-`GET` refusal rather than by a missing wire — went red on 2026-09-01,
+   * on the commit that built ADR-0024, exactly as its own text instructed:
+   * *"If you are here because it went red: that is the system working, and
+   * ADR-0024 is the argument you are looking for. Move it."* It was moved.
+   * Its positive replacement is `describe('the landing kind is reachable…')`
+   * in the section above, and the empty block stays so the next deferred
+   * capability has somewhere to land.
    */
 
-  it('nothing lands, so an external-effect outcome cannot occur', () => {
-    /**
-     * `LANDING_ACTION_KINDS` is EMPTY, and that is a claim rather than an
-     * oversight.
-     *
-     * `ShiftOutcomeKind` has five members and `external-effect` is the only one
-     * that is not `held` — the only one a person is offered no verdict on,
-     * because it already happened out in the world. Nothing today can produce
-     * one: every ActionKind that exists is a read or a draft, and even
-     * `click-element`, which can press a page's own Send button, is not a
-     * landing kind. Landing is about whose act put the effect into the world.
-     *
-     * ── Strengthened when a run started driving the browser ──────────────
-     *
-     * This survived the wave that made three of its neighbours red, and it
-     * survived on a better reason than *not yet*. `classifyPausedRequest` in
-     * `extension/src/cdp.js` fails **every non-`GET` request, unconditionally,
-     * with no bypass anywhere in the file** — not after a confirmation, not for
-     * a confirmed intent, not at all. So while Propositum holds a tab, no
-     * request that changes something out there leaves it, and a landing kind
-     * would be a claim the transport cannot honour: a run marked `landed` for an
-     * effect the network layer aborted, and a person told *"This already
-     * happened, outside Propositum"* about something that did not.
-     *
-     * That is worth stating precisely, because it also names what a future
-     * landing kind actually costs. It is not a line in this set. It is a bypass
-     * in the extension's request handler, which is the one mechanism in ADR-0010
-     * that cannot be talked out of firing — and spending it needs its own ADR,
-     * the same way `Runtime.evaluate` does.
-     *
-     * So `src/server/outcomes/external-effect.ts` drops everything it is handed,
-     * by design, and the drop is the enforcement rather than a fallback. The day
-     * someone adds a landing kind this goes RED — which is the point. A mutating
-     * capability whose effects leave Propositum is not a line in a set; it is a
-     * person being shown work they cannot undo, and the claim has to move up
-     * into the reachable section deliberately rather than slip in with the enum.
-     */
-    const policy = readFileSync(join(repo, 'src/domain/handoff/policy.ts'), 'utf8')
-    const declaration = /LANDING_ACTION_KINDS[^=]*=\s*new Set<ActionKind>\(([\s\S]*?)\)\s*$/m.exec(
-      policy,
-    )
+  // (The emptiness pin lived here from 2026-08-26 to 2026-09-01. See the
+  // block header for where it went and why.)
 
+  it('holds nothing, and the promotions it points at exist', () => {
+    // An empty describe fails the runner, so the block's one occupant asserts
+    // its own claim: every once-deferred capability was moved UP, not deleted.
+    const self = readFileSync(join(repo, 'tests/reachability.test.ts'), 'utf8')
     expect(
-      declaration,
-      'LANDING_ACTION_KINDS is not declared the way this test reads it',
-    ).not.toBeNull()
-    expect(
-      declaration?.[1]?.trim(),
-      'a kind lands now — external-effect is reachable, so move this into the section above',
-    ).toBe('')
+      self,
+      'the landing-kind promotion is gone — a deferred capability was deleted rather than moved',
+    ).toContain("describe('the landing kind is reachable")
   })
 
 

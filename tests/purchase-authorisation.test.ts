@@ -77,7 +77,7 @@ describe('an instruction naming nothing to buy authorises nothing, at every laye
     currentSnapshotId: 'snap-1',
     actionsTaken: 0,
     mutatingActionsTaken: 0,
-    chargesLanded: 0,
+    chargesSpent: 0,
   }
 
   it('compiles to a policy with no purchase view at all', () => {
@@ -299,21 +299,62 @@ describe('accepting a draft with no purchase columns grants no purchase', () => 
 
 /* ── the network, which is where nothing lands today ───────────────────── */
 
-describe("the transport still refuses every non-GET — today's truth, dated", () => {
-  it('blocks the checkout POST with no permit in the call, 2026-09-01', () => {
-    /**
-     * ASSERTS TODAY, not the end state. docs/todo/06 item 5 makes the block
-     * conditional on a landing permit; the commit that does so rewrites this
-     * assertion to cover both arms — no permit still blocks, and a covered
-     * request within the ceiling lands. Until then, a run holding a granted
-     * complete-purchase presses Buy and the order does not go through, which
-     * is exactly what the agreement screen still says.
-     */
-    const paused = {
-      request: { method: 'POST', url: 'https://grocery.example/checkout' },
-      resourceType: 'XHR',
-      frameId: 'frame-main',
-    }
+describe('the transport refuses everything the ratification did not cover', () => {
+  /**
+   * ~~Asserted today's unconditional truth, dated 2026-09-01.~~ Rewritten the
+   * same day, by the commit item 5 named, to cover both arms — which is what
+   * the original text instructed. The never-pass property survives in the
+   * first arm: an instruction that drafted no authorisation produces no
+   * permit, and no permit is exactly the old refusal.
+   */
+  const paused = {
+    request: {
+      method: 'POST',
+      url: 'https://grocery.example/checkout',
+      postData: '{"amount_minor":3999,"currency":"USD"}',
+      headers: { 'Content-Type': 'application/json' },
+    },
+    resourceType: 'XHR',
+    frameId: 'frame-main',
+  }
+
+  it('blocks the checkout POST with no permit — the dinner instruction ends here', () => {
     expect(classifyPausedRequest(paused, ['https://grocery.example'])).toBe('blocked-request')
+  })
+
+  it('lands exactly the covered request under a ratified permit, and nothing else', () => {
+    const permit = {
+      intentId: 'intent-1',
+      originPattern: 'https://grocery.example',
+      maxAmountMinor: 4_000,
+      currency: 'USD',
+    }
+    expect(
+      classifyPausedRequest(paused, ['https://grocery.example'], undefined, 'frame-main', permit),
+    ).toBe('allow-landing')
+
+    // The same permit covers nothing at another origin and nothing over its
+    // ceiling — the refusals are the never-pass property, per covered case.
+    expect(
+      classifyPausedRequest(
+        { ...paused, request: { ...paused.request, url: 'https://elsewhere.example/checkout' } },
+        ['https://grocery.example'],
+        undefined,
+        'frame-main',
+        permit,
+      ),
+    ).toBe('blocked-request')
+    expect(
+      classifyPausedRequest(
+        {
+          ...paused,
+          request: { ...paused.request, postData: '{"amount_minor":4001,"currency":"USD"}' },
+        },
+        ['https://grocery.example'],
+        undefined,
+        'frame-main',
+        permit,
+      ),
+    ).toBe('amount-over-ceiling')
   })
 })

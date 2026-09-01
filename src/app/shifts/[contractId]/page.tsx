@@ -99,6 +99,10 @@ function actionPhrase(kind: string, params: Record<string, unknown>, sourceLabel
       const section = textOf(params, 'sectionPath')
       return section === null ? 'draft a section' : `draft ${section}`
     }
+    case 'complete-purchase':
+      // The amount and origin ride the outcome's own detail line, which is
+      // code-composed from the attested charge — this phrase names the act.
+      return 'complete the purchase you authorised'
     default:
       // The kind is a model-supplied string when the gate refused it as
       // unknown, so it is never rendered. The quoted reason below carries the
@@ -126,6 +130,11 @@ const REFUSAL_REASONS: Record<string, string> = {
   step_out_of_scope: 'It was a step ahead of the one I was on, and you asked me to finish that first.',
   plan_limit_exceeded: 'The plan was longer than I am allowed to work through.',
   budget_exhausted: 'The time you gave me had already run out.',
+  purchase_not_authorized:
+    "You didn't authorise a purchase in this agreement, so buying is refused outright.",
+  purchase_count_exceeded:
+    'The charges you authorised were already used up, so no further purchase was allowed.',
+  purchase_expired: 'Your authorisation to spend had already ended with the agreement.',
 }
 
 /* ── where a change lands ───────────────────────────────────────────────── */

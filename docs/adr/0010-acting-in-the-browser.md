@@ -4,8 +4,9 @@
 **Amended by:** [ADR-0024](0024-purchases-within-a-ratified-authorisation.md) — §3's account of the
 network mechanism. It stays, and stops being unconditional: a non-`GET` covered by a ratified
 `PurchaseAuthorization` is allowed. The section headed *"`LANDING_ACTION_KINDS` is still empty"* is
-superseded rather than merely dated — though **as of the day this line was written the set is still
-empty and no code has been changed**, because ADR-0024 is a decision and nobody has built it
+superseded rather than merely dated — ~~though **as of the day this line was written the set is still
+empty and no code has been changed**, because ADR-0024 is a decision and nobody has built it~~
+**built 2026-09-01: the set holds `complete-purchase`, and the section carries its own dated note**
 **Reversed by:** [ADR-0025](0025-computer-use-beyond-the-browser.md) — §1, the bound to one tab
 Propositum opened. There is no tab bound because there is no tab. §2's *"no `Runtime` domain, ever"*
 is **carried forward unchanged** and becomes the desktop's *no shell, no `osascript`*
@@ -459,6 +460,11 @@ three runs. What it does not cost is the confirmation storm §"Risks" predicts, 
 the run — there is no twentieth dialog to click through, only a stop.
 
 ### `LANDING_ACTION_KINDS` is still empty, and now for a stronger reason
+
+*(Superseded by [ADR-0024](0024-purchases-within-a-ratified-authorisation.md), and spent by its
+build on 2026-09-01: the set holds `complete-purchase`, the bypass this section prices got exactly
+the ADR it demanded, and the block below survives for every uncovered request. Kept unrewritten
+because the pricing argument is the reason the spend took an ADR.)*
 
 The set did not gain a member, and the reason is not *not yet*. `classifyPausedRequest` in
 `extension/src/cdp.js` fails **every non-`GET` request unconditionally**, with no bypass for a

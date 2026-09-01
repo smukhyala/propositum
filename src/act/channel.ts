@@ -55,6 +55,7 @@
 import { z } from 'zod'
 
 import type { ActionKind } from '../domain/handoff/policy'
+import { CURRENCY_CODES } from '../domain/handoff/policy'
 import { fromOurExtension } from '../capture/transport'
 
 /** Mirrors `x-propositum-capture`, and is deliberately a DIFFERENT string. The
@@ -321,7 +322,10 @@ export const controlFailureSchema = z.enum([
  */
 export const chargeSchema = z.object({
   amountMinor: z.number().int().positive(),
-  currency: z.string().min(3).max(3),
+  // Pinned to the domain's closed set at the wire too — the extension already
+  // narrows, and a version skew that invented a currency should refuse at the
+  // door rather than reach the ledger.
+  currency: z.string().refine((code) => (CURRENCY_CODES as readonly string[]).includes(code)),
   origin: z.string().min(1),
 })
 export type AttestedCharge = z.infer<typeof chargeSchema>

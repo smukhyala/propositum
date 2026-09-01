@@ -354,21 +354,22 @@ pure, no model prose — and parks the run `awaiting-confirmation`. **One pause 
 `creditedDeadlineFor` sums `(requestedAt, decidedAt)` pairs and overlapping pauses would credit the
 same wait twice.
 
-**`LANDING_ACTION_KINDS` is still empty and still pinned**, on a stronger reason than *not yet*:
-`classifyPausedRequest` in `extension/src/cdp.js` fails every non-`GET` request unconditionally, with
-no bypass for a confirmed action, so a landing kind would be a claim the transport cannot honour. No
-`external-effect` outcome can occur. The consequence, stated because it is surprising: **a confirmed
-click whose page posts still fails**, with `blocked-request`. Propositum can operate a page and cannot
-send from it.
+~~**`LANDING_ACTION_KINDS` is still empty and still pinned**…~~ **Built 2026-09-01 — ADR-0024's
+build landed and the set holds `complete-purchase`.** The transport is permit-conditional now:
+`classifyPausedRequest` still fails every non-`GET` that arrives without a one-shot landing permit —
+a ratified `PurchaseAuthorization` arms one per `complete-purchase` command, and it releases exactly
+one covered request at or under the ceiling, in the ratified currency, at the exact origin. One
+`external-effect` outcome kind can occur, and only that one. What stays surprising and true: **a
+confirmed click whose page posts still fails** — the permit is not a confirmation and a confirmation
+is not a permit; the two mechanisms never traded jobs.
 
-**That is still what runs, and it is no longer what was decided.**
-[ADR-0024](./adr/0024-purchases-within-a-ratified-authorisation.md) spends the unconditional block:
-one branch at `extension/src/cdp.js:553`, a deterministic amount parse at `Fetch.requestPaused`, and
-a landing kind behind a ratified ceiling. **Nothing of it is built** —
-`grep -n 'export const LANDING_ACTION_KINDS' src/domain/handoff/policy.ts` still returns an empty
-`Set`. The alarm is already armed: `tests/architecture.test.ts` couples `src/ui/agreement.tsx`'s
-*"Buy anything"* promise to the transport, so the day the branch lands the guard goes red and names
-the screen that has started lying about money.
+~~**That is still what runs, and it is no longer what was decided.** … **Nothing of it is built**~~
+**The gap closed on 2026-09-01, by the alarm's own script:** the *"Buy anything"* guard and the
+reachability pin both went red on the commit that moved the branch, and both were deliberately
+updated in it — the guard now confines the promise to the no-authorisation arm and the refusal to
+the no-permit arm. What has NOT happened is the live purchase:
+[`docs/todo/06-buying-things.md`](./todo/06-buying-things.md) keeps its *Done when* open on a real
+charge, made and refunded, with the owner's card and a low ceiling.
 
 **Honest limit: every mutating browser action asks.** `RunContext.targetEvidence` has no supplier, so
 the classifier escalates every `click-element`, `type-text` and `press-key`. That is the cautious

@@ -307,7 +307,10 @@ const NOT_IN_THIS_AGREEMENT = 'Not part of this agreement. Propositum is refused
 const ABSENT: readonly string[] = [
   'Send an email or a message',
   'Publish anything',
-  'Buy anything',
+  // 'Buy anything' left this list on 2026-09-01 (ADR-0024) and renders as a
+  // CONDITIONAL row at the list's use site: still absent, with the refusal
+  // named, when no authorisation was ratified — and not absent at all when one
+  // was, because it is then the ratified-bound line in Section 1.
   'Delete a file',
 ]
 
@@ -708,7 +711,20 @@ export function Agreement({ draft, defaults, sourceLabels, onBack, onHandedOver 
                 : 'What Propositum cannot do at all'}
             </h3>
             <ul className="ag-perms">
-              {ABSENT.map((thing) => (
+              {/*
+                The buy row is CONDITIONAL since 2026-09-01 (ADR-0024), and the
+                weakening reads like one. With no authorisation the old absolute
+                survives with its mechanism named; with one, buying is not
+                absent — it is the ratified-bound line in Section 1 — and
+                claiming absence here would be the screen lying about money.
+                `tests/architecture.test.ts` couples this arm to the transport.
+              */}
+              {[
+                ...ABSENT,
+                ...(draft.purchaseAuthorization === undefined
+                  ? ['Buy anything — you authorised no purchase, so every buying request is refused at the network']
+                  : []),
+              ].map((thing) => (
                 <li className="ag-perm" key={thing}>
                   <span className="ag-perm-mark">
                     <Refused size={16} title="Not possible" />

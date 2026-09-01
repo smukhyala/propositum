@@ -1,19 +1,22 @@
 # 06 — Let Propositum buy the thing it was asked to buy
 
-**Status:** not started — **decided, not built.**
+**Status:** ~~not started — **decided, not built.**~~ **Built 2026-09-01, except the live purchase.**
+All eight work items landed in five commits on `agent/complete-purchase`; what remains is the one
+*Done when* only a person can do — a real charge, made and refunded, with a card and money the owner
+is willing to lose — plus the real-basket calibration of the amount parser that goes with it.
 **Decided by:** [ADR-0024](../adr/0024-purchases-within-a-ratified-authorisation.md), accepted
 2026-08-26
-**Blocked by:** nothing technical. Blocked by judgment on
-[`00`](./00-score-the-hypotheses.md), the same way [`01`](./01-menu-bar-app.md) is: this is the
-largest single reduction in safety the product has ever taken, and taking it for an unproven bet is
-the wrong order.
+**Blocked by:** ~~nothing technical. Blocked by judgment on
+[`00`](./00-score-the-hypotheses.md)~~ *(spent 2026-09-01: the numbers existed and were poor — H1
+one of four, H3 failed — and the owner directed the build with that on the table, recorded in
+[`docs/research/instinct.md`](../research/instinct.md) §8.)*
 **Blocks:** [`07`](./07-off-the-browser.md) — ADR-0025 depends on this one, because a non-`GET` being
-sendable at all is what makes signing in possible.
+sendable at all is what makes signing in possible. That dependency is now satisfied on the browser
+side.
 
-The decision is written and the argument is finished. **Nothing is built.** This file is the work
-between the two, and it exists because
-[`README.md`](./README.md) named it as *"work nobody has written"* in the same breath as striking the
-bullet that used to forbid it.
+~~The decision is written and the argument is finished. **Nothing is built.**~~ **The build is in;
+the purchase is not.** This file stays open for the live half, and its work list below is struck
+rather than deleted because each item carries the argument its implementation answered.
 
 ---
 
@@ -34,19 +37,18 @@ grep -n 'export const LANDING_ACTION_KINDS' src/domain/handoff/policy.ts
 ls tests/purchase-authorisation.test.ts
 ```
 
-~~**As of 2026-08-26:** (1) returns nothing…~~ **Re-answered 2026-09-01, mid-build (items 1–4 and 6
-landed; item 5 has not):** (1) returns real fields — the object, the gate rules and the five
-columns exist, and `complete-purchase` is in the enum, grantable only by ratification; (2) still
-returns the unconditional refusal in `extension/src/cdp.js` — **the branch has not moved**; (3)
-still returns an empty `LANDING_ACTION_KINDS`, deliberately, because a member before the transport
-honours it is a claim the transport cannot honour; (4) exists and passes — for the boring reason on
-its network arm, and for the real reasons on every other.
+~~**As of 2026-08-26:** (1) returns nothing…~~ ~~**Re-answered 2026-09-01, mid-build…**~~
+**Re-answered a second time the same day, post-build:** (1) returns the object, the gate rules and
+the five columns; (2) returns the refusal INSIDE the permit branch — the bare unconditional line is
+gone, and `tests/architecture.test.ts` now asserts its absence; (3) returns a set holding
+`complete-purchase`; (4) exists and passes for the real reasons on every arm, including the
+network's two.
 
-So **Propositum still cannot buy anything today**, and every sentence in the product that says so is
-still true. The agreement screen lists *"Buy anything"* under what Propositum has no way to do, and
-`tests/architecture.test.ts` couples that promise to the transport — *"says 'Buy anything' only while
-every non-GET is blocked"*. **That guard is the alarm for this file.** The day item 5 below lands, it
-goes red and names the screen that has started lying about money.
+So **Propositum can buy exactly what a person ratified, and nothing else** — refused at the network
+without a permit, over the ceiling, in the wrong currency, at the wrong origin, past the count, or
+after the agreement's own end. The alarm fired on the commit that moved the branch, exactly as the
+paragraph below said it would, and was deliberately updated in it: the guard now confines *"Buy
+anything"* to the no-authorisation arm and the refusal to the no-permit arm.
 
 ---
 
@@ -81,7 +83,18 @@ about how serious it is rather than reassuring.
 
 In this order, because the last step is the irreversible one and everything before it is inert.
 
-1. **The vocabulary is already in — take the fences off in the commit that builds this.**
+**All eight struck 2026-09-01 — built across five commits on `agent/complete-purchase`, in exactly
+this order, with item 6 written before item 5 as instructed.** The items are left readable rather
+than deleted, because each carries the argument its implementation answered. What the build decided
+inside them, worth a line each: expiry is DERIVED (`acceptedAt + timeLimitMinutes`), never stored or
+drafted, so an authorisation structurally cannot outlive its contract; the charge counter fails
+CLOSED when unwired; item 4's "refuses and asks" is a typed transport failure
+(`amount-over-ceiling` / `amount-unparseable`) that ends the run with a `DecisionNeeded` — an answer
+grants nothing, and the remedy is a re-ratification, never a mid-run override; and item 5's five
+checks became four at the network plus the count at the gate, with a ONE-SHOT permit making
+landings ≤ authorised intents by construction.
+
+1. ~~**The vocabulary is already in — take the fences off in the commit that builds this.**~~ *(done 2026-09-01)*
    `CONTEXT.md` was written ahead of the code on 2026-08-26 and says so about itself, in **two
    places**, both of which go stale the moment a field exists:
 
@@ -93,14 +106,14 @@ In this order, because the last step is the irreversible one and everything befo
    A glossary that says the fields do not exist while they do is worse than one that says nothing,
    and the second fence is the one that gets missed because it is inside somebody else's entry.
 
-2. **`PurchaseAuthorization` on `ContractScope`, optional, absence is the deny.**
+2. ~~**`PurchaseAuthorization` on `ContractScope`, optional, absence is the deny.**~~ *(done 2026-09-01)*
    `src/domain/handoff/policy.ts:336`. Six fields, and the closed set — currency — gets its Zod
    schema in `src/domain` like every other closed set, because Prisma's SQLite provider has no enums.
    Nothing in `AutonomyControls` gains a field: per
    [principle 6](../PRODUCT_PRINCIPLES.md) a dial may switch purchasing off and may never relax the
    ceiling.
 
-3. **Draft it at the handoff boundary, and ratify it on the screen that already ratifies.** The model
+3. ~~**Draft it at the handoff boundary, and ratify it on the screen that already ratifies.**~~ *(done 2026-09-01)* The model
    proposes constrained values; `src/ui/agreement.tsx` renders **one line with the amount prominent,
    not a form** — [principle 10](../PRODUCT_PRINCIPLES.md), a person has about a minute. The
    boundary schema gets the four constrained fields and nothing that could carry prose into a
@@ -109,13 +122,13 @@ In this order, because the last step is the irreversible one and everything befo
    *"Find me food for dinner"* must produce **nothing to ratify**, so the screen shows no
    authorisation and the block stays unconditional for it. That is the whole design and it is item 6.
 
-4. **Parse the amount at `Fetch.requestPaused`, deterministically, and refuse when you cannot.**
+4. ~~**Parse the amount at `Fetch.requestPaused`, deterministically, and refuse when you cannot.**~~ *(done 2026-09-01)*
    `extension/src/cdp.js`. Never a model — a model deciding whether a charge is within budget is a
    model deciding whether it needs permission. **Unparseable refuses and asks**, which ADR-0024 §5
    says will be common, and the interface has to say that honestly rather than implying the ceiling
    binds everywhere.
 
-5. **Then, and only then, stop refusing every non-`GET`.** One branch in `extension/src/cdp.js:553`.
+5. ~~**Then, and only then, stop refusing every non-`GET`.**~~ *(done 2026-09-01)* One branch in `extension/src/cdp.js:553`.
    Everything above is inert until this line moves, which is why it is fifth and not first: the
    product is safe throughout steps 1–4 and stops being safe at step 5.
 
@@ -123,17 +136,17 @@ In this order, because the last step is the irreversible one and everything befo
    from Chrome; the charge count from the ledger; the clock injected. The fifth, the amount, is the
    honest weakness.
 
-6. **`tests/purchase-authorisation.test.ts`, with the fixture that must never pass.** *"Find me food
+6. ~~**`tests/purchase-authorisation.test.ts`, with the fixture that must never pass.**~~ *(done 2026-09-01)* *"Find me food
    for dinner"* drafts no authorisation and therefore charges nothing. Write this test **before item
    5**, watch it pass for the boring reason, and then make sure it still passes for the real one.
 
-7. **Move the reachability assertions in the same change.** `LANDING_ACTION_KINDS` stops being empty,
+7. ~~**Move the reachability assertions in the same change.**~~ *(done 2026-09-01)* `LANDING_ACTION_KINDS` stops being empty,
    so `src/server/outcomes/external-effect.ts`'s reasoning about emptiness changes and the
    `external-effect` `ShiftOutcomeKind` becomes reachable for the first time. Per
    [`AGENTS.md`](../../AGENTS.md): if you wire something up, move its assertion out of the deferred
    block in the same change.
 
-8. **Strike the promises, everywhere, in the same commit.** `src/ui/agreement.tsx:298` is the one
+8. ~~**Strike the promises, everywhere, in the same commit.**~~ *(done 2026-09-01)* `src/ui/agreement.tsx:298` is the one
    the guard names, and it is not the only one. `docs/SECURITY_AND_PRIVACY.md`'s *capabilities that
    do not exist* section shrinks, and *"Propositum cannot buy anything"* — true by mechanism today —
    becomes *"cannot buy anything you did not authorise"*, which is a weaker claim and has to read
@@ -143,16 +156,19 @@ In this order, because the last step is the irreversible one and everything befo
 
 ## Done when
 
-- `npm test`, `npm run typecheck` and `npm run build` are green, with
-  `tests/purchase-authorisation.test.ts` in the suite.
-- The four commands under *Is this already done?* return what a finished repo returns.
-- The *"Buy anything"* guard in `tests/architecture.test.ts` has been **deliberately updated**, not
-  deleted — it is the thing that noticed, and its replacement should hold the new promise the way it
-  held the old one.
-- A real purchase has been made and refunded, and the `ActionIntent` / `ActionOutcome` pair for it
-  reads correctly on the re-entry screen.
-- `CONTEXT.md`'s `PurchaseAuthorization` entry no longer carries its *specification rather than a
-  description* fence.
+- ~~`npm test`, `npm run typecheck` and `npm run build` are green, with
+  `tests/purchase-authorisation.test.ts` in the suite.~~ *(met 2026-09-01)*
+- ~~The four commands under *Is this already done?* return what a finished repo returns.~~ *(met
+  2026-09-01)*
+- ~~The *"Buy anything"* guard in `tests/architecture.test.ts` has been **deliberately updated**, not
+  deleted~~ *(met 2026-09-01 — it fired first, which is the mechanism working, and its replacement
+  holds the two-arm promise the way the old one held the absolutes)*.
+- **A real purchase has been made and refunded, and the `ActionIntent` / `ActionOutcome` pair for it
+  reads correctly on the re-entry screen.** ***Open — the one item only a person can close, and the
+  reason this file is not done.*** The same session should calibrate `parseChargeAmount`'s key list
+  against real checkouts, which no fixture can do.
+- ~~`CONTEXT.md`'s `PurchaseAuthorization` entry no longer carries its *specification rather than a
+  description* fence.~~ *(met 2026-09-01)*
 
 ---
 

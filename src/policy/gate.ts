@@ -273,16 +273,18 @@ export interface RunContext {
    *  in every field; see `../domain/execution/reversibility`. */
   readonly targetEvidence?: ElementEvidence | null | undefined
   /**
-   * Charges that have LANDED under this contract's authorisation — counted off
-   * `complete-purchase` intents whose outcome succeeded, which the transport
-   * makes equivalent to "the covered request left the machine".
+   * Ratified charges SPENT under this contract's authorisation — authorized
+   * `complete-purchase` intents, counted as ATTEMPTS whatever their outcome.
+   * The closed direction for money: a throw after the covered request left
+   * reads `failed` in the ledger, and a success-only count would let a retry
+   * spend the ratified `maxCount` twice across exactly that gap.
    *
    * **Fail-closed when absent**, and that is a documented deviation from
    * `actionsTaken`'s absent-means-zero reading: an unwired counter must never
    * let money move, so `undefined` here refuses `complete-purchase` with
    * `purchase_count_exceeded` rather than treating the ledger as empty.
    */
-  readonly chargesLanded?: number | undefined
+  readonly chargesSpent?: number | undefined
 }
 
 /**
@@ -620,10 +622,10 @@ export function authorize(
         return deny('purchase_expired')
       }
 
-      // Fail closed on an absent counter — see `RunContext.chargesLanded`.
-      const landed = run.chargesLanded
-      if (landed === undefined) return deny('purchase_count_exceeded')
-      if (landed >= policy.purchase.maxCount) return deny('purchase_count_exceeded')
+      // Fail closed on an absent counter — see `RunContext.chargesSpent`.
+      const spent = run.chargesSpent
+      if (spent === undefined) return deny('purchase_count_exceeded')
+      if (spent >= policy.purchase.maxCount) return deny('purchase_count_exceeded')
 
       // What is deliberately NOT here: the amount. The gate never sees a
       // request body — the ceiling is compared by the transport against the

@@ -45,6 +45,7 @@ import {
   classifyPausedRequest,
   flattenAXTree,
   isApprovedOrigin,
+  claimLandingPermitOnce,
   originOf,
   parseChargeAmount,
   sanitiseName,
@@ -332,6 +333,38 @@ describe('the amount parse is deterministic, and every ambiguity refuses', () =>
     // is a hand-kept copy of CURRENCY_CODES — and this assertion is the only
     // thing that keeps a hand-kept copy true.
     expect([...PERMIT_CURRENCY_CODES]).toEqual([...CURRENCY_CODES])
+  })
+})
+
+describe('one permit has one spender, decided synchronously', () => {
+  it('grants a claim exactly once per intent, whatever interleaving asks', () => {
+    /**
+     * The race this pins: two same-origin POSTs from one checkout press, both
+     * holding state snapshots read before either handler's async storage clear
+     * committed. `chrome.storage.session` has no compare-and-swap, so the
+     * one-shot property lives in this synchronous claim — and this test is the
+     * whole reason it is exported.
+     */
+    expect(claimLandingPermitOnce('intent-race-1')).toBe(true)
+    expect(claimLandingPermitOnce('intent-race-1')).toBe(false)
+    expect(claimLandingPermitOnce('intent-race-1')).toBe(false)
+    // A different command's permit is its own claim.
+    expect(claimLandingPermitOnce('intent-race-2')).toBe(true)
+  })
+
+  it('refuses a malformed intent id rather than minting a shared claim', () => {
+    expect(claimLandingPermitOnce(undefined)).toBe(false)
+    expect(claimLandingPermitOnce('')).toBe(false)
+    expect(claimLandingPermitOnce(42)).toBe(false)
+  })
+
+  it('is consulted by the handler before any spending verdict acts', () => {
+    // The grep half: the claim exists and onRequestPaused reads it. The unit
+    // half above proves the semantics; this proves the wiring did not rot.
+    const cdp = stripComments(readFileSync(join(repo, 'extension/src/cdp.js'), 'utf8'))
+    expect(cdp, 'onRequestPaused no longer consults the synchronous claim').toContain(
+      'claimLandingPermitOnce(',
+    )
   })
 })
 
@@ -1046,13 +1079,16 @@ describe('what the browser attests about a request it is holding', () => {
     frameId,
   })
 
-  it('blocks every non-GET, whatever it is for', () => {
+  it('blocks every non-GET, whatever it is for — the four-argument form, unchanged', () => {
     /**
      * The method is attested by Chrome, not asserted by the page. A page can
      * put the word *Cancel* on a button that posts an order; it cannot make
      * Chrome report a POST as a GET.
      *
-     * Unconditional, and with no exception for the approved origin: the
+     * ~~Unconditional~~ **Permit-conditional since 2026-09-01 (ADR-0024), and
+     * with NO permit in the call this is character-for-character the old
+     * refusal** — which is what every caller outside a complete-purchase
+     * command passes. Still no exception for the approved origin: the
      * dangerous request is usually to the site the person is signed into.
      */
     expect(classifyPausedRequest(paused('POST', 'https://mail.example.com/send'), approved)).toBe(
@@ -1061,6 +1097,88 @@ describe('what the browser attests about a request it is holding', () => {
     expect(classifyPausedRequest(paused('DELETE', 'https://mail.example.com/x'), approved)).toBe(
       'blocked-request',
     )
+  })
+
+  describe('the landing permit, at the network (ADR-0024)', () => {
+    const permit = {
+      intentId: 'intent-1',
+      originPattern: 'https://mail.example.com',
+      maxAmountMinor: 4_000,
+      currency: 'USD',
+    }
+    const checkout = (body: string, url = 'https://mail.example.com/checkout'): unknown => ({
+      request: {
+        method: 'POST',
+        url,
+        postData: body,
+        headers: { 'Content-Type': 'application/json' },
+      },
+      resourceType: 'XHR',
+      frameId: MAIN,
+    })
+
+    it('lands the one covered request at or under the ceiling', () => {
+      expect(
+        classifyPausedRequest(
+          checkout('{"amount_minor":4000,"currency":"USD"}'),
+          approved,
+          patternCovers,
+          MAIN,
+          permit,
+        ),
+      ).toBe('allow-landing')
+    })
+
+    it('refuses over the ceiling, as its own typed verdict', () => {
+      expect(
+        classifyPausedRequest(
+          checkout('{"amount_minor":4001,"currency":"USD"}'),
+          approved,
+          patternCovers,
+          MAIN,
+          permit,
+        ),
+      ).toBe('amount-over-ceiling')
+    })
+
+    it('refuses an unreadable or wrong-currency amount, as its own typed verdict', () => {
+      expect(
+        classifyPausedRequest(checkout('opaque'), approved, patternCovers, MAIN, permit),
+      ).toBe('amount-unparseable')
+      expect(
+        classifyPausedRequest(
+          checkout('{"amount_minor":4000,"currency":"EUR"}'),
+          approved,
+          patternCovers,
+          MAIN,
+          permit,
+        ),
+      ).toBe('amount-unparseable')
+    })
+
+    it('matches the origin exactly — never a pattern, never a prefix, never a subdomain', () => {
+      expect(
+        classifyPausedRequest(
+          checkout('{"amount_minor":4000,"currency":"USD"}', 'https://pay.mail.example.com/x'),
+          approved,
+          patternCovers,
+          MAIN,
+          permit,
+        ),
+      ).toBe('blocked-request')
+    })
+
+    it('a GET is untouched by a permit — the permit releases nothing it was not for', () => {
+      expect(
+        classifyPausedRequest(
+          paused('GET', 'https://mail.example.com/page'),
+          approved,
+          patternCovers,
+          MAIN,
+          permit,
+        ),
+      ).toBe('allow')
+    })
   })
 
   it('treats an absent or malformed method as the dangerous case', () => {

@@ -87,8 +87,17 @@
  * approved web page, and `GET`-shaped destruction acquires a desktop analogue
  * with no mechanism behind it at all.
  *
- * Neither ADR is implemented as this is written. Both are decisions, and the
- * reason they are recorded here rather than only in `docs/adr/` is that this is
+ * ~~Neither ADR is implemented as this is written.~~ **ADR-0024 built,
+ * 2026-09-01; ADR-0025 still a decision.** The network check is conditional
+ * now — a one-shot landing permit under a ratified `PurchaseAuthorization`
+ * releases exactly one covered non-`GET` — and this file's importance changed
+ * exactly the way the sentence below predicted: `complete-purchase` sits
+ * OUTSIDE `CONFIRMABLE_ACTION_KINDS` (the ratification is the consent, ADR-0024
+ * §4), so this lexicon never runs on it, while an ordinary `click-element` on a
+ * buy-token button still escalates here — which is now the defence in depth
+ * behind the permit rather than a second opinion beside an absolute block. The
+ * reason this is recorded here rather than only in `docs/adr/` is unchanged:
+ * this is
  * the file whose importance changes, and a file that quietly becomes
  * load-bearing is how a mechanism erodes without anybody choosing it.
  *
