@@ -290,6 +290,11 @@ was written from the row rather than from the diff it was part of.)*
 
 **Later.** Structured integrations with the tools people actually work in. Editors, note apps,
 ~~calendars~~ — each with the same posture: least privilege, enforced by the platform where possible.
+*(2026-09-01: mail stopped being "later" —
+[ADR-0029](./adr/0029-the-mailbox-and-a-calendar-of-our-own.md) decides it, unbuilt, and as verbs
+inside a ratified run rather than an integration that watches anything. The posture sentence held
+again; the platform could not enforce the least privilege this time, and the ADR says what holds it
+instead.)*
 
 *(Amended 2026-08-18 — [ADR-0014](./adr/0014-reading-free-busy.md). One calendar arrived early, and
 it arrived as the narrowest possible version of itself, so the word is struck from **Later** rather
@@ -490,7 +495,13 @@ it pretends to undo.
   you connect it, it is revocable from Google in one click, nothing it returns is stored, and it can
   only offer a time limit you then set yourself. **The withdrawal is still a withdrawal**, and
   ADR-0014 opens by saying so: a narrow scope makes the exposure small and does not make the promise
-  less broken.
+  less broken. **Struck a third time 2026-09-01
+  ([ADR-0029](./adr/0029-the-mailbox-and-a-calendar-of-our-own.md)), decided and unbuilt:** *"for
+  one question"* is withdrawn. Two more scopes are permitted on paper — the mailbox without delete
+  or unratified send, and holds on a calendar Propositum creates — each its own consent at its own
+  price. *No cloud, no telemetry, no server of ours* survives every strike this bullet has taken;
+  what has gone, in three steps, is the claim that Propositum's reach into your accounts is small
+  enough not to need an argument. The arguments are the ADRs.
   That limit is a privacy property today and a limitation tomorrow — it is also why a run stops when
   your Mac sleeps, and it is the sentence the calendar read exists to answer the other half of.
 - **An `Intention` is human-*ratified*, which is not the same as human-*written*.** It is born on

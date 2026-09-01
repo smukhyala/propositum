@@ -15,7 +15,10 @@ these six things, in this order, and where each lives is not uniform: **Blocked
 by** is a bold field in the header on [`00`](./00-score-the-hypotheses.md) through
 [`05`](./05-chrome-web-store.md) and a full heading on
 [`06`](./06-buying-things.md) through [`08`](./08-one-time-codes.md), where there
-is an argument rather than a name. Three files also carry a seventh heading of
+is an argument rather than a name *(and on [`10`](./10-the-mailbox.md) and
+[`11`](./11-calendar-holds.md), which carry both, copying `08`)*. ~~Three files~~ **Some files**
+*(the count went stale the day [`11`](./11-calendar-holds.md) arrived with its own seventh heading,
+2026-09-01, so it is deleted rather than corrected)* also carry a seventh heading of
 their own, and [`02`](./02-phone-thread.md) is finished and has dropped most of
 them.
 
@@ -39,7 +42,7 @@ point and a rule nothing enforces is one more thing to keep true by hand.
 A seventh is worth adding when it earns a heading: what the work **disturbed**
 that nothing predicted ([`03`](./03-document-loop.md), [`04`](./04-quick-fixes.md)),
 or what would make the file **deletable** rather than done
-([`08`](./08-one-time-codes.md)).
+([`08`](./08-one-time-codes.md), [`11`](./11-calendar-holds.md)).
 
 ## The order, and why
 
@@ -55,11 +58,15 @@ or what would make the file **deletable** rather than done
 | 7 | [`07-off-the-browser.md`](./07-off-the-browser.md) | **the largest file here**, decided not built | via `01` |
 | 8 | [`08-one-time-codes.md`](./08-one-time-codes.md) | ~200 lines, **decided not built** | no |
 | 9 | [`09-onboarding.md`](./09-onboarding.md) | **unshaped** — written down 2026-08-27, the owner's design pass pending | no |
+| 10 | [`10-the-mailbox.md`](./10-the-mailbox.md) | days, **decided not built** | no — until a build leaves the tester circle, then the CASA bill |
+| 11 | [`11-calendar-holds.md`](./11-calendar-holds.md) | ~a day, **decided not built**, and it opens with a stop-the-line check | no |
 
 **6, 7 and 8 were written 2026-08-26**, hours after the decisions that made them necessary and in the
 same pass that noticed this folder did not have them. All three are **decided, not built** — the
 argument is finished, the ADR is accepted, and `grep` finds nothing in `src/`. Each carries the
-command that proves it.
+command that proves it. **10 and 11 joined the same class on 2026-09-01**, in the same change that
+accepted [ADR-0029](../adr/0029-the-mailbox-and-a-calendar-of-our-own.md) — the rule about writing
+the file beside the decision held this time.
 
 They sit at the end of the table and they are **not** at the end of the order. 7 depends on 1 and on
 6; 8 depends on 7. Where a file sits in this table is where it was added, and the *Blocked by*
@@ -103,7 +110,10 @@ than a rule: `extension/src/cdp.js` refuses every non-`GET`, there is no native
 binary to hold a TCC permission, and nothing reads a file on the disk. Those are
 the strongest guarantees this product has, and **0 is what decides whether they
 are worth spending.** Building any of them before H1, H2 and H3 have numbers is
-paying the price of a bet without knowing whether the bet paid.
+paying the price of a bet without knowing whether the bet paid. *(2026-09-01: 10
+and 11 belong to this class too — a mail scope that can read everything, a first
+write to a calendar. The numbers exist now and were poor, which is said in 10's
+header rather than hidden; the owner directed the work with that on the table.)*
 
 The ADRs say this about themselves — all three open with a section headed *The
 sentence that stops being true*, and each says the product

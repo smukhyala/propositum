@@ -132,8 +132,11 @@ These are decided, documented, and load-bearing. Changing one is an ADR, not a d
   `compilePolicy` structurally cannot receive a `StatedIntent`.
 - **Observation may never execute actions.**
 - **No cloud, no telemetry, no server of ours.** The only credential needed is
-  `ANTHROPIC_API_KEY`; the optional Google scope is `calendar.freebusy` and nothing
-  else (ADR-0014).
+  `ANTHROPIC_API_KEY`; ~~the optional Google scope is `calendar.freebusy` and nothing
+  else (ADR-0014)~~ **amended 2026-09-01,
+  [ADR-0029](docs/adr/0029-the-mailbox-and-a-calendar-of-our-own.md): two more optional
+  scopes are decided and unbuilt — `gmail.modify` and `calendar.app.created` — each its
+  own consent, each behind the gate when built.**
 - **Every inference carries provenance to its events**, and every action is an
   `ActionIntent` before and an `ActionOutcome` after — two rows, because one row
   holding both would force an `UPDATE` into an append-only table.

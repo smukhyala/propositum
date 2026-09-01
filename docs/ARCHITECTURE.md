@@ -198,6 +198,10 @@ of it but one file, and one pair of per-turn observations.**
 [ADR-0025](./adr/0025-computer-use-beyond-the-browser.md) adds a screenshot and an `AXUIElement` tree
 as observations, both untrusted. **Neither is written** — `grep -rn 'chat\.db' src/ --include='*.ts'`
 returns nothing — so *one sensor, browser only* is still the true status and the cell has not moved.
+*(2026-09-01: [ADR-0029](./adr/0029-the-mailbox-and-a-calendar-of-our-own.md) does not move it
+either — the mail it decides is verbs inside a ratified run, not a sensor: no watch, no event,
+nothing persisted, and the unsubscribe sweep's header read carries the same never-persisted posture
+a `BusyInterval` has. Also unbuilt.)*
 
 **The structural fact that makes this hard to change by accident.**
 `ObservationEvent.sessionId` is **required** in `prisma/schema.prisma`, its relation to `WorkSession`
@@ -272,12 +276,16 @@ types are constructed so they cannot receive prose, and the `@ts-expect-error` d
 That file ends in `-test.ts` rather than `.test.ts`, so vitest never runs it — **`npm run typecheck`
 is the assertion.** Neither command is a superset of the other.
 
-**Not built: two fields decided 2026-08-26.** `ContractScope` gains `purchaseAuthorization`
-([ADR-0024](./adr/0024-purchases-within-a-ratified-authorisation.md)) and `approvedApplications`
-([ADR-0025](./adr/0025-computer-use-beyond-the-browser.md)). Both are optional and **absence is the
-deny**; neither exists in `src/` or `prisma/`, and `CONTEXT.md` carries both entries behind its
+**Not built: two fields decided 2026-08-26** *(a third, 2026-09-01)*. `ContractScope` gains
+`purchaseAuthorization`
+([ADR-0024](./adr/0024-purchases-within-a-ratified-authorisation.md)), `approvedApplications`
+([ADR-0025](./adr/0025-computer-use-beyond-the-browser.md)) and `sendAuthorization`
+([ADR-0029](./adr/0029-the-mailbox-and-a-calendar-of-our-own.md)). All are optional and **absence is
+the deny**; none exists in `src/` or `prisma/`, and `CONTEXT.md` carries the entries behind its
 *specification rather than a description* fence. The second replaces the bound ADR-0010 had, and it
-is weaker — that one was Chrome refusing, this one is our code remembering.
+is weaker — that one was Chrome refusing, this one is our code remembering. The third shares that
+weakness and names it: a first-party API call has no paused request for Chrome to attest, so what
+decides is our own typed call before and a read-after-write proof behind.
 
 **Not built: the durable half.** Every policy today is per-handoff and dies with its
 `HandoffContract`. `WorkingAgreement` — a standing agreement that outlives a handoff — is a

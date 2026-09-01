@@ -41,7 +41,10 @@ this document is provisional; where a term's shape depends on a later ticket, it
   calendar until somebody presses the offer. It may not reach `compilePolicy`, `EnforcedPolicy` or the gate, may not raise or widen
   anything, and is never persisted. This is the first thing in the vocabulary that comes from neither
   our code nor the person, so the rule the first line of this list states about models is restated
-  here about a third party rather than assumed to generalise.
+  here about a third party rather than assumed to generalise. *(2026-09-01,
+  [ADR-0029](docs/adr/0029-the-mailbox-and-a-calendar-of-our-own.md): unchanged for the read. A
+  `CalendarHold` is not the calendar granting — it is a write a ratified contract granted, going the
+  other way, and the two never trade jobs.)*
 
 ### Why the reversibility rule was weakened, and what holds it up now
 
@@ -937,7 +940,10 @@ table and is not displaced by this. It is restated by it.**
 neither built:** `approvedApplications[]`
 ([ADR-0025](docs/adr/0025-computer-use-beyond-the-browser.md)) and an optional
 `purchaseAuthorization` ([ADR-0024](docs/adr/0024-purchases-within-a-ratified-authorisation.md)).
-`grep -rn 'approvedApplications\|purchaseAuthorization' src/ prisma/` returns nothing — these are a
+**A third joined 2026-09-01, also unbuilt:** an optional `sendAuthorization`
+([ADR-0029](docs/adr/0029-the-mailbox-and-a-calendar-of-our-own.md)).
+`grep -rn 'approvedApplications\|purchaseAuthorization\|sendAuthorization' src/ prisma/` returns
+nothing — these are a
 **specification rather than a description**, the same fence the `Intention` entry put around itself,
 and they are written here first because the constraint is one sentence today and a migration later.
 
@@ -1020,6 +1026,30 @@ switch the ceiling off, because that is a dial pre-approving an irreversible act
 *Displaces:* Budget (which is time — see AutonomyControls) · SpendLimit · PaymentMethod · Wallet ·
 `alwaysAllow`.
 **Consumer:** "What you said I could buy".
+
+### SendAuthorization — *value object*
+`recipients[]`, `whatFor`, `maxCount`, `expiresAt`. Optional on `ContractScope`; **its absence is
+the deny.** Decided 2026-09-01,
+[ADR-0029](docs/adr/0029-the-mailbox-and-a-calendar-of-our-own.md).
+
+**A specification rather than a description.** Nothing in `src/` or `prisma/` holds any of these
+fields and `grep -rn 'gmail' src/` returns nothing — no mail code exists at all, so **Propositum
+cannot send an email today**. `tests/architecture.test.ts` still asserts no send-shaped function
+exists, stated with its known limit: since ADR-0010 that clause is about our function names, not
+reachable effects. It is the guard that must be deliberately updated on the day this is built, and
+[`docs/todo/10-the-mailbox.md`](docs/todo/10-the-mailbox.md) names it.
+
+What a person ratified about sending, for one contract — `PurchaseAuthorization`'s pattern applied
+to the send verb. A model drafts it **only** from an instruction that names its recipient (*"send
+Priya the summary"* names someone, so there is something to draft; *"deal with my inbox"* names no
+one, so the terminal is a `message-draft` held unsent in the drafts folder) and the person ratifies
+it on the screen they already ratify. `recipients` are exact addresses, matched exactly and never by
+domain; `whatFor` is display-only prose the gate never reads; `expiresAt` is never later than the
+contract's own end, because an authorisation that outlives its contract is a
+`WorkingAgreement` in everything but name, and that word stays reserved.
+
+*Displaces:* MailPermission · SendGrant · `sendMessage` (as a capability name) · `alwaysAllow`.
+**Consumer:** "Who you said I could write to".
 
 ### AutonomyControls — *value object*
 The human-set dials. Absent from every model-facing schema; defaults are static product constants,
@@ -1123,6 +1153,12 @@ live only in an ADR:
   recommends; it may never grant** — principle 15's asymmetry, applied to a third party instead of to
   a model or to history.
 
+*(2026-09-01, [ADR-0029](docs/adr/0029-the-mailbox-and-a-calendar-of-our-own.md): the scope this
+entry reads under is no longer the product's only Google scope on paper — a write path is decided,
+and its object is `CalendarHold`, below. Nothing in this entry moves: the read is still
+`calendar.freebusy`, still never persisted, still grants nothing, and a hold is not a BusyInterval
+and never becomes one.)*
+
 **The suggestion gets no term of its own, deliberately.** It is a candidate value of
 `timeLimitMinutes` — offered beside the dial, applied only by a press, and *not* pre-filled into it;
 weaker than `StatedIntent`'s fields, which do arrive pre-filled from a model. Giving the offered
@@ -1142,6 +1178,36 @@ focus block.
 the time limit it would have shown anyway, one sentence saying what the calendar said, and a button
 offering the number that fits. The sentence stays after the button is pressed, so a ratified limit
 never sheds where the number came from.)*
+
+### CalendarHold — *value object*
+`{ start, end, label }` — one busy block Propositum wrote, on a calendar Propositum created. The
+write-side counterpart of a `BusyInterval` and never the same object: one is evidence read from a
+person's availability, the other an action a ratified contract granted. Decided 2026-09-01,
+[ADR-0029](docs/adr/0029-the-mailbox-and-a-calendar-of-our-own.md).
+
+**A specification rather than a description.** `grep -rn 'CalendarHold\|calendar.app.created' src/`
+returns nothing, and `src/server/calendar.ts` still names `calendar/v3/freeBusy` and no other
+endpoint. The build's first job is a stop-the-line verification — a hold that does not make the
+person read as busy reopens the decision rather than shipping anyway —
+[`docs/todo/11-calendar-holds.md`](docs/todo/11-calendar-holds.md) leads with it.
+
+Written under `calendar.app.created`, which can touch only calendars Propositum itself created —
+the person's own calendars have no field this can reach and no call that can return their contents,
+so ADR-0014's *has nowhere to put it* holds in both directions. The consumer wording still says
+*your* calendar deliberately: the secondary calendar sits inside the person's account and moves the
+person's availability, which is the sense a person means — the scope sense (never the calendars they
+keep themselves) is the security fact, said where security is the subject. **The hold itself lives
+on Google, not here** — locally there are only the ledger's rows about the action that placed it,
+the same not-persisted posture as the read. Proof per hold: the event read back
+by its id, and the interval reported busy by the ADR-0014 read — the product's oldest Google read
+becomes the receipt for its first Google write. Removing a hold removes only what Propositum wrote.
+
+The standing rule survives untouched: the calendar's *read* still recommends and never grants. A
+hold grants nothing either — it is *granted*, by a contract, like any other mutating kind.
+
+*Displaces:* TimeBlock · HoldEvent · the write sense of `calendar block` and `focus block` (whose
+read sense stays displaced by `BusyInterval`).
+**Consumer:** "Time held on your calendar".
 
 ### EnforcedPolicy — *computed view*
 The deterministic rule set the gate evaluates, produced by the pure total function
@@ -1402,6 +1468,13 @@ boundary is untouched, because deny-by-default already covers it. The only cost 
 `allowedActionKinds`, so a worker proposing it is refused by the same deny-by-default path as any
 unauthorized kind. The control is therefore enforced by the gate that already exists, at the cost
 of one flag.
+
+**Members decided and not built** *(2026-09-01,
+[ADR-0029](docs/adr/0029-the-mailbox-and-a-calendar-of-our-own.md); a specification rather than a
+description)*: the mail verbs (read, search, label, archive, draft, the evidence-bound unsubscribe)
+and the calendar-hold pair. Their exact member names are the build's to choose — mechanisms, not
+effects, as everything since ADR-0010 — and none exists in the enum today; the fence comes off in
+the commit that adds them.
 *Displaces:* Tool · ToolCall · tool call · Capability · Operation · Verb · Command · Skill ·
 ActionType · allowed actions (as free strings).
 **Consumer:** "What I'm allowed to do" — "Read approved sources" / "Draft a section".
@@ -2079,9 +2152,14 @@ say that it does.
     within a `PurchaseAuthorization` a person ratified, bounded by an origin, a ceiling, a count and
     an expiry. [ADR-0025](docs/adr/0025-computer-use-beyond-the-browser.md) removes the bound to one
     Chrome tab, so the blast radius becomes the machine. Both make the product less safe and both say
-    so at the top rather than here.
+    so at the top rather than here. ~~there are now three~~ **Corrected 2026-09-01: four —
+    [ADR-0029](docs/adr/0029-the-mailbox-and-a-calendar-of-our-own.md) overrides the brief's
+    exclusion of *sending*, inside a `SendAuthorization` a person ratified naming its exact
+    recipients. Decided and unbuilt: `grep -rn 'gmail' src/` finds nothing and
+    `tests/architecture.test.ts` still asserts no send-shaped function.**
 
-    **All three are decisions and none is built**, which this entry got wrong for about an hour on the
+    ~~All three~~ **All four, since 2026-09-01,** **are decisions and none is built**, which this
+    entry got wrong for about an hour on the
     day it was written. ~~`LANDING_ACTION_KINDS` … is no longer empty~~ — **it is still empty.**
     `src/domain/handoff/policy.ts:168` reads `new Set<ActionKind>()`, `extension/src/cdp.js:529` still
     returns `blocked-request` for every non-`GET`, and `grep -rn 'PurchaseAuthorization' src/` finds

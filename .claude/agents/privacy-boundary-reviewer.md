@@ -35,8 +35,13 @@ first and **say what you chose**. An empty diff is a question for the caller, no
   here and is bounded by a published constant.
 - **Acting** — only under a ratified agreement, only in a tab Propositum opened. Sees far more per turn
   than the watching does in an hour, and `ActionEvidence` is swept.
-- **Calendar** — `calendar.freebusy` and nothing else. Busy start and end times; never a title, an
-  attendee or a description. Never persisted, and it reaches no model and no policy decision.
+- **Calendar** — `calendar.freebusy` is the only scope built. Busy start and end times; never a
+  title, an attendee or a description. Never persisted, and it reaches no model and no policy
+  decision. **Decided and unbuilt (ADR-0029, 2026-09-01):** `gmail.modify` and
+  `calendar.app.created`. When a diff starts building them, hold it to the ADR: mail read only
+  inside a ratified run, nothing persisted, mail text `Datamarked`-only, send only inside a
+  `SendAuthorization`, holds only on the Propositum-created calendar — and flag any watch, poll or
+  index as ingestion, which stays on the do-not-build list.
 
 ## What to flag
 

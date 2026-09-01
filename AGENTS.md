@@ -136,8 +136,14 @@ Changing one of these is an ADR, not a diff.
   per action, by a person, and a question that times out produces no verdict row and therefore no
   permission.
 - **Nothing is ever copied.** The `Changeset` is the copy, and "copy" is banned from the interface.
-- **No cloud, no telemetry, no server of ours.** `ANTHROPIC_API_KEY` is the only credential needed; the
-  optional Google scope is `calendar.freebusy` and nothing else (ADR-0014).
+- **No cloud, no telemetry, no server of ours.** `ANTHROPIC_API_KEY` is the only credential needed; ~~the
+  optional Google scope is `calendar.freebusy` and nothing else (ADR-0014)~~ **amended 2026-09-01,
+  [ADR-0029](docs/adr/0029-the-mailbox-and-a-calendar-of-our-own.md), decided and unbuilt**: two
+  more optional scopes are permitted on paper — `gmail.modify` (everything in mail but permanent
+  delete; send only inside a ratified `SendAuthorization`) and `calendar.app.created` (holds on a
+  calendar Propositum creates; the person's own calendars stay unreachable by construction).
+  `grep -rn 'gmail' src/` still returns nothing, and where this line and the code disagree, the code
+  is right.
 
 **The heuristic all of these express:** prefer absence to a rule, and a type to a convention. *"There
 is no field for it"* beats *"must not"*, and a compile error beats a review note. Extend that pattern
@@ -172,7 +178,10 @@ executes actions"* is unchanged. But *"no dial, default, timeout or model may pr
 irreversible action"* now sits beside a `PurchaseAuthorization`
 ([ADR-0024](docs/adr/0024-purchases-within-a-ratified-authorisation.md)) — which is not a dial, not a
 default and not a model: it is a structured object a person ratified, per purchase scope, with a
-ceiling nothing may relax.
+ceiling nothing may relax. *(And since 2026-09-01, beside a `SendAuthorization` and a per-contract
+ratified unsubscribe list —
+[ADR-0029](docs/adr/0029-the-mailbox-and-a-calendar-of-our-own.md), the same shape on the same
+argument: ratified structured objects whose absence is the deny, none of them a dial.)*
 
 ## What "done" means
 
