@@ -1,5 +1,6 @@
 /**
- * The permission screen has to stop saying three things that stopped being true.
+ * The permission screen has to stop saying ~~three things~~ **five, 2026-09-01**
+ * that stopped being true.
  *
  * ── The failure this exists for ──────────────────────────────────────────
  *
@@ -277,7 +278,11 @@ function headings(html: string): string[] {
  * Sliced between this `ag-group-head` and the next one. It does NOT cover the
  * prose after the last group — the `ag-hint` under the absence list runs to the
  * end of the section and would be swept into it. No assertion here needs it,
- * and `tests/agreement-density.test.ts` owns that sentence.
+ * and ~~`tests/agreement-density.test.ts` owns that sentence~~ **corrected
+ * 2026-09-01: that file counts words and would not notice the sentence change.
+ * It is pinned by the page-wide reads in this same file — `keeps the absence
+ * claim, which is still true of it` and `says what actually stands there,
+ * which is the pause`.**
  */
 function underHeading(html: string, heading: string): string {
   const heads = [...html.matchAll(/<h3 class="ag-group-head">(.*?)<\/h3>/g)]
@@ -303,6 +308,16 @@ describe('the panel files a permission under the heading that is true of it', ()
     expect(underHeading(html, SWITCHED_OFF)).toBe('')
   })
 
+  it('credits the person with nothing on a default document shift either', () => {
+    // The other half of the same default, and the case the old shape got most
+    // wrong by volume: a document shift is never offered the browser six, and
+    // all six sat under the heading that names a choice.
+    const html = screen(DOCUMENT)
+
+    expect(headings(html)).not.toContain(SWITCHED_OFF)
+    expect(underHeading(html, NOT_INCLUDED)).toContain('Click something on the page')
+  })
+
   it('files what was never offered under a heading naming no cause', () => {
     const said = underHeading(screen(BROWSER), NOT_INCLUDED)
 
@@ -316,6 +331,11 @@ describe('the panel files a permission under the heading that is true of it', ()
     const html = screen(DOCUMENT, { output: 'suggestions-only' }, 'The supplier proposal')
 
     expect(underHeading(html, SWITCHED_OFF)).toContain('Draft a section of your document')
+    // The second heading has to be ON the screen before the line under it means
+    // anything: `underHeading` returns '' for a heading that is not there, and
+    // the old shape had only one heading — so without this the `not.toContain`
+    // passed against the very component this case exists to fail.
+    expect(headings(html)).toContain(NOT_INCLUDED)
     expect(underHeading(html, NOT_INCLUDED)).not.toContain('Draft a section of your document')
   })
 

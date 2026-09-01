@@ -414,9 +414,12 @@ export function Agreement({ draft, defaults, sourceLabels, onBack, onHandedOver 
    * `grantableActionKinds(false)` never offered, so the panel credited the
    * person with switching off things they were never shown.
    *
-   * The discriminant is the one `whyDraftingIsOff` already uses below and the
-   * one the other four corrections use: what the draft OFFERED, against what
-   * compiled. It is deliberately not derived from `allowedActionKinds` alone,
+   * The discriminant is what the draft OFFERED, against what compiled — used
+   * by exactly two of the corrections in this family, `whyDraftingIsOff` below
+   * and `HandedOver`'s `whyNoText` in `src/ui/reading.tsx` one screen later.
+   * The other two, `mayOperate` and `mayFollowLinks`, read the compiled
+   * allowlist alone, which cannot tell a removed offer from one that was never
+   * made. It is deliberately not derived from `allowedActionKinds` alone,
    * which collapses the two facts — that collapse is the whole bug.
    *
    * What this does NOT do: name the dial for the kinds it does file under the
