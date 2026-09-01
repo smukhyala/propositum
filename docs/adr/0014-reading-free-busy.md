@@ -1,6 +1,8 @@
 # ADR-0014 — Reading free/busy, and the account that stops being none
 
-**Status:** accepted · 2026-08-18
+**Status:** accepted · 2026-08-18 · **amended by [ADR-0029](./0029-the-mailbox-and-a-calendar-of-our-own.md), 2026-09-01** — the
+single-scope claim is withdrawn by reopening, the route the *Revisit when* below demands. The
+free/busy read, its five prohibitions and its never-persisted posture all stand.
 **Amends:** [`docs/SECURITY_AND_PRIVACY.md`](../SECURITY_AND_PRIVACY.md) — *"**Everything is local.**
 SQLite on your machine. No account, no cloud, no sync, no server."* ·
 [`docs/VISION.md`](../VISION.md) — *"Everything is local. There is no cloud, no telemetry, and no
@@ -408,7 +410,11 @@ Named without rounding up.
   sentence that arrives next, attached to Gmail, or Drive, or a wider Calendar scope. It is not an
   argument, the consent screen a person saw named one thing, and every additional scope is its own
   decision at its own price. This is recorded as the predicted failure mode rather than left to be
-  discovered.
+  discovered. *(2026-09-01: the predicted sentence arrived, and it was taken by the route this
+  document demanded rather than by drift —
+  [ADR-0029](./0029-the-mailbox-and-a-calendar-of-our-own.md) reopens this decision, argues the
+  Gmail price this ADR's research note recorded, and pays it deliberately. The prediction held; so
+  did the trigger.)*
 
 ---
 
