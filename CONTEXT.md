@@ -1223,7 +1223,18 @@ row**: the queue is a status column and one guarded `UPDATE … RETURNING`, not 
 `leaseExpiresAt`, `cancelRequested`, `lastCompletedStepOrdinal`, `startedAt`, `endedAt`,
 `terminalReason`.
 
-`status`: `queued · running · completed · halted · interrupted · failed`.
+~~`status`: `queued · running · completed · halted · interrupted · failed`.~~
+**Corrected 2026-09-01, and it was wrong in both directions.** Three of those six are never written
+for an AgentRun — `queued` is `ActionDispatch`'s, and `completed` and `halted` are nobody's — and
+three the code does write were missing. The seven, agreed between the code and
+`prisma/schema.prisma`'s own AgentRun comment: `pending · claimed · running · succeeded · failed ·
+interrupted · awaiting-confirmation`. `awaiting-confirmation` is now load-bearing outside the worker:
+`confirmRequest` refuses a yes unless the run is still parked on the question, so a value this list
+did not mention decides whether a person's answer is accepted. The divergence below already said this
+entry disagrees with the schema; what changed is that it stopped being only a specification gap.
+**The reasons table below still partitions by `completed` and `halted` and is left standing** — the
+terminal reasons are a second divergence, and correcting one list by leaning on the other is how this
+entry got here.
 `terminalReason` is closed, **code-assigned**, and partitions strictly by status:
 
 | Status | Reasons |
@@ -1518,6 +1529,24 @@ as an **attributed quotation**, exactly as an inferred `constraint` claim is.
 The question is never model-composed. A model that could write the words asking for its own
 permission is a model that can argue for itself, and the page-authored half is quoted with
 attribution rather than spoken in Propositum's voice.
+
+**It is answerable only while the run is still parked on it** *(added 2026-09-01)*. A question whose
+run ended some other way is **abandoned**: closed rather than live, the person told the work stopped
+before their answer arrived, and no verdict written. `abandoned` is the word for that closed state
+wherever it is carried — `AnswerResult.reason`, `ConfirmationView.abandoned`, and the `unanswered`
+the settled screen renders.
+
+It is **a distinct closed state, not a fourth thing expiry does**: a question can close this way one
+minute after it was asked, and telling somebody who answered promptly that they were too slow is the
+failure the two sentences are kept apart to prevent. **When a question is both expired and unparked —
+the ordinary case, because the sweep that notices the expiry is what ends the run — the expiry
+sentence wins**, in `confirmRequest` and on the screen alike, off one tie-break in
+`unansweredReason`. Saying **no** is still accepted, on the standing rule that a rejection grants
+nothing.
+
+**Not `ActionDispatch`'s `abandoned`**, which is an instruction that was queued and never handed out.
+One word, two closed sets, no overlap: this one is about a question a person was asked, that one
+about a command the browser never received.
 *Checked against the banned words:* not bare `action`, not `approval` (displaced by ChangeVerdict),
 not `escalation` (displaced by DecisionNeeded).
 *Displaces:* approval request · permission prompt · escalation · are-you-sure · gate prompt ·

@@ -49,6 +49,7 @@ import {
   rejectRequest,
   settleAbandonedIntents,
   sweepAbandonedIntents,
+  unansweredReason,
 } from '../src/server/confirmations'
 import type { ConfirmationContext } from '../src/server/confirmations'
 import {
@@ -65,12 +66,21 @@ import {
 } from '../src/domain/execution/stop-conditions'
 import { startWorkerProcess } from '../src/runtime/worker-process'
 import type { FenceVerdict, RunFence } from '../src/runtime/worker-process'
-import { ConfirmationScreen } from '../src/ui/confirm'
+import { ConfirmationScreen, SettledConfirmation } from '../src/ui/confirm'
 import { createLedgerWriter } from '../src/persistence/ledger-writer'
 import { executeRun } from '../src/server/execute-run'
 import { stripComments } from './support/strip-comments'
 import { FakeModelClient } from '../src/model/fake'
 import { fixtureFetcher } from '../src/policy/fetcher'
+
+// `revalidatePath` needs a request store that does not exist in a test process.
+// The server actions below are imported for one assertion — the SENTENCE a
+// person reads when their yes arrives after the work ended — because that is
+// the mapping the two closed states could quietly collapse into one.
+vi.mock('next/cache', () => ({ revalidatePath: () => undefined }))
+
+type Actions = typeof import('../src/server/actions')
+type ServerDb = typeof import('../src/server/db')
 
 const MINUTE = 60_000
 const HOUR = 60 * MINUTE
@@ -80,6 +90,8 @@ let db: Database
 let repos: Repositories
 let ctx: ConfirmationContext
 let projectId: string
+let actions: Actions
+let serverDb: ServerDb
 
 beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), 'propositum-confirm-'))
@@ -92,10 +104,19 @@ beforeAll(async () => {
   repos = createRepositories(db.prisma)
   ctx = { db, repos }
   projectId = (await repos.projects.create('northwind')).id
+
+  // Set before the module loads: `appContext()` builds its client from the
+  // environment the first time an action asks for it, and it must land on the
+  // same file the rows above are in.
+  process.env['DATABASE_URL'] = url
+  actions = await import('../src/server/actions')
+  serverDb = await import('../src/server/db')
 }, 120_000)
 
 afterAll(async () => {
   await db?.close()
+  const appCtx = await serverDb?.appContext()
+  await appCtx?.db.close()
   if (dir) rmSync(dir, { recursive: true, force: true })
 })
 
@@ -1907,5 +1928,247 @@ describe('a paused run is parked in one transaction', () => {
     // transaction. Either one appearing here is the bug returning.
     expect(block).not.toContain('repos.confirmations.create')
     expect(block).not.toContain('repos.runs.complete')
+  })
+})
+
+/* ═════════════════════════ 10. a question whose work is over ═════════════ */
+
+/**
+ * The half of #108 that PR #111 left open on purpose.
+ *
+ * `raiseAndPark` closed the window where a question could exist beside a run
+ * still holding a control token. It did not close the other end: `confirmRequest`
+ * checked that the request existed, had no verdict and had not expired, and
+ * never read the parent run's status. So a question raised by a run that was
+ * later reaped — `interrupted` / `lease-expired`, credential revoked, precisely
+ * because we stopped trusting it to be driving — could still be answered, and
+ * answering enqueued a continuation off the back of it.
+ *
+ * That was never a permission failure. A human really did confirm. It is a
+ * person being asked about work that had been abandoned, and not being told.
+ *
+ * ── Why the fix is symmetry rather than invention ────────────────────────
+ *
+ * Two sibling queries in `src/server/confirmations.ts` already filter on
+ * `run: { status: 'awaiting-confirmation' }` — `expireConfirmations` and
+ * `oldestPendingConfirmation`. So the question already vanished from the
+ * extension's notification while staying fully answerable by URL. The one that
+ * GRANTS something was the one not looking.
+ *
+ * ── What actually reaches it, said rather than implied ───────────────────
+ *
+ * Two populations, and the first is routine rather than rare.
+ * `expireConfirmations` runs on the worker's five-minute poll and ends the run
+ * of every question older than `CONFIRMATION_EXPIRY_HOURS`, so minutes after
+ * the day is up an unanswered question is BOTH expired and no longer parked.
+ * That is why `confirmRequest` reads the status AFTER the expiry check and why
+ * `unansweredReason` breaks the same tie the same way: somebody a day late is
+ * owed "too slow", not "the work ended", and one row must not get two
+ * explanations.
+ *
+ * The second is what `abandoned` is left for: a run that ended for some other
+ * reason while its question was still inside its day. Today that is a row
+ * written before `raiseAndPark` landed — the old create-then-complete pair, a
+ * crash between them, the lease sweep. Nothing currently ends a correctly
+ * parked run early. `sweepExpiredLeases` matches `claimed | running` and
+ * `requestCancel` matches `pending | claimed | running`, which means a person
+ * pressing Stop on a parked run changes nothing at all and the question stays
+ * answerable — its own defect, and #141.
+ *
+ * The population an earlier draft of this paragraph named — "a run reaped
+ * before it got as far as parking" — does not reach this state, and the reason
+ * is worth writing down rather than quietly dropping. `raiseAndPark` writes
+ * `awaiting-confirmation` with no status predicate, so it rewrites a reaped run
+ * back to parked, carrying the stale `terminalReason 'lease-expired'` with it.
+ * That row looks correctly parked and its question is answerable. Separate
+ * pre-existing defect, #140.
+ *
+ * The tests below construct the abandoned state directly rather than pretending
+ * a live sweep produces it. The expiry pair at the end runs the real sweep,
+ * because there the sweep is the point.
+ */
+describe('a question is not answerable once the work behind it is over', () => {
+  /** The state, however it was arrived at: a request whose run is not parked. */
+  async function reaped(): Promise<Paused> {
+    const paused = await pausedShift({
+      acceptedAt: new Date('2026-05-04T09:00:00Z'),
+      askedAt: new Date('2026-05-04T09:05:00Z'),
+    })
+    await db.prisma.agentRun.update({
+      where: { id: paused.runId },
+      data: { status: 'interrupted', terminalReason: 'lease-expired', controlToken: null },
+    })
+    return paused
+  }
+
+  it('turns the yes down rather than enqueueing work off an abandoned run', async () => {
+    const paused = await reaped()
+
+    const answered = await confirmRequest(ctx, paused.requestId, new Date('2026-05-04T09:06:00Z'))
+
+    expect(answered.ok).toBe(false)
+    if (answered.ok) return
+    expect(answered.reason).toBe('abandoned')
+  })
+
+  it('writes no verdict, so the gate sees the absence it saw before', async () => {
+    const paused = await reaped()
+    await confirmRequest(ctx, paused.requestId, new Date('2026-05-04T09:06:00Z'))
+
+    // The same property expiry has. A refusal that recorded a `confirmed` row
+    // and then declined to act on it would leave a permission on disk for the
+    // next thing that reads one.
+    const verdict = await db.prisma.confirmationVerdict.findUnique({
+      where: { requestId: paused.requestId },
+    })
+    expect(verdict).toBeNull()
+  })
+
+  it('still lets the person say no, because saying no grants nothing', async () => {
+    const paused = await reaped()
+
+    // Same asymmetry `rejectRequest` already has against expiry. A no is a
+    // record of what the person wanted, and it authorises nothing, so there is
+    // no reason to refuse it — and refusing would leave them unable to answer
+    // at all.
+    const rejected = await rejectRequest(ctx, paused.requestId, new Date('2026-05-04T09:06:00Z'))
+    expect(rejected.ok).toBe(true)
+  })
+
+  it('leaves a properly parked question answerable, or this rule eats the product', async () => {
+    const paused = await pausedShift({
+      acceptedAt: new Date('2026-05-04T09:00:00Z'),
+      askedAt: new Date('2026-05-04T09:05:00Z'),
+    })
+
+    const answered = await confirmRequest(ctx, paused.requestId, new Date('2026-05-04T09:06:00Z'))
+    expect(answered.ok).toBe(true)
+  })
+
+  it('tells the screen so, before the person is offered a button', async () => {
+    const paused = await reaped()
+
+    const view = await confirmationView(ctx, paused.requestId, Date.parse('2026-05-04T09:06:00Z'))
+    expect(view).not.toBeNull()
+    if (!view) return
+
+    // Neither answered nor expired, so without this the page falls through to
+    // the live screen with both controls — under copy promising that Propositum
+    // picks the work up again afterwards, which by then is false.
+    expect(view.verdict).toBeNull()
+    expect(view.expired).toBe(false)
+    expect(view.abandoned).toBe(true)
+  })
+
+  it('says what happened in words that name no verdict nobody gave', async () => {
+    const html = renderToStaticMarkup(
+      createElement(SettledConfirmation, {
+        summary: 'Propositum wants to press Send on mail.example.test.',
+        verdict: null,
+        unanswered: 'abandoned' as const,
+      }),
+    )
+    const said = html.replace(/<[^>]*>/g, ' ').replace(/&#x27;|&rsquo;/g, "'")
+
+    expect(said).toContain('stopped before anyone answered')
+    // The expiry sentence is a different fact and must not stand in for this one.
+    expect(said).not.toContain('went unanswered for a day')
+  })
+
+  /**
+   * The ordinary day-late yes, produced by the real sweep rather than
+   * constructed — because the sweep is what makes it the ordinary one.
+   *
+   * `expireConfirmations` ends the run of every question older than
+   * `CONFIRMATION_EXPIRY_HOURS`, so a few minutes after the day is up an
+   * unanswered question is both expired AND no longer parked. Read the status
+   * first and every day-late yes is told the work ended rather than that it
+   * was too late, while the screen breaks the same tie the other way — two
+   * sentences about one row.
+   */
+  it('tells a day-late yes it was too late, not that the work ended', async () => {
+    const paused = await pausedShift({
+      acceptedAt: new Date('2026-05-05T09:00:00Z'),
+      askedAt: new Date('2026-05-05T09:05:00Z'),
+    })
+
+    const afterTheSweep = new Date('2026-05-06T09:10:00Z')
+    await expireConfirmations(ctx, afterTheSweep)
+
+    const run = await db.prisma.agentRun.findUniqueOrThrow({ where: { id: paused.runId } })
+    expect(run.status).toBe('interrupted')
+    expect(run.terminalReason).toBe(CONFIRMATION_EXPIRED)
+
+    const answered = await confirmRequest(ctx, paused.requestId, afterTheSweep)
+    expect(answered.ok).toBe(false)
+    if (answered.ok) return
+    expect(answered.reason).toBe('expired')
+  })
+
+  it('hands the screen both facts about a swept question, not one of them', async () => {
+    const paused = await pausedShift({
+      acceptedAt: new Date('2026-05-07T09:00:00Z'),
+      askedAt: new Date('2026-05-07T09:05:00Z'),
+    })
+
+    const afterTheSweep = Date.parse('2026-05-08T09:10:00Z')
+    await expireConfirmations(ctx, new Date(afterTheSweep))
+
+    const view = await confirmationView(ctx, paused.requestId, afterTheSweep)
+    expect(view).not.toBeNull()
+    if (!view) return
+
+    // Both, and that is routine rather than a corner: the sweep that notices
+    // the expiry is the thing that ends the run.
+    expect(view.expired).toBe(true)
+    expect(view.abandoned).toBe(true)
+
+    // And the screen says the same thing the answer path does about that row.
+    expect(unansweredReason(view)).toBe('expired')
+  })
+
+  /**
+   * The page cannot be rendered here — a `.tsx` server component is the one
+   * thing in this repository nothing can assert against — so the tie-break
+   * lives beside `confirmRequest` and is tested directly. Two places breaking
+   * the same tie is how one row acquires two explanations, and that is what
+   * this pair is guarding.
+   */
+  it('names the expiry when both are true, and the abandonment when only it is', () => {
+    expect(unansweredReason({ expired: true, abandoned: true })).toBe('expired')
+    expect(unansweredReason({ expired: false, abandoned: true })).toBe('abandoned')
+    expect(unansweredReason({ expired: true, abandoned: false })).toBe('expired')
+  })
+
+  /**
+   * The sentence, not the reason code.
+   *
+   * `confirmOnePendingRequest` is where a reason becomes words, and the expiry
+   * message sits directly below this branch saying the opposite thing about the
+   * same refusal. A branch that fell through to it would be a one-line mistake
+   * telling somebody who answered within a minute that they took a day.
+   *
+   * Asked NOW rather than through `reaped()`, and that is not a convenience:
+   * the server action reads the wall clock — `confirmRequest(ctx, id, new
+   * Date())` — so a fixture dated months ago is expired before it is anything
+   * else, and this branch is only reachable inside the day. Written the other
+   * way it passed against the expiry sentence and asserted nothing.
+   */
+  it('tells the person the work stopped rather than that they were too slow', async () => {
+    const paused = await pausedShift({
+      acceptedAt: new Date(Date.now() - MINUTE),
+      askedAt: new Date(),
+    })
+    await db.prisma.agentRun.update({
+      where: { id: paused.runId },
+      data: { status: 'interrupted', terminalReason: 'lease-expired', controlToken: null },
+    })
+
+    const result = await actions.confirmOnePendingRequest(paused.requestId)
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+
+    expect(result.problem.message).toContain('stopped before your answer arrived')
+    expect(result.problem.message).not.toContain('sat unanswered for a day')
   })
 })

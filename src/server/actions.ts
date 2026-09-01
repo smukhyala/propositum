@@ -3687,6 +3687,16 @@ export async function confirmOnePendingRequest(
       if (answered.reason === 'already-answered') {
         return no<ConfirmationAnswered>('already-done', 'You have already answered this one.')
       }
+      // The work ended before the answer arrived, so there is nothing for a yes
+      // to let carry on. Said as its own sentence rather than folded into the
+      // expiry one below: somebody who answered within a minute must not be
+      // told they were too slow.
+      if (answered.reason === 'abandoned') {
+        return no<ConfirmationAnswered>(
+          'blocked',
+          'Propositum stopped before your answer arrived, so there is nothing left for a yes to carry on. Nothing was done. Hand the work over again if you still want it.',
+        )
+      }
       // Expiry never approves. A yes that arrives a day late is not converted
       // into a yes; it is turned down, and the person is told plainly why.
       return no<ConfirmationAnswered>(
