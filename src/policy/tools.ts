@@ -104,7 +104,7 @@
 import type { AuthorizedAction } from './gate'
 import type { SourceFetcher } from './fetcher'
 import { BrowserControlError, DISPATCH_TIMEOUT_MS, UNVERIFIED_FAILURES } from '../runtime/browser-control'
-import type { BrowserControl, DispatchableKind, PageObservation, ScreenCapture } from '../runtime/browser-control'
+import type { AttestedCharge, BrowserControl, DispatchableKind, PageObservation, ScreenCapture } from '../runtime/browser-control'
 
 export interface SourceText {
   readonly approvedSourceId: string
@@ -306,7 +306,7 @@ async function report(
   action: AuthorizedAction,
   params: Record<string, unknown>,
   deps: BrowserDeps,
-): Promise<{ observation?: PageObservation; capture?: ScreenCapture }> {
+): Promise<{ observation?: PageObservation; capture?: ScreenCapture; charge?: AttestedCharge }> {
   /**
    * Narrow the nine kinds to the six the channel can carry.
    *
@@ -334,7 +334,12 @@ async function report(
   if (!dispatched.ok) throw new BrowserControlError(dispatched.failure, dispatched.detail)
 
   return 'observation' in dispatched
-    ? { observation: dispatched.observation }
+    ? {
+        observation: dispatched.observation,
+        ...('charge' in dispatched && dispatched.charge !== undefined
+          ? { charge: dispatched.charge }
+          : {}),
+      }
     : { capture: dispatched.capture }
 }
 
@@ -441,6 +446,67 @@ export async function clickElement(
     action,
     await report(action, { ref, snapshotId: action.params.snapshotId }, deps),
   )
+}
+
+export interface PurchaseDeps extends BrowserDeps {
+  /** The compiled, whatFor-free authorisation view. APP-OWNED: it arrives from
+   *  `EnforcedPolicy.purchase` through the worker's deps, never from anything a
+   *  model proposed — the proposal contributes only `ref` and `snapshotId`. */
+  readonly purchase: {
+    readonly originPattern: string
+    readonly maxAmountMinor: number
+    readonly currency: string
+  }
+}
+
+/**
+ * Press the checkout control with the ratified network permit armed — ADR-0024.
+ *
+ * The wire's `purchase` block is composed HERE from deps, so a proposal cannot
+ * name its own ceiling; the extension arms a one-shot permit from it and the
+ * uncovered non-`GET` block stays exactly as it was for every other kind.
+ *
+ * Success requires the attested charge. An ok report without one means the
+ * permit was never consumed — the press landed nothing — and this throws so the
+ * outcome row reads `failed`: `succeeded` in the ledger must mean "the covered
+ * request left the machine" and nothing weaker, because the charge counter and
+ * the landed-outcome derivation both stand on it.
+ *
+ * (While the transport still refuses every non-`GET` — docs/todo/06 item 5 —
+ * this tool is reachable only in tests: dispatch answers `blocked-request` and
+ * the throw below is the `BrowserControlError` path, which is itself the
+ * asserted-inert behaviour.)
+ */
+export async function completePurchase(
+  action: AuthorizedAction<'complete-purchase'>,
+  deps: PurchaseDeps,
+): Promise<{ observation: PageObservation; charge: AttestedCharge }> {
+  const ref = action.params.ref
+  if (!ref) throw new Error(`authorized complete-purchase with no ref (${action.intentId})`)
+
+  // Flat on the wire, deliberately: tests/extension-cdp.test.ts holds "every
+  // key sent is a key read" by grepping for `params.<key>`, and a nested block
+  // would put the ceiling outside what that guard can see.
+  const reported = await report(
+    action,
+    {
+      ref,
+      snapshotId: action.params.snapshotId,
+      purchaseOriginPattern: deps.purchase.originPattern,
+      purchaseMaxAmountMinor: deps.purchase.maxAmountMinor,
+      purchaseCurrency: deps.purchase.currency,
+    },
+    deps,
+  )
+
+  const observation = observationFrom(action, reported)
+  if (reported.charge === undefined) {
+    throw new BrowserControlError(
+      'blocked-request',
+      'no covered charge was observed — nothing was bought',
+    )
+  }
+  return { observation, charge: reported.charge }
 }
 
 /**

@@ -87,12 +87,13 @@
  */
 
 import { ACTION_KINDS, compilePolicy, MUTATING_ACTION_KINDS } from '../domain/handoff/policy'
-import type { ActionKind, AutonomyControls, ContractScope } from '../domain/handoff/policy'
+import type { ActionKind, AutonomyControls, ContractScope, EnforcedPolicy } from '../domain/handoff/policy'
 import { authorize } from '../policy/gate'
 import type { AuthorizedAction, RunContext, ToolProposal } from '../policy/gate'
 import {
   captureScreen,
   clickElement,
+  completePurchase,
   draftSection,
   navigateTo,
   observePage,
@@ -1019,7 +1020,7 @@ export async function runWorker(job: WorkerJob, deps: WorkerDeps): Promise<Worke
     let failed: string | null = null
 
     try {
-      performed = await perform(verdict.action, intentId, deps, gathered)
+      performed = await perform(verdict.action, intentId, deps, gathered, policy.purchase)
     } catch (error) {
       // Includes every `BrowserControlError`. A channel failure is a recorded
       // fact about one action — the intent is already committed, so the ledger
@@ -1277,6 +1278,10 @@ async function perform(
   intentId: string,
   deps: WorkerDeps,
   gathered: Array<{ label: string; content: Datamarked }>,
+  /** The compiled, whatFor-free spend bound, when the contract ratified one.
+   *  From `policy.purchase` at the call site — never from deps, which are
+   *  constructed before the policy exists, and never from the proposal. */
+  purchase?: EnforcedPolicy['purchase'],
 ): Promise<Performed> {
   const kind: ActionKind = action.kind
 
@@ -1445,14 +1450,27 @@ async function perform(
     }
 
     case 'complete-purchase': {
-      // Unreachable until docs/todo/06 item 5 wires the transport: nothing
-      // grants the kind yet, so no authorized action of it can exist. The case
-      // exists because this switch is exhaustive by design, and it throws
-      // rather than no-ops for browserFor's reason — a silent success here
-      // would be a ledger row claiming a charge that never happened.
-      throw new Error(
-        'complete-purchase is decided and not yet carried by any transport — docs/todo/06 item 5',
-      )
+      // Second fence, browserFor's shape: the gate already refused the kind
+      // when the policy holds no authorisation, so arriving here without one is
+      // a programming error that must be loud rather than a silent no-op.
+      if (purchase === undefined) {
+        throw new Error(
+          `complete-purchase is authorized but this run holds no compiled authorisation (${intentId})`,
+        )
+      }
+      const bought = await completePurchase(action as AuthorizedAction<'complete-purchase'>, {
+        ...browserFor(deps, kind),
+        purchase,
+      })
+      // Code-composed from the ATTESTED charge, never from page text or model
+      // prose — the sentence the ledger keeps about money keeps the same
+      // discipline confirmationQuestion does. Minor units, named as such, so
+      // the row cannot be misread as dollars.
+      return {
+        summary: `completed the purchase — ${bought.charge.amountMinor} minor units ${bought.charge.currency} at ${bought.charge.origin}`,
+        changedSomething: true,
+        observed: bought.observation,
+      }
     }
   }
 }

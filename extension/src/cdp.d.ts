@@ -56,3 +56,15 @@ export declare function classifyPausedRequest(
   patternCovers?: (pattern: string, origin: string) => boolean,
   mainFrameId?: string | null,
 ): 'allow' | 'blocked-request' | 'off-origin'
+
+/** ADR-0024. A hand-kept copy of `CURRENCY_CODES` in
+ *  `src/domain/handoff/policy.ts`; `tests/extension-cdp.test.ts` asserts the
+ *  two agree. */
+export declare const PERMIT_CURRENCY_CODES: readonly string[]
+
+/** ADR-0024. Pure: the one deterministic amount a checkout body names, or
+ *  null, which the caller must refuse as `amount-unparseable`. */
+export declare function parseChargeAmount(
+  postData: unknown,
+  contentType: unknown,
+): { amountMinor: number; currency: string } | null

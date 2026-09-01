@@ -569,6 +569,135 @@ export function classifyPausedRequest(paused, approvedOrigins, patternCovers, ma
   return 'allow'
 }
 
+/**
+ * The currencies a landing permit may name — a COPY of the closed set in
+ * `src/domain/handoff/policy.ts`, because this file is buildless and imports
+ * nothing. `tests/extension-cdp.test.ts` asserts the two arrays are identical,
+ * which is the only way a hand-kept copy stays true. JPY is the one
+ * zero-exponent member; everything else divides by 100.
+ */
+export const PERMIT_CURRENCY_CODES = ['USD', 'EUR', 'GBP', 'CAD', 'AUD', 'JPY']
+
+/**
+ * The amount a checkout request is about to charge, read deterministically off
+ * the body Chrome is holding — or null, which the caller must treat as
+ * `amount-unparseable` and refuse. NEVER a model, per ADR-0024 §4: a model
+ * deciding whether a charge is within budget is a model deciding whether it
+ * needs permission.
+ *
+ * Pure, exported, and unit-tested like `classifyPausedRequest`. What it does
+ * NOT cover, so the promise reads no stronger than it is:
+ *
+ *  - Every ambiguity resolves toward refusal. Two distinct candidate amounts,
+ *    an unknown or absent currency, a fractional value with more precision
+ *    than money has, an opaque or binary body — all null. Guessing which
+ *    number is "the" charge is the judgment this function exists to not have.
+ *  - Bare numbers under a major-unit key are read as MAJOR units (40 → 4000
+ *    minor), which over-reads — the direction that refuses, never the one
+ *    that lets a charge under the ceiling through by misreading it 100x low.
+ *  - The key lists are a floor calibrated against fixtures. Real checkouts are
+ *    the todo's own "afternoon of real shopping", and ADR-0024 §5 predicts
+ *    unparseable will be common. The interface says so rather than implying
+ *    the ceiling binds everywhere.
+ */
+export function parseChargeAmount(postData, contentType) {
+  const body = typeof postData === 'string' ? postData : ''
+  if (body === '') return null
+  const type = String(contentType ?? '').toLowerCase()
+
+  /** minor-unit keys: integers, taken as-is */
+  const MINOR_KEYS = ['amountminor', 'amount_minor']
+  /** major-unit keys: decimals or integers, multiplied by the exponent */
+  const MAJOR_KEYS = ['amount', 'total', 'grand_total', 'grandtotal', 'order_total', 'ordertotal', 'price']
+  /** parents a candidate may sit one level under */
+  const PARENT_KEYS = ['payment', 'order', 'purchase', 'checkout', 'cart']
+
+  const candidates = []
+  let currency = null
+  let currencyConflict = false
+
+  const noteCurrency = (value) => {
+    if (typeof value !== 'string') return
+    const upper = value.toUpperCase()
+    if (!PERMIT_CURRENCY_CODES.includes(upper)) return
+    if (currency !== null && currency !== upper) currencyConflict = true
+    currency = upper
+  }
+
+  /** a number in minor units, or null — the one place the arithmetic lives */
+  const minorOf = (value, unit, code) => {
+    const exponent = code === 'JPY' ? 1 : 100
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      if (unit === 'minor') return Number.isInteger(value) ? value : null
+      // 12.99 dollars → 1299, within float noise; 12.999 is not a money amount
+      // and refuses rather than rounds.
+      const minor = value * exponent
+      const rounded = Math.round(minor)
+      return Math.abs(minor - rounded) < 1e-6 ? rounded : null
+    }
+    if (typeof value === 'string') {
+      const text = value.trim()
+      if (!/^\d+(\.\d{1,2})?$/.test(text)) return null
+      if (unit === 'minor') return /^\d+$/.test(text) ? Number(text) : null
+      const [whole, frac = ''] = text.split('.')
+      return Number(whole) * exponent + (exponent === 100 ? Number(frac.padEnd(2, '0') || '0') : 0)
+    }
+    return null
+  }
+
+  const noteCandidate = (key, value) => {
+    const lower = String(key).toLowerCase()
+    if (lower === 'currency') return noteCurrency(value)
+    const unit = MINOR_KEYS.includes(lower) || /_?cents$/.test(lower) ? 'minor' : null
+    if (unit === null && !MAJOR_KEYS.includes(lower)) return
+    candidates.push({ unit: unit ?? 'major', value })
+  }
+
+  const looksJson = type.includes('json') || /^\s*[[{]/.test(body)
+  if (looksJson) {
+    let parsed
+    try {
+      parsed = JSON.parse(body)
+    } catch {
+      return null
+    }
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return null
+    for (const [key, value] of Object.entries(parsed)) {
+      noteCandidate(key, value)
+      if (PARENT_KEYS.includes(String(key).toLowerCase()) && value !== null && typeof value === 'object' && !Array.isArray(value)) {
+        for (const [innerKey, innerValue] of Object.entries(value)) noteCandidate(innerKey, innerValue)
+      }
+    }
+  } else if (type.includes('x-www-form-urlencoded') || /^[^=&\s]+=[^&\s]*(&|$)/.test(body)) {
+    let params
+    try {
+      params = new URLSearchParams(body)
+    } catch {
+      return null
+    }
+    for (const [key, value] of params.entries()) noteCandidate(key, value)
+  } else {
+    // multipart, GraphQL, binary, anything else: opaque, refused.
+    return null
+  }
+
+  if (currency === null || currencyConflict) return null
+  if (candidates.length === 0) return null
+
+  const amounts = new Set()
+  for (const candidate of candidates) {
+    const minor = minorOf(candidate.value, candidate.unit, currency)
+    if (minor === null || minor <= 0) return null
+    amounts.add(minor)
+  }
+  // Two DISTINCT amounts is the ambiguity this refuses to adjudicate; the same
+  // number stated twice agrees with itself.
+  if (amounts.size !== 1) return null
+
+  const [amountMinor] = [...amounts]
+  return { amountMinor, currency }
+}
+
 /* ── everything below talks to Chrome ──────────────────────────────────── */
 
 /**
@@ -589,6 +718,11 @@ const CONTROL_KEYS = [
   'indicatorGraceUntil',
   'actionWindow',
   'mainFrameId',
+  // ADR-0024. The one-shot landing permit, armed per complete-purchase command
+  // and cleared on consumption, expiry, and every control-state clear — a
+  // CONTROL key deliberately, so giving up the tab always takes the permit
+  // with it. { intentId, originPattern, maxAmountMinor, currency, until }.
+  'landingPermit',
 ]
 
 /**
@@ -622,7 +756,31 @@ export async function controlState() {
       typeof state.indicatorGraceUntil === 'number' ? state.indicatorGraceUntil : 0,
     actionWindow: typeof state.actionWindow === 'number' ? state.actionWindow : 0,
     mainFrameId: typeof state.mainFrameId === 'string' ? state.mainFrameId : null,
+    landingPermit:
+      state.landingPermit !== null && typeof state.landingPermit === 'object'
+        ? state.landingPermit
+        : null,
   }
+}
+
+/**
+ * Arm the one-shot landing permit for a `complete-purchase` command.
+ *
+ * The fields come off the DISPATCHED COMMAND, which the app composed from the
+ * ratified authorisation — the same trust story as `approvedOrigins`, and like
+ * them the extension can only ever narrow. `until` bounds it exactly the way
+ * `actionWindow` is bounded, and NOTHING in this commit reads it back at the
+ * paused request: the non-`GET` block is untouched until docs/todo/06 item 5,
+ * so arming a permit today changes no behaviour at the network.
+ */
+export async function armLandingPermit(permit) {
+  if (permit === null || typeof permit !== 'object') return
+  await chrome.storage.session.set({ landingPermit: permit })
+}
+
+/** Consumed or expired or given up — all three land here, one-shot either way. */
+export async function clearLandingPermit() {
+  await chrome.storage.session.remove('landingPermit')
 }
 
 export async function clearControlState() {
@@ -1235,7 +1393,8 @@ export async function performCommand(command, handlers) {
   const touchesAnElement =
     command.kind === 'click-element' ||
     command.kind === 'type-text' ||
-    command.kind === 'press-key'
+    command.kind === 'press-key' ||
+    command.kind === 'complete-purchase'
 
   if (markerQuiet && (touchesAnElement || Date.now() > state.indicatorGraceUntil)) {
     await handlers.onIndicatorLost(state)
@@ -1286,6 +1445,72 @@ export async function performCommand(command, handlers) {
       case 'capture-screen': {
         const { data } = await send(state.tabId, 'Page.captureScreenshot', { format: 'png' })
         return { ok: true, capture: { mediaType: 'image/png', base64: data } }
+      }
+      case 'complete-purchase': {
+        /**
+         * ADR-0024: the same synthesised press as `click-element`, with the
+         * one-shot landing permit armed first. The permit's fields come off
+         * the dispatched command, which the app composed from the ratified
+         * authorisation — like `approvedOrigins`, the extension only narrows.
+         *
+         * While the non-`GET` block is unconditional (docs/todo/06 item 5),
+         * nothing consumes the permit, no `consumedCharge` is ever written,
+         * and the chargeless branch below is the only reachable one — the
+         * asserted-inert behaviour the tests pin.
+         *
+         * The permit is cleared BEFORE a chargeless report goes out, so a
+         * checkout request arriving after the report cannot land: `succeeded`
+         * with a charge and `failed` without one stay the only two endings,
+         * and "the charge landed but the ledger says failed" is not a state
+         * this ordering can produce.
+         */
+        const params = command.params ?? {}
+        if (
+          typeof params.purchaseOriginPattern !== 'string' ||
+          typeof params.purchaseMaxAmountMinor !== 'number' ||
+          typeof params.purchaseCurrency !== 'string'
+        ) {
+          return {
+            ok: false,
+            failure: 'not-delivered',
+            detail: 'complete-purchase arrived without its authorisation fields',
+          }
+        }
+        await armLandingPermit({
+          intentId: command.intentId,
+          originPattern: params.purchaseOriginPattern,
+          maxAmountMinor: params.purchaseMaxAmountMinor,
+          currency: params.purchaseCurrency,
+          until: Date.now() + SETTLE_CEILING_MS + 2000,
+        })
+
+        const pressFailure = await clickElement(state.tabId, command.params ?? {})
+        if (pressFailure !== null) {
+          await clearLandingPermit()
+          return { ok: false, ...pressFailure }
+        }
+
+        const observation = await observePage(state.tabId)
+        const { consumedCharge } = await chrome.storage.session.get('consumedCharge')
+        await chrome.storage.session.remove('consumedCharge')
+        await clearLandingPermit()
+
+        if (
+          consumedCharge &&
+          typeof consumedCharge === 'object' &&
+          consumedCharge.intentId === command.intentId
+        ) {
+          return {
+            ok: true,
+            observation,
+            charge: {
+              amountMinor: consumedCharge.amountMinor,
+              currency: consumedCharge.currency,
+              origin: consumedCharge.origin,
+            },
+          }
+        }
+        return { ok: true, observation }
       }
       default:
         return {

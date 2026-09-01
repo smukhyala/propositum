@@ -97,7 +97,13 @@ export const POLL_TIMEOUT_MS = 25_000
  */
 export type DispatchableKind = Extract<
   ActionKind,
-  'observe-page' | 'navigate' | 'click-element' | 'type-text' | 'press-key' | 'capture-screen'
+  | 'observe-page'
+  | 'navigate'
+  | 'click-element'
+  | 'type-text'
+  | 'press-key'
+  | 'capture-screen'
+  | 'complete-purchase'
 >
 
 export const DISPATCH_TIMEOUT_MS: Readonly<Record<DispatchableKind, number>> = {
@@ -110,6 +116,10 @@ export const DISPATCH_TIMEOUT_MS: Readonly<Record<DispatchableKind, number>> = {
   // same number rather than a new opinion.
   'press-key': 10_000,
   'capture-screen': 15_000,
+  // The same synthesised press as click-element, plus a network round trip the
+  // page then makes — which click-element's checkouts also make, so the same
+  // number rather than a new opinion (ADR-0024).
+  'complete-purchase': 20_000,
 }
 
 /**
@@ -142,8 +152,21 @@ export type ControlFailure =
   | 'stale-snapshot'
   /** Navigation or a redirect left the contract's approved sources. */
   | 'off-origin'
-  /** A non-idempotent request was aborted pending confirmation. */
+  /** A non-idempotent request was aborted. ~~pending confirmation~~ Corrected
+   *  2026-09-01: there is no confirmation on this path and never was — the
+   *  request is refused at the network, unconditionally without a landing
+   *  permit and on any permit mismatch with one (ADR-0024). */
   | 'blocked-request'
+  /** ADR-0024: the permit was armed, the request's parsed amount exceeded the
+   *  ratified ceiling, and the request was refused at the network. The detail
+   *  carries the attested facts; the loop turns them into a question. */
+  | 'amount-over-ceiling'
+  /** ADR-0024's predicted common case: the permit was armed and the request
+   *  body yielded no single deterministic amount — two candidates, an unknown
+   *  currency, a mismatched one, or an opaque body. Refused, never guessed:
+   *  a model deciding what a charge costs is a model deciding whether it
+   *  needs permission. */
+  | 'amount-unparseable'
   /** The browser was still working when the wait ran out. Reported BY the
    *  extension about a CDP operation, not by the app about the channel — the
    *  channel's own two endings are `not-delivered` and `not-reported`, which
@@ -177,7 +200,13 @@ export interface ScreenCapture {
 
 /** What came back from the browser, in the worker's hands. */
 export type BrowserReport =
-  | { readonly ok: true; readonly observation: PageObservation }
+  | {
+      readonly ok: true
+      readonly observation: PageObservation
+      /** ADR-0024. Present iff the landing permit was consumed — see
+       *  `chargeSchema`. Optional-absent, never null. */
+      readonly charge?: AttestedCharge | undefined
+    }
   | { readonly ok: true; readonly capture: ScreenCapture }
   | { readonly ok: false; readonly failure: ControlFailure; readonly detail: string }
 
@@ -269,6 +298,8 @@ export const controlFailureSchema = z.enum([
   'stale-snapshot',
   'off-origin',
   'blocked-request',
+  'amount-over-ceiling',
+  'amount-unparseable',
   'timed-out',
 ] as const)
 
@@ -280,11 +311,27 @@ export const controlFailureSchema = z.enum([
  * things that can have happened, and a body that is none of them is malformed
  * at the door rather than half-handled in the route.
  */
+/**
+ * The attested charge, present on an ok report iff the landing permit was
+ * consumed — a covered non-`GET` actually left the machine (ADR-0024). Every
+ * field is read off the request Chrome was holding, never off page text and
+ * never off a model. Its ABSENCE on a `complete-purchase` report is load-
+ * bearing: the tool throws on a chargeless ok, so `succeeded` in the ledger
+ * means "the charge left" and nothing weaker.
+ */
+export const chargeSchema = z.object({
+  amountMinor: z.number().int().positive(),
+  currency: z.string().min(3).max(3),
+  origin: z.string().min(1),
+})
+export type AttestedCharge = z.infer<typeof chargeSchema>
+
 export const reportRequestSchema = z.union([
   z.object({
     intentId: z.string().min(1),
     ok: z.literal(true),
     observation: pageObservationSchema,
+    charge: chargeSchema.optional(),
   }),
   z.object({ intentId: z.string().min(1), ok: z.literal(true), capture: screenCaptureSchema }),
   z.object({
@@ -307,7 +354,11 @@ export type ReportRequest = z.infer<typeof reportRequestSchema>
  * at the door.
  */
 export const browserReportSchema = z.union([
-  z.object({ ok: z.literal(true), observation: pageObservationSchema }),
+  z.object({
+    ok: z.literal(true),
+    observation: pageObservationSchema,
+    charge: chargeSchema.optional(),
+  }),
   z.object({ ok: z.literal(true), capture: screenCaptureSchema }),
   z.object({ ok: z.literal(false), failure: controlFailureSchema, detail: z.string() }),
 ])
@@ -364,7 +415,13 @@ export interface DispatchedCommand {
 /** Turn a stored report body into the shape the worker blocks on. */
 export function reportOf(body: ReportRequest): BrowserReport {
   if (body.ok === false) return { ok: false, failure: body.failure, detail: body.detail }
-  if ('observation' in body) return { ok: true, observation: body.observation }
+  if ('observation' in body) {
+    return {
+      ok: true,
+      observation: body.observation,
+      ...(body.charge === undefined ? {} : { charge: body.charge }),
+    }
+  }
   return { ok: true, capture: body.capture }
 }
 

@@ -38,6 +38,7 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import {
   NAME_BUDGET_CHARS,
+  PERMIT_CURRENCY_CODES,
   SNAPSHOT_BUDGET_CHARS,
   SNAPSHOT_NODE_CAP,
   centreOfContentQuad,
@@ -45,8 +46,10 @@ import {
   flattenAXTree,
   isApprovedOrigin,
   originOf,
+  parseChargeAmount,
   sanitiseName,
 } from '../extension/src/cdp.js'
+import { CURRENCY_CODES } from '../src/domain/handoff/policy'
 import { patternCovers } from '../extension/src/match-pattern.js'
 import { losesNoCode, stripComments } from './support/strip-comments'
 
@@ -237,6 +240,120 @@ describe('no call that would spend ADR-0010’s central property', () => {
  * a name they agree on. A rename on both sides at once still passes, which is
  * correct — that is a working change, not a defect.
  */
+describe('the amount parse is deterministic, and every ambiguity refuses', () => {
+  // ADR-0024 item 4. These fixtures are the FLOOR, not the claim — real
+  // checkout calibration is the todo's own afternoon of real shopping, and §5
+  // of the ADR predicts unparseable will be common.
+
+  it('reads a Stripe-shaped body: integer minor units plus a currency', () => {
+    expect(parseChargeAmount('{"amount_minor":1299,"currency":"usd"}', 'application/json')).toEqual(
+      { amountMinor: 1299, currency: 'USD' },
+    )
+  })
+
+  it('reads a major-unit decimal string as money, exactly', () => {
+    expect(parseChargeAmount('{"total":"12.99","currency":"USD"}', 'application/json')).toEqual({
+      amountMinor: 1299,
+      currency: 'USD',
+    })
+  })
+
+  it('reads a form-encoded checkout', () => {
+    expect(
+      parseChargeAmount('amount=12.99&currency=USD&item=avocados', 'application/x-www-form-urlencoded'),
+    ).toEqual({ amountMinor: 1299, currency: 'USD' })
+  })
+
+  it('treats a bare number under a major key as MAJOR units — over-reading refuses, under-reading spends', () => {
+    expect(parseChargeAmount('{"total":40,"currency":"USD"}', 'application/json')).toEqual({
+      amountMinor: 4000,
+      currency: 'USD',
+    })
+  })
+
+  it('knows JPY carries no minor exponent', () => {
+    expect(parseChargeAmount('{"amount":4000,"currency":"JPY"}', 'application/json')).toEqual({
+      amountMinor: 4000,
+      currency: 'JPY',
+    })
+  })
+
+  it('descends one level under a payment-shaped parent, and no further', () => {
+    expect(
+      parseChargeAmount('{"payment":{"amount":"5.00","currency":"GBP"}}', 'application/json'),
+    ).toEqual({ amountMinor: 500, currency: 'GBP' })
+    expect(
+      parseChargeAmount('{"a":{"b":{"amount":"5.00","currency":"GBP"}}}', 'application/json'),
+    ).toBeNull()
+  })
+
+  it('refuses two DISTINCT candidate amounts — guessing which is the charge is the judgment this refuses', () => {
+    expect(
+      parseChargeAmount('{"amount":"12.99","total":"15.99","currency":"USD"}', 'application/json'),
+    ).toBeNull()
+    // The same number stated twice agrees with itself.
+    expect(
+      parseChargeAmount('{"amount":"12.99","total":"12.99","currency":"USD"}', 'application/json'),
+    ).toEqual({ amountMinor: 1299, currency: 'USD' })
+  })
+
+  it('refuses a missing, unknown, or conflicting currency', () => {
+    expect(parseChargeAmount('{"amount":"12.99"}', 'application/json')).toBeNull()
+    expect(parseChargeAmount('{"amount":"12.99","currency":"DOGE"}', 'application/json')).toBeNull()
+    expect(
+      parseChargeAmount(
+        '{"amount":"12.99","currency":"USD","payment":{"currency":"EUR"}}',
+        'application/json',
+      ),
+    ).toBeNull()
+  })
+
+  it('refuses more precision than money has', () => {
+    expect(parseChargeAmount('{"amount":"12.999","currency":"USD"}', 'application/json')).toBeNull()
+    expect(parseChargeAmount('{"amount_minor":12.5,"currency":"USD"}', 'application/json')).toBeNull()
+  })
+
+  it('refuses opaque bodies: GraphQL, multipart, binary, empty, absent', () => {
+    expect(
+      parseChargeAmount('{"query":"mutation { checkout }"}', 'application/json'),
+    ).toBeNull()
+    expect(parseChargeAmount('--boundary\r\nContent-Disposition: form-data', 'multipart/form-data')).toBeNull()
+    expect(parseChargeAmount('', 'application/json')).toBeNull()
+    expect(parseChargeAmount(undefined, 'application/json')).toBeNull()
+    expect(parseChargeAmount('not json at all', 'application/json')).toBeNull()
+  })
+
+  it('refuses a zero or negative amount — a refund is not a charge this covers', () => {
+    expect(parseChargeAmount('{"amount":0,"currency":"USD"}', 'application/json')).toBeNull()
+  })
+
+  it('holds the extension currency copy identical to the domain closed set', () => {
+    // The extension is buildless and imports nothing, so PERMIT_CURRENCY_CODES
+    // is a hand-kept copy of CURRENCY_CODES — and this assertion is the only
+    // thing that keeps a hand-kept copy true.
+    expect([...PERMIT_CURRENCY_CODES]).toEqual([...CURRENCY_CODES])
+  })
+})
+
+describe('no Network domain, still', () => {
+  it('never enables Network.*, so request post data is the ONLY body surface', () => {
+    /**
+     * ADR-0024 reads `paused.request.postData` — a field on the Fetch event
+     * the extension already subscribes to, requiring no new domain. This
+     * assertion pins the line that distinction rests on: `Network.enable`
+     * would unlock getResponseBody-class reads (the forbidden list above), and
+     * reading the one request we are deciding whether to RELEASE is not that.
+     * The day this fails, that argument is being re-litigated — read the
+     * forbidden list's comments before making it pass.
+     */
+    expect(
+      ALL_CODE,
+      'an extension file enables a Network domain — the postData argument does not cover that',
+    ).not.toContain("'Network.enable'")
+    expect(ALL_CODE).not.toContain('"Network.enable"')
+  })
+})
+
 describe('the app and the extension agree on parameter names', () => {
   const tools = stripComments(readFileSync(join(repo, 'src/policy/tools.ts'), 'utf8'))
 
@@ -259,7 +376,18 @@ describe('the app and the extension agree on parameter names', () => {
     expect(
       [...dispatched].sort(),
       'the dispatch shape in tools.ts changed — this guard is now reading nothing',
-    ).toEqual(['inputText', 'key', 'ref', 'snapshotId', 'url'])
+    ).toEqual([
+      'inputText',
+      'key',
+      // The three purchase fields, 2026-09-01 (ADR-0024) — flat on the wire
+      // precisely so this guard can see them.
+      'purchaseCurrency',
+      'purchaseMaxAmountMinor',
+      'purchaseOriginPattern',
+      'ref',
+      'snapshotId',
+      'url',
+    ])
   })
 
   it.each([...dispatched].sort())('cdp.js reads params.%s', (key) => {
