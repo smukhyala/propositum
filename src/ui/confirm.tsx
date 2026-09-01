@@ -375,7 +375,7 @@ export function ConfirmationScreen({ detail, goAhead, dont }: ConfirmationScreen
 }
 
 /**
- * Answered, or too old to answer.
+ * Over, whether or not anybody answered.
  *
  * A dead end with NO controls at all, deliberately. A screen that still offered
  * *Go ahead* on a question that can no longer be confirmed would be offering a
@@ -400,6 +400,10 @@ export function SettledConfirmation({
    * Folding them together would tell somebody who opened the page within a
    * minute that they had been too slow. Defaults to `expired` because that was
    * the only one until 2026-09-01 and it is the one every existing caller means.
+   *
+   * Both can be true of one question, and choosing between them is NOT this
+   * component's job: `unansweredReason` in `src/server/confirmations.ts` picks,
+   * so that the screen and the answer path cannot disagree about a row.
    */
   readonly unanswered?: 'expired' | 'abandoned' | undefined
   readonly children?: ReactNode | undefined

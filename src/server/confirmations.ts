@@ -234,6 +234,11 @@ export interface ConfirmationView {
    * work ended before your answer arrived"*. Neither is a verdict, and a screen
    * that folded them together would tell somebody who answered within a minute
    * that they were too slow.
+   *
+   * They are not exclusive, and the overlap is the common case rather than the
+   * corner: `expireConfirmations` ends the run it settles, so an expired
+   * question is unparked a moment later. `unansweredReason` breaks that tie and
+   * expiry wins it.
    */
   readonly abandoned: boolean
   /**
@@ -280,6 +285,33 @@ export interface ConfirmationView {
   }
   readonly evidenceId: string | null
   readonly hasImage: boolean
+}
+
+/**
+ * Which of the two closed-without-a-verdict facts the person is told.
+ *
+ * Both can be true at once, and after the sweep the ordinary day-old question
+ * IS both: `expireConfirmations` ends the run it belongs to, so `abandoned`
+ * goes true as a consequence of the expiry being noticed. Expiry wins that tie
+ * because it came first and explains the other — the work ended BECAUSE nobody
+ * answered — and because telling somebody who was a day late that the work
+ * stopped would drop the only part they can act on.
+ *
+ * It is here rather than inline in the page for one reason: `confirmRequest`
+ * breaks the same tie the same way, and a `.tsx` server component is the one
+ * thing in this repository nothing can assert against. Two sentences about one
+ * row is the defect; this is the single place that picks between them.
+ *
+ * It decides NOTHING. Neither state is a verdict and neither is answerable, so
+ * this only chooses a sentence. It is meaningful only where the caller has
+ * already established there is no verdict and the question is closed; with both
+ * flags false it has nothing to describe and its answer means nothing.
+ */
+export function unansweredReason(view: {
+  readonly expired: boolean
+  readonly abandoned: boolean
+}): 'expired' | 'abandoned' {
+  return view.expired ? 'expired' : 'abandoned'
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -454,6 +486,10 @@ export type AnswerResult =
        * question was about had already ended, so there is nothing for a yes to
        * let carry on, and enqueueing a continuation off it would start work on
        * the strength of a run we had stopped trusting to be driving.
+       *
+       * Reported only when `expired` does not apply, because the expiry sweep
+       * ends the run as well: see the order in `confirmRequest`. So this means
+       * a run that ended for some OTHER reason, inside the day.
        */
       readonly reason: 'not-found' | 'already-answered' | 'expired' | 'abandoned'
     }
@@ -490,28 +526,6 @@ export async function confirmRequest(
   if (request.verdict) return { ok: false, reason: 'already-answered' }
 
   /**
-   * The run has to still be parked on this question.
-   *
-   * Without it, a question raised by a run that was later reaped —
-   * `interrupted` / `lease-expired`, credential revoked, precisely because we
-   * stopped trusting it to be driving — could be answered, and answering
-   * enqueued a continuation off the back of it.
-   *
-   * This is symmetry rather than a new rule. `expireConfirmations` and
-   * `oldestPendingConfirmation` below both already carry
-   * `run: { status: 'awaiting-confirmation' }`, so the question had already
-   * vanished from the extension's notification while staying answerable by URL.
-   * The one function here that GRANTS something was the one not looking.
-   *
-   * Checked BEFORE expiry on purpose. Both refuse, so the order cannot change
-   * what is permitted — it changes what the person is told, and "the work
-   * ended" is the truer of the two about a question that was also old.
-   */
-  if (request.run.status !== 'awaiting-confirmation') {
-    return { ok: false, reason: 'abandoned' }
-  }
-
-  /**
    * Expiry refuses the yes rather than converting it into one.
    *
    * Note which direction this fails in. An expired request cannot be confirmed
@@ -522,6 +536,40 @@ export async function confirmRequest(
    */
   if (confirmationHasExpired({ requestedAtEpochMs: request.createdAt.getTime(), nowEpochMs: now.getTime() })) {
     return { ok: false, reason: 'expired' }
+  }
+
+  /**
+   * The run has to still be parked on this question.
+   *
+   * Without it, a question raised by a run that ended some other way —
+   * `interrupted` / `lease-expired`, credential revoked, precisely because we
+   * stopped trusting it to be driving — could be answered, and answering
+   * enqueued a continuation off the back of it.
+   *
+   * This is symmetry rather than a new rule. `expireConfirmations` and
+   * `oldestPendingConfirmation` below both already carry
+   * `run: { status: 'awaiting-confirmation' }`, so the question had already
+   * vanished from the extension's notification while staying answerable by URL.
+   * The one function here that GRANTS something was the one not looking.
+   *
+   * ── Checked AFTER expiry, and the sweep is the reason ────────────────────
+   *
+   * `expireConfirmations` runs on the worker's five-minute poll and ends the
+   * run of every question older than `CONFIRMATION_EXPIRY_HOURS` —
+   * `interrupted` / `CONFIRMATION_EXPIRED`. So minutes after the day is up, the
+   * ordinary unanswered question is BOTH expired and no longer parked, and
+   * reading the status first would answer every day-late yes with *"the work
+   * ended"* rather than *"you were too late"*. `unansweredReason` breaks the
+   * same tie the same way on the screen, so the two cannot say different things
+   * about one row.
+   *
+   * That leaves this narrow, and deliberately so: `abandoned` is a run that
+   * ended for some OTHER reason while its question was still inside its day.
+   * Both refuse either way, so the order changes what the person is told and
+   * never what is permitted.
+   */
+  if (request.run.status !== 'awaiting-confirmation') {
+    return { ok: false, reason: 'abandoned' }
   }
 
   await ctx.repos.confirmations.recordVerdict({ requestId, verdict: 'confirmed', decidedAt: now })
