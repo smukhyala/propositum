@@ -12,8 +12,13 @@ import type { Scenario } from './scenario'
  * Two of ADR-0007's four H3 classes were unrepresented until 2026-08-20, and
  * the consequence was sharper than a gap: with every scenario sealing
  * `shouldRaise: true`, `scoreH3` could not produce a false stop and
- * `summariseH3`'s *"at most one false stop"* rule governed nothing. The two
- * additions fill `straightforward` and `structural`, and they are comparison
+ * `summariseH3`'s *"at most one false stop"* rule governed nothing. ~~The two
+ * additions fill `straightforward` and `structural`~~ **— struck 2026-09-01
+ * ([#101](https://github.com/smukhyala/propositum/issues/101)). They filled
+ * both for eleven days. `lisbon-thread` was re-classed `straightforward` when
+ * the halt it predicted was ruled a false stop and removed, so `structural` is
+ * empty again; `docs/todo/00-score-the-hypotheses.md` carries the owed
+ * scenario, and `tests/eval.test.ts` pins the gap.** They are comparison
  * shopping and trip planning because ADR-0018 makes those targets rather than
  * the residual false positives `grounds.ts` had them down as.
  *

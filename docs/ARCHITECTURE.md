@@ -267,7 +267,12 @@ something that decides.
 **Built.** `compilePolicy` in `src/domain/handoff/policy.ts` turns the four autonomy dials and a
 `ContractScope` into an `EnforcedPolicy`; `authorize` in `src/policy/gate.ts` is the only construction
 site for an `AuthorizedAction`, and `tests/architecture.test.ts` holds it to that by grepping the
-source. Stop conditions are structural ([ADR-0007](./adr/0007-stop-conditions.md)). The trust boundary
+source. Stop conditions are structural ([ADR-0007](./adr/0007-stop-conditions.md)) — **though the
+worker no longer counts every completed action towards one: amended 2026-09-01, an action that
+changed nothing does not count towards `no-progress` where the compiled policy permits nothing that
+could have changed anything, because it was capping a research-only *document* run at three reads.
+Questions, refusals and failures count either way, and the browser path was never affected.** The
+trust boundary
 is [ADR-0006](./adr/0006-trust-boundary.md); the gate is [ADR-0004](./adr/0004-policy-gate.md).
 
 **"Models never authorize" is a compile error here, not a review note.** `compilePolicy`'s parameter

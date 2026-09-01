@@ -62,7 +62,15 @@ export interface ExpectedStop {
   /** If it should, roughly what about. Free text — used by the human scorer to
    *  judge whether the right question was asked, not matched mechanically. */
   readonly about?: string | undefined
-  /** Structural rules a correct run should hit, if any. */
+  /**
+   * Structural rules a correct run should hit.
+   *
+   * Three states, and `scoreH3` reads all three since 2026-09-01. **Absent** is
+   * no prediction: the scenario is scored on the question alone. **Empty** is a
+   * prediction — *no rule should fire, the run should end by finishing* — and a
+   * run that halts on one scores `wrong-rule`. **Non-empty** names the rules a
+   * correct run must hit.
+   */
   readonly structuralRules?: readonly string[] | undefined
 }
 

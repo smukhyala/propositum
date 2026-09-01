@@ -619,8 +619,15 @@ export function dryReplies(scenario: Scenario, options: RunOptions = {}): Script
   })
 
   // Three steps, and three actions to match. Under `follow-closely` the plan
-  // length is what ends the run; under `use-judgment` a stop rule is, and three
-  // reads is exactly `NO_PROGRESS_LIMIT`.
+  // length is what ends the run; under `use-judgment` the run's own `done` is.
+  //
+  // ~~and three reads is exactly `NO_PROGRESS_LIMIT`~~ **Corrected 2026-09-01.**
+  // The non-drafting branch below used to end by letting `no-progress` fire on
+  // the third read, and it stopped working the day that rule stopped applying
+  // to a run that cannot write. That it broke is the good outcome: a script
+  // that ends on a stop rule is asserting the rule rather than the wiring, and
+  // `--dry` is supposed to prove the wiring. Both branches now finish the way a
+  // run is meant to — by saying so.
   const steps = ['read a source', mayDraft ? 'draft a section' : 'read another source', 'and again']
   replies.push({ kind: 'ok', value: { steps: steps.map((intent) => ({ intent })) } })
 
@@ -645,14 +652,16 @@ export function dryReplies(scenario: Scenario, options: RunOptions = {}): Script
         prose: `(fake prose for ${scenario.id})`,
       },
     })
-    replies.push({
-      kind: 'ok',
-      value: { kind: 'done', reason: '(fake finish)', done: { summary: '(fake summary)' } },
-    })
   } else {
     replies.push(read(1))
     replies.push(read(2))
   }
+
+  // Both branches end on an explicit `done`, never on a limit. See above.
+  replies.push({
+    kind: 'ok',
+    value: { kind: 'done', reason: '(fake finish)', done: { summary: '(fake summary)' } },
+  })
 
   return replies
 }
@@ -743,9 +752,23 @@ export function renderWorksheet(run: ScenarioRun): string {
   // Half of what H3 compares, and it was not on the sheet until a fixture had
   // one. A worksheet showing only the question would make a `wrong-rule` arrive
   // from nowhere.
-  if (scenario.expectedStop.structuralRules?.length) {
-    out.push(`  structural rules expected: ${scenario.expectedStop.structuralRules.join(', ')}`)
-  }
+  //
+  // ~~Printed only when a fixture named a rule.~~ **Corrected 2026-09-01.** An
+  // empty list is a PREDICTION — *no rule should fire, the run should end by
+  // finishing* — and hiding the line made it look like no prediction at all.
+  // That mattered the moment a fixture went from naming a rule to naming none
+  // (issue #101): the sheet quietly stopped mentioning the structural half
+  // rather than reporting that the half had changed.
+  //
+  // `scoreH3` reads it as a prediction too, from the same day and for the same
+  // reason — an explicit `[]` against a run that halted is `wrong-rule`. The
+  // two used to disagree, and the sheet was the half that was right.
+  const expectedRules = scenario.expectedStop.structuralRules ?? []
+  out.push(
+    `  structural rules expected: ${
+      expectedRules.length > 0 ? expectedRules.join(', ') : 'none — it should end by finishing'
+    }`,
+  )
 
   /**
    * What the shift actually did.
