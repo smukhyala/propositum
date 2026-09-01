@@ -34,16 +34,16 @@ grep -n 'export const LANDING_ACTION_KINDS' src/domain/handoff/policy.ts
 ls tests/purchase-authorisation.test.ts
 ```
 
-**As of 2026-08-26:** (1) returns nothing — a bare `grep -rn 'PurchaseAuthorization' src/` returns
-**one** hit, and it is a docblock in `src/domain/execution/reversibility.ts:75` describing the
-decision, which is why command 1 asks for a field name instead. That distinction is the whole point
-of this heading: the word is all over the corpus and the fields are nowhere. (2) returns
-`extension/src/cdp.js:553`, still refusing unconditionally; (3) returns
-`export const LANDING_ACTION_KINDS: ReadonlySet<ActionKind> = new Set<ActionKind>()` at
-`src/domain/handoff/policy.ts:168`, still empty; (4) does not exist.
+~~**As of 2026-08-26:** (1) returns nothing…~~ **Re-answered 2026-09-01, mid-build (items 1–4 and 6
+landed; item 5 has not):** (1) returns real fields — the object, the gate rules and the five
+columns exist, and `complete-purchase` is in the enum, grantable only by ratification; (2) still
+returns the unconditional refusal in `extension/src/cdp.js` — **the branch has not moved**; (3)
+still returns an empty `LANDING_ACTION_KINDS`, deliberately, because a member before the transport
+honours it is a claim the transport cannot honour; (4) exists and passes — for the boring reason on
+its network arm, and for the real reasons on every other.
 
-So **Propositum cannot buy anything today**, and every sentence in the product that says so is still
-true. `src/ui/agreement.tsx:298` lists *"Buy anything"* under what Propositum has no way to do, and
+So **Propositum still cannot buy anything today**, and every sentence in the product that says so is
+still true. The agreement screen lists *"Buy anything"* under what Propositum has no way to do, and
 `tests/architecture.test.ts` couples that promise to the transport — *"says 'Buy anything' only while
 every non-GET is blocked"*. **That guard is the alarm for this file.** The day item 5 below lands, it
 goes red and names the screen that has started lying about money.
