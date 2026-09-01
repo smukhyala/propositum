@@ -12,7 +12,7 @@
  */
 
 import { compilePolicy } from '../src/domain/handoff/policy'
-import type { AutonomyControls, ContractScope } from '../src/domain/handoff/policy'
+import type { AutonomyControls, ContractScope, EnforcedPolicy } from '../src/domain/handoff/policy'
 import { authorize } from '../src/policy/gate'
 import type { AuthorizedAction, RunContext } from '../src/policy/gate'
 import { draftSection, readApprovedSource } from '../src/policy/tools'
@@ -126,11 +126,56 @@ compilePolicy(scope, { ...controls, expects: workOffer.expects })
  * That is not the hole it looks like, and the reason is worth writing down
  * rather than rediscovering. The guarantee is that prose cannot INFLUENCE a
  * permission decision, and that is a property of the function body, which reads
- * exactly three fields and could not consult a fourth if one arrived. The
- * compile error is what makes the rule visible at the call site — it catches
- * the refactor that decides to "just pass the offer, it has everything" — and
- * catching it there is the point. It was never a sandbox.
+ * ~~exactly three fields~~ **four, since 2026-09-01 — and the fourth carries
+ * prose.** `ContractScope.purchaseAuthorization` holds `whatFor`, a
+ * model-drafted display string, so "the scope has no prose" stopped being the
+ * argument. What replaced it is narrower and proved in §5 below: the
+ * projection `compilePolicy` performs has no field the prose could cross into,
+ * so `whatFor` provably dies at the compile step and the gate compares only
+ * the five ratified operands. The compile error is what makes the rule visible
+ * at the call site — it catches the refactor that decides to "just pass the
+ * offer, it has everything" — and catching it there is the point. It was never
+ * a sandbox.
  */
+
+// ─────────────────────────────────────────────────────────────────────────
+// §5 — the purchase prose cannot reach the purchase check (ADR-0024)
+//
+// `whatFor` is the one prose field a permission object has ever carried, and
+// these lines are what keeps it display-only. The projection target —
+// `EnforcedPolicy['purchase']` — has no field for it, so code that tries to
+// carry the whole authorisation into the compiled policy does not compile,
+// and the gate could not consult the prose if it wanted to: there is nowhere
+// for it to arrive.
+
+type CompiledPurchase = NonNullable<EnforcedPolicy['purchase']>
+
+// The whole ratified object, prose included, does not fit the compiled slot.
+const ratified = {
+  originPattern: 'https://shop.example',
+  whatFor: 'the thing you asked for',
+  maxAmountMinor: 4_000,
+  currency: 'USD',
+  maxCount: 2,
+  expiresAtEpochMs: 10_000,
+} as const
+
+const compiledPurchase: CompiledPurchase = {
+  originPattern: 'https://shop.example',
+  maxAmountMinor: 4_000,
+  currency: 'USD',
+  maxCount: 2,
+  expiresAtEpochMs: 10_000,
+  // @ts-expect-error — the compiled view has no field prose could occupy.
+  whatFor: ratified.whatFor,
+}
+void compiledPurchase
+
+// And not by renaming either: no key of the compiled view is prose-typed by
+// accident. `'whatFor' extends keyof CompiledPurchase` must stay `never`.
+type WhatForCrossed = 'whatFor' extends keyof CompiledPurchase ? true : never
+const whatForCrossed: never = undefined as unknown as WhatForCrossed
+void whatForCrossed
 
 // ─────────────────────────────────────────────────────────────────────────
 // 2. Authority cannot be fabricated.

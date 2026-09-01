@@ -242,6 +242,7 @@ export const ACTION_LABEL: Readonly<Record<ActionKind, string>> = {
   'type-text': 'Type into a box on the page',
   'press-key': 'Press Enter, Tab or Escape',
   'capture-screen': 'Take a picture of the page',
+  'complete-purchase': 'Complete the purchase you authorised',
 }
 
 /**

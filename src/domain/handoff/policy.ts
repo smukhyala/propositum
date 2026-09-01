@@ -70,12 +70,26 @@
 /**
  * The closed set of things a worker can attempt.
  *
- * Note what is still absent: there is no `send-message`, no `purchase`, no
- * `publish`, no `delete-file`. That absence is now a statement about our TOOL
+ * Note what is still absent: there is no `send-message`, no `publish`, no
+ * `delete-file`. That absence is now a statement about our TOOL
  * SURFACE — we ship no code that composes an email — and no longer a statement
  * about REACHABLE EFFECTS, because `click-element` reaches the page's own Send
  * button. See the file header; the distinction is the whole reason this comment
  * is longer than the array.
+ *
+ * ── `complete-purchase`, and whether a kind may name an effect (2026-09-01) ──
+ *
+ * ADR-0024 adds the tenth member, and it reads like an effect in a list of
+ * mechanisms. It is not one: the mechanism it names is *press the checkout
+ * control with the ratified network permit armed* — the same synthesised click
+ * as `click-element`, plus the one thing `click-element` never carries, a
+ * one-shot permission for a single covered non-`GET` to leave the tab. Naming
+ * it `click-element-with-permit` would hide the only fact that matters on the
+ * agreement screen, and principle 9 (as amended by ADR-0024) requires an
+ * irreversible capability to exist as a landing `ActionKind` — a kind of its
+ * own is that requirement, not a violation of this list's doctrine. What stays
+ * true: granting `click-element` still cannot buy anything, and no kind here
+ * grants more than its own mechanism.
  */
 export const ACTION_KINDS = [
   'read-approved-source',
@@ -87,6 +101,7 @@ export const ACTION_KINDS = [
   'type-text',
   'press-key',
   'capture-screen',
+  'complete-purchase',
 ] as const
 export type ActionKind = (typeof ACTION_KINDS)[number]
 
@@ -109,6 +124,7 @@ export const MUTATING_ACTION_KINDS: ReadonlySet<ActionKind> = new Set<ActionKind
   'click-element',
   'type-text',
   'press-key',
+  'complete-purchase',
 ])
 
 /**
@@ -118,6 +134,14 @@ export const MUTATING_ACTION_KINDS: ReadonlySet<ActionKind> = new Set<ActionKind
  * but it mutates a proposal inside Propositum that a human reviews before
  * anything reaches a document. Asking permission for that would be asking
  * permission to think.
+ *
+ * `complete-purchase` is also absent, for the opposite reason and on ADR-0024
+ * §4's argument: the ratified `PurchaseAuthorization` IS the consent, given
+ * once, while the person was looking at exactly this — and a per-purchase
+ * confirmation on top of it is the habituation storm that ADR refuses. What
+ * survives as defence in depth: an ordinary `click-element` on a button whose
+ * accessible name says *buy* still escalates through this set, so a checkout
+ * press that was never proposed as a purchase still stops and asks.
  */
 export const CONFIRMABLE_ACTION_KINDS: ReadonlySet<ActionKind> = new Set<ActionKind>([
   'click-element',
@@ -183,6 +207,7 @@ export const BROWSER_ACTION_KINDS: ReadonlySet<ActionKind> = new Set<ActionKind>
   'type-text',
   'press-key',
   'capture-screen',
+  'complete-purchase',
 ])
 
 /**
@@ -232,18 +257,41 @@ export const DOCUMENT_ACTION_KINDS: readonly ActionKind[] = ACTION_KINDS.filter(
  * a new kind lands on one side by its own membership and on neither by
  * accident.
  *
- * **This grants no landing kind, because there are none.** See
- * `LANDING_ACTION_KINDS` above: the browser six are mechanisms, and what stops
- * a mechanism from becoming an irreversible effect is the confirmation pause
- * plus the extension's unconditional refusal to let a non-`GET` request leave
- * the tab. Neither of those lives here, and this function must never grow an
- * opinion about them.
+ * ~~**This grants no landing kind, because there are none.**~~ **Amended
+ * 2026-09-01, ADR-0024's build:** there is a landing-capable kind now, and this
+ * function still grants none — by subtraction rather than by there being
+ * nothing to subtract. `complete-purchase` is grantable by NEITHER branch;
+ * the only writer that may add it is `acceptContract`, and only when the
+ * persisted draft carries a `PurchaseAuthorization` the person is ratifying.
+ * The partition weakens to: every non-landing kind is grantable by exactly one
+ * branch, and a landing kind by ratification alone. What still does not live
+ * here: the confirmation pause, and the extension's refusal to let an
+ * uncovered non-`GET` leave the tab.
  */
 export function grantableActionKinds(pinsDocument: boolean): readonly ActionKind[] {
   return pinsDocument
     ? DOCUMENT_ACTION_KINDS
-    : ACTION_KINDS.filter((kind) => BROWSER_ACTION_KINDS.has(kind))
+    : ACTION_KINDS.filter(
+        (kind) => BROWSER_ACTION_KINDS.has(kind) && !PURCHASE_ACTION_KINDS.has(kind),
+      )
 }
+
+/**
+ * The kinds only a ratified `PurchaseAuthorization` may grant.
+ *
+ * A set rather than a literal in `grantableActionKinds`, because two callers
+ * need the same answer: the grant path subtracts it, and `acceptContract` adds
+ * it back iff the draft being accepted carries an authorisation. It is NOT
+ * `LANDING_ACTION_KINDS`: that set states what the transport will honour, and
+ * it stays empty until the extension's branch moves (its own docblock says a
+ * member added early is a claim the transport cannot honour). This set states
+ * what ratification may grant, which has to exist first — the build order is
+ * the safety argument, and `docs/todo/06-buying-things.md` item 5 is where the
+ * two sets converge.
+ */
+export const PURCHASE_ACTION_KINDS: ReadonlySet<ActionKind> = new Set<ActionKind>([
+  'complete-purchase',
+])
 
 /**
  * Kinds whose target is an element in a specific accessibility-tree snapshot.
@@ -257,6 +305,7 @@ export function grantableActionKinds(pinsDocument: boolean): readonly ActionKind
  */
 export const SNAPSHOT_DEPENDENT_ACTION_KINDS: ReadonlySet<ActionKind> = new Set<ActionKind>([
   'click-element',
+  'complete-purchase',
   'type-text',
   'press-key',
 ])
@@ -323,6 +372,65 @@ export const MAX_ACTIONS_PER_RUN = 40
 export const MAX_MUTATING_ACTIONS_PER_RUN = 8
 
 /**
+ * The currencies a `PurchaseAuthorization` may name. Closed, and closed HERE:
+ * Prisma's SQLite provider has no enums, so the column is a `String` and this
+ * array is the authoritative set. The boundary's `z.enum` is a prose hint the
+ * model can ignore; `currencyOf` below is the enforcement.
+ */
+export const CURRENCY_CODES = ['USD', 'EUR', 'GBP', 'CAD', 'AUD', 'JPY'] as const
+export type CurrencyCode = (typeof CURRENCY_CODES)[number]
+
+/**
+ * The closed set applied in code: a currency outside the set is DROPPED, never
+ * mapped to a neighbour and never defaulted — the `outcomeKindsOf` pattern. A
+ * dropped currency drops the whole authorisation with it (absence is the deny),
+ * because a ceiling in an unknown unit is not a ceiling.
+ */
+export function currencyOf(value: string): CurrencyCode | null {
+  const upper = value.toUpperCase()
+  return (CURRENCY_CODES as readonly string[]).includes(upper) ? (upper as CurrencyCode) : null
+}
+
+/**
+ * The product's own ceilings on what a drafted authorisation may ask for, in
+ * minor units and charges. `draftContract` clamps to these the way it clamps
+ * the suggested time limit — safe because the person sees the clamped number on
+ * the screen they ratify. They are bounds on the DRAFT, not dials: nothing at
+ * run time reads them, and no control may raise a ratified ceiling
+ * (principle 6).
+ */
+export const MAX_PURCHASE_AMOUNT_MINOR = 50_000
+export const MAX_PURCHASE_COUNT = 3
+
+/**
+ * What a person ratified about spending, for one contract. ADR-0024's object.
+ *
+ * `whatFor` is prose and is DISPLAY-ONLY — the person reads it, the gate never
+ * does, and `EnforcedPolicy.purchase` below has no field it could occupy, so
+ * the compile step is where the prose provably falls away.
+ *
+ * `expiresAt` is DERIVED, never stored: it is `acceptedAt + timeLimitMinutes`,
+ * the same immutable pair the deadline derives from. That is stronger than the
+ * stored field ADR-0024's interface sketch showed, and it is the mechanism
+ * behind that ADR's own tripwire — an authorisation structurally cannot outlive
+ * its contract, because its expiry IS the contract's own end.
+ */
+export interface PurchaseAuthorization {
+  /** Where. An origin, matched exactly by the transport — never by prefix,
+   *  never by wildcard, and never via `patternCovers`. */
+  readonly originPattern: string
+  /** Display only. Never read by the gate, the compiler, or the transport. */
+  readonly whatFor: string
+  /** The ceiling, in minor units. Nothing may relax it. */
+  readonly maxAmountMinor: number
+  readonly currency: CurrencyCode
+  /** How many charges this permits. */
+  readonly maxCount: number
+  /** Derived from `acceptedAt + timeLimitMinutes` at assembly. Epoch ms. */
+  readonly expiresAtEpochMs: number
+}
+
+/**
  * What the contract permits. Deliberately contains NO prose.
  *
  * `baseVersionId` is **optional**, and its absence is load-bearing. A browser
@@ -332,11 +440,21 @@ export const MAX_MUTATING_ACTIONS_PER_RUN = 8
  * (`no_document_pinned`), so the document capability is present **iff** a base
  * is pinned. Deny-by-default, expressed in a field that already existed, with
  * no new mechanism to keep in sync.
+ *
+ * `purchaseAuthorization` has the same shape and the same load-bearing absence
+ * (ADR-0024): no object, no spending — the gate refuses `complete-purchase`
+ * with `purchase_not_authorized` before any other fact about it is consulted.
+ * It DOES carry prose (`whatFor`), which this docblock's first sentence
+ * forbids; the resolution is that the prose provably cannot leave the scope —
+ * `compilePolicy` projects the authorisation into `EnforcedPolicy.purchase`,
+ * which has no field for it, and `tests/policy-gate.type-test.ts` §5 holds
+ * that as a compile-time proof.
  */
 export interface ContractScope {
   readonly approvedSourceIds: readonly string[]
   readonly allowedActionKinds: readonly ActionKind[]
   readonly baseVersionId?: string | undefined
+  readonly purchaseAuthorization?: PurchaseAuthorization | undefined
 }
 
 /** The human-set dials. Absent from every model-facing schema — a model that
@@ -411,6 +529,28 @@ export interface EnforcedPolicy {
    */
   readonly documentBasePinned: boolean
   readonly timeLimitMinutes: number
+  /**
+   * The ratified spend bound, when one exists — and provably WITHOUT `whatFor`.
+   *
+   * `documentBasePinned` above argues that a compiled policy carries the least
+   * a rule needs, and this field has to argue why it carries five values where
+   * that one carries a boolean: every field here is a comparison operand the
+   * gate or the transport performs (origin equality, ceiling, count, expiry),
+   * and a boolean "purchase permitted" would push the operands back to a lookup
+   * against the scope — the drift `documentBasePinned` exists to prevent, in
+   * the opposite direction. The prose field is the one that must not survive
+   * the projection, and its absence from this type is held by
+   * `tests/policy-gate.type-test.ts`.
+   */
+  readonly purchase?:
+    | {
+        readonly originPattern: string
+        readonly maxAmountMinor: number
+        readonly currency: CurrencyCode
+        readonly maxCount: number
+        readonly expiresAtEpochMs: number
+      }
+    | undefined
 }
 
 /**
@@ -504,5 +644,19 @@ export function compilePolicy(scope: ContractScope, controls: AutonomyControls):
     documentBasePinned: scope.baseVersionId !== undefined && scope.baseVersionId.length > 0,
 
     timeLimitMinutes: controls.timeLimitMinutes,
+
+    // The projection is where `whatFor` provably falls away: the five operands
+    // cross, the prose does not, and the target type has no field for it.
+    ...(scope.purchaseAuthorization === undefined
+      ? {}
+      : {
+          purchase: {
+            originPattern: scope.purchaseAuthorization.originPattern,
+            maxAmountMinor: scope.purchaseAuthorization.maxAmountMinor,
+            currency: scope.purchaseAuthorization.currency,
+            maxCount: scope.purchaseAuthorization.maxCount,
+            expiresAtEpochMs: scope.purchaseAuthorization.expiresAtEpochMs,
+          },
+        }),
   }
 }

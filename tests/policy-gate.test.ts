@@ -19,6 +19,7 @@ import {
   MAX_MUTATING_ACTIONS_PER_RUN,
   MAX_PLAN_STEPS,
   MUTATING_ACTION_KINDS,
+  PURCHASE_ACTION_KINDS,
   compilePolicy,
   grantableActionKinds,
 } from '../src/domain/handoff/policy'
@@ -31,6 +32,18 @@ const scope: ContractScope = {
   approvedSourceIds: ['src-approved'],
   allowedActionKinds: [...ACTION_KINDS],
   baseVersionId: 'ver-1',
+  // Present in the base fixture so `complete-purchase` can be a well-formed
+  // PERMITTED proposal in the generic tables, the same reason `run` below
+  // carries a confirmed id for `press-key`. The purchase-specific refusals
+  // construct their own absences.
+  purchaseAuthorization: {
+    originPattern: 'https://shop.example',
+    whatFor: 'the thing you asked for',
+    maxAmountMinor: 4_000,
+    currency: 'USD',
+    maxCount: 2,
+    expiresAtEpochMs: 10_000,
+  },
 }
 
 const controls: AutonomyControls = {
@@ -75,6 +88,9 @@ const run: RunContext = {
    */
   confirmedRequestIds: new Set<string>(['confirmed-1']),
   targetEvidence: harmless,
+  // Zero, not absent: the gate fails closed on an absent counter, so the base
+  // fixture wires it the way the loop does.
+  chargesLanded: 0,
 }
 
 const read: ToolProposal = {
@@ -115,6 +131,10 @@ const VALID_PARAMS: Readonly<Record<ActionKind, ActionParams>> = {
   // it has no ref, so nothing binds evidence to it, so it always escalates.
   'press-key': { snapshotId: 'snap-1', key: 'Enter', confirmationId: 'confirmed-1' },
   'capture-screen': {},
+  // No confirmationId, deliberately: the ratified authorisation is the consent
+  // (ADR-0024 §4), and the kind is outside CONFIRMABLE_ACTION_KINDS. What makes
+  // it permitted is the base fixtures' authorisation and chargesLanded.
+  'complete-purchase': { snapshotId: 'snap-1', ref: 'e12' },
 }
 
 const valid = (kind: ActionKind): Partial<ToolProposal> => ({
@@ -926,12 +946,90 @@ describe('check order, pair by pair', () => {
   })
 })
 
+describe('a purchase is authorised by the ratified object, and by nothing else', () => {
+  it('refuses when no authorisation exists, whatever the allowlist says', () => {
+    const r = gate(valid('complete-purchase'), {}, {}, { purchaseAuthorization: undefined })
+    expect(r).toEqual({ authorized: false, rule: 'purchase_not_authorized' })
+  })
+
+  it('refuses at the instant of expiry, `>=` like the budget', () => {
+    const r = gate(valid('complete-purchase'), {}, { nowEpochMs: 9_999 })
+    expect(r.authorized).toBe(true)
+
+    const atExpiry = gate(valid('complete-purchase'), {}, { nowEpochMs: 10_000 })
+    // The base fixture derives expiry from the same pair as the deadline, so at
+    // this instant the budget arm fires first — which is the coincidence the
+    // RefusalRule docblock records. The purchase arm is reached by giving the
+    // authorisation an earlier expiry than the deadline, which a stored expiry
+    // could produce.
+    expect(atExpiry).toEqual({ authorized: false, rule: 'budget_exhausted' })
+
+    const earlier = gate(
+      valid('complete-purchase'),
+      {},
+      { nowEpochMs: 6_000 },
+      {
+        purchaseAuthorization: {
+          ...scope.purchaseAuthorization!,
+          expiresAtEpochMs: 6_000,
+        },
+      },
+    )
+    expect(earlier).toEqual({ authorized: false, rule: 'purchase_expired' })
+  })
+
+  it('refuses the charge past the count, and counts landings only', () => {
+    const atCount = gate(valid('complete-purchase'), {}, { chargesLanded: 2 })
+    expect(atCount).toEqual({ authorized: false, rule: 'purchase_count_exceeded' })
+
+    const underCount = gate(valid('complete-purchase'), {}, { chargesLanded: 1 })
+    expect(underCount.authorized).toBe(true)
+  })
+
+  it('fails closed on an absent counter — an unwired ledger never spends', () => {
+    const r = gate(valid('complete-purchase'), {}, { chargesLanded: undefined })
+    expect(r).toEqual({ authorized: false, rule: 'purchase_count_exceeded' })
+  })
+
+  it('still requires the element ref every snapshot-dependent kind requires', () => {
+    const r = gate({ ...valid('complete-purchase'), params: { snapshotId: 'snap-1' } })
+    expect(r).toEqual({ authorized: false, rule: 'element_ref_missing' })
+  })
+
+  it('never asks for a per-purchase confirmation — the ratification was the yes', () => {
+    // Hostile evidence that would escalate any confirmable kind: a submit
+    // control inside a form whose accessible name says buy. The kind is outside
+    // CONFIRMABLE_ACTION_KINDS, so the classifier never runs on it and the
+    // authorisation alone decides (ADR-0024 §4).
+    const r = gate(
+      valid('complete-purchase'),
+      {},
+      {
+        targetEvidence: {
+          ...harmless,
+          accessibleNameTokens: ['Buy', 'now'],
+          isSubmitControl: true,
+          isInsideForm: true,
+        },
+      },
+    )
+    expect(r.authorized).toBe(true)
+  })
+
+  it('is stripped by suggestions-only like every mutating kind', () => {
+    const r = gate(valid('complete-purchase'), { output: 'suggestions-only' })
+    expect(r).toEqual({ authorized: false, rule: 'action_kind_not_allowed' })
+  })
+})
+
 describe('exhaustive control matrix', () => {
   it('walks every ActionKind against every dial combination', () => {
-    // 9 kinds x 16 dial combinations = 144 decisions, each with an expected
+    // 10 kinds x 16 dial combinations = 160 decisions, each with an expected
     // answer that depends only on the compiled allowlist — not on a
     // re-implementation of the gate's rules, which would agree with any bug in
-    // them.
+    // them. (Was 144; `complete-purchase` joined the enum 2026-09-01, and the
+    // base fixtures carry the authorisation and counter that make it behave
+    // like any other permitted kind here.)
     let checked = 0
 
     for (const dials of DIALS) {
@@ -953,7 +1051,7 @@ describe('exhaustive control matrix', () => {
     }
 
     expect(checked).toBe(ACTION_KINDS.length * DIALS.length)
-    expect(checked).toBe(144)
+    expect(checked).toBe(160)
   })
 
   it('never authorizes an unapproved source under any combination', () => {
@@ -1238,10 +1336,25 @@ describe('a shift with no document grants the browser verbs, not nothing', () =>
    * that actually costs something — neither leaves a kind ungrantable by every
    * path, which is how a capability comes to exist with no contract able to
    * name it.
+   *
+   * ~~The union is the whole enum.~~ **Amended 2026-09-01, ADR-0024's build:**
+   * the union is the whole enum MINUS the purchase kinds, which are grantable
+   * by neither default branch — only `acceptContract` adds one, and only when
+   * the draft being accepted carries a ratified `PurchaseAuthorization`. The
+   * no-ungrantable-kind property survives with its grant path named; a landing
+   * kind grantable by default would be the over-grant this test exists to
+   * refuse, in the direction that costs money.
    */
-  it('partitions the enum between them', () => {
+  it('partitions the enum between them, except what only ratification grants', () => {
     const both = [...grantableActionKinds(true), ...grantableActionKinds(false)]
-    expect([...both].sort()).toEqual([...ACTION_KINDS].sort())
+    const byDefault = ACTION_KINDS.filter((kind) => !PURCHASE_ACTION_KINDS.has(kind))
+    expect([...both].sort()).toEqual([...byDefault].sort())
+  })
+
+  it('grants the purchase kind by neither branch, so only ratification can', () => {
+    for (const pinsDocument of [true, false]) {
+      expect(grantableActionKinds(pinsDocument)).not.toContain('complete-purchase')
+    }
   })
 })
 

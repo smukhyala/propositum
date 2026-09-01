@@ -191,6 +191,20 @@ export interface RebuiltHistory {
    *  moves and what `MAX_MUTATING_ACTIONS_PER_RUN` counts. */
   readonly mutatingActionsTaken: number
   /**
+   * Charges that LANDED under this contract: authorized `complete-purchase`
+   * intents whose outcome succeeded. The transport makes `succeeded` mean "the
+   * covered request left the machine" — a failed or interrupted attempt lands
+   * nothing, because the extension's permit is one-shot and its consumption is
+   * what a success reports. What `PurchaseAuthorization.maxCount` counts, and
+   * the gate FAILS CLOSED when it is absent from `RunContext`, so a caller
+   * that forgets to thread this refuses spending rather than resetting it.
+   *
+   * This module reads strings off durable rows, so the kind is compared as a
+   * string here for the same reason `mutatingKinds` is passed in — see the
+   * module header on old rows naming retired capabilities.
+   */
+  readonly chargesLanded: number
+  /**
    * Authorized intents with no outcome at all.
    *
    * The `unknown` ActionStatus, in row form. Under the standing "a local worker
@@ -229,6 +243,7 @@ export async function historyForContract(
   const orphanedIntentIds: string[] = []
   let actionsTaken = 0
   let mutatingActionsTaken = 0
+  let chargesLanded = 0
 
   for (const row of rows) {
     if (!row.authorized) {
@@ -258,6 +273,10 @@ export async function historyForContract(
       continue
     }
 
+    if (row.kind === 'complete-purchase' && row.outcome.result === 'succeeded') {
+      chargesLanded += 1
+    }
+
     turns.push({
       kind: row.kind,
       summary: row.reason,
@@ -269,6 +288,7 @@ export async function historyForContract(
     turns,
     actionsTaken,
     mutatingActionsTaken,
+    chargesLanded,
     orphanedIntentIds,
     confirmations,
     confirmedRequestIds: new Set(confirmations.map((c) => c.requestId)),

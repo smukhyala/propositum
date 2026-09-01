@@ -91,6 +91,16 @@ interface PurchaseAuthorization {
 }
 ```
 
+*(2026-09-01, the build — two corrections the code decided, both toward this document's own
+argument. `maxAmount` became `maxAmountMinor`: the comment above already said minor units, and a
+name that says so cannot be misread by a caller holding dollars. And `expiresAt` is **derived, not
+stored or drafted** — `acceptedAt + timeLimitMinutes`, the immutable pair the deadline already
+derives from — so an authorisation structurally cannot outlive its contract, which answers the
+second *Revisit when* trigger below by construction instead of by review. While the expiry derives
+from that pair it is production-coincident with the budget check; the gate's `purchase_expired`
+rule exists for the day a stored expiry earns its own argument. `CONTEXT.md`'s entry records the
+same corrections, dated.)*
+
 ### 1. Why a structured object, and not the instruction itself
 
 The tempting shape is to let the objective authorise: the person wrote *"buy 10 avocados"*, so

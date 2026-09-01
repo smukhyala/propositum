@@ -505,6 +505,7 @@ export async function runWorker(job: WorkerJob, deps: WorkerDeps): Promise<Worke
         turns: [] as HistoryTurn[],
         actionsTaken: 0,
         mutatingActionsTaken: 0,
+        chargesLanded: 0,
         orphanedIntentIds: [],
         confirmations: [] as ConfirmedAction[],
         confirmedRequestIds: new Set<string>(),
@@ -518,6 +519,7 @@ export async function runWorker(job: WorkerJob, deps: WorkerDeps): Promise<Worke
   let refusals = 0
   let actionsTaken = rebuilt.actionsTaken
   let mutatingActionsTaken = rebuilt.mutatingActionsTaken
+  let chargesLanded = rebuilt.chargesLanded
   let consecutiveNoProgress = 0
   let consecutiveRefusals = 0
   let summary: string | undefined
@@ -889,6 +891,7 @@ export async function runWorker(job: WorkerJob, deps: WorkerDeps): Promise<Worke
         currentSnapshotId: page?.snapshotId ?? null,
         actionsTaken,
         mutatingActionsTaken,
+        chargesLanded,
         // Looked up against the snapshot the RUN last saw, never against the one
         // the proposal named. A proposal naming a stale snapshot is refused
         // before this matters, and looking evidence up by the model's own value
@@ -1041,6 +1044,16 @@ export async function runWorker(job: WorkerJob, deps: WorkerDeps): Promise<Worke
     // a refund, and a run whose every action fails must still end.
     actionsTaken += 1
     if (MUTATING_ACTION_KINDS.has(verdict.action.kind)) mutatingActionsTaken += 1
+
+    // The charge counter moves on SUCCESS ONLY, unlike the caps above, and the
+    // asymmetry is the safety: the transport's permit is one-shot and its
+    // consumption is what a success reports, so a failed attempt landed
+    // nothing — while an attempt-counted charge would let three failures spend
+    // a maxCount of three without a cent moving. The rebuild in history.ts
+    // counts the same way off durable rows, so the two never disagree.
+    if (verdict.action.kind === 'complete-purchase' && performed !== null) {
+      chargesLanded += 1
+    }
 
     if (performed !== null) {
       consecutiveNoProgress = performed.changedSomething ? 0 : consecutiveNoProgress + 1
@@ -1218,6 +1231,7 @@ function runContext(
     currentSnapshotId: string | null
     actionsTaken: number
     mutatingActionsTaken: number
+    chargesLanded: number
     targetEvidence: ElementEvidence | null
     confirmedRequestIds: ReadonlySet<string>
   },
@@ -1428,6 +1442,17 @@ async function perform(
         browserFor(deps, kind),
       )
       return { summary: 'took a picture of the page', changedSomething: false, captured }
+    }
+
+    case 'complete-purchase': {
+      // Unreachable until docs/todo/06 item 5 wires the transport: nothing
+      // grants the kind yet, so no authorized action of it can exist. The case
+      // exists because this switch is exhaustive by design, and it throws
+      // rather than no-ops for browserFor's reason — a silent success here
+      // would be a ledger row claiming a charge that never happened.
+      throw new Error(
+        'complete-purchase is decided and not yet carried by any transport — docs/todo/06 item 5',
+      )
     }
   }
 }
