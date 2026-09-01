@@ -18,9 +18,25 @@
 #     machine with a key, never here.
 #   - It does not exercise the Chrome extension. A host grant needs a user
 #     gesture, so capture cannot be tested without a person and a browser.
-#   - It does not touch a database. `tests/support/no-real-database.ts` points
-#     `DATABASE_URL` at a path that does not exist, so a test that reaches for
-#     a real one fails rather than finding somebody's.
+#   - It does not touch YOUR database. `tests/support/no-real-database.ts`
+#     points `DATABASE_URL` at a path that does not exist, so a test that
+#     reaches for a real one fails rather than finding somebody's.
+#
+#     ~~It does not touch a database.~~ **Corrected 2026-09-01, and it is the
+#     load-bearing one in this block.** That sentence was true of the developer's
+#     `propositum.db` and false of this runner: a large share of the files under
+#     `tests/` build a temp SQLite database of their own, each spawning
+#     `npx prisma db push` and then reinstalling and verifying the append-only
+#     triggers before its first assertion. `tests/counts.test.ts` counts them and
+#     refuses the old sentence.
+#
+#     Why it mattered more than a tidy-up: it is the same fact that explains why
+#     a Markdown-only pull request went red on three timeouts here and passed on
+#     a re-run of the very same commit, with nothing changed but the runner. A
+#     header saying CI never touches a database is the reason nobody
+#     looked there, and a red tick that could mean either "a guard fired" or "the
+#     runner was slow" is exactly the promise this block exists to keep honest.
+#     `vitest.config.ts` now sets `testTimeout`, and states what that costs.
 #
 # Verified before this file was committed: a clone with no `.env`, no
 # `prisma db push` and nothing but `npm ci` passes all four steps below.
@@ -63,9 +79,13 @@ jobs:
 
       - run: npm run typecheck
 
-      # 1,551 tests across 52 files at the time of writing. The number is not
-      # asserted anywhere and deliberately not repeated here — see CONTRIBUTING.md
-      # on counts that live in two places.
+      # ~~1,551 tests across 52 files at the time of writing.~~ **Deleted
+      # 2026-09-01: both figures were wrong, in a comment whose own next
+      # sentence said the number was deliberately not repeated.** The number is
+      # not asserted anywhere and there is no way to know it without running
+      # this step, so the only honest place for it is the run that produced it —
+      # see CONTRIBUTING.md on counts that live in two places, and
+      # `tests/counts.test.ts`, which now refuses one here.
       - run: npm test
 
       # The build catches what neither of the above can: a route that only

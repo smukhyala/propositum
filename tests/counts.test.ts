@@ -136,3 +136,68 @@ describe('a count is checked against the file that knows it', () => {
     expect(claimed(README, 'tests')).toEqual([])
   })
 })
+
+/**
+ * The CI workflow's header, which is a promise about what a green check means.
+ *
+ * ── The failure this exists for ──────────────────────────────────────────
+ *
+ * `.github/workflows/ci.yml` opens with a block headed *"WHAT THIS DOES NOT
+ * DO, stated because a green check reads as a stronger promise than it is"* —
+ * the most careful paragraph in the repository about its own limits, and
+ * nothing read it. Two of its claims had gone false by 2026-09-01:
+ *
+ *   - *"It does not touch a database."* True of the developer's own
+ *     `propositum.db`, which is what `tests/support/no-real-database.ts`
+ *     guarantees. False of CI, where every run builds temp SQLite databases and
+ *     spawns `npx prisma db push` once per file that needs one.
+ *   - *"1,551 tests across 52 files"*, in a comment whose own next sentence
+ *     says the number is deliberately not repeated. It was wrong on both
+ *     figures, which is exactly what `AGENTS.md` forbids a hand-maintained
+ *     count for.
+ *
+ * The first is the load-bearing one, and not because it is untidy: it is the
+ * same fact that explains why three tests time out on a 2-core runner and pass
+ * on re-run. A header that says CI never touches a database is the reason
+ * nobody looked there.
+ *
+ * ── What this does NOT check ─────────────────────────────────────────────
+ *
+ * The other three claims in that header — no live tests, no `ANTHROPIC_API_KEY`,
+ * no extension — are unbound. They are true, and binding them would need this
+ * file to know what a live test is. `tests/eval-flags.test.ts` and
+ * `tests/extension-permissions.test.ts` are nearer to those.
+ */
+describe('the CI header says what is true of CI, not of a developer', () => {
+  // Struck, like the README's. The corrections below keep the old sentences on
+  // the page on purpose, and a guard that bound them would forbid the honesty.
+  const CI = live(read('.github/workflows/ci.yml'))
+
+  /** Test files that build a database of their own, counted off the call. */
+  const databaseBuilders = readdirSync(join(repo, 'tests'))
+    .filter((name) => name.endsWith('.test.ts'))
+    .filter((name) => /'prisma',\s*'db',\s*'push'|prisma db push/.test(read(join('tests', name))))
+
+  it('has test files that build a database, or the rest of this is about nothing', () => {
+    expect(databaseBuilders.length).toBeGreaterThan(0)
+  })
+
+  it('does not claim CI never touches a database while that many files build one', () => {
+    expect(live(CI)).not.toMatch(/does not touch a database/i)
+  })
+
+  it('does not state the size of this suite, for the reason the README may not', () => {
+    // Same rule as the README's: there is no way to know it without running it,
+    // so the only honest place for the number is the run that produced it.
+    expect(claimed(CI, 'tests')).toEqual([])
+    expect(claimed(CI, 'files')).toEqual([])
+  })
+
+  it('gives a suite that builds databases longer than vitest s default', () => {
+    // Not a taste question. The default is 5000ms; a file here spawns
+    // `prisma db push` and reinstalls the append-only triggers before its first
+    // assertion, and on a 2-core runner that has lost the race three times.
+    // Deleting this line puts the flake back, so the line is pinned.
+    expect(read('vitest.config.ts')).toMatch(/testTimeout:\s*[0-9_]+/)
+  })
+})
