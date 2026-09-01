@@ -25,12 +25,24 @@
  * permission panel; calling the real compiler is how that stays impossible
  * rather than merely unlikely.
  *
- * The panel keeps two refusals visually distinct, and must never blur them:
+ * The panel keeps ~~two refusals~~ **three, 2026-09-01** visually distinct, and
+ * must never blur them:
  *
- *   - **switched off** — inside `ActionKind`, and your dials removed it.
+ *   - **switched off** — inside `ActionKind`, offered by this shift, and your
+ *     dials removed it.
+ *   - **not in this agreement** — inside `ActionKind`, and this shift never
+ *     offered it, so there was nothing for a dial to remove. **Added
+ *     2026-09-01.** It used to be filed under *switched off*, which made the
+ *     heading a claim about a decision the person had not made — the fifth
+ *     sentence of the family below, and the only one a rewrite could not fix,
+ *     because the sentences were already true and the GROUPING was the lie.
  *   - **does not exist** — absent from the enum entirely. Send a message,
  *     publish, buy, delete. Absence of capability is the strongest prohibition
  *     available, and it is not something a setting could turn back on.
+ *
+ * The middle one is weaker than the third and stronger than the first, and the
+ * order above is that scale. Blurring it into either neighbour is the failure
+ * this split exists to prevent.
  *
  * ── Where the two pre-filled sentences came from, said out loud ──────────
  *
@@ -279,6 +291,15 @@ const NOT_IN_THIS_AGREEMENT = 'Not part of this agreement. Propositum is refused
  * discriminant as these three. Three was the number of sentences the old
  * comment happened to name — never the number that went false.
  *
+ * **And a fifth, reported twice before anybody fixed it** (2026-09-01). Both
+ * `64ed3e4` and `529fecc` closed by naming it and leaving it: the heading
+ * *"What you've switched off"* named one cause for a list built as everything
+ * not on the compiled allowlist. It is the only one of the five that no
+ * rewording could fix, because every sentence under it was already true and it
+ * was the grouping that lied — see `dialledOff` and `neverOnOffer`. It survived
+ * two commits that both reported it because a page-wide assertion cannot see
+ * it; `tests/agreement-honesty.test.ts` now scopes its reads to a group.
+ *
  * What is still true unconditionally, and is the whole reason the list survives:
  * **there is no code here that composes a message, places an order, publishes
  * or deletes.** `tests/architecture.test.ts` asserts those functions do not
@@ -380,7 +401,40 @@ export function Agreement({ draft, defaults, sourceLabels, onBack, onHandedOver 
   )
 
   const allowed = ACTION_KINDS.filter((kind) => policy.actionKindAllowlist.has(kind))
-  const switchedOff = ACTION_KINDS.filter((kind) => !policy.actionKindAllowlist.has(kind))
+
+  /**
+   * The two ways a kind can be missing, which may not share a heading.
+   *
+   * This was one list under *"What you've switched off"*, and that heading was
+   * the fifth thing on this screen to attribute a decision to somebody who did
+   * not make it. Every sentence in the list was already true —
+   * `NOT_IN_THIS_AGREEMENT` names no cause precisely so that it is — but the
+   * heading named one, over a list built as everything not on the compiled
+   * allowlist. On a browser shift that is mostly kinds
+   * `grantableActionKinds(false)` never offered, so the panel credited the
+   * person with switching off things they were never shown.
+   *
+   * The discriminant is what the draft OFFERED, against what compiled — used
+   * by exactly two of the corrections in this family, `whyDraftingIsOff` below
+   * and `HandedOver`'s `whyNoText` in `src/ui/reading.tsx` one screen later.
+   * The other two, `mayOperate` and `mayFollowLinks`, read the compiled
+   * allowlist alone, which cannot tell a removed offer from one that was never
+   * made. It is deliberately not derived from `allowedActionKinds` alone,
+   * which collapses the two facts — that collapse is the whole bug.
+   *
+   * What this does NOT do: name the dial for the kinds it does file under the
+   * choice heading. Only `draft-section` earns a per-kind sentence today, and
+   * the docblock on `NOT_IN_THIS_AGREEMENT` says why the rest may not — a
+   * wording that names one reason has to be earned per kind. The heading is
+   * now true of every member of its group, which is what was wrong; the
+   * members still explain themselves in the safe, causeless words.
+   */
+  const dialledOff = ACTION_KINDS.filter(
+    (kind) => draft.allowedActionKinds.includes(kind) && !policy.actionKindAllowlist.has(kind),
+  )
+  const neverOnOffer = ACTION_KINDS.filter(
+    (kind) => !draft.allowedActionKinds.includes(kind) && !policy.actionKindAllowlist.has(kind),
+  )
 
   /**
    * Two facts about this agreement that three sentences below depend on.
@@ -617,14 +671,35 @@ export function Agreement({ draft, defaults, sourceLabels, onBack, onHandedOver 
             ))}
           </ul>
 
-          {switchedOff.length > 0 ? (
+          {dialledOff.length > 0 ? (
             <div className="ag-off">
               <h3 className="ag-group-head">What you&rsquo;ve switched off</h3>
               <ul className="ag-perms">
-                {switchedOff.map((kind) => (
+                {dialledOff.map((kind) => (
                   <li className="ag-perm" key={kind}>
                     <span className="ag-perm-mark">
                       <Refused size={16} title="Switched off" />
+                    </span>
+                    <span>
+                      {ACTION_LABEL[kind]}
+                      <span className="ag-perm-why">
+                        {kind === 'draft-section' ? whyDraftingIsOff : NOT_IN_THIS_AGREEMENT}
+                      </span>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+
+          {neverOnOffer.length > 0 ? (
+            <div className="ag-off">
+              <h3 className="ag-group-head">What this agreement doesn&rsquo;t include</h3>
+              <ul className="ag-perms">
+                {neverOnOffer.map((kind) => (
+                  <li className="ag-perm" key={kind}>
+                    <span className="ag-perm-mark">
+                      <Refused size={16} title="Not in this agreement" />
                     </span>
                     <span>
                       {ACTION_LABEL[kind]}
