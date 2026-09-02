@@ -1424,6 +1424,24 @@ a lost claim into a `ClaimFenced` that returns **without writing anything at all
 values agree too, as of the correction at the top of this entry.
 [ADR-0009](docs/adr/0009-composed-offers.md) records the divergence this closed.
 
+**And one write got in front of it** *(found and closed 2026-09-02,
+[#140](https://github.com/smukhyala/propositum/issues/140))*. The fence reads `status`, and `status`
+is the only one of its three signals a lease sweep moves — the sweep touches neither `claimedBy` nor
+`cancelRequested`. `runs.advanceProgress`, which the worker calls at the top of **every** turn, wrote
+`status: 'running'` with no predicate. So a reaped run put itself back to live one step before its
+own fence read the column, passed, and carried on driving. The paragraph above was true of the check
+and false of the run. Both that write and `confirmations.raiseAndPark`'s are now scoped on the live
+statuses, so those two cannot resurrect a reaped run.
+
+**What is still unscoped, said here rather than left to be found:** `runs.complete` is a plain
+`update` by id, and it is the terminal write of every run. A reaped run whose worker reaches the end
+of its loop is completed `succeeded` and keeps `terminalReason: 'lease-expired'` — the same
+uninterpretable row this correction is about, one function away in the same file. It is out of reach
+of the fence for the same reason `advanceProgress` was, and it is not fixed here because `complete`
+is on every run's path and narrowing it is a change with its own blast radius. `renewLease` is
+unscoped too and is harmless: nothing reads the lease except the sweep, which is itself scoped to
+the live statuses.
+
 One handoff produces **two** runs: a worker, then a reviewer whenever the worker completed at least
 one action. The reviewer is **enqueued, not invoked inline** — failure isolation was the reason to
 split them, and inlining recouples them. Two runs rather than two phases also means each run's

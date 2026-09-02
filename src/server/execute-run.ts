@@ -803,6 +803,25 @@ export async function executeRun(runId: string, deps: ExecuteDeps): Promise<void
      * table nothing in the transaction writes to, and pulling it in would hold a
      * write transaction open across a query for no property gained.
      */
+    /**
+     * A declined park needs nothing from this caller, and that is worth saying
+     * rather than leaving as a discarded return value.
+     *
+     * `raiseAndPark` reports `{ parked: false }` when the run ended under us
+     * between the refusal and the park. The window is small and it is real: the
+     * fence in `ledgerFor` above is checked when the REFUSED intent is
+     * committed, and everything after that — the loop returning,
+     * `lastPageSnapshot` reading a table — is time the lease sweep can reap this
+     * run in. Before #140 the park rewrote it anyway, producing
+     * `awaiting-confirmation` beside `terminalReason: 'lease-expired'`: a row no
+     * reader can interpret, in the table the shift report is built from.
+     *
+     * Both paths end this run here, so there is no branch to write. Whatever
+     * reaped it already recorded why, the shift report reads that reason, and
+     * the question is simply never asked — which is the honest outcome, because
+     * there is no run left for a yes to carry on. Nothing throws, which is this
+     * file's standing contract for a run-level failure.
+     */
     await ctx.repos.confirmations.raiseAndPark({
       runId,
       intentId: awaiting.intentId,

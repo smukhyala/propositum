@@ -1915,11 +1915,39 @@ describe('a paused run is parked in one transaction', () => {
 
     expect(body).toContain('prisma.$transaction')
     expect(body).toMatch(/tx\.confirmationRequest\.create\(/)
-    expect(body).toMatch(/tx\.agentRun\.update\(/)
+    // ~~`tx.agentRun.update(`~~ **Corrected 2026-09-02 (#140).** An unpredicated
+    // `update` is what let a reaped run be rewritten back to parked. The write
+    // is now an `updateMany` scoped on the live statuses, and the count decides
+    // whether the question is asked at all — so this asserts the guarded form
+    // and would go red on a return to the unguarded one.
+    expect(body).toMatch(/tx\.agentRun\.updateMany\(/)
+    expect(body).not.toMatch(/tx\.agentRun\.update\(/)
     // If this goes, a run parked overnight on a question is holding a credential
     // that drives somebody's browser.
     expect(body).toContain('controlToken: null')
     expect(body).toContain("status: 'awaiting-confirmation'")
+  })
+
+  /**
+   * The status write comes FIRST, and the order is load-bearing.
+   *
+   * Creating the question and then discovering the run cannot be parked would
+   * leave a `ConfirmationRequest` against a terminal run — a question on
+   * somebody's phone about work that is over, which is the state section 10
+   * below spends a refusal and a screen on. Writing the status first means a
+   * refused park writes nothing at all.
+   */
+  it('decides whether it may park before it writes the question', () => {
+    const repositories = stripComments(
+      readFileSync(new URL('../src/persistence/repositories/index.ts', import.meta.url), 'utf8'),
+    )
+    const at = repositories.indexOf('raiseAndPark: (')
+    const status = repositories.indexOf('tx.agentRun.updateMany(', at)
+    const question = repositories.indexOf('tx.confirmationRequest.create(', at)
+
+    expect(status).toBeGreaterThan(-1)
+    expect(question).toBeGreaterThan(-1)
+    expect(status).toBeLessThan(question)
   })
 
   it('reaches neither non-transactional door', () => {
@@ -2171,5 +2199,164 @@ describe('a question is not answerable once the work behind it is over', () => {
 
     expect(result.problem.message).toContain('stopped before your answer arrived')
     expect(result.problem.message).not.toContain('sat unanswered for a day')
+  })
+})
+
+/* ═════════════════════ 11. a park that checks what it overwrites ═════════ */
+
+/**
+ * The half of #108's neighbourhood that #111 and #132 both left open — #140.
+ *
+ * `raiseAndPark` wrote the run's status with an unpredicated `update`, so the
+ * question is only half the story: a run the lease sweep had already reaped
+ * came back out of the park reading `awaiting-confirmation` while still
+ * carrying `terminalReason: 'lease-expired'`. `prisma/schema.prisma` partitions
+ * that column strictly by status and documents `awaiting-confirmation` as
+ * taking none, *"because there is nothing terminal to explain"* — so the row
+ * said two things a reader cannot reconcile, in the table the shift report is
+ * built from. It also meant the population #132's refusal was written for never
+ * reached it: the run came out looking correctly parked, and its question was
+ * answerable.
+ *
+ * ── Why the window is real, and where it is ──────────────────────────────
+ *
+ * The claim fence in `ledgerFor` is checked when the REFUSED intent is
+ * committed. Everything after that — the loop returning through `askFirst`,
+ * `executeRun` reading `lastPageSnapshot` — is time the sweep can land in. So
+ * the fence is not the thing that closes this; the predicate is.
+ *
+ * ── What these tests do NOT cover ────────────────────────────────────────
+ *
+ * The race itself. Both call the sweep and then the park, in order, on one
+ * connection — which is the state the race produces, not the race. A test that
+ * interleaved two real workers would be measuring SQLite's locking rather than
+ * this predicate.
+ */
+describe('a park refuses a run that something else already ended', () => {
+  /** A claimed run whose lease is already in the past. */
+  async function reapableRun(): Promise<{ runId: string; intentId: string }> {
+    const sessionId = (await repos.sessions.start(projectId)).id
+    const reading = await repos.readings.create({ sessionId, throughSeq: 0, claims: [] })
+    const contract = await repos.contracts.createDraft({
+      sessionId,
+      readingId: reading.id,
+      objective: 'Anything.',
+      definitionOfDone: 'Done.',
+      guidance: [],
+      approvedSourceIds: [],
+      allowedActionKinds: ['click-element'],
+      baseVersionId: null,
+      initiative: 'use-judgment',
+      progress: 'remaining-plan',
+      output: 'draft-changes',
+      interruption: 'stop-when-uncertain',
+      timeLimitMinutes: 30,
+    })
+    const enqueued = await repos.runs.enqueue({ contractId: contract.id, role: 'worker' })
+
+    // `claim` takes the oldest pending run and this file leaves some behind, so
+    // drain until ours comes up rather than assuming queue position.
+    for (let attempt = 0; ; attempt += 1) {
+      if (attempt >= 200) throw new Error('never reached the run under test')
+      const claimed = await repos.runs.claim({
+        leaseUntil: new Date(Date.now() - 60_000),
+        startedAt: new Date(),
+        claimedBy: 'worker-under-test',
+        controlToken: `token-${enqueued.id}`,
+      })
+      if (!claimed) throw new Error('the queue emptied before the run came up')
+      if (claimed.id === enqueued.id) break
+      await repos.runs.complete(claimed.id, 'succeeded', new Date())
+    }
+
+    // A real refused intent, because before the fix the park CREATED the
+    // question and the foreign key had to resolve. A fabricated id would have
+    // made this pass for the wrong reason.
+    const refused = await db.prisma.actionIntent.create({
+      data: {
+        runId: enqueued.id,
+        seq: 1,
+        kind: 'click-element',
+        reason: 'Send is the next control.',
+        params: { ref: 'e47', snapshotId: 'snap-1', method: 'POST' },
+        authorized: false,
+        refusedRule: 'confirmation_required',
+      },
+      select: { id: true },
+    })
+
+    return { runId: enqueued.id, intentId: refused.id }
+  }
+
+  it('leaves a reaped run reaped, and asks nothing', async () => {
+    const { runId, intentId } = await reapableRun()
+
+    expect(await repos.runs.sweepExpiredLeases(new Date())).toBeGreaterThan(0)
+    const reaped = await repos.runs.byId(runId)
+    expect(reaped?.status).toBe('interrupted')
+
+    const parked = await repos.confirmations.raiseAndPark({
+      runId,
+      intentId,
+      summary: 'Propositum wants to press Send on mail.example.test.',
+      endedAt: new Date(),
+    })
+
+    expect(parked.parked).toBe(false)
+
+    // The row the sweep wrote, untouched. Before #140 this came back
+    // `awaiting-confirmation` with `terminalReason: 'lease-expired'` still on
+    // it — a status and a terminal reason that contradict each other.
+    const after = await db.prisma.agentRun.findUniqueOrThrow({ where: { id: runId } })
+    expect(after.status).toBe('interrupted')
+    expect(after.terminalReason).toBe('lease-expired')
+    expect(after.controlToken).toBeNull()
+
+    // And no question. A refused park writes nothing at all, which is why the
+    // status is decided before the request is created.
+    expect(await db.prisma.confirmationRequest.count({ where: { runId } })).toBe(0)
+  })
+
+  it('still parks a run that is genuinely live', async () => {
+    const { runId, intentId } = await reapableRun()
+
+    // Same shape, no sweep. The guard has to refuse the reaped run WITHOUT
+    // refusing the ordinary one, or it is not a fix but an outage.
+    await repos.runs.renewLease(runId, new Date(Date.now() + 60_000))
+
+    const parked = await repos.confirmations.raiseAndPark({
+      runId,
+      intentId,
+      summary: 'Propositum wants to press Send on mail.example.test.',
+      endedAt: new Date(),
+    })
+
+    expect(parked.parked).toBe(true)
+
+    const after = await db.prisma.agentRun.findUniqueOrThrow({ where: { id: runId } })
+    expect(after.status).toBe('awaiting-confirmation')
+    expect(after.terminalReason).toBeNull()
+    expect(after.controlToken).toBeNull()
+    expect(await db.prisma.confirmationRequest.count({ where: { runId } })).toBe(1)
+  })
+
+  /**
+   * The same defect one layer up, and the one that made the fence a paragraph.
+   *
+   * `advanceProgress` runs at the top of every worker turn and writes
+   * `status: 'running'` along with the step. Unpredicated, it put a reaped run
+   * back to `running` — and status is the ONLY one of `fenceFor`'s three
+   * signals that a lease sweep moves, because the sweep touches neither
+   * `claimedBy` nor `cancelRequested`. So the reaped worker resurrected itself,
+   * passed its own fence one step later, and carried on driving.
+   */
+  it('does not let a reaped run put itself back to running', async () => {
+    const { runId } = await reapableRun()
+
+    await repos.runs.sweepExpiredLeases(new Date())
+    await repos.runs.advanceProgress(runId, 2)
+
+    const after = await repos.runs.byId(runId)
+    expect(after?.status).toBe('interrupted')
   })
 })
