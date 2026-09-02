@@ -1,7 +1,8 @@
 # ADR-0023 — A menu-bar app that owns the runtime, and the warning it makes come true
 
 **Status:** accepted · 2026-08-26 · **amended 2026-08-26**
-**Amended by:** [ADR-0025](0025-computer-use-beyond-the-browser.md) — prohibitions 1 and 4, reversed
+**Amended by:** [ADR-0027](0027-a-sealed-bundle-and-where-the-state-moves.md) — the *Configures*
+row's `.env` location, for an installed copy only · [ADR-0025](0025-computer-use-beyond-the-browser.md) — prohibitions 1 and 4, reversed
 **the same day this ADR was accepted** · [ADR-0026](0026-reading-a-one-time-code.md) — Full Disk Access. What it
 supervises, configures, pairs and shows is unchanged; what it may never do is now three things rather
 than five
@@ -40,8 +41,11 @@ EventKit and the right answer"* once a helper exists. That string is now the who
 
 **What is bought.** Setting Propositum up today means two terminals, hand-editing `.env` with an
 extension id copied out of `chrome://extensions`, and diagnosing a `bad-origin` hint buried in a
-JSON response body. There is no onboarding route, no first-run screen, and no welcome flow — grep
-for `onboard|first-run|welcome` across `src/` returns nothing product-facing. A new person's entire
+JSON response body. ~~There is no onboarding route, no first-run screen, and no welcome flow — grep
+for `onboard|first-run|welcome` across `src/` returns nothing product-facing.~~ *(True when
+accepted; `/welcome` arrived 2026-08-26 and the todo 09 build made it `/first-run` on
+2026-08-30 — opened by this tray in its own window, one bit read, nothing decided, so
+prohibition 5 held.)* A new person's entire
 introduction is `/` rendering *"Go and read about something for a while."*
 
 `README.md`'s own status paragraph says what is missing is evidence, and that `eval-scores.json` is a
@@ -60,7 +64,7 @@ filesystem outside its own configuration, and adds no sensor.**
 | | |
 |---|---|
 | **Supervises** | spawns `next` and `scripts/worker.ts` as child processes, restarts them on crash, kills them on quit. `npm run dev` and `npm run worker` stay as they are, for anyone who wants them |
-| **Configures** | one field for `ANTHROPIC_API_KEY`, written to `.env` |
+| **Configures** | one field for `ANTHROPIC_API_KEY`, written to `.env` *(amended 2026-08-28, [ADR-0027](0027-a-sealed-bundle-and-where-the-state-moves.md): an installed copy's `.env` lives in `~/Library/Application Support/Propositum/`, because the bundle is sealed by its signature; a checkout's stays in the checkout)* |
 | **Pairs the extension** | ~~the `bad-origin` refusal, which today is a dead end in a JSON body, becomes a prompt naming the id that knocked. One click writes `PROPOSITUM_EXTENSION_ID`~~ **Corrected 2026-08-27:** the prompt landed on `/welcome` first (2026-08-26) and the click writes a `pairing` row, restart-free. The tray writes nothing here — `resolveExtensionOrigin` reads the env var *ahead of* the row, so a tray-written `PROPOSITUM_EXTENSION_ID` would silently outrank every later click the person makes on that screen, which is the exact failure `extension-pairing.ts` opens by refusing. Its Pairs job is a *Finish setting up* link |
 | **Shows one light** | rendered from `intentionState()`, which already folds `working \| delegated \| needs-you \| sleeping \| done` and already carries the consumer labels. **Not a second implementation** — two stores for one truth is the failure `CONTEXT.md` names about this exact function |
 | **Opens deep links** | every control opens a page at `127.0.0.1:3117`. Nothing is decided in the menu bar |
@@ -73,8 +77,13 @@ exists: a global hotkey and a menu item, handled in the Tauri process, that **SI
 children. SIGKILL rather than SIGTERM because §2's verification is `kill -STOP` on the children and
 then pressing it, and a stopped process cannot run a SIGTERM handler; a run killed this way surfaces
 as interrupted through the worker's startup lease sweep, which is what the sweep is for. There is no
-input synthesis yet and the menu claims no more than it does (*Stop Propositum now*). Signing,
-notarisation and a bundled runtime are stage 2 ([`docs/todo/01`](../todo/01-menu-bar-app.md)).
+input synthesis yet and the menu claims no more than it does (*Stop Propositum now*). ~~Signing,
+notarisation and a bundled runtime are stage 2 ([`docs/todo/01`](../todo/01-menu-bar-app.md)).~~
+**Stage 2 built 2026-08-28** ([ADR-0027](0027-a-sealed-bundle-and-where-the-state-moves.md)): the
+runtime is bundled and sealed, the state moves to Application Support for installed copies, and a
+v* tag runs the pipeline that ships a signed, notarised `.dmg` from CI — the first release waits
+on the credential steps [`docs/todo/01`](../todo/01-menu-bar-app.md) records as open. The update
+feed is refused for now — ADR-0027 §4 carries that argument.
 
 ### What it may never do
 
@@ -176,7 +185,12 @@ ADR-0012 priced *"a signed and notarised native helper, a native-messaging host 
 `nativeMessaging` permission … and a launchd agent"* — four things, and the reason they cost so much
 is that they are the apparatus for **reaching past the browser into the machine.**
 
-This binary has none of the four. It spawns two Node processes and draws a light. It has strictly
+~~This binary has none of the four.~~ **Corrected 2026-08-28: it now has the pipeline for the first —
+[ADR-0027](0027-a-sealed-bundle-and-where-the-state-moves.md) signs and notarises it from the
+first tagged release, once the credential steps `docs/todo/01` records as open are done. The
+other three remain absent, and the paragraph below already conceded this day: "the cost ADR-0012
+was really pricing was the existence of a build pipeline and a signing identity, and this creates
+both."** It spawns two Node processes and draws a light. It has strictly
 less reach than the Chrome extension it sits beside, which holds `debugger` and can read and change
 data on all websites.
 

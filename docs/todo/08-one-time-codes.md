@@ -3,7 +3,10 @@
 **Status:** not started — **decided, not built.**
 **Decided by:** [ADR-0026](../adr/0026-reading-a-one-time-code.md), accepted 2026-08-26
 **Blocked by:** [`07`](./07-off-the-browser.md), which takes the permission this uses, and
-[`01`](./01-menu-bar-app.md), which is the signed binary that can hold it.
+[`01`](./01-menu-bar-app.md), which is the signed binary that can hold it *(2026-08-28: `01`'s
+code half is done — [ADR-0027](../adr/0027-a-sealed-bundle-and-where-the-state-moves.md) — and
+its credential steps are what remain of this half of the blocker; `07` is untouched and still
+binds)*.
 **Blocks:** nothing.
 
 The smallest of the three files decided on 2026-08-26 and the one with the worst ratio of code to

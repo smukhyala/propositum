@@ -582,7 +582,11 @@ sentence to the desktop unspent.
 [`docs/todo/07-off-the-browser.md`](./todo/07-off-the-browser.md), the largest single piece of work
 in the project. **Corrected 2026-08-27: the native binary exists (`src-tauri/`, ADR-0023 stage 1) and
 holds no TCC permission — `tests/tray-permissions.test.ts` pins its config to none, and going red
-there is how a grant enters knowingly.**
+there is how a grant enters knowingly.** *(Re-marked 2026-08-28: still no TCC permission — but the
+guard has since gone red once, for stage 2's hardened-runtime JIT carve-outs
+([ADR-0027](./adr/0027-a-sealed-bundle-and-where-the-state-moves.md)), which are not grants; it now
+pins TCC vocabulary to none and the entitlements file to exactly those two keys, so the seam this
+sentence promises is intact and tested.)*
 
 **The tension with the direction document, stated rather than resolved.** Direction §4 files Computer
 Use under *Later — fallback when structured APIs/integrations are unavailable*. This repository shipped

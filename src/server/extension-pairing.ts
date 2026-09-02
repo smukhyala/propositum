@@ -13,7 +13,7 @@
  *
  * ── What this is, said narrowly ───────────────────────────────────────────
  *
- * **Not authentication, and the welcome screen must not imply otherwise.**
+ * **Not authentication, and the first-run page must not imply otherwise.**
  * Anything running on this machine can call the app claiming to be an extension,
  * and a forged `Origin` was always possible from a non-browser client —
  * `src/capture/transport.ts` says exactly that about the check this feeds. What
@@ -136,7 +136,7 @@ export function noteKnock(origin: string | undefined, nowMs: number = Date.now()
   knocks().note(origin, nowMs)
 }
 
-/** What `/welcome` offers to pair with. */
+/** What `/first-run` offers to pair with. */
 export function recentKnocks(nowMs: number = Date.now()): readonly Knock[] {
   return knocks().recent(nowMs)
 }
@@ -157,7 +157,7 @@ export function forgetKnocks(): void {
  * Returns the same `chrome-extension://unset` sentinel as before when there is
  * neither, because the check is never loosened — an install with no answer
  * refuses everything, which is the state a fresh clone is in and the state
- * `/welcome` exists to get somebody out of.
+ * `/first-run` exists to get somebody out of.
  */
 export async function resolveExtensionOrigin(): Promise<string> {
   const fromEnv = process.env['PROPOSITUM_EXTENSION_ID']

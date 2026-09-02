@@ -118,7 +118,7 @@ In pipeline order, because the order is the design:
 | `src/runtime/` | The worker loop and process, drained by `scripts/worker.ts` in its own OS process (ADR-0001, amended — `npm run dev` now spawns it as a sibling), plus the browser control channel and `thread-channel.ts`, **the one file that knows Telegram exists**. A second transport is a new file here and a test enforces that. |
 | `src/persistence/` | Repositories, the single ledger writer, and `append-only.ts`. The only Prisma consumer. |
 | `src/server/` | Route-facing orchestration and the server actions. |
-| `src/app/`, `src/ui/` | Next.js routes and client components. `src/app/welcome/` is the setup screen, added 2026-08-26 — five steps, each reading what is actually true rather than tracking a cursor, so there is no progress row to get out of step with the truth. Its derivation lives in `src/server/welcome.ts` because a `.tsx` server component is the one thing here nothing can assert against. |
+| `src/app/`, `src/ui/` | Next.js routes and client components. ~~`src/app/welcome/` is the setup screen, added 2026-08-26~~ **`src/app/first-run/` since 2026-08-30 (todo 09 built)** — an opening ask routing consent cards, each fact read rather than a cursor tracked, so there is no progress row to get out of step with the truth. Its derivation lives in `src/server/first-run.ts` because a `.tsx` server component is the one thing here nothing can assert against. |
 | `src/eval/`, `src/fixtures/` | The offline harness and its scenarios. |
 
 Prisma's SQLite provider has **no enums**. Every closed set is a `String` whose authoritative
@@ -148,6 +148,12 @@ Changing one of these is an ADR, not a diff.
   calendar Propositum creates; the person's own calendars stay unreachable by construction).
   `grep -rn 'gmail' src/` still returns nothing, and where this line and the code disagree, the code
   is right.
+  *(And amended 2026-08-29,
+  [ADR-0028](docs/adr/0028-a-capped-key-ships-in-the-bundle.md), ~~accepted and unbuilt~~
+  **built 2026-08-30**: a tester
+  build may carry a spend-capped bundled key, so in that build the credential stops being the
+  person's. The person's own key always outranks it — by construction, in
+  `src-tauri/src/runtime.rs`'s seeding, unit-tested — and asking remains the fallback.)*
 
 **The heuristic all of these express:** prefer absence to a rule, and a type to a convention. *"There
 is no field for it"* beats *"must not"*, and a compile error beats a review note. Extend that pattern

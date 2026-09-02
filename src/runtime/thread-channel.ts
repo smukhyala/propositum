@@ -108,7 +108,7 @@ export interface InboundMessage {
  * What any channel must be able to do.
  *
  * Three verbs and no more. `identify` exists only for pairing — it is how the
- * welcome screen turns a pasted token into a name a person can recognise, so
+ * first-run page turns a pasted token into a name a person can recognise, so
  * they can tell whether they pasted the right one.
  */
 export interface ThreadTransport {

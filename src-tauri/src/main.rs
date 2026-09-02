@@ -28,7 +28,7 @@ mod logs;
 mod menu;
 mod origin;
 mod preflight;
-mod repo;
+mod runtime;
 mod supervisor;
 
 use std::net::TcpListener;
@@ -39,6 +39,7 @@ use tauri::Manager;
 use tauri_plugin_global_shortcut::ShortcutState;
 
 use logs::Logger;
+use runtime::Runtime;
 use supervisor::{RuntimeHold, Supervisor};
 
 const KILL_SWITCH: &str = "CmdOrCtrl+Shift+Escape";
@@ -54,11 +55,14 @@ fn port_taken() -> bool {
 
 /// The one writer `.env` has ever had, reachable only from the settings
 /// window. A refusal comes back as the sentence the window renders; the key
-/// itself never appears in a log, an error, or a return value.
+/// itself never appears in a log, an error, or a return value. Where the file
+/// lives is the mode's decision (`runtime.env_path()`): the checkout's own
+/// `.env`, or the state dir a sealed bundle keeps its configuration in.
 #[tauri::command]
 fn set_api_key(app: tauri::AppHandle, key: String) -> Result<(), String> {
     let hold = Arc::clone(&*app.state::<Arc<RuntimeHold>>());
-    env_file::write_key(&repo::repo_root().join(".env"), &key)?;
+    let held_runtime = Arc::clone(&*app.state::<Arc<Runtime>>());
+    env_file::write_key(&held_runtime.env_path(), &key)?;
     hold.logger.line(
         "tray",
         ".env ANTHROPIC_API_KEY updated — restarting both halves for it",
@@ -118,6 +122,48 @@ fn watch_exit_signals(hold: Arc<RuntimeHold>) {
     });
 }
 
+/// Open the first-run window once per launch, and only when setup is
+/// unfinished — the tiny tray icon is easy to miss and a fresh install
+/// deserves a surface, which is todo 09's whole argument. The tray learns
+/// "unfinished" from `GET /api/first-run`, one bit, served by the app so the
+/// derivation stays where `tests/first-run.test.ts` can hold it (ADR-0023
+/// prohibition 5: the tray decides nothing, so it receives nothing it could
+/// decide with). One poll per second until the children serve; gives up when
+/// the runtime stops, parks, or ten minutes pass — a checkout's first build
+/// can be slow, and a parked launch must never get a window.
+fn open_first_run_when_unfinished(handle: tauri::AppHandle, hold: Arc<RuntimeHold>) {
+    std::thread::spawn(move || {
+        let agent = ureq::AgentBuilder::new()
+            .timeout_connect(Duration::from_secs(2))
+            .timeout(Duration::from_secs(4))
+            .build();
+        let url = origin::page("/api/first-run");
+        let deadline = std::time::Instant::now() + Duration::from_secs(600);
+
+        while std::time::Instant::now() < deadline {
+            match hold.overall() {
+                supervisor::Overall::Stopped | supervisor::Overall::GaveUp(_) => return,
+                _ => {}
+            }
+            if let Ok(response) = agent.get(&url).set(origin::CUSTOM_HEADER, "1").call() {
+                let unfinished = response
+                    .into_json::<serde_json::Value>()
+                    .ok()
+                    .and_then(|body| body.get("unfinished").and_then(|bit| bit.as_bool()))
+                    .unwrap_or(false);
+                if unfinished {
+                    let _ = handle.run_on_main_thread({
+                        let handle = handle.clone();
+                        move || menu::first_run_window(&handle)
+                    });
+                }
+                return;
+            }
+            std::thread::sleep(Duration::from_secs(1));
+        }
+    });
+}
+
 fn main() {
     block_exit_signals();
 
@@ -161,24 +207,56 @@ fn main() {
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
 
             let logger = Arc::new(Logger::open()?);
+            let held_runtime = Arc::new(Runtime::resolve());
             logger.line(
                 "tray",
-                &format!("Propositum {} starting", env!("CARGO_PKG_VERSION")),
+                &format!(
+                    "Propositum {} starting ({} mode, runtime at {})",
+                    env!("CARGO_PKG_VERSION"),
+                    match held_runtime.mode {
+                        runtime::Mode::Bundled => "bundled",
+                        runtime::Mode::Checkout => "checkout",
+                    },
+                    held_runtime.root.display()
+                ),
             );
 
             let hold = RuntimeHold::new(
                 Arc::clone(&logger),
                 Supervisor::pending(Arc::clone(&logger)),
             );
-            let handles = menu::build(app, Arc::clone(&hold), preflight::chromium_missing())?;
+            let handles = menu::build(
+                app,
+                Arc::clone(&hold),
+                preflight::chromium_missing(),
+                Arc::clone(&held_runtime),
+            )?;
             light::start(handles.status.clone(), Arc::clone(&hold));
             app.manage(Arc::clone(&hold));
+            app.manage(Arc::clone(&held_runtime));
             app.manage(handles);
             watch_exit_signals(Arc::clone(&hold));
+            let app_handle = app.handle().clone();
 
             // The blocking half of the launch, off the main thread so the tray
             // appears immediately with the light on Starting.
             std::thread::spawn(move || {
+                if held_runtime.translocated() {
+                    logger.line(
+                        "tray",
+                        "macOS is running this app from a temporary read-only place (App Translocation) — it was opened without being moved into Applications first. Nothing was started.",
+                    );
+                    hold.replace(Supervisor::parked(
+                        logger,
+                        "move Propositum into Applications, then open it again".into(),
+                    ));
+                    return;
+                }
+                if let Err(reason) = held_runtime.ensure_state_dir() {
+                    logger.line("tray", &format!("{reason}. Nothing was started."));
+                    hold.replace(Supervisor::parked(logger, reason));
+                    return;
+                }
                 if port_taken() {
                     let reason = format!(
                         "something else has port {} — `lsof -i :{}` names it",
@@ -189,8 +267,11 @@ fn main() {
                     hold.replace(Supervisor::parked(logger, reason));
                     return;
                 }
-                match preflight::run(&logger) {
-                    preflight::Outcome::Ready => hold.replace(Supervisor::start(logger)),
+                match preflight::run(&logger, &held_runtime) {
+                    preflight::Outcome::Ready => {
+                        hold.replace(Supervisor::start(logger, &held_runtime));
+                        open_first_run_when_unfinished(app_handle, hold);
+                    }
                     preflight::Outcome::Parked(reason) => {
                         hold.replace(Supervisor::parked(logger, reason))
                     }

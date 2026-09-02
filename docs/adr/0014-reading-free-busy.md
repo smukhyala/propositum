@@ -212,10 +212,18 @@ where the OAuth path is *narrower* than the local one, and it is not close: a pe
 *Allow Full Access* has granted more than `calendar.events.readonly` would have, plus the ability to
 modify their calendar, plus — via `EKEvent.birthdayContactIdentifier` — join keys into Contacts.
 
-**The second is that the binary does not exist.** EventKit needs a signed and notarised native
-helper, a native-messaging host manifest and a launchd agent. [ADR-0012](0012-screen-capture-refused.md)
-priced that exact dependency and its conclusion applies here unchanged: the proposal is not *add a
-calendar read*, it is *become a desktop product*.
+~~**The second is that the binary does not exist.**~~ **Struck 2026-08-28 — the strike the
+2026-08-26 sweep missed: the binary has existed since ADR-0023's stage 1, and
+[ADR-0027](0027-a-sealed-bundle-and-where-the-state-moves.md) built the pipeline that signs and
+notarises it (the first signed artefact waits on `docs/todo/01`'s credential steps).**
+EventKit needs a signed and notarised native helper, a native-messaging host manifest and a
+launchd agent — the first of those exists unsigned with its signing pipeline in place; the other
+two do not.
+[ADR-0012](0012-screen-capture-refused.md)
+priced that exact dependency, and what survives of its conclusion is the account argument above,
+which was always the load-bearing half: the proposal is not *add a calendar read*, it is *become a
+desktop product* — and the desktop product has now been argued into existence on its own terms
+rather than smuggled in through a calendar read.
 
 **What would make it the right answer later:** Apple shipping a read-only events tier, which would
 make it better than this decision on every axis simultaneously — or a native helper arriving for some

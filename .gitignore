@@ -33,3 +33,6 @@ coverage/
 # the tray app (Rust build products and Tauri codegen)
 src-tauri/target/
 src-tauri/gen/
+
+# the staged runtime a bundled .app carries — produced by `npm run tray:stage`
+dist-runtime/

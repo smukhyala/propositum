@@ -2,8 +2,13 @@
 
 **Status:** not started — **decided, not built.**
 **Decided by:** [ADR-0025](../adr/0025-computer-use-beyond-the-browser.md), accepted 2026-08-26
-**Blocked by:** [`01`](./01-menu-bar-app.md), hard — this needs a signed binary that holds three TCC
-permissions, and there is no binary. Also [`06`](./06-buying-things.md), because a non-`GET` being
+**Blocked by:** ~~[`01`](./01-menu-bar-app.md), hard — this needs a signed binary that holds three TCC
+permissions, and there is no binary.~~ **Split 2026-08-28, because the two halves of that sentence
+came apart: `01`'s code half is done — the pipeline that signs and notarises the binary landed
+([ADR-0027](../adr/0027-a-sealed-bundle-and-where-the-state-moves.md)), and what remains of the
+blocker is `01`'s credential steps (minutes) and the first tagged release; the three TCC
+permissions are still this file's own work, ungranted and unbuilt.** Also
+[`06`](./06-buying-things.md), because a non-`GET` being
 sendable at all is what makes signing in possible.
 **Blocks:** [`08`](./08-one-time-codes.md), which uses a permission this takes.
 
@@ -84,10 +89,16 @@ they are describing this file.
 
 ## Blocked by
 
-- **[`01`](./01-menu-bar-app.md), and there is no way around it.** Accessibility, Screen Recording
+- ~~**[`01`](./01-menu-bar-app.md), and there is no way around it.**~~ **Clearing 2026-08-28 — the signed application bundle is a
+  credential step and a tag away
+  ([ADR-0027](../adr/0027-a-sealed-bundle-and-where-the-state-moves.md) built and verified the
+  pipeline; [`01`](./01-menu-bar-app.md) records what stays open).** Accessibility, Screen Recording
   and Full Disk Access are TCC permissions, macOS grants them to a signed application bundle, and
-  `npm run dev` is not one. ADR-0023's prohibition 1 — *the tray app requests no TCC permission* — is
-  amended by ADR-0025 rather than deleted, so read the amendment before building against either.
+  `npm run dev` is not one — the `.dmg` is. ADR-0023's prohibition 1 — *the tray app requests no TCC
+  permission* — is
+  amended by ADR-0025 rather than deleted, so read the amendment before building against either;
+  the entitlements a TCC grant enters through are pinned by `tests/tray-permissions.test.ts`, which
+  goes red on the first `*UsageDescription` string and is designed to.
 - **[`06`](./06-buying-things.md)**, for the sign-in path specifically. §4's sequence ends in a form
   submission, and a form submission is a non-`GET`.
 - **[`00`](./00-score-the-hypotheses.md)**, by judgment. Three TCC permissions is a very different
@@ -99,7 +110,7 @@ they are describing this file.
 
 | | What | Lead time |
 |---|---|---|
-| **$99/yr** | Apple Developer Program, via [`01`](./01-menu-bar-app.md). Without notarisation, three TCC prompts on an unsigned binary is not something you can ask anybody to accept. | days, once paid |
+| **$99/yr** | ~~Apple Developer Program, via [`01`](./01-menu-bar-app.md).~~ **Enrolment approved (owner-reported) and the signing pipeline landed, 2026-08-28; the first signed binary waits on [`01`](./01-menu-bar-app.md)'s credential steps.** The sentence that made it urgent stands: three TCC prompts on an unsigned binary is not something you can ask anybody to accept. | ~~days, once paid~~ **minutes of setup left** |
 | **Three permission grants** | Accessibility, Screen Recording and Full Disk Access, each granted by hand in System Settings, each with its own dialog. **No script can do this** and no amount of onboarding removes it. | minutes, per machine |
 | **A test machine you do not mind losing** | The first runs of a thing that synthesises input at coordinates will click the wrong thing. Do not develop this against your own signed-in accounts. | — |
 | **A decision about focus** | Synthesised input goes where focus actually is, so the agent and a person cannot use the machine at once. That is a product limit, not a bug, and somebody has to decide it is acceptable before it is built rather than after. | — |

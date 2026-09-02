@@ -6,8 +6,20 @@
 # build on a Linux runner without a webkit2gtk detour that would verify the
 # wrong platform. So this job is macOS, path-filtered, and check-only.
 #
-# Deliberately absent, because they are stage 2 of docs/todo/01-menu-bar-app.md:
-# no `tauri build`, no artefact upload, no signing, no notarisation, no release.
+# ~~Deliberately absent, because they are stage 2 of docs/todo/01-menu-bar-app.md:
+# no `tauri build`, no artefact upload, no signing, no notarisation, no release.~~
+# Corrected 2026-08-28 — stage 2 landed and those things now exist in
+# release.yml, which runs on a v* tag and holds the Apple credentials. What is
+# still deliberately absent HERE is unchanged and now has a sharper reason:
+# this job runs on pull requests, and a job that runs a stranger's diff must
+# hold no secret a stranger's diff could exfiltrate. Check-only,
+# credential-free.
+#
+# Corrected 2026-08-30: check-only is no longer free of the bundle. Sealing the
+# runtime in gave `tauri.conf.json` resources and a sidecar, and tauri-build
+# resolves both in its build script — so this job, which builds no bundle and
+# wants none, still has to put those two paths on disk before cargo will run
+# at all. It fabricates them empty; the step below argues why.
 
 name: tray
 on:
@@ -42,6 +54,25 @@ jobs:
       - name: Format
         run: cargo fmt --check
         working-directory: src-tauri
+
+      # `tauri.conf.json` names `../dist-runtime/bin/node-<triple>` and
+      # `../dist-runtime/runtime`, and tauri-build resolves both in its BUILD
+      # SCRIPT — so a fresh checkout fails `cargo check`, not just
+      # `tauri build`. Staging the real runtime here would cost an
+      # `npm ci --omit=dev`, a `next build` and a 50 MB download to answer a
+      # question about Rust. These two empty paths answer the build script and
+      # nothing else. `tests/stage-runtime.test.ts` is what keeps them the same
+      # two paths the bundle reads from.
+      #
+      # What this therefore does NOT check: that the runtime stages, that the
+      # sidecar runs, that the bundle is whole. `release.yml`'s
+      # `npm run tray:build` is the only place any of that is true, and a
+      # release is the only place it matters.
+      - name: A placeholder runtime, because the build script resolves resources
+        run: |
+          mkdir -p dist-runtime/runtime dist-runtime/bin
+          : > dist-runtime/runtime/.placeholder
+          : > dist-runtime/bin/node-aarch64-apple-darwin
 
       - name: Check
         run: cargo check --locked

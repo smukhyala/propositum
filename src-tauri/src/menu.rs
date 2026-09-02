@@ -26,7 +26,7 @@ use tauri_plugin_opener::OpenerExt;
 
 use crate::origin;
 use crate::preflight;
-use crate::repo;
+use crate::runtime::{Mode, Runtime};
 use crate::supervisor::RuntimeHold;
 
 /// The two items other hands need after the build: the light keeps `status`
@@ -40,12 +40,13 @@ pub fn build(
     app: &App<Wry>,
     hold: Arc<RuntimeHold>,
     chromium_missing: bool,
+    runtime: Arc<Runtime>,
 ) -> tauri::Result<TrayHandles> {
     let status = MenuItemBuilder::with_id("state", "Starting…")
         .enabled(false)
         .build(app)?;
     let open = MenuItemBuilder::with_id("open", "Open Propositum").build(app)?;
-    let welcome = MenuItemBuilder::with_id("welcome", "Finish setting up").build(app)?;
+    let first_run = MenuItemBuilder::with_id("first-run", "Finish setting up").build(app)?;
     let set_key = MenuItemBuilder::with_id("set-key", "Set the API key…").build(app)?;
     let browser = MenuItemBuilder::with_id(
         "install-browser",
@@ -70,15 +71,22 @@ pub fn build(
         .item(&status)
         .separator()
         .item(&open)
-        .item(&welcome)
+        .item(&first_run)
         .item(&set_key)
         .separator();
     if chromium_missing {
         builder = builder.item(&browser);
     }
+    // A sealed bundle ships `.next` prebuilt and cannot write into itself, so
+    // there is nothing for *Rebuild and restart* to do there — the item exists
+    // only where the code can have moved under the binary, which is a checkout.
+    if runtime.mode == Mode::Checkout {
+        builder = builder.item(&rebuild);
+    }
+    if chromium_missing || runtime.mode == Mode::Checkout {
+        builder = builder.separator();
+    }
     let menu = builder
-        .item(&rebuild)
-        .separator()
         .item(&version)
         .item(&diagnostics)
         .separator()
@@ -102,19 +110,20 @@ pub fn build(
             "open" => {
                 let _ = app.opener().open_url(origin::page("/"), None::<&str>);
             }
-            "welcome" => {
-                let _ = app
-                    .opener()
-                    .open_url(origin::page("/welcome"), None::<&str>);
-            }
+            // The window, not a browser tab: the settings window is the
+            // precedent for what cannot be a link, and one native surface is
+            // the todo 09 design's whole point. A second click focuses the
+            // one that exists.
+            "first-run" => first_run_window(app),
             "set-key" => settings_window(app),
             "install-browser" => {
                 let hold = Arc::clone(&hold);
+                let runtime = Arc::clone(&runtime);
                 let browser = browser.clone();
                 let _ = browser.set_text("Installing the background browser…");
                 let _ = browser.set_enabled(false);
                 std::thread::spawn(move || {
-                    let done = preflight::install_chromium(&hold.logger);
+                    let done = preflight::install_chromium(&hold.logger, &runtime);
                     let _ = browser.set_text(if done {
                         "The background browser is installed"
                     } else {
@@ -125,13 +134,16 @@ pub fn build(
             }
             "rebuild" => {
                 let hold = Arc::clone(&hold);
+                let runtime = Arc::clone(&runtime);
                 let status = status.clone();
                 let app = app.clone();
                 let _ = status.set_text("Rebuilding…");
                 std::thread::spawn(move || {
                     hold.shutdown();
-                    match repo::node_binary() {
-                        Some(node) if preflight::build_app(&hold.logger, &node) => app.restart(),
+                    match runtime.node() {
+                        Some(node) if preflight::build_app(&hold.logger, &node, &runtime) => {
+                            app.restart()
+                        }
                         _ => {
                             let _ = status.set_text("The rebuild failed — see the log");
                         }
@@ -168,6 +180,48 @@ pub fn build(
         .build(app)?;
 
     Ok(handles)
+}
+
+/// The first-run window: the app's own page at `/first-run`, in a frame
+/// without browser chrome, opened on launch while setup is unfinished and
+/// from *Finish setting up*. Everything in it is the page deciding on the
+/// app's own facts, so ADR-0023 prohibition 5 stands — and the label
+/// `first-run` matches no capability, so the window has no IPC at all;
+/// `tests/tray-permissions.test.ts`'s pins hold untouched.
+pub fn first_run_window(app: &AppHandle<Wry>) {
+    if let Some(existing) = app.get_webview_window("first-run") {
+        let _ = existing.show();
+        let _ = existing.set_focus();
+        return;
+    }
+    let Ok(url) = origin::page("/first-run").parse() else {
+        return;
+    };
+    // External links — t.me for the phone card — belong in the person's real
+    // browser, not trapped in this frame. Ours is an exact scheme-host-port
+    // match, never a string prefix (a prefix admits :31170 and userinfo
+    // tricks into a chrome-less frame titled Propositum); and only web
+    // schemes go to the opener, so a file: or custom-scheme URL reaches no
+    // OS handler from here.
+    let opener = app.clone();
+    let _ = WebviewWindowBuilder::new(app, "first-run", WebviewUrl::External(url))
+        .title("Propositum")
+        .inner_size(720.0, 800.0)
+        .on_navigation(move |navigated| {
+            let ours = navigated.scheme() == "http"
+                && navigated.host_str() == Some(origin::HOST)
+                && navigated.port() == Some(origin::PORT);
+            if ours {
+                return true;
+            }
+            if navigated.scheme() == "https" || navigated.scheme() == "http" {
+                let _ = opener
+                    .opener()
+                    .open_url(navigated.to_string(), None::<&str>);
+            }
+            false
+        })
+        .build();
 }
 
 /// The one window: a field for the key, because a menu cannot take text. It

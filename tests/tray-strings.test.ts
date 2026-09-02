@@ -59,10 +59,21 @@ const EXEMPT = new Set(['CmdOrCtrl+Shift+Escape'])
 const literalsOf = (rustSource: string): string[] =>
   [...stripComments(rustSource).matchAll(/"((?:[^"\\]|\\.)*)"/g)].map((match) => match[1] ?? '')
 
-const rustFiles = (): string[] =>
-  readdirSync(join(repo, 'src-tauri', 'src'))
-    .filter((name) => name.endsWith('.rs'))
-    .map((name) => join(repo, 'src-tauri', 'src', name))
+/** Recursive since 2026-08-28 — the walk was flat, which meant a module moved
+ * into a subdirectory would leave this guard silently reading less. The crate
+ * is still flat today; the recursion is for the day it is not. */
+const rustFiles = (): string[] => {
+  const found: string[] = []
+  const walk = (dir: string) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name)
+      if (entry.isDirectory()) walk(path)
+      else if (entry.name.endsWith('.rs')) found.push(path)
+    }
+  }
+  walk(join(repo, 'src-tauri', 'src'))
+  return found
+}
 
 const htmlFiles = (): string[] =>
   readdirSync(join(repo, 'src-tauri', 'ui'))

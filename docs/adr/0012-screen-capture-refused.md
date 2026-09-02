@@ -122,7 +122,11 @@ The permission gate is *Privacy & Security › Screen & System Audio Recording*
 It is the strictest consumer-visible gate on the machine, and macOS shows a system indicator for the
 whole time it is held — **by design, and we would not want it otherwise.**
 
-**And Propositum cannot reach any of it today.** There is no macOS binary. Frames would require a
+**And Propositum cannot reach any of it today.** ~~There is no macOS binary.~~ **Struck
+2026-08-28 — false since ADR-0023's stage 1 (2026-08-27), and this file was missed by the same
+sweep that missed ADR-0014; [ADR-0027](0027-a-sealed-bundle-and-where-the-state-moves.md) has
+since given that binary a signing pipeline. This ADR's refusal of an ambient screenshot buffer is
+untouched, exactly as ADR-0025 restated.** Frames would require a
 signed and notarised native helper, a native-messaging host manifest, the `nativeMessaging`
 permission (*"Communicate with cooperating native applications."*) and a launchd agent to keep it
 alive. The research puts that plainly: *"That cost is larger than every TCC prompt below put

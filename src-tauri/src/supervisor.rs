@@ -34,7 +34,7 @@ use std::time::{Duration, Instant};
 
 use crate::logs::Logger;
 use crate::origin;
-use crate::repo;
+use crate::runtime::{Mode, Runtime};
 
 pub const EX_CONFIG: i32 = 78;
 
@@ -109,32 +109,41 @@ impl Supervisor {
         supervisor
     }
 
-    pub fn start(logger: Arc<Logger>) -> Arc<Supervisor> {
+    pub fn start(logger: Arc<Logger>, runtime: &Runtime) -> Arc<Supervisor> {
         let supervisor = Arc::new(Supervisor {
             stopping: Arc::new(AtomicBool::new(false)),
             slots: Arc::new(Mutex::new(Vec::new())),
             logger,
         });
 
-        let node = match repo::node_binary() {
+        let node = match runtime.node() {
             Some(found) => found,
             None => {
-                // No node, no children — parked rather than looping, with the fix in
-                // the log. PROPOSITUM_NODE is the escape hatch repo.rs documents.
-                supervisor.logger.line(
-          "tray",
-          "node was not found on PATH or via the login shell. Set PROPOSITUM_NODE to its full path and relaunch.",
-        );
+                // No node, no children — parked rather than looping, with the
+                // fix in the log, worded per mode: a checkout has an escape
+                // hatch, a sealed bundle has only a reinstall.
+                let (log_line, reason) = match runtime.mode {
+                    Mode::Bundled => (
+                        "the bundled Node runtime is missing from this install — reinstall Propositum",
+                        "this install is incomplete — reinstall Propositum",
+                    ),
+                    Mode::Checkout => (
+                        "node was not found on PATH. Set PROPOSITUM_NODE to its full path and relaunch.",
+                        "node was not found — the log has the fix",
+                    ),
+                };
+                supervisor.logger.line("tray", log_line);
                 supervisor.slots.lock().unwrap().push(Slot {
                     prefix: "tray",
                     pid: None,
-                    state: ChildState::GaveUp("node was not found — the log has the fix".into()),
+                    state: ChildState::GaveUp(reason.into()),
                 });
                 return supervisor;
             }
         };
 
-        let repo_dir = repo::repo_root();
+        let repo_dir = runtime.root.clone();
+        let child_env = runtime.child_env();
         let children: [(&'static str, Vec<String>); 2] = [
             (
                 "app",
@@ -171,8 +180,16 @@ impl Supervisor {
             let supervisor_for_child = Arc::clone(&supervisor);
             let node_for_child = node.clone();
             let repo_for_child = repo_dir.clone();
+            let env_for_child = child_env.clone();
             std::thread::spawn(move || {
-                supervisor_for_child.run_child(index, prefix, node_for_child, argv, repo_for_child);
+                supervisor_for_child.run_child(
+                    index,
+                    prefix,
+                    node_for_child,
+                    argv,
+                    repo_for_child,
+                    env_for_child,
+                );
             });
         }
 
@@ -186,6 +203,7 @@ impl Supervisor {
         node: std::path::PathBuf,
         argv: Vec<String>,
         repo_dir: std::path::PathBuf,
+        child_env: Vec<(String, String)>,
     ) {
         let mut backoff_ms = BACKOFF_START_MS;
         let mut quick_failures: u32 = 0;
@@ -204,9 +222,15 @@ impl Supervisor {
             // switch test. Signalling the negative pgid reaches the whole
             // tree, including whatever the worker itself spawns later
             // (Playwright's Chromium is the one already known).
+            // `.envs` on top of the inherited environment: in a checkout the
+            // slice is empty and this spawn is byte-identical to stage 1's;
+            // bundled, the state-dir `.env` pairs and the owned DATABASE_URL
+            // arrive here because the sealed bundle has no dotfile beside the
+            // code for the children to load themselves.
             let mut child = match Command::new(&node)
                 .args(&argv)
                 .current_dir(&repo_dir)
+                .envs(child_env.iter().map(|(key, value)| (key, value)))
                 .process_group(0)
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())

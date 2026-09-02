@@ -17,7 +17,7 @@
 //!
 //! Why the supervisor owns this and not a Next page: a route that writes
 //! `.env` hands every local page an HTTP door to the credential file, and
-//! `/welcome` deliberately *detects, never collects* the key. The write forces
+//! `/first-run` deliberately *detects, never collects* the key. The write forces
 //! a restart of both children (each reads `.env` once at startup), and the
 //! process that owns the restart is the process that owns the write.
 
@@ -115,6 +115,46 @@ pub fn write_key(env_path: &Path, key: &str) -> Result<(), String> {
     write().map_err(|error| format!("The file could not be written: {error}"))
 }
 
+/// The read half, for the bundled mode where the children no longer sit
+/// beside a `.env` they can load themselves: the supervisor parses the
+/// state-dir file into pairs and passes them as explicit child environment
+/// (`runtime.rs`).
+///
+/// Deliberately small: `KEY=value` lines, `#` comments and blanks skipped,
+/// one pair of matching surrounding quotes stripped, the split at the first
+/// `=`. What it does not parse — escapes, `export ` prefixes, multi-line
+/// values — has never appeared in `.env.example`, and a line it cannot read
+/// is skipped rather than guessed at.
+pub fn read_pairs(text: &str) -> Vec<(String, String)> {
+    text.lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                return None;
+            }
+            let (key, value) = line.split_once('=')?;
+            let key = key.trim();
+            let starts_well = key
+                .chars()
+                .next()
+                .is_some_and(|first| first.is_ascii_alphabetic() || first == '_');
+            if !starts_well || !key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+                return None;
+            }
+            let value = value.trim();
+            let unquoted = if value.len() >= 2
+                && ((value.starts_with('"') && value.ends_with('"'))
+                    || (value.starts_with('\'') && value.ends_with('\'')))
+            {
+                &value[1..value.len() - 1]
+            } else {
+                value
+            };
+            Some((key.to_string(), unquoted.to_string()))
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -163,6 +203,37 @@ mod tests {
         assert_eq!(
             next,
             "MY_ANTHROPIC_API_KEY=other\nANTHROPIC_API_KEY=a-key\n"
+        );
+    }
+
+    #[test]
+    fn reads_pairs_and_skips_what_it_cannot_own() {
+        let pairs = read_pairs(
+            "# a comment\n\nANTHROPIC_API_KEY=sk-test\nDATABASE_URL=\"file:../propositum.db\"\nQUOTED='a value'\nHOLDS_EQUALS=a=b=c\n2BAD=starts-with-digit\nnot a pair\n",
+        );
+        assert_eq!(
+            pairs,
+            vec![
+                ("ANTHROPIC_API_KEY".to_string(), "sk-test".to_string()),
+                (
+                    "DATABASE_URL".to_string(),
+                    "file:../propositum.db".to_string()
+                ),
+                ("QUOTED".to_string(), "a value".to_string()),
+                ("HOLDS_EQUALS".to_string(), "a=b=c".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn reads_a_crlf_file_without_carrying_the_return() {
+        let pairs = read_pairs("A=1\r\nB=2\r\n");
+        assert_eq!(
+            pairs,
+            vec![
+                ("A".to_string(), "1".to_string()),
+                ("B".to_string(), "2".to_string()),
+            ]
         );
     }
 }

@@ -140,7 +140,7 @@ first-class event with `service_worker_terminated` as one of its reasons.
    ~~PROPOSITUM_EXTENSION_ID=<the id>~~
    ~~```~~
    ~~Restart `npm run dev`.~~ **Struck 2026-08-26.** Open
-   [`/welcome`](http://127.0.0.1:3117/welcome) instead. The extension knocks on
+   [`/first-run`](http://127.0.0.1:3117/first-run) instead. The extension knocks on
    its own heartbeat, the page says *"Something just knocked."* and shows the id
    verbatim so you can compare it against `chrome://extensions`, and one click
    pairs it. No file to edit and **no restart**:
@@ -161,7 +161,7 @@ first-class event with `service_worker_terminated` as one of its reasons.
    Unpaired, the app still rejects every request with `bad-origin` — the
    response says so explicitly rather than failing silently. That hint used to
    be the only place it was said, buried in a JSON body nobody reads, which is
-   what `/welcome` exists to stop.
+   what `/first-run` exists to stop.
 4. ~~In the app, create a project, paste in your document, and approve the
    sources you want watched.~~ **Struck 2026-08-26 — the first clause describes
    a flow that was deleted.** Nothing in the product creates a project any more:
@@ -172,7 +172,7 @@ first-class event with `service_worker_terminated` as one of its reasons.
 5. Press **Start session**. The extension picks up the session and its token
    from `GET /api/session/current` on its next heartbeat.
 6. **Open the side panel** (click the Propositum toolbar icon) and press
-   **Allow** next to each approved source. `/welcome` names this as its own step
+   **Allow** next to each approved source. `/first-run` names this on its watching card
    and links here; it cannot do it for you, for the reason below. Chrome shows its own permission
    prompt; the grant is Chrome's, visible and revocable in Chrome's own UI, not
    ours.

@@ -174,7 +174,7 @@ export async function GET(request: Request) {
   // origin or a browser-attested non-page caller — see `fromOurExtension`.
   if (!fromOurExtension((name) => request.headers.get(name) ?? undefined, await expectedOrigin())) {
     /**
-     * Remember who knocked, so `/welcome` can offer to pair with it.
+     * Remember who knocked, so `/first-run` can offer to pair with it.
      *
      * This route is the right and only place for it: the extension's heartbeat
      * alarm polls here every thirty seconds from `wake()`, unconditionally and
@@ -194,8 +194,8 @@ export async function GET(request: Request) {
         // Said out loud because the most likely cause is an unpaired extension,
         // and a silent 403 sends people hunting the wrong thing entirely.
         // ~~Set PROPOSITUM_EXTENSION_ID in .env~~ — still works, and is no
-        // longer the only way: /welcome offers whatever has just knocked.
-        hint: `Expected ${await expectedOrigin()}. Open http://127.0.0.1:3117/welcome to pair this extension, or set PROPOSITUM_EXTENSION_ID in .env.`,
+        // longer the only way: /first-run offers whatever has just knocked.
+        hint: `Expected ${await expectedOrigin()}. Open http://127.0.0.1:3117/first-run to pair this extension, or set PROPOSITUM_EXTENSION_ID in .env.`,
       },
       { status: 403 },
     )

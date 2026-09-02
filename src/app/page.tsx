@@ -123,7 +123,7 @@ import {
 } from '@/server/actions'
 import type { CarriedProject } from '@/server/actions'
 import { calendarRow } from '@/server/calendar'
-import { welcomeState } from '@/server/welcome'
+import { firstRunState } from '@/server/first-run'
 import { ambientStore, captureStore } from '@/server/capture-store'
 import { describeWork, signatureOf } from '@/server/ambient-store'
 import type { NamedThread } from '@/server/ambient-store'
@@ -474,8 +474,8 @@ export default async function Home({
    * renders no row."* A setup check that threw would take the whole front door
    * with it, which is a worse outcome than not offering a link.
    */
-  const setupUnfinished = await welcomeState()
-    .then((state) => state.at !== null)
+  const setupUnfinished = await firstRunState()
+    .then((state) => state.unfinished)
     .catch(() => false)
 
   /**
@@ -1037,7 +1037,8 @@ export default async function Home({
               standing suggestion that something is wrong — the same reason
               `calendarRow` renders NOTHING rather than a greyed control when
               there is nothing to offer. `setupUnfinished` is a boolean off
-              `welcomeState`, computed in `src/server/welcome.ts` where a test
+              `firstRunState().unfinished`, the durable-grants bit computed in
+              `src/server/first-run.ts` where a test
               can reach it. */}
           {setupUnfinished ? (
             <div className="hm-cal">
@@ -1045,7 +1046,7 @@ export default async function Home({
                 Propositum is not set up yet, so it cannot see anything you do.
               </span>
               <span className="hm-cal-acts">
-                <Link className="hm-cal-go" href="/welcome">
+                <Link className="hm-cal-go" href="/first-run">
                   Finish setting it up
                 </Link>
               </span>

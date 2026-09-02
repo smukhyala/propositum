@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Hardened-runtime carve-outs for the two processes Tauri signs — the tray
+     binary and the bundled Node sidecar. These are constraints relaxed on OUR
+     OWN processes; they grant nothing of the person's, prompt nobody, and are
+     a different kind of thing from the TCC permissions ADR-0025 argues about.
+     tests/tray-permissions.test.ts pins this file to exactly these two keys,
+     so every future addition is an argued diff against that pin.
+
+     allow-jit: on arm64 the kernel enforces W^X unconditionally and MAP_JIT
+     is the only path to executable memory under hardened runtime. V8 JITs;
+     a hardened Node without this aborts at startup.
+
+     allow-unsigned-executable-memory: probably inert on arm64 (it relaxes an
+     x86_64 rule that MAP_JIT replaces wholesale), kept because Node upstream
+     ships it for its own signed releases and the failure mode of guessing
+     wrong is a runtime abort in a WASM/FFI path no test exercises. Dropping
+     it is a cheap experiment once a stranger's install works.
+
+     Deliberately absent: disable-library-validation — every .node/dylib in
+     the bundle is signed with the same Developer ID (scripts/sign-runtime.ts)
+     and same-team libraries pass validation, so the hole is not needed. -->
+<plist version="1.0">
+<dict>
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <true/>
+</dict>
+</plist>

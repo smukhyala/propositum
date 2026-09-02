@@ -313,7 +313,7 @@ running.push(start('the app', bin('next'), ['dev', '-H', host, '-p', port]))
 running.push(start('the worker', bin('tsx'), ['scripts/worker.ts']))
 
 console.log(`[dev] the app on http://127.0.0.1:${port}, and the worker beside it.`)
-console.log('[dev] set up at http://127.0.0.1:%s/welcome — Ctrl-C stops both.', port)
+console.log('[dev] set up at http://127.0.0.1:%s/first-run — Ctrl-C stops both.', port)
 
 /**
  * Stop both, and wait.

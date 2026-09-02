@@ -8,8 +8,9 @@
  * itself done when it is not sends somebody to the next one and leaves them
  * hunting; a step that reports itself pending when it is done tells them their
  * own machine is broken. A `.tsx` server component is the one thing in this repo
- * nothing can assert against, so the derivation lives here and the page keeps
- * the markup.
+ * nothing can assert against, so the derivation lives here and the page —
+ * `src/app/first-run/page.tsx`, rendered on `/first-run` and in the window
+ * the tray opens — keeps the markup.
  *
  * ── It is a state machine over facts, not a wizard with a cursor ──────────
  *
@@ -41,6 +42,8 @@
  * to the thresholds cannot leave this screen describing the old ones.
  */
 
+import { join } from 'node:path'
+
 import { appContext } from './db'
 import { ambientStore, captureStore } from './capture-store'
 import { recentKnocks } from './extension-pairing'
@@ -50,22 +53,26 @@ import { INTENT_REQUIRED, INVESTMENT_REQUIRED } from '@/domain/detection/grounds
 import { TELEGRAM } from '@/domain/conversation/channel'
 
 /**
- * The steps, in the order they must be done.
+ * The steps, in the order the trail shows them.
  *
- * `paired` is last and is not a step somebody can skip ahead to: the thread's
- * first message is an offer, and an offer that does not exist yet is a greeting
- * — which Principle 13 forbids outright. So the screen does not invite pairing
- * until there is something to say.
+ * ~~`paired` is last and is not a step somebody can skip ahead to.~~ Rewritten
+ * 2026-08-30, with the todo 09 design: the first run is consent cards a person
+ * may grant in any order, so pairing the phone early is allowed — pairing
+ * SENDS nothing, and what Principle 13 actually forbids survives intact: the
+ * thread's first message is still the offer, never a greeting
+ * (`src/server/thread.ts` completes a pairing without emitting a word). The
+ * order here still names the dependency truth the trail renders: nothing to
+ * watch before a site is allowed, nothing to offer before anything arrives.
  */
-export const WELCOME_STEPS = ['key', 'extension', 'sources', 'watching', 'phone'] as const
+export const FIRST_RUN_STEPS = ['key', 'extension', 'sources', 'watching', 'phone'] as const
 
-export type WelcomeStep = (typeof WELCOME_STEPS)[number]
+export type FirstRunStep = (typeof FIRST_RUN_STEPS)[number]
 
-export interface WelcomeState {
+export interface FirstRunState {
   /** The first step that is not done. `null` when everything is. */
-  readonly at: WelcomeStep | null
+  readonly at: FirstRunStep | null
   /** Every step, so the page can show what is behind as well as what is next. */
-  readonly done: Readonly<Record<WelcomeStep, boolean>>
+  readonly done: Readonly<Record<FirstRunStep, boolean>>
 
   /** Whether a model can be reached at all. Detected, never collected. */
   readonly keySet: boolean
@@ -90,6 +97,20 @@ export interface WelcomeState {
 
   /** The phone thread, once paired. */
   readonly threadPaired: boolean
+
+  /** `unfinishedFrom` over the same facts — see its docblock for why this is
+   * not `at !== null`. */
+  readonly unfinished: boolean
+
+  /**
+   * Where the extension folder actually is, absolute, for the guided
+   * sideload. The children run with the runtime tree as cwd
+   * (`src-tauri/src/supervisor.rs`), so this is the checkout's `extension/`
+   * in development and `Propositum.app/Contents/Resources/runtime/extension`
+   * in an installed copy — the card can name the real path instead of
+   * "the extension folder".
+   */
+  readonly extensionFolder: string
 }
 
 /** The five answers the ordering is computed from. All booleans, no reading. */
@@ -120,10 +141,10 @@ export interface SetupFacts {
  * greeting.
  */
 export function stepFrom(facts: SetupFacts): {
-  readonly at: WelcomeStep | null
-  readonly done: Readonly<Record<WelcomeStep, boolean>>
+  readonly at: FirstRunStep | null
+  readonly done: Readonly<Record<FirstRunStep, boolean>>
 } {
-  const done: Record<WelcomeStep, boolean> = {
+  const done: Record<FirstRunStep, boolean> = {
     key: facts.keySet,
     extension: facts.extensionPaired,
     sources: facts.anySourceApproved,
@@ -134,7 +155,53 @@ export function stepFrom(facts: SetupFacts): {
     phone: facts.threadPaired,
   }
 
-  return { at: WELCOME_STEPS.find((step) => !done[step]) ?? null, done }
+  return { at: FIRST_RUN_STEPS.find((step) => !done[step]) ?? null, done }
+}
+
+/**
+ * Whether the durable grants are all in place — the key, the extension, a
+ * source. THIS is the only bit that may open a window or render a setup
+ * link. `at` would be the obvious derivation and it is wrong twice over:
+ * `watching` reads the in-memory ambient store, empty at every restart, so
+ * an install that is completely set up would reopen the first run on every
+ * launch forever; and serving `at`-derived state over HTTP would leak
+ * whether a composed offer exists through a bit that only needed to say
+ * "is anything missing". Found by review, 2026-08-30. `phone` is optional
+ * by design and never makes an install unfinished.
+ */
+export function unfinishedFrom(facts: SetupFacts): boolean {
+  return !(facts.keySet && facts.extensionPaired && facts.anySourceApproved)
+}
+
+/** The three consent cards, in the order the ask decides. Not "sources" —
+ * that word belongs to ApprovedSource, and the calendar is deliberately not
+ * an observation source of any kind (BusyInterval's entry). */
+export type ConsentCard = 'extension' | 'calendar' | 'phone'
+
+/**
+ * Which card comes first, from the opening ask.
+ *
+ * The ask — act on things now, quietly watch, just connect sources — is the
+ * one thing on the first run that is genuinely not a fact about the machine,
+ * so it lives in the URL and routes presentation only. The ordering is the
+ * kind of quietly-wrong decision this module exists to keep out of a `.tsx`:
+ * somebody who said "act" being shown the calendar first is confidently,
+ * silently the wrong screen. `null` means the ask has not been answered and
+ * the page renders the ask itself.
+ */
+export function consentOrder(
+  ask: 'act' | 'watch' | 'connect' | null,
+): readonly ConsentCard[] | null {
+  switch (ask) {
+    case 'act':
+      return ['extension', 'phone', 'calendar']
+    case 'watch':
+      return ['extension', 'calendar', 'phone']
+    case 'connect':
+      return ['calendar', 'extension', 'phone']
+    case null:
+      return null
+  }
 }
 
 /**
@@ -145,7 +212,7 @@ export function stepFrom(facts: SetupFacts): {
  * done"* is a different sentence from *"here is the next thing"*. Both are on
  * the page, so both are computed.
  */
-export async function welcomeState(nowMs: number = Date.now()): Promise<WelcomeState> {
+export async function firstRunState(nowMs: number = Date.now()): Promise<FirstRunState> {
   const keySet = (process.env['ANTHROPIC_API_KEY'] ?? '').trim() !== ''
 
   const { repos } = await appContext()
@@ -182,13 +249,14 @@ export async function welcomeState(nowMs: number = Date.now()): Promise<WelcomeS
 
   const threadPaired = (await repos.thread.status(TELEGRAM)) !== null
 
-  const { at, done } = stepFrom({
+  const facts = {
     keySet,
     extensionPaired: pairedExtension !== null,
     anySourceApproved: approvedSources > 0,
     anythingToOffer: offer !== null,
     threadPaired,
-  })
+  }
+  const { at, done } = stepFrom(facts)
 
   return {
     at,
@@ -202,5 +270,7 @@ export async function welcomeState(nowMs: number = Date.now()): Promise<WelcomeS
     bar: { intent: INTENT_REQUIRED, investment: INVESTMENT_REQUIRED },
     offer,
     threadPaired,
+    unfinished: unfinishedFrom(facts),
+    extensionFolder: join(process.cwd(), 'extension'),
   }
 }

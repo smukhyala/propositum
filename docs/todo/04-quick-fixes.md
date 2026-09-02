@@ -18,7 +18,7 @@ waiting on Apple or on a model run.
 ~~**Item 0 was added 2026-08-26** and is now the most valuable one here: an
 onboarding screen was built and nothing points at it.~~ **Struck the same day —
 it was fixed within the hour.** `src/app/page.tsx` now computes `welcomeState()`
-and links `/welcome` from the front door when setup is unfinished. Item 0 below
+and links `/welcome` *(now `/first-run`)* from the front door when setup is unfinished. Item 0 below
 is kept struck rather than deleted, because a todo that silently loses its most
 valuable item reads as though it was never there.
 
@@ -29,8 +29,8 @@ valuable item reads as though it was never there.
 Run all of these. Each line that produces output is a job still to do.
 
 ```bash
-# 0. the welcome screen exists and nothing links to it
-grep -rn '/welcome' --include='*.tsx' src/app src/ui | grep -v 'src/app/welcome/'
+# 0. the setup screen exists and nothing links to it (route renamed /first-run 2026-08-30)
+grep -rn '/first-run' --include='*.tsx' src/app src/ui | grep -v 'src/app/first-run/'
 
 # 1. no route-level boundaries
 find src/app -name 'loading.tsx' -o -name 'error.tsx' -o -name 'not-found.tsx'
@@ -243,7 +243,7 @@ from the greps at the top rather than from the code.
 
 ## What this does not cover
 
-- **Onboarding.** None of this adds a welcome screen, a tour or a first-run flow.
+- **Onboarding.** None of this adds a welcome screen, a tour or a first-run flow. *(One exists since 2026-08-30 — todo 09 built `/first-run` and the tray window — but not through this file.)*
   That is [`01`](./01-menu-bar-app.md), and it is not a small job.
 - **Responsive layout.** The app is a single desktop column with no header, no
   navigation and two padding breakpoints. That is a deliberate register, not an
