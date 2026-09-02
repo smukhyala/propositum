@@ -71,6 +71,7 @@ export default async function ConfirmPage({
           summary={view.summary}
           verdict={view.verdict}
           unanswered={unansweredReason(view)}
+          handoverHref={`/sessions/${view.sessionId}`}
         >
           Nothing on this page can be changed now. What happened next is in &ldquo;While you were
           away&rdquo;.{' '}

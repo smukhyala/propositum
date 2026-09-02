@@ -2360,3 +2360,114 @@ describe('a park refuses a run that something else already ended', () => {
     expect(after?.status).toBe('interrupted')
   })
 })
+
+/* ═══════════════════ 12. a way back from a question that is over ═════════ */
+
+/**
+ * The half of #108 that #132 left, and that `stop-conditions.ts` decided before
+ * anything was built — #139.
+ *
+ * Three sentences in the product tell a person to hand the work over again:
+ * `confirmOnePendingRequest` says it twice, once for a run that ended and once
+ * for a question that sat a day, and `ANSWERED_TOO_LATE_REPORT` says it in the
+ * shift report. None of the three was beside anything that does it, and the
+ * closed confirm screen — which could — rendered no href of its own at all.
+ *
+ * `stop-conditions.ts` wrote the requirement down in 2026: *"a person answering
+ * a question whose shift has already ended should be TOLD that, and offered a
+ * fresh shift."* #132 built the telling. This is the offering.
+ *
+ * ── Why an offer here is not a pre-approval ──────────────────────────────
+ *
+ * Because it authorises nothing. The link lands on the ordinary agreement
+ * screen and a person ratifies a new `HandoffContract` there in full, with the
+ * same panel and the same dials as any other handover. That is the whole reason
+ * this is the ONE control a dead end may carry: the two buttons that would lie
+ * are still absent.
+ *
+ * ── What these tests do NOT cover ────────────────────────────────────────
+ *
+ * That `/sessions/<id>` renders anything. It is the same address the drifted
+ * shift report has used for its own *Hand over again* since before this, and
+ * nothing in this repository renders that route in a test either.
+ */
+describe('a question that is over offers the handover its own copy asks for', () => {
+  /**
+   * Every href on an ANCHOR, in order.
+   *
+   * Anchors only, because every primitive here renders a
+   * `<style href="…" precedence>` element for React to hoist and de-duplicate —
+   * so a bare `href="` count is never zero and an emptiness assertion written
+   * that way passes for the wrong reason.
+   */
+  function hrefsOf(props: Parameters<typeof SettledConfirmation>[0]): string[] {
+    const html = renderToStaticMarkup(createElement(SettledConfirmation, props))
+    return [...html.matchAll(/<a\b[^>]*\bhref="([^"]*)"/g)].map((m) => m[1] ?? '')
+  }
+
+  const CLOSED = [
+    { label: 'confirmed', verdict: 'confirmed' as string | null },
+    { label: 'rejected', verdict: 'rejected' as string | null },
+    { label: 'expired', verdict: null, unanswered: 'expired' as const },
+    { label: 'abandoned', verdict: null, unanswered: 'abandoned' as const },
+  ]
+
+  it('rendered no route out of its own at all, which is what made counting enough', () => {
+    // The state before #139, kept as a case: with no `handoverHref` this screen
+    // is the dead end it was, and the only links on the page came from the
+    // caller's `children`. That is also the contract for a caller with no
+    // session in reach — a missing link rather than a broken one.
+    for (const state of CLOSED) {
+      expect(hrefsOf({ summary: 'Send it?', ...state })).toEqual([])
+    }
+  })
+
+  it('offers a fresh handover on every closed state, including the two verdicts', () => {
+    // `confirmed` and `rejected` included on purpose. A person who said don't
+    // may still want the rest of the work, and a person who said go ahead is
+    // looking at a shift that has ended either way. Excluding a state would be
+    // this screen deciding on their behalf that the work is over.
+    for (const state of CLOSED) {
+      const hrefs = hrefsOf({ summary: 'Send it?', ...state, handoverHref: '/sessions/s-1' })
+      expect(hrefs, `${state.label} offers no way back`).toContain('/sessions/s-1')
+    }
+  })
+
+  it('says the words the rest of the product uses for this act, and no other', () => {
+    const html = renderToStaticMarkup(
+      createElement(SettledConfirmation, {
+        summary: 'Send it?',
+        verdict: null,
+        unanswered: 'abandoned' as const,
+        handoverHref: '/sessions/s-1',
+      }),
+    )
+    const said = html.replace(/<[^>]*>/g, ' ').replace(/&#x27;|&rsquo;/g, "'")
+
+    // The drifted shift report's label, unchanged. Two wordings for one act is
+    // how one of them comes to be wrong, and `take over` is banned outright.
+    expect(said).toContain('Hand over again')
+    expect(said).not.toMatch(/take over/i)
+    // And it must not read as a resumption of the dead run. Nothing carries
+    // over; the person ratifies a new contract on the ordinary screen.
+    expect(said).toContain('nothing starts on its own')
+  })
+
+  it('carries the session the page needs to build that address', async () => {
+    const paused = await pausedShift({
+      acceptedAt: new Date('2026-05-05T09:00:00Z'),
+      askedAt: new Date('2026-05-05T09:05:00Z'),
+    })
+
+    const view = await confirmationView(ctx, paused.requestId, Date.parse('2026-05-05T09:06:00Z'))
+    expect(view).not.toBeNull()
+    if (!view) return
+
+    // Read off the contract through the join that was already there for
+    // `contractId` and `status`, so the page makes no second query and cannot
+    // reach for a row the view has not vouched for.
+    const contract = await repos.contracts.byId(paused.contractId)
+    expect(view.sessionId).toBe(contract?.sessionId)
+    expect(view.sessionId).not.toBe('')
+  })
+})

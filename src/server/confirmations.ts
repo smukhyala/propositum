@@ -218,6 +218,18 @@ export interface ConfirmationView {
   readonly id: string
   readonly runId: string
   readonly contractId: string
+  /**
+   * The `WorkSession` this contract was handed over from — the address of the
+   * ordinary handover flow, and the whole of what #139 needed here.
+   *
+   * Carried on the view rather than fetched by the page because it costs
+   * nothing: `run` is already joined for `contractId` and `status`, so this is
+   * one more column on a query that was happening anyway. It is an ADDRESS and
+   * not a permission — following it lands on the agreement screen, where a
+   * person ratifies a new `HandoffContract` in full. The shift report's
+   * *Hand over again* is built from the same fact.
+   */
+  readonly sessionId: string
   /** Code-generated from attested facts. Never model prose. */
   readonly summary: string
   readonly askedAt: Date
@@ -374,7 +386,11 @@ export async function confirmationView(
       createdAt: true,
       evidenceId: true,
       verdict: { select: { verdict: true } },
-      run: { select: { contractId: true, status: true } },
+      // `contract.sessionId` is the address of the ordinary handover flow, and
+      // it rides the join that was already here for `contractId` and `status`.
+      run: {
+        select: { contractId: true, status: true, contract: { select: { sessionId: true } } },
+      },
       intent: { select: { kind: true, params: true } },
       // `image` is deliberately NOT selected. It is a multi-megabyte PNG and
       // this function only needs to know whether there is one; the page reads
@@ -421,6 +437,7 @@ export async function confirmationView(
     id: row.id,
     runId: row.runId,
     contractId: row.run.contractId,
+    sessionId: row.run.contract.sessionId,
     summary: row.summary,
     askedAt: row.createdAt,
     verdict: row.verdict?.verdict ?? null,

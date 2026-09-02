@@ -113,6 +113,15 @@ export const CONFIRM_CSS = `
 
 .cf-acts { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 2rem; }
 .cf-settled { margin: 0 0 1rem; font-family: var(--serif); font-size: 1.0625rem; }
+/* The one control on a closed question. Deliberately the drifted shift
+   report's ps-go rule to the pixel: it is the same act, and a handover that
+   looked different depending on which screen offered it would read as a
+   different thing. */
+.cf-settle { display: flex; gap: 0.75rem; align-items: baseline; flex-wrap: wrap; margin-top: 1.5rem; }
+.cf-settle-note { margin: 0; font-size: 0.8125rem; color: var(--muted); max-width: 34rem; }
+.cf-go { display: inline-block; font: inherit; font-size: 0.8125rem; line-height: 1.4; padding: 0.35rem 0.9rem; border: 1px solid var(--accent); border-radius: 3px; background: var(--accent); color: var(--ground); text-decoration: none; }
+.cf-go:hover { filter: brightness(1.07); }
+.cf-go:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 `
 
 function Styles() {
@@ -377,15 +386,41 @@ export function ConfirmationScreen({ detail, goAhead, dont }: ConfirmationScreen
 /**
  * Over, whether or not anybody answered.
  *
- * A dead end with NO controls at all, deliberately. A screen that still offered
- * *Go ahead* on a question that can no longer be confirmed would be offering a
- * button that does nothing — and the person would reasonably conclude their yes
- * had been taken.
+ * ~~A dead end with NO controls at all, deliberately.~~ **One control, from
+ * 2026-09-02 ([#139](https://github.com/smukhyala/propositum/issues/139)).** The
+ * sentence below still holds and is the reason there is exactly one: a screen
+ * that still offered *Go ahead* on a question that can no longer be confirmed
+ * would be offering a button that does nothing, and the person would reasonably
+ * conclude their yes had been taken.
+ *
+ * ── Why a handover is the one thing that may be offered here ─────────────
+ *
+ * Because it is the only control on this screen that cannot be mistaken for a
+ * pre-approval. Nothing is authorised by following it: it lands on the ordinary
+ * agreement screen, where a person ratifies a new `HandoffContract` in full,
+ * with the same panel and the same dials as any other. The two buttons that
+ * would lie are still absent; this one was absent by accident.
+ *
+ * `src/domain/execution/stop-conditions.ts` decided this before anything was
+ * built — *"a person answering a question whose shift has already ended should
+ * be TOLD that, and offered a fresh shift"* — and three sentences in the
+ * product already tell people to hand the work over again, none of them beside
+ * anything that does it. `src/ui/shift-report.tsx` is the precedent for both
+ * the wording and the note under it.
+ *
+ * ── On all four closed states, and why none is excluded ──────────────────
+ *
+ * `confirmed` and `rejected` included. A person who said *don't* may still want
+ * the rest of the work, and a person who said *go ahead* is looking at a shift
+ * that has ended either way. Excluding a state would mean deciding on their
+ * behalf that this piece of work is over, which is the judgment this screen has
+ * no standing to make.
  */
 export function SettledConfirmation({
   summary,
   verdict,
   unanswered,
+  handoverHref,
   children,
 }: {
   readonly summary: string
@@ -406,6 +441,14 @@ export function SettledConfirmation({
    * so that the screen and the answer path cannot disagree about a row.
    */
   readonly unanswered?: 'expired' | 'abandoned' | undefined
+  /**
+   * Where a fresh handover starts — the `WorkSession` this contract came from.
+   *
+   * Optional so that a caller with no session in reach renders the dead end
+   * this screen was, rather than a broken link. Every caller in the product
+   * passes one.
+   */
+  readonly handoverHref?: string | undefined
   readonly children?: ReactNode | undefined
 }): ReactNode {
   return (
@@ -423,6 +466,22 @@ export function SettledConfirmation({
                 : 'This question went unanswered for a day, so Propositum stopped waiting. Nothing was done.'}
         </p>
         <p className="cf-note">{children}</p>
+        {handoverHref === undefined ? null : (
+          <div className="cf-settle">
+            {/* The same label and the same promise as the drifted shift report,
+                because it is the same act and two wordings for one act is how
+                one of them comes to be wrong. `hand over` is the direction
+                CONTEXT.md fixes; the person is the subject. */}
+            <a className="cf-go" href={handoverHref}>
+              Hand over again
+            </a>
+            <p className="cf-settle-note">
+              Starting fresh, from where things stand now. You set how far Propositum should go and
+              hand it over yourself &mdash; nothing here carries over, and nothing starts on its
+              own.
+            </p>
+          </div>
+        )}
       </Section>
     </>
   )

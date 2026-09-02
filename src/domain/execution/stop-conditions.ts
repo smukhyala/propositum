@@ -111,11 +111,25 @@ export const PAUSING_RULES: ReadonlySet<string> = new Set(['confirmation_require
  *
  * The two constants are deliberately not reconciled by shortening the expiry,
  * because a confirmation that expires while someone is still willing to answer
- * pushes them toward answering fast rather than reading. The right resolution
+ * pushes them toward answering fast rather than reading. ~~The right resolution
  * lives in the interface: a person answering a question whose shift has already
  * ended should be TOLD that, and offered a fresh shift, rather than having
  * their yes accepted into a dead run. Whoever builds the confirmation screen
- * owns that; recording it here so it is a decision rather than a surprise.
+ * owns that; recording it here so it is a decision rather than a surprise.~~
+ *
+ * **Both halves built, and the second one took a year of the repository's
+ * patience to spend.** *Told that* landed 2026-09-01 (#132): `confirmRequest`
+ * refuses a question whose run ended some other way, and `SettledConfirmation`
+ * renders the closed state rather than offering a button the answer path turns
+ * down. *Offered a fresh shift* landed 2026-09-02
+ * ([#139](https://github.com/smukhyala/propositum/issues/139)): that screen
+ * carries **Hand over again** on all four of its closed states, to the ordinary
+ * agreement screen where a person ratifies a new contract in full. Nothing is
+ * pre-approved by it, which is why it is the one control a dead end may hold.
+ *
+ * The interaction this paragraph describes is unchanged and still real — the
+ * resolution was always about what the person is offered next, never about
+ * making the two constants agree.
  */
 export const CONFIRMATION_EXPIRY_HOURS = 24
 
