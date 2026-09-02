@@ -3918,6 +3918,13 @@ export interface ControlTaken {
  * to stop cleanly when the thing being stopped may be mid-navigation in
  * somebody's real browser — and it is why the two switches that remove the
  * capability outright exist alongside it.
+ *
+ * **One exception, from 2026-09-02 ([ADR-0030](../../docs/adr/0030-a-halt-closes-the-question.md)).**
+ * A run PARKED on a question is not mid-navigation and holds no credential, so
+ * this door ends it outright rather than flagging it. That is what `byAPerson`
+ * says, and this is the only caller that passes it: the extension's door must
+ * not, because its idle timer cannot be told apart from a person's Stop and a
+ * parked run is idle by construction.
  */
 export async function takeBackControl(runId: string): Promise<ActionResult<ControlTaken>> {
   return attempt(async () => {
@@ -3932,7 +3939,7 @@ export async function takeBackControl(runId: string): Promise<ActionResult<Contr
      * a run that is driving somebody's browser, and they would disagree first
      * on the part nobody looks at — flag, revoke, settle, in that order.
      */
-    const { stopped, unfinished } = await haltRun(ctx, runId)
+    const { stopped, unfinished } = await haltRun(ctx, runId, { byAPerson: true })
 
     refresh()
     return ok<ControlTaken>({ runId, stopped, unfinished })

@@ -2597,7 +2597,7 @@ describe('stopping a run parked on a question closes the question', () => {
       askedAt: new Date('2026-06-01T09:05:00Z'),
     })
 
-    const halted = await haltRun(ctx, paused.runId)
+    const halted = await haltRun(ctx, paused.runId, { byAPerson: true })
 
     // Before ADR-0030 this was `false` — true of the flag, false of what the
     // person had just done.
@@ -2617,7 +2617,7 @@ describe('stopping a run parked on a question closes the question', () => {
       askedAt: new Date('2026-06-02T09:05:00Z'),
     })
 
-    await haltRun(ctx, paused.runId)
+    await haltRun(ctx, paused.runId, { byAPerson: true })
 
     const answered = await confirmRequest(ctx, paused.requestId, new Date('2026-06-02T09:06:00Z'))
     expect(answered.ok).toBe(false)
@@ -2643,7 +2643,7 @@ describe('stopping a run parked on a question closes the question', () => {
       askedAt: new Date('2026-06-03T09:05:00Z'),
     })
 
-    await haltRun(ctx, paused.runId)
+    await haltRun(ctx, paused.runId, { byAPerson: true })
 
     const view = await confirmationView(ctx, paused.requestId, Date.parse('2026-06-03T09:06:00Z'))
     expect(view).not.toBeNull()
@@ -2670,7 +2670,7 @@ describe('stopping a run parked on a question closes the question', () => {
       data: { status: 'interrupted', terminalReason: 'lease-expired', controlToken: null },
     })
 
-    await haltRun(ctx, paused.runId)
+    await haltRun(ctx, paused.runId, { byAPerson: true })
 
     const run = await db.prisma.agentRun.findUniqueOrThrow({ where: { id: paused.runId } })
     expect(run.terminalReason).toBe('lease-expired')
@@ -2698,5 +2698,65 @@ describe('stopping a run parked on a question closes the question', () => {
     expect(run?.controlToken).toBeNull()
     // Not ended from outside. The status write is scoped to a parked run.
     expect(run?.status).not.toBe('interrupted')
+  })
+})
+
+/**
+ * The two ways ADR-0030's step 0 could destroy something, both found on review
+ * before either shipped.
+ *
+ * Neither is exotic. The first is what the extension does to EVERY parked run
+ * two minutes after it parks; the second is the state every answered question
+ * is in for the rest of its life. Both passed `npm test` in the commit that
+ * introduced them, which is why they are pinned here by the paths that reach
+ * them rather than by the function's own arguments.
+ */
+describe('a halt closes a question only when a person closed it', () => {
+  it('does not let an idle detach end a run somebody is being asked a question', async () => {
+    const paused = await pausedShift({
+      acceptedAt: new Date('2026-06-06T09:00:00Z'),
+      askedAt: new Date('2026-06-06T09:05:00Z'),
+    })
+
+    // The extension's own call, byte for byte: `letGoIfIdle` reaches
+    // `postHalt(runId, reason)` after CONTROL_IDLE_MS with no way to say who
+    // did it. A parked run hands out no commands, so `lastCommandAt` stops
+    // moving the moment it parks and this timer fires on every one of them.
+    await haltRun(ctx, paused.runId)
+
+    const run = await db.prisma.agentRun.findUniqueOrThrow({ where: { id: paused.runId } })
+    expect(run.status, 'a two-minute timer ended a question with a day to run').toBe(
+      'awaiting-confirmation',
+    )
+    expect(run.terminalReason).toBeNull()
+
+    // And the question is still answerable, which is the whole point of the day.
+    const answered = await confirmRequest(ctx, paused.requestId, new Date('2026-06-06T09:07:00Z'))
+    expect(answered.ok).toBe(true)
+  })
+
+  it('does not report a stop for a parked run whose question was already answered', async () => {
+    const paused = await pausedShift({
+      acceptedAt: new Date('2026-06-07T09:00:00Z'),
+      askedAt: new Date('2026-06-07T09:05:00Z'),
+    })
+
+    const answered = await confirmRequest(ctx, paused.requestId, new Date('2026-06-07T09:06:00Z'))
+    expect(answered.ok).toBe(true)
+
+    // Nothing moves a run off `awaiting-confirmation` — the verdict enqueues a
+    // NEW run and leaves this row where it is. So this row matches the status
+    // predicate forever, and without the verdict check a halt here would report
+    // success while the continuation that is about to claim a browser
+    // credential carried on untouched. A stop that lies is worse than one that
+    // says nothing happened.
+    const halted = await haltRun(ctx, paused.runId, { byAPerson: true })
+    expect(halted.stopped).toBe(false)
+
+    const continuation = await db.prisma.agentRun.findFirst({
+      where: { contractId: paused.contractId, resumesRunId: { not: null } },
+      select: { status: true, cancelRequested: true },
+    })
+    expect(continuation?.cancelRequested).toBe(false)
   })
 })

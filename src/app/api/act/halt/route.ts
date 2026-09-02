@@ -88,10 +88,22 @@ export async function POST(request: Request) {
   // delivered row, so this can only ever discard something that never left.
   for (const dispatchId of stopped) await ctx.repos.dispatches.abandon(dispatchId)
 
-  // The other half, through the one implementation. `flagged` keeps its name and
-  // its place in the response because the extension reads it, but it now means
-  // what `Halted.stopped` means — something was stopped, which since ADR-0030
-  // includes closing a question a parked run was waiting on.
+  /**
+   * The other half, through the one implementation.
+   *
+   * `byAPerson` is deliberately NOT passed. This door is reached from
+   * `letGoIfIdle` as well as from the chip and the side panel, and the envelope
+   * carries no way to tell them apart — so a step 0 here would give every
+   * parked question a two-minute life, because a run waiting on a person hands
+   * out no commands and is idle by construction. `haltRun`'s parameter carries
+   * the argument.
+   *
+   * ~~`flagged` keeps its name and its place in the response because the
+   * extension reads it.~~ **Struck the day it was written: nothing reads it.**
+   * `postHalt` discards the response body entirely. The name and the shape stay
+   * because they are the response this route has always returned and changing
+   * them buys nothing; what is corrected is the reason given for keeping them.
+   */
   const { stopped: flagged } = await haltRun(ctx, runId)
 
   return NextResponse.json({ ok: true, settled: stopped.length, flagged })

@@ -67,9 +67,31 @@ while deciding what a button does:
 **A halt ends a run parked on a question, and the question closes with it.**
 
 1. **`haltRun` gains a fourth step, and it is the first one.** A run in `awaiting-confirmation` is
-   written `interrupted` with `terminalReason: 'cancelled'`, scoped on the status so nothing else is
-   touched. It reuses the cancel fence's own reason rather than minting a new one — the person
-   called it back, and that is what happened, whether the run was mid-action or waiting on them.
+   written `interrupted` with `terminalReason: 'cancelled'`. It reuses the cancel fence's own reason
+   rather than minting a new one — the person called it back, and that is what happened, whether the
+   run was mid-action or waiting on them.
+
+   **It happens only when a person did it, and the default is that nobody did.** `haltRun` takes an
+   explicit `byAPerson`, and one caller passes it: `takeBackControl`, the control on the shift
+   screen. `POST /api/act/halt` does not, and the reason is not caution. The extension reaches that
+   route from `letGoIfIdle` after two minutes on a tab nothing has asked anything of, and **a run
+   parked on a question is idle by construction** — it hands out no commands, so the timer fires on
+   every parked run, always. Without the flag this ADR would have given every confirmation in the
+   product a two-minute life and told the person *"You called me back, so I stopped"* about a
+   service worker's alarm, with `CONFIRMATION_EXPIRY_HOURS` — a day, chosen so somebody can think —
+   dead on arrival.
+
+   The extension knows the difference and cannot say it: `stopActing` takes `canceled_by_user` at
+   the chip and the side panel and `control-lost` from the idle path, but `postHalt` sends only a
+   prose `reason`, and a permission decided by parsing prose is not one. Widening that envelope so
+   the person's two other switches can close a question is real work and is not this change.
+
+   **The write is scoped twice more.** It refuses a run some other path already ended, which is the
+   defect #140 fixed one layer down. And it refuses a parked run whose question has already been
+   ANSWERED: that row stays `awaiting-confirmation` for ever — the verdict enqueues a NEW run and
+   leaves this one where it is — so without the check a halt would report success for a spent run
+   while the continuation about to claim a browser credential carried on untouched. A stop that lies
+   is worse than one that says nothing happened.
 
 2. **Nothing else changes, and that is the argument for this option over the other two.** The
    machinery that makes the closure mean something is already built and already tested:
@@ -79,9 +101,12 @@ while deciding what a button does:
    [#132](https://github.com/smukhyala/propositum/issues/132) for a different population — a run
    reaped before it got as far as parking — and a halted run joins that population by the front door.
 
-3. **The stop keeps working when nothing else does.** ADR-0010's ordering is untouched: the extension
-   detaches the debugger *before* telling the app. This step is app-side and runs after that, so a
-   halt still takes effect on a machine that never reaches a server.
+3. **The stop keeps working when nothing else does — and step 0 is not the part that does.**
+   ADR-0010's ordering is untouched: the extension detaches the debugger *before* telling the app,
+   and that is what works with the app closed, the dev server restarting, or the machine offline.
+   Step 0 is a database write and works none of those times. What survives an offline stop is the
+   detach and the flag; closing a question needs the app, which is acceptable because closing a
+   question is not what makes a stop urgent — removing the capability is, and that is unchanged.
 
 4. **Both doors reach one implementation.** `takeBackControl` is wired to the shift screen, and
    `POST /api/act/halt` calls `haltRun` rather than reaching past it — keeping the two steps that are
@@ -105,7 +130,9 @@ browser is precisely the thing the kill switches exist for.
 
 | Claim | What holds it |
 |---|---|
-| A halted parked run cannot be answered | `confirmRequest`'s `abandoned` refusal, reading `AgentRun.status` — the same column, the same test as a reaped run |
+| A halted parked run cannot be answered | `confirmRequest`'s `abandoned` refusal, reading `AgentRun.status` — the same column, the same test as a reaped run. **Not a transaction:** it reads the status and then writes the verdict and enqueues, so a halt landing between the two produces the yes this ADR says it prevents. Sub-millisecond, pre-existing (the lease sweep and `expireConfirmations` race it identically), and named here because this ADR is about two decisions arriving in an order nobody reconciled |
+| A timer never closes a question | `byAPerson`, defaulted off, passed by one caller. Nothing else in the codebase can reach step 0, and `tests/confirmation-pause.test.ts` drives the extension's own idle call and asserts the run is still parked |
+| A stop reports what it stopped | The verdict predicate on step 0, and `tests/confirmation-pause.test.ts` asserting `stopped: false` on a parked run whose question was answered |
 | The screen says so rather than offering a button | `confirmationView.abandoned`, derived off that column so screen and answer path cannot disagree about a row |
 | A halt reaches the run whichever door was used | `tests/confirmation-pause.test.ts` drives the halt and then the confirm, and `tests/reachability.test.ts` asserts both doors reach `haltRun` |
 | The person is told what happened | `SettledConfirmation`'s `abandoned` sentence, and — since [#139](https://github.com/smukhyala/propositum/issues/139) — the handover beside it |
@@ -121,6 +148,12 @@ matter, which is what #139 started.
 **A halt needs to distinguish *stop this now* from *stop when you get to a boundary*.** Today they
 are one act. If a second kind of stop arrives, this decision is about the first kind and the second
 one needs its own argument.
+
+**The person's other two switches still cannot close a question.** The chip and the side panel are a
+person, and they reach the route that may not pass `byAPerson`. Closing that gap means the halt
+envelope carrying who acted rather than prose about why — which is a change to a boundary the
+extension shares with every page in the browser, and deserves its own argument about what a
+caller-chosen field may decide.
 
 **`cancelled` stops being the honest reason.** It is reused here rather than joined by a
 `halted-while-parked`, on the grounds that the person called the run back and the run's own posture at

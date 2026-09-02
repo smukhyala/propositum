@@ -258,9 +258,18 @@ export default async function ShiftPage({ params }: { params: Promise<{ contract
    * after a confirmation — and the one still going is the one at the end.
    * Halting an earlier one would report success and stop nothing.
    *
-   * A parked run is deliberately NOT here. It is not live by the test above,
-   * and stopping it is reached from the question's own screen, where a person
-   * can see what they are closing.
+   * A parked run is deliberately NOT here. It is not live by the test above, so
+   * it never becomes `liveRunId` and this screen never offers to stop it.
+   *
+   * ~~Stopping it is reached from the question's own screen, where a person can
+   * see what they are closing.~~ **Struck the day it was written.** There is no
+   * such control: `/shifts/[contractId]/confirm/[requestId]` offers *Go ahead*,
+   * *Don't*, and — since #139 — a fresh handover, and nothing that ends the run
+   * without answering. So ADR-0030's step 0 has one caller, `takeBackControl`,
+   * and it is reachable only while the run is live. A person who wants to close
+   * a parked question answers it. Naming a screen that has no such control is
+   * the defect #141 was written to remove, and writing it into the fix would
+   * have been the second time.
    */
   const liveRunId =
     [...runs]

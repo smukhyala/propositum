@@ -1079,12 +1079,13 @@ export interface Halted {
  * and a yes afterwards enqueued a continuation that claims a run and mints a
  * fresh control token, on a shift they had stopped.
  *
- * 0. **End a run that is parked on a question.** `interrupted` /
- *    `cancelled`, scoped on the status so nothing else is touched. Everything
- *    that makes the closure mean something is already built: `confirmRequest`
- *    refuses a question whose run is no longer parked, and
- *    `confirmationView.abandoned` is derived off the same column, so the screen
- *    says so rather than offering a button the answer path turns down.
+ * 0. **End a run that is parked on a question — only if a PERSON did this.**
+ *    `interrupted` / `cancelled`, and skipped entirely without `byAPerson`,
+ *    whose parameter carries the argument. Everything that makes the closure
+ *    mean something is already built: `confirmRequest` refuses a question whose
+ *    run is no longer parked, and `confirmationView.abandoned` is derived off
+ *    the same column, so the screen says so rather than offering a button the
+ *    answer path turns down.
  * 1. **Flag it.** `cancelRequested` is a column, not a kill. The run re-reads
  *    it at its next action boundary and halts itself, which is the only way to
  *    stop cleanly when the thing being stopped may be mid-navigation.
@@ -1101,10 +1102,13 @@ export interface Halted {
  *
  * **It writes no note in the shift report**, unlike `admitRun` and
  * `expireConfirmations`, which end a parked run for reasons the person was not
- * present for. This one they did themselves, and the report already has a
- * sentence for it — `whereItStopped`'s `cancelled` arm says *"You called me
- * back, so I stopped."* A second sentence explaining a stop to the person who
- * pressed Stop is the report talking to itself.
+ * present for. This one they did themselves — that is exactly what `byAPerson`
+ * establishes — and the report already has a sentence for it:
+ * `whereItStopped`'s `cancelled` arm says *"You called me back, so I stopped."*
+ * A second sentence explaining a stop to the person who pressed Stop is the
+ * report talking to itself. **The flag is what keeps that true**: without it,
+ * the same sentence would be shown to somebody whose service worker timed out,
+ * which is the note claiming an act nobody performed.
  *
  * **It mints no new terminal reason.** `cancelled` is the cancel fence's, and
  * it is the true one: the person called the run back, and whether the run
@@ -1112,21 +1116,64 @@ export interface Halted {
  * concern. ADR-0030's *Revisit when* carries the case for ever telling the two
  * apart.
  */
-export async function haltRun(ctx: ConfirmationContext, runId: string): Promise<Halted> {
+export async function haltRun(
+  ctx: ConfirmationContext,
+  runId: string,
   /**
-   * Scoped on `awaiting-confirmation`, and the scope is doing two jobs.
+   * Did a PERSON do this, at a control in the app?
+   *
+   * ── Absent is the safe value, and the default is absence ─────────────────
+   *
+   * Step 0 ends a run parked on a question, and a question is the one thing
+   * here that a timer must never close — `CONFIRMATION_EXPIRY_HOURS` is a day,
+   * chosen so somebody can read a question about something irreversible and
+   * think about it. Every other caller of this function is a machine noticing
+   * something, so the flag is opt-in rather than opt-out: a new door gets the
+   * behaviour that closes nothing until somebody argues for the other one.
+   *
+   * ── The door this excludes, and why that is not a small point ────────────
+   *
+   * `POST /api/act/halt` does NOT pass it, and must not. The extension calls it
+   * from `letGoIfIdle` after `CONTROL_IDLE_MS` — two minutes — on any tab
+   * nothing has asked anything of. **A run parked on a question is idle by
+   * construction**: it hands out no commands, so `lastCommandAt` stops moving
+   * the moment it parks. So that timer fires on every parked run, always, and
+   * a step 0 reachable from there would give every confirmation in the product
+   * a two-minute life and tell the person *"You called me back, so I stopped."*
+   * about a service worker's alarm.
+   *
+   * The extension cannot currently tell the person's Stop from that timer:
+   * `stopActing` takes `canceled_by_user` at the chip and the side panel and
+   * `control-lost` from the idle path, but `postHalt` sends only a prose
+   * `reason`, and a permission decided by parsing prose is not one. Widening
+   * the halt envelope so the person's two switches can close a question is
+   * real work and is its own change.
+   */
+  opts: { readonly byAPerson?: boolean } = {},
+): Promise<Halted> {
+  /**
+   * Scoped, and the scope is doing three jobs.
    *
    * It leaves a live run to steps 1–3, which is where a run that can still act
    * has to be stopped from — a status write here would end a run mid-navigation
-   * from outside, which is the thing `cancelRequested` exists to avoid. And it
+   * from outside, which is the thing `cancelRequested` exists to avoid. It
    * refuses to rewrite a run that some other path already ended, which is the
-   * defect #140 fixed one layer down; an unpredicated `update` here would have
-   * reintroduced it in a new place.
+   * defect #140 fixed one layer down. And it refuses a parked run whose
+   * question has already been ANSWERED: that run is spent, the work moved to
+   * the continuation the verdict enqueued, and ending it would report a stop
+   * for a run nothing was waiting on while the run that is about to drive a
+   * browser carried on untouched.
    */
-  const closed = await ctx.db.prisma.agentRun.updateMany({
-    where: { id: runId, status: 'awaiting-confirmation' },
-    data: { status: 'interrupted', terminalReason: 'cancelled', endedAt: new Date() },
-  })
+  const closed = opts.byAPerson
+    ? await ctx.db.prisma.agentRun.updateMany({
+        where: {
+          id: runId,
+          status: 'awaiting-confirmation',
+          confirmations: { none: { verdict: { isNot: null } } },
+        },
+        data: { status: 'interrupted', terminalReason: 'cancelled', endedAt: new Date() },
+      })
+    : { count: 0 }
 
   const stopped = await ctx.repos.runs.requestCancel(runId)
 
