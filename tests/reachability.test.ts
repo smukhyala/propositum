@@ -1845,6 +1845,42 @@ describe('a document can be brought in and taken out', () => {
     ).toEqual([join('src', 'app', 'shifts', '[contractId]', 'page.tsx')])
   })
 
+  /**
+   * The release pipeline, which was in neither block — #156.
+   *
+   * `stage` and `signRuntime` are the two halves of what a shipped `.dmg` is
+   * made of: one stages the runtime tree into the bundle, the other signs every
+   * Mach-O in it. `tests/stage-runtime.test.ts` holds the staging invariants
+   * and nothing held the WIRING, so both were built, tested, and asserted by
+   * this file to be neither reached nor deliberately deferred — the exact hole
+   * AGENTS.md says this file exists to close.
+   *
+   * `scripts/release-tray.ts` is the one caller and `npm run tray:build` is the
+   * one way in, so the chain is pinned end to end rather than at its middle.
+   *
+   * WHAT THIS DOES NOT COVER: that the pipeline works. Nothing here signs
+   * anything — that needs a Developer ID certificate and a notary credential,
+   * which is `docs/todo/01-menu-bar-app.md`'s *"what you have to do yourself"*
+   * table, not a test.
+   */
+  it('the release script is what runs the staging and the signing', () => {
+    expect(
+      callersOf('stage(', 'scripts/stage-runtime.ts'),
+      'nothing stages the runtime — a bundle would ship without one',
+    ).toContain(join('scripts', 'release-tray.ts'))
+
+    expect(
+      callersOf('signRuntime(', 'scripts/sign-runtime.ts'),
+      'nothing signs the staged runtime — Gatekeeper refuses the app',
+    ).toContain(join('scripts', 'release-tray.ts'))
+
+    // And the one door a person or a workflow actually uses.
+    const scripts = JSON.parse(readFileSync(join(repo, 'package.json'), 'utf8')) as {
+      scripts: Record<string, string>
+    }
+    expect(scripts.scripts['tray:build']).toContain('release-tray')
+  })
+
   it('the project screen no longer carries an editor of its own', () => {
     // The half a caller check cannot see. Both components could be rendered
     // and a leftover `<textarea name="content">` in the page would still be
