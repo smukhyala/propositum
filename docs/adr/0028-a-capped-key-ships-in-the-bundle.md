@@ -62,6 +62,19 @@ as the obvious middle ground when the circle grows.
 | The workspace spend cap | Set in Anthropic's console, outside this repository — **discipline, not code**; nothing here can verify it exists |
 | Stage-time injection from env | The key has no home in git; `scripts/stage-runtime.ts` carries the mechanism *(built 2026-08-30)* |
 | Precedence under the person's key | ADR-0027 §2's layered child-env mechanics, unit-tested in `src-tauri/src/runtime.rs` *(built 2026-08-30; detection is presence, not validity — a revoked or exhausted bundled key still reads as set, and that failure surfaces at the model call, one menu from the tray's* Set the API key… *item)* |
+| A keyed release is a draft, not a public page | **Added 2026-09-02 ([#153](https://github.com/smukhyala/propositum/issues/153)).** `release.yml` reads `carriesBundledKey` off the staged `runtime-manifest.json` and passes `--draft` when it is true, so the `.dmg` is visible only to people who can write to this repository until somebody presses publish. Pinned by `tests/counts.test.ts`. A keyless build publishes immediately, unchanged |
+
+**Why that row was owed, and what it does not buy.** The *Revisit when* below opens on
+*"distribution goes beyond people the owner knows"*, and §4 says the premise is spent the moment
+distribution is aimed at people the owner has not met. A GitHub Release page is public the instant
+it is created, so until 2026-09-02 a single tag push crossed that line with nothing in the way and
+no red tick anywhere — the release would simply succeed. The draft is the something: it makes
+publishing an act rather than a side effect of tagging.
+
+It buys a pause and nothing more. Anyone who downloads the artefact still has the key, the spend cap
+is still the whole containment, and the cap is still set by hand in a console this repository cannot
+see. The condition is read off what the build actually staged rather than off the secret, so the two
+cannot disagree about whether a key went in.
 
 ## Revisit when
 

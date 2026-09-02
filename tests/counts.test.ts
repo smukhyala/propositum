@@ -306,6 +306,33 @@ describe('the release workflow caches dependencies, not what it just signed', ()
     expect(RELEASE).toMatch(/tags:\s*\[\s*'v\*'\s*\]/)
   })
 
+  /**
+   * A build carrying a bundled key does not reach a public page on its own —
+   * #153.
+   *
+   * ADR-0028 accepts that the key is one `strings` away from anyone with the
+   * artefact and rests the containment on a spend cap set by hand outside this
+   * repository. That argument assumes a tester circle, and says so: *"the
+   * moment distribution is aimed at people the owner has not met, this ADR's
+   * premise is spent."* A GitHub Release is public the instant it is created,
+   * so one tag push crossed that line with nothing in the way.
+   *
+   * Pinned as config text because the failure has no red tick: the release
+   * would succeed, and the only sign would be a public page nobody meant to
+   * make.
+   *
+   * WHAT THIS DOES NOT COVER: that the spend cap exists. Nothing in this
+   * repository can see it, which ADR-0028 names as its own weakest link.
+   */
+  it('publishes a build that carries a bundled key as a draft', () => {
+    const publish = RELEASE.slice(RELEASE.indexOf('Publish the .dmg'))
+
+    // Read off what was STAGED, not off the secret — one fact, one place.
+    expect(publish).toContain('runtime-manifest.json')
+    expect(publish).toContain('carriesBundledKey')
+    expect(publish).toContain('--draft')
+  })
+
   it('does not cache the bundle directory the signed app lands in', () => {
     const cache = RELEASE.slice(RELEASE.indexOf('actions/cache'))
     const paths = cache.slice(0, cache.indexOf('key:'))

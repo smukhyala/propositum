@@ -107,9 +107,42 @@ jobs:
           # keychain, two signers.
         run: npm run tray:build
 
+      # A build that carries a bundled key is published as a DRAFT, and a
+      # person presses publish.
+      #
+      # ADR-0028 accepts that the key is one `strings` away from anyone who
+      # downloads the artefact, and rests the whole containment on a hard
+      # monthly spend cap set by hand in the Anthropic console — outside this
+      # repository, and unverifiable from it. What that argument assumes is a
+      # TESTER CIRCLE: "the moment distribution is aimed at people the owner
+      # has not met, this ADR's premise is spent."
+      #
+      # A GitHub Release page is public the instant it is created, so one tag
+      # push took the artefact from a tester circle to the open internet with
+      # nothing between. `--draft` is that something: the release exists, the
+      # `.dmg` is attached, and it is visible only to people who can write to
+      # the repository until somebody presses publish having decided the
+      # circle is still the circle.
+      #
+      # A keyless build publishes immediately, unchanged. The condition is read
+      # off `runtime-manifest.json`, which `scripts/stage-runtime.ts` writes
+      # from what it actually staged — not off the secret, which would be a
+      # second place the same fact is decided.
       - name: Publish the .dmg
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes \
+          keyed=$(node -e "process.stdout.write(String(require('./dist-runtime/runtime/runtime-manifest.json').carriesBundledKey))")
+          if [ "$keyed" = "true" ]; then
+            echo "This build carries a bundled key — publishing as a DRAFT (ADR-0028 §4)."
+            draft=--draft
+          elif [ "$keyed" = "false" ]; then
+            draft=
+          else
+            echo "runtime-manifest.json did not say whether a key was staged: '$keyed'" >&2
+            exit 1
+          fi
+
+          # shellcheck disable=SC2086 # $draft is a single flag or empty, deliberately unquoted
+          gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes $draft \
             src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
