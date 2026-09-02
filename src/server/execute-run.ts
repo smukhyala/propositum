@@ -66,7 +66,7 @@ import { narrateShift } from './shift-narrative'
 import type { BrowserDeps } from '../policy/tools'
 import type { AppContext } from './db'
 import type { ModelClient } from '../model/client'
-import { BROWSER_ACTION_KINDS } from '../domain/handoff/policy'
+import { BROWSER_ACTION_KINDS, currencyOf } from '../domain/handoff/policy'
 import type { ActionKind } from '../domain/handoff/policy'
 
 export interface ExecuteDeps {
@@ -544,6 +544,37 @@ export async function executeRun(runId: string, deps: ExecuteDeps): Promise<void
       // scope's optional field is what `compilePolicy` reads to decide whether
       // the document capability exists at all.
       ...(contract.baseVersionId === null ? {} : { baseVersionId: contract.baseVersionId }),
+      // ADR-0024. Expiry is DERIVED here from the same immutable pair as the
+      // deadline — never stored, never drafted — which is what makes an
+      // authorisation structurally unable to outlive its contract. Note the
+      // UNcredited pair, deliberately: a confirmation pause credits waiting
+      // time back into the deadline, and widening the spend window because the
+      // person was slow to answer a question would be a relaxation no dial is
+      // allowed either.
+      ...(() => {
+        if (
+          contract.purchaseOriginPattern == null ||
+          contract.purchaseMaxAmountMinor == null ||
+          contract.purchaseCurrency == null ||
+          contract.purchaseMaxCount == null
+        ) {
+          return {}
+        }
+        // A row written before a currency left the closed set still refuses:
+        // drop, never map, exactly as the draft path does.
+        const currency = currencyOf(contract.purchaseCurrency)
+        if (currency === null) return {}
+        return {
+          purchaseAuthorization: {
+            originPattern: contract.purchaseOriginPattern,
+            whatFor: contract.purchaseWhatFor ?? '',
+            maxAmountMinor: contract.purchaseMaxAmountMinor,
+            currency,
+            maxCount: contract.purchaseMaxCount,
+            expiresAtEpochMs: acceptedAt + contract.timeLimitMinutes * 60_000,
+          },
+        }
+      })(),
     },
     controls: {
       initiative: contract.initiative as 'follow-closely' | 'use-judgment',

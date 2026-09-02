@@ -58,6 +58,23 @@ const DEFAULTS: AutonomyControls = {
   timeLimitMinutes: 30,
 }
 
+/**
+ * A drafted authorisation, for the cases about the kind no dial can grant.
+ *
+ * Absent by default and passed only where the case is about it, on the
+ * component's own convention: an absent key is the deny, and every other case
+ * in this file has to keep rendering the screen that existed before buying
+ * did.
+ */
+const AUTHORISED = {
+  originPattern: 'https://shop.example',
+  merchantLabel: 'shop.example',
+  whatFor: '10 avocados',
+  maxAmountMinor: 4000,
+  currency: 'USD',
+  maxCount: 1,
+} as const
+
 function screen(
   allowedActionKinds: readonly ActionKind[],
   over: Partial<AutonomyControls> = {},
@@ -65,6 +82,7 @@ function screen(
    *  the shape most of this file is about. A title is passed only where the
    *  case under test is a shift that really does have a document under it. */
   documentTitle: string | null = null,
+  purchaseAuthorization: ContractDrafted['purchaseAuthorization'] = undefined,
 ): string {
   const draft: ContractDrafted = {
     contractId: 'contract-1',
@@ -81,6 +99,7 @@ function screen(
     allowedActionKinds: [...allowedActionKinds],
     documentTitle,
     quotedConstraints: [],
+    ...(purchaseAuthorization === undefined ? {} : { purchaseAuthorization }),
   }
 
   return renderToStaticMarkup(
@@ -348,5 +367,58 @@ describe('the panel files a permission under the heading that is true of it', ()
     expect(underHeading(html, SWITCHED_OFF)).toContain('Click something on the page')
     expect(underHeading(html, SWITCHED_OFF)).not.toContain('Draft a section of your document')
     expect(underHeading(html, NOT_INCLUDED)).toContain('Draft a section of your document')
+  })
+})
+
+/**
+ * The sixth sentence, and the first one that is a permission rather than a
+ * refusal.
+ *
+ * `complete-purchase` is inside `ActionKind` and is on neither derivation
+ * above's right side, so both off-lists would happily claim it — and both
+ * would be false. *"What you've switched off"* would tell the person a dial
+ * decides money, and no dial can switch this kind ON. *"What this agreement
+ * doesn't include"* would be false on the one screen where the agreement is
+ * being made: with an authorisation ratified, spending is exactly what it
+ * does include. It is neither, and it renders on its own line in Section 1
+ * where the amount is — ADR-0024, and the header docblock's fourth shape.
+ *
+ * What this does NOT cover: whether that line says the right amount.
+ * `tests/purchase-authorisation.test.ts` owns the values; these cases own the
+ * three lists the kind must stay out of.
+ */
+const MAY_DO = 'What Propositum may do'
+const PURCHASE_LABEL = 'Complete the purchase you authorised'
+
+describe('the purchase kind is shown where the amount is, and in no permission list', () => {
+  it('files it under no heading on a browser shift with nothing authorised', () => {
+    const html = screen(BROWSER)
+
+    expect(underHeading(html, MAY_DO)).not.toContain(PURCHASE_LABEL)
+    expect(underHeading(html, SWITCHED_OFF)).not.toContain(PURCHASE_LABEL)
+    expect(underHeading(html, NOT_INCLUDED)).not.toContain(PURCHASE_LABEL)
+    // The heading has to be on the screen before the line under it means
+    // anything — the same trap the case above this one names.
+    expect(headings(html)).toContain(NOT_INCLUDED)
+  })
+
+  it('files it under no heading on a document shift either', () => {
+    const html = screen(DOCUMENT)
+
+    expect(underHeading(html, MAY_DO)).not.toContain(PURCHASE_LABEL)
+    expect(underHeading(html, SWITCHED_OFF)).not.toContain(PURCHASE_LABEL)
+    expect(underHeading(html, NOT_INCLUDED)).not.toContain(PURCHASE_LABEL)
+    expect(headings(html)).toContain(NOT_INCLUDED)
+  })
+
+  it('files it under no heading when an authorisation really was drafted', () => {
+    const html = screen(BROWSER, {}, null, AUTHORISED)
+
+    // The amount is on the screen, or the three refusals below prove nothing
+    // about where this kind is shown.
+    expect(words(html)).toContain('May spend up to')
+    expect(underHeading(html, MAY_DO)).not.toContain(PURCHASE_LABEL)
+    expect(underHeading(html, SWITCHED_OFF)).not.toContain(PURCHASE_LABEL)
+    expect(underHeading(html, NOT_INCLUDED)).not.toContain(PURCHASE_LABEL)
   })
 })

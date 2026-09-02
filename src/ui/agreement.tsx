@@ -25,8 +25,9 @@
  * permission panel; calling the real compiler is how that stays impossible
  * rather than merely unlikely.
  *
- * The panel keeps ~~two refusals~~ **three, 2026-09-01** visually distinct, and
- * must never blur them:
+ * The panel keeps ~~two refusals~~ ~~three~~ **four, 2026-09-01 — two splits
+ * decided apart and merged the same day** refusal-and-permission shapes
+ * visually distinct, and must never blur them:
  *
  *   - **switched off** — inside `ActionKind`, offered by this shift, and your
  *     dials removed it.
@@ -36,13 +37,37 @@
  *     heading a claim about a decision the person had not made — the fifth
  *     sentence of the family below, and the only one a rewrite could not fix,
  *     because the sentences were already true and the GROUPING was the lie.
+ *   - **ratified-bound** — `complete-purchase`, ADR-0024. **Added 2026-09-01**,
+ *     and it is none of the other three: it exists in the enum, no dial can
+ *     switch it ON, and it is granted only by ratifying a drafted
+ *     authorisation whose amount is on this screen. Rendered as its own line
+ *     in Section 1 with the amount prominent, never inside any list below.
+ *     Each neighbour is the wrong box for a different reason, and all three
+ *     reasons are worth keeping: *switched off* would say a dial decides
+ *     money; *not in this agreement* would be false on the one screen where
+ *     the agreement is being made, because with an authorisation ratified
+ *     spending is exactly what it includes; *does not exist* would have been
+ *     false the day the transport lands, and the transport landed.
+ *     `purchaseKinds` below is the exclusion that keeps it out of all three,
+ *     and `tests/agreement-honesty.test.ts` fails if it stops.
  *   - **does not exist** — absent from the enum entirely. Send a message,
- *     publish, buy, delete. Absence of capability is the strongest prohibition
+ *     publish, delete. Absence of capability is the strongest prohibition
  *     available, and it is not something a setting could turn back on.
+ *     ~~(*Buy* stays on this list until the extension's branch moves —
+ *     `tests/architecture.test.ts` couples the sentence to the transport, and
+ *     docs/todo/06 item 5 is the commit where both change together.)~~
+ *     **Corrected 2026-09-01: the branch moved.** *Buy* is a CONDITIONAL row
+ *     now — still absent, with its refusal named, when no authorisation was
+ *     ratified, and not absent at all when one was. See `ABSENT` below.
  *
- * The middle one is weaker than the third and stronger than the first, and the
- * order above is that scale. Blurring it into either neighbour is the failure
- * this split exists to prevent.
+ * ~~The middle one is weaker than the third and stronger than the first, and
+ * the order above is that scale.~~ **Corrected 2026-09-01, when the fourth
+ * shape arrived:** the first, second and last are still that scale, weakest
+ * refusal to strongest, in the order above. *Ratified-bound* is not on the
+ * scale at all — it is the one shape that is a PERMISSION rather than a
+ * refusal, which is why it is shown above the lists rather than in one.
+ * Blurring any of them into a neighbour is the failure this split exists to
+ * prevent.
  *
  * ── Where the two pre-filled sentences came from, said out loud ──────────
  *
@@ -131,10 +156,12 @@ import type { ContractDrafted, PrefilledWords } from '../server/actions'
 import {
   ACTION_KINDS,
   CONFIRMABLE_ACTION_KINDS,
+  amountLabel,
   compilePolicy,
+  PURCHASE_ACTION_KINDS,
   TIME_LIMIT_CHOICES,
 } from '../domain/handoff/policy'
-import type { ActionKind, AutonomyControls } from '../domain/handoff/policy'
+import type { ActionKind, AutonomyControls, CurrencyCode } from '../domain/handoff/policy'
 import type { CalendarTimeSuggestion } from '../server/calendar'
 
 export interface AgreementProps {
@@ -254,6 +281,7 @@ export const ACTION_LABEL: Readonly<Record<ActionKind, string>> = {
   'type-text': 'Type into a box on the page',
   'press-key': 'Press Enter, Tab or Escape',
   'capture-screen': 'Take a picture of the page',
+  'complete-purchase': 'Complete the purchase you authorised',
 }
 
 /**
@@ -316,7 +344,10 @@ const NOT_IN_THIS_AGREEMENT = 'Not part of this agreement. Propositum is refused
 const ABSENT: readonly string[] = [
   'Send an email or a message',
   'Publish anything',
-  'Buy anything',
+  // 'Buy anything' left this list on 2026-09-01 (ADR-0024) and renders as a
+  // CONDITIONAL row at the list's use site: still absent, with the refusal
+  // named, when no authorisation was ratified — and not absent at all when one
+  // was, because it is then the ratified-bound line in Section 1.
   'Delete a file',
 ]
 
@@ -339,6 +370,7 @@ function minutesLabel(minutes: number): string {
   const hours = minutes / 60
   return hours === 1 ? '1 hour' : `${hours} hours`
 }
+
 
 function clockOf(when: Date): string {
   return new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit' })
@@ -400,7 +432,36 @@ export function Agreement({ draft, defaults, sourceLabels, onBack, onHandedOver 
     controls,
   )
 
-  const allowed = ACTION_KINDS.filter((kind) => policy.actionKindAllowlist.has(kind))
+  /**
+   * The kind that belongs in none of the three lists — ADR-0024.
+   *
+   * `complete-purchase` is inside `ActionKind`, so every derivation below
+   * would otherwise claim it, and each would say something false: it is on no
+   * dial, so *"What you've switched off"* credits the person with a decision
+   * about money they never made, and it may well be the very thing this
+   * agreement grants, so *"What this agreement doesn't include"* is false on
+   * the one screen where the agreement is being made. It is shown instead as
+   * the ratified-bound line in Section 1, with the amount, which is the header
+   * docblock's fourth shape.
+   *
+   * Excluded from `allowed` as well as from the two off-lists, and the
+   * exclusion there is defensive rather than load-bearing today: no draft
+   * offers this kind, so the compiled allowlist cannot hold it. It is here so
+   * that the day a draft does, the permission does not quietly appear as one
+   * more tick beside *"Click something on the page"* — a spending grant read
+   * at the same weight as a click is the thing Section 1's line exists to
+   * prevent.
+   *
+   * What this does NOT do: hide the refusal. With no authorisation ratified,
+   * the absence list below still carries the conditional *Buy anything* row
+   * naming the mechanism that refuses. `tests/agreement-honesty.test.ts` holds
+   * both halves.
+   */
+  const purchaseKind = (kind: ActionKind) => PURCHASE_ACTION_KINDS.has(kind)
+
+  const allowed = ACTION_KINDS.filter(
+    (kind) => policy.actionKindAllowlist.has(kind) && !purchaseKind(kind),
+  )
 
   /**
    * The two ways a kind can be missing, which may not share a heading.
@@ -430,10 +491,16 @@ export function Agreement({ draft, defaults, sourceLabels, onBack, onHandedOver 
    * members still explain themselves in the safe, causeless words.
    */
   const dialledOff = ACTION_KINDS.filter(
-    (kind) => draft.allowedActionKinds.includes(kind) && !policy.actionKindAllowlist.has(kind),
+    (kind) =>
+      draft.allowedActionKinds.includes(kind) &&
+      !policy.actionKindAllowlist.has(kind) &&
+      !purchaseKind(kind),
   )
   const neverOnOffer = ACTION_KINDS.filter(
-    (kind) => !draft.allowedActionKinds.includes(kind) && !policy.actionKindAllowlist.has(kind),
+    (kind) =>
+      !draft.allowedActionKinds.includes(kind) &&
+      !policy.actionKindAllowlist.has(kind) &&
+      !purchaseKind(kind),
   )
 
   /**
@@ -561,6 +628,45 @@ export function Agreement({ draft, defaults, sourceLabels, onBack, onHandedOver 
             can&rsquo;t be checked; &ldquo;Commercials and Close are drafted&rdquo; can.
           </p>
         </div>
+
+        {/*
+          The one line with the amount prominent, above the fold — ADR-0024.
+
+          Not a form: the numbers were clamped server-side and the person's
+          choice is ratify-or-go-back. `whatFor` is the draft's own prose and
+          renders attributed in quotation marks, never in Propositum's voice —
+          the quotedConstraints discipline, because a model sentence shown as
+          ours is how prose starts to read as a grant. Absent entirely when the
+          instruction named nothing to buy: an absent key is the deny, and this
+          screen stays byte-identical to the screen before buying existed.
+        */}
+        {draft.purchaseAuthorization === undefined ? null : (
+          <div style={{ marginTop: '1.6rem' }}>
+            <span className="ag-label">What you said I could buy</span>
+            <p className="ag-foot-line" style={{ marginTop: '0.4rem' }}>
+              May spend up to{' '}
+              <strong>
+                {amountLabel(
+                  draft.purchaseAuthorization.maxAmountMinor,
+                  draft.purchaseAuthorization.currency,
+                )}
+              </strong>{' '}
+              at {draft.purchaseAuthorization.merchantLabel} &mdash;{' '}
+              {draft.purchaseAuthorization.maxCount === 1
+                ? 'one charge'
+                : `at most ${draft.purchaseAuthorization.maxCount} charges`}
+              , while this agreement runs. Anything past the ceiling is refused and you are asked.
+            </p>
+            <p className="ag-hint">
+              The draft calls it &ldquo;{draft.purchaseAuthorization.whatFor}&rdquo; &mdash; its
+              words, quoted so you can check them. The words grant nothing; the ceiling is what you
+              are agreeing to.
+              {output === 'suggestions-only'
+                ? ' Suggestions only is on, so this hand-over grants no spending at all.'
+                : ''}
+            </p>
+          </div>
+        )}
       </Section>
 
       {/*
@@ -732,7 +838,20 @@ export function Agreement({ draft, defaults, sourceLabels, onBack, onHandedOver 
                 : 'What Propositum cannot do at all'}
             </h3>
             <ul className="ag-perms">
-              {ABSENT.map((thing) => (
+              {/*
+                The buy row is CONDITIONAL since 2026-09-01 (ADR-0024), and the
+                weakening reads like one. With no authorisation the old absolute
+                survives with its mechanism named; with one, buying is not
+                absent — it is the ratified-bound line in Section 1 — and
+                claiming absence here would be the screen lying about money.
+                `tests/architecture.test.ts` couples this arm to the transport.
+              */}
+              {[
+                ...ABSENT,
+                ...(draft.purchaseAuthorization === undefined
+                  ? ['Buy anything — you authorised no purchase, so every buying request is refused at the network']
+                  : []),
+              ].map((thing) => (
                 <li className="ag-perm" key={thing}>
                   <span className="ag-perm-mark">
                     <Refused size={16} title="Not possible" />
@@ -894,6 +1013,19 @@ export function Agreement({ draft, defaults, sourceLabels, onBack, onHandedOver 
           canDraft={policy.actionKindAllowlist.has('draft-section')}
           stopsWhenUnsure={interruption === 'stop-when-uncertain'}
         />
+
+        {draft.purchaseAuthorization !== undefined && output !== 'suggestions-only' ? (
+          <p className="ag-foot-line">
+            Pressing Hand over also lets it spend up to{' '}
+            <strong>
+              {amountLabel(
+                draft.purchaseAuthorization.maxAmountMinor,
+                draft.purchaseAuthorization.currency,
+              )}
+            </strong>{' '}
+            at {draft.purchaseAuthorization.merchantLabel}.
+          </p>
+        ) : null}
 
         <div className="ag-foot-actions">
           <Button variant="primary" onClick={handOver} disabled={pending || !ready}>

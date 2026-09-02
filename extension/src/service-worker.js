@@ -1452,7 +1452,13 @@ const controlHandlers = {
     // the intent here means the `control-lost` that follows from stopping
     // finds nothing in flight and stays quiet, rather than overwriting "I was
     // about to send a POST and did not" with "I lost the browser".
-    await reportInFlight({ ok: false, failure, detail: `${detail.method} ${detail.origin}` })
+    // `attested` rides only on the two amount refusals (ADR-0024): the parsed
+    // charge, from the request Chrome held, for the question at re-entry.
+    await reportInFlight({
+      ok: false,
+      failure,
+      detail: `${detail.method} ${detail.origin}${detail.attested ? ` — ${detail.attested}` : ''}`,
+    })
     await stopActing(failure)
   },
 }

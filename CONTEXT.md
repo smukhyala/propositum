@@ -936,26 +936,30 @@ table and is not displaced by this. It is restated by it.**
 **Consumer:** "What I'll work on" · "Done means…" · "Guidance — not a hard limit".
 
 ### ContractScope — *value object*
-`approvedSourceIds[]`, `allowedActionKinds[]`, `baseVersionId`. **Two more decided 2026-08-26 and
-neither built:** `approvedApplications[]`
-([ADR-0025](docs/adr/0025-computer-use-beyond-the-browser.md)) and an optional
-`purchaseAuthorization` ([ADR-0024](docs/adr/0024-purchases-within-a-ratified-authorisation.md)).
-**A third joined 2026-09-01, also unbuilt:** an optional `sendAuthorization`
+`approvedSourceIds[]`, `allowedActionKinds[]`, `baseVersionId`, and — **built 2026-09-01, the first
+of the fenced three to leave the fence** — an optional `purchaseAuthorization`
+([ADR-0024](docs/adr/0024-purchases-within-a-ratified-authorisation.md)): its absence is the deny,
+and only `acceptContract` may grant the kind it unlocks. **Two decided and still unbuilt:**
+`approvedApplications[]`
+([ADR-0025](docs/adr/0025-computer-use-beyond-the-browser.md)) and an optional `sendAuthorization`
 ([ADR-0029](docs/adr/0029-the-mailbox-and-a-calendar-of-our-own.md)).
-`grep -rn 'approvedApplications\|purchaseAuthorization\|sendAuthorization' src/ prisma/` returns
-nothing — these are a
+`grep -rn 'approvedApplications\|sendAuthorization' src/ prisma/` returns
+nothing — those two are a
 **specification rather than a description**, the same fence the `Intention` entry put around itself,
 and they are written here first because the constraint is one sentence today and a migration later.
 
 Deny-by-default; **no denylist**, because a second mechanism creates a precedence question with no
 principled answer. The "I will not…" reassurance panel renders ~~two visually distinct groups: the
 computed complement of `allowedActionKinds` (we chose not to allow this) and capabilities absent
-from the enum entirely (this does not exist)~~ **three, 2026-09-01 — the complement collapsed two
-different facts under one heading that named a choice, and credited the person with switching off
-kinds their shift never offered.** The three: **switched off** (inside `ActionKind`, this shift
-offered it, a dial removed it) · **not in this agreement** (inside `ActionKind`, never offered, so
-there was nothing for a dial to remove) · **does not exist** (absent from the enum entirely). The UI
-must never blur them.
+from the enum entirely (this does not exist)~~ ~~**three, 2026-09-01**~~ **four, 2026-09-01 — two
+splits decided apart and reconciled the same day.** The complement collapsed two different facts
+under one heading that named a choice, and credited the person with switching off kinds their shift
+never offered; and ADR-0024's `complete-purchase` fits none of the groups that leaves. The four:
+**switched off** (inside `ActionKind`, this shift offered it, a dial removed it) · **not in this
+agreement** (inside `ActionKind`, never offered, so there was nothing for a dial to remove) ·
+**ratified-bound** (`complete-purchase` — inside `ActionKind`, on no dial, granted only by
+ratifying a drafted `PurchaseAuthorization`, and shown as its own line with the amount rather than
+in any list) · **does not exist** (absent from the enum entirely). The UI must never blur them.
 
 `approvedSourceIds` defaults to the project sources actually observed this session, one tap to add
 any other — least privilege, cheap to correct. A model may propose a **narrowing**, checked
@@ -998,15 +1002,31 @@ Guardrails · Sandbox · ACL · Scope (bare) · approved resources · workingCop
 **Consumer:** "What I can look at" · "What I can change" · "Where I can work".
 
 ### PurchaseAuthorization — *value object*
-`originPattern`, `whatFor`, `maxAmount`, `currency`, `maxCount`, `expiresAt`. Optional on
-`ContractScope`; **its absence is the deny.** Decided 2026-08-26,
-[ADR-0024](docs/adr/0024-purchases-within-a-ratified-authorisation.md).
+~~`originPattern`, `whatFor`, `maxAmount`, `currency`, `maxCount`, `expiresAt`.~~ **Built 2026-09-01
+with two field corrections the code decided:** `originPattern`, `whatFor`, `maxAmountMinor` (the
+ceiling was always in minor units; the name now says so), `currency`, `maxCount`,
+`expiresAtEpochMs` — and the expiry is **derived, never stored or drafted**:
+`acceptedAt + timeLimitMinutes`, the same immutable pair the deadline derives from, so an
+authorisation structurally cannot outlive its contract, which is ADR-0024's own *Revisit when*
+tripwire answered by construction. Optional on `ContractScope`; **its absence is the deny.** Decided
+2026-08-26, [ADR-0024](docs/adr/0024-purchases-within-a-ratified-authorisation.md).
 
-**A specification rather than a description.** Nothing in `src/` or `prisma/` holds any of these
-fields, `LANDING_ACTION_KINDS` is still `new Set<ActionKind>()`, and `extension/src/cdp.js:529` still
-refuses every non-`GET` unconditionally — so **Propositum cannot buy anything today**, and
-`src/ui/agreement.tsx` is right to say so. `tests/architecture.test.ts` couples that screen's promise
-to the transport, so the day this is built the suite names the sentence that has to move.
+~~**A specification rather than a description.** Nothing in `src/` or `prisma/` holds any of these
+fields…~~ **The fence came off 2026-09-01: the fields exist** — `src/domain/handoff/policy.ts`
+declares the object, `prisma/schema.prisma` holds five nullable `purchase*` columns on the contract,
+and the gate refuses `complete-purchase` with `purchase_not_authorized`, `purchase_count_exceeded`
+and `purchase_expired`. ~~**What has NOT moved: the transport.**~~ **The transport moved later the
+same day: item 5 landed.** `LANDING_ACTION_KINDS` holds `complete-purchase`, and the extension
+refuses any non-`GET` without a one-shot landing permit a ratified authorisation armed — releasing
+exactly one covered request at or under the ceiling. *The landing permit is the extension-internal
+mechanism of THIS term and deliberately gets no noun of its own in the glossary: it is a
+not-persisted value in `chrome.storage.session`, armed per `complete-purchase` command from these
+fields and dead on consumption, refusal, expiry, or the tab being given up — a projection of the
+authorisation, never a second authority over it.* So **Propositum can buy exactly what a person
+ratified, and still nothing else**; the agreement screen confines *"Buy anything"* to the
+no-authorisation arm, and `tests/architecture.test.ts`'s updated guard couples the two arms the way
+the old one coupled the absolutes. The live purchase has not been made —
+[`docs/todo/06-buying-things.md`](docs/todo/06-buying-things.md) keeps its *Done when* open on it.
 
 What a person ratified about spending, for one contract. A model **drafts** it from the instruction —
 *"Buy 10 avocados from Amazon"* names a merchant, an item and a quantity, so there is something to
@@ -2003,7 +2023,13 @@ One thing the worker judged it could not safely decide:
 The centrepiece of the initial supported scenario — Propositum completes the draft **and** identifies
 one strategic decision — which is only consistent with the run continuing. So this is **not a halt
 and not a gate refusal.** It is not an ActionIntent (nothing was proposed and refused), not a
-ChangeVerdict, and not an `openThread` claim (that is a pre-handoff strand).
+ChangeVerdict, and not an `openThread` claim (that is a pre-handoff strand). *(One class is
+narrower since 2026-09-01, ADR-0024's build: a refused CHARGE — `amount-over-ceiling` or
+`amount-unparseable` at the transport — raises a `DecisionNeeded` built by `chargeRefusedQuestion`
+from the extension's attested account, and there the failed `ActionIntent`/`ActionOutcome` pair
+exists first and the run ends with the question. What made `DecisionNeeded` the right shape anyway
+is its load-bearing property, which is unchanged: the answer is prose and grants nothing — a
+confirmation would need a yes-path, and a yes-path would need the ceiling relaxed in flight.)*
 
 Naming it is not new abstraction: the brief already mandates "human decisions required" as a
 ShiftReport field, and without a name the demo's headline output is unrepresentable.
@@ -2217,9 +2243,16 @@ say that it does.
     ~~All three~~ **All four, since 2026-09-01,** **are decisions and none is built**, which this
     entry got wrong for about an hour on the
     day it was written. ~~`LANDING_ACTION_KINDS` … is no longer empty~~ — **it is still empty.**
-    `src/domain/handoff/policy.ts:168` reads `new Set<ActionKind>()`, `extension/src/cdp.js:529` still
+    ~~`src/domain/handoff/policy.ts:168` reads `new Set<ActionKind>()`, `extension/src/cdp.js:529` still
     returns `blocked-request` for every non-`GET`, and `grep -rn 'PurchaseAuthorization' src/` finds
-    nothing. What ADR-0024 changed is the **reason** the set is empty: it was *the transport cannot
+    nothing.~~ **Re-marked 2026-09-01, the day ADR-0024's build began:** the grep finds the object
+    now — the type, the gate rules and the columns exist, and `complete-purchase` is in the enum,
+    grantable only by ratification. ~~`LANDING_ACTION_KINDS` is still empty…~~ **Item 5 landed
+    later the same day: the set holds `complete-purchase`, the extension's refusal is
+    permit-conditional with absence meaning exactly what unconditional meant, and buying happens —
+    once per ratified authorisation, at or under its ceiling, and in no other case.** What ADR-0024
+    changed first was the **reason** the set was empty: it
+    was *the transport cannot
     honour a member* and it is now *the transport has been decided against and nobody has written the
     code*. The correction is left visible rather than tidied because stating a decision in the present
     tense is the exact failure this override's own paragraph warns about, and it happened here, inside

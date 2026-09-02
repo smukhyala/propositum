@@ -1381,3 +1381,104 @@ describe('the plan is reporting now', () => {
     expect((d.model as FakeModelClient).pendingReplies).toBe(0)
   })
 })
+
+/**
+ * ADR-0024, and the gap that opened on the day it was built.
+ *
+ * `LANDING_ACTION_KINDS` gained `complete-purchase` on 2026-09-01 and the arm
+ * that carries it out returned no `produced` — so the covered request left the
+ * machine, the ledger held the charge, and `recordOutcomes` was handed nothing
+ * to write an `external-effect` row from. A run whose only work was the
+ * purchase reported that it had produced nothing. This is the assertion that
+ * would have gone red that day: the loop's `produced` carries exactly one
+ * `landed` proposal, for the purchase intent, composed from the ATTESTED charge
+ * and not from anything a model said.
+ */
+describe('a completed purchase is produced as a landed outcome', () => {
+  it('yields one landed proposal, for the purchase intent, off the attested charge', async () => {
+    const d = deps(
+      [
+        plan('buy the thing'),
+        act({ kind: 'observe-page' }),
+        act({ kind: 'complete-purchase', ref: 'r1', snapshotId: 'snap-1' }),
+        done('Bought it.'),
+      ],
+      [
+        { ok: true, observation: observed(1) },
+        {
+          ok: true,
+          observation: observed(2),
+          charge: { amountMinor: 4200, currency: 'USD', origin: 'https://orders.example.com' },
+        },
+      ],
+    )
+
+    const result = await runWorker(
+      job({
+        scope: {
+          approvedSourceIds: ['src-orders'],
+          allowedActionKinds: ['observe-page', 'complete-purchase'],
+          purchaseAuthorization: {
+            originPattern: 'https://orders.example.com',
+            whatFor: 'the thing',
+            maxAmountMinor: 5000,
+            currency: 'USD',
+            maxCount: 1,
+            expiresAtEpochMs: 1_000_000,
+          },
+        },
+      }),
+      d,
+    )
+
+    expect(result.stoppedBy).toEqual([])
+    expect(d.recorded.outcomes.map((o) => o.result)).toEqual(['succeeded', 'succeeded'])
+    expect(result.produced).toEqual([
+      {
+        kind: 'landed',
+        intentId: 'intent-2',
+        what: 'Paid $42.00',
+        where: 'https://orders.example.com',
+      },
+    ])
+  })
+
+  it('produces nothing when the permit was never consumed, because nothing was bought', async () => {
+    // An ok report with no charge means the press landed nothing. The tool
+    // throws, the outcome row reads failed, and there is no landed proposal
+    // for a charge that did not happen.
+    const d = deps(
+      [
+        plan('buy the thing'),
+        act({ kind: 'observe-page' }),
+        act({ kind: 'complete-purchase', ref: 'r1', snapshotId: 'snap-1' }),
+        done('Tried.'),
+      ],
+      [
+        { ok: true, observation: observed(1) },
+        { ok: true, observation: observed(2) },
+      ],
+    )
+
+    const result = await runWorker(
+      job({
+        scope: {
+          approvedSourceIds: ['src-orders'],
+          allowedActionKinds: ['observe-page', 'complete-purchase'],
+          purchaseAuthorization: {
+            originPattern: 'https://orders.example.com',
+            whatFor: 'the thing',
+            maxAmountMinor: 5000,
+            currency: 'USD',
+            maxCount: 1,
+            expiresAtEpochMs: 1_000_000,
+          },
+        },
+      }),
+      d,
+    )
+
+    expect(d.recorded.outcomes.map((o) => o.result)).toEqual(['succeeded', 'failed'])
+    expect(result.produced).toEqual([])
+  })
+})

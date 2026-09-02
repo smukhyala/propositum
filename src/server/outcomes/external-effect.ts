@@ -1,19 +1,26 @@
 /**
  * `landed` productions become external effects — the one kind that is not
- * `held`, and the one kind nothing can currently produce.
+ * `held`, ~~and the one kind nothing can currently produce~~ **and since
+ * 2026-09-01 one kind can produce it: `complete-purchase` (ADR-0024)**.
  *
- * ── It has no producing `ActionKind`, and that is asserted ───────────────
+ * ── ~~It has no producing `ActionKind`~~ It has exactly one, and the check
+ * below is what makes that a fact rather than a claim ──
  *
- * `LANDING_ACTION_KINDS` is EMPTY. Every kind that exists today is a read or a
- * draft: `draft-section` proposes text a person still has to accept, and even
- * `click-element` — which can press a page's own Send button — is not a landing
- * kind, because landing is about whose act put the effect into the world, not
- * about whether an effect is possible.
+ * `LANDING_ACTION_KINDS` holds `complete-purchase`. Every other kind is still
+ * a read or a draft: `draft-section` proposes text a person still has to
+ * accept, and even `click-element` — which can press a page's own Send button
+ * into a request the network refuses — is not a landing kind, because landing
+ * is about whose act put the effect into the world, not about whether an
+ * effect is possible.
  *
- * So this file's realistic behaviour today is to DROP everything it is handed,
- * and `tests/reachability.test.ts` pins the emptiness of `LANDING_ACTION_KINDS`
- * in its *deferred, and asserted as deferred* block. The day a capability lands,
- * that test turns red and forces the claim to move up rather than slip in.
+ * The DROP below stopped being this file's whole behaviour and became its
+ * enforcement: a `landed` production whose intent is not a succeeded
+ * `complete-purchase` in this run is still dropped, and the tool's own rule —
+ * an ok report without the attested charge throws — is what makes `succeeded`
+ * mean "the covered request left the machine". `tests/reachability.test.ts`
+ * now pins the set's exact membership in its reachable section; the emptiness
+ * pin did its job on the day this landed and was moved up, as its own text
+ * instructed.
  *
  * ── Why a `landed` production is dropped unless the ledger agrees ────────
  *

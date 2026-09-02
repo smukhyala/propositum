@@ -824,13 +824,14 @@ decision.
 > **Read this before the table. 2026-08-26.**
 >
 > **Three decisions were accepted today that spend most of this section, and none of them is built
-> yet** *(a fourth joined 2026-09-01)*. Everything below is true of the code as it stands. It is not
-> true of the product that has been decided on, and the gap between those two things is the most
+> yet** *(a fourth joined 2026-09-01 — and later that same day the first row stopped being unbuilt:
+> ADR-0024 landed, and its row below says exactly what that changed)*. Everything below is true of
+> the code as it stands, and the gap between what is decided and what is built is the most
 > important sentence on this page:
 >
 > | Decision | What it spends | Built? |
 > |---|---|---|
-> | [ADR-0024](./adr/0024-purchases-within-a-ratified-authorisation.md) | the unconditional non-`GET` block. **Propositum will buy things**, within a `PurchaseAuthorization` you ratified — bounded by an origin, a ceiling, a count and an expiry | **no** |
+> | [ADR-0024](./adr/0024-purchases-within-a-ratified-authorisation.md) | the unconditional non-`GET` block. **Propositum ~~will~~ can buy things**, within a `PurchaseAuthorization` you ratified — bounded by an origin, a ceiling, a count and an expiry the agreement's own end derives | **~~no~~ yes — 2026-09-01.** Everything else in the row above holds: any non-`GET` without a ratified permit is refused at the network exactly as before, an unreadable or over-ceiling amount refuses and asks, and no live purchase has yet been made ([todo 06](../docs/todo/06-buying-things.md) keeps that open) |
 > | [ADR-0025](./adr/0025-computer-use-beyond-the-browser.md) | rows 1 and 3 of the table below. It will act on the whole machine, inside an allowlist of applications you ratified, and it will sign in by clicking Chrome's own saved-password prompt | **no** |
 > | [ADR-0026](./adr/0026-reading-a-one-time-code.md) | the filesystem qualification below. It will read `~/Library/Messages/chat.db` for a one-time code — one caller, a five-minute window, digits only, nothing stored | **no** |
 > | [ADR-0029](./adr/0029-the-mailbox-and-a-calendar-of-our-own.md) *(added 2026-09-01)* | ADR-0014's single-scope containment. **Propositum will work in your mailbox** — read, label, archive and draft inside a ratified run, never permanent delete, send only inside a `SendAuthorization` naming its recipients — **and place holds** on a calendar of its own inside your account — meant to move your availability, and whether a hold on a secondary calendar actually reads as busy is the build's first check (ADR-0029 §3; the calendar half reopens if it does not) — while the calendars you already keep stay untouchable by that scope's construction | **no** |
@@ -861,7 +862,7 @@ What still does not exist, and what replaced what did:
 | **Still absent entirely**      | any capability outside your browser — your filesystem, your other applications, your computer. There is no tool, and an architecture test asserts none exists. *(Qualified 2026-08-26 — see the note under this table. Propositum still cannot reach your filesystem; you can now hand it one file at a time.)*                                                           |
 | **Still absent entirely**      | any way for Propositum to run its own JavaScript in a page you are signed into. No `Runtime.evaluate`, no `element.click()`. Clicks are synthesised input at coordinates                                                |
 | **Still absent entirely**      | any way to learn that another tab exists, or to act in one                                                                                                                                                              |
-| **Replaced by a confirmation** | sending, submitting, buying, publishing, deleting. These used to be absent from the `ActionKind` enum. They are now reachable by a click, and every action the browser attests as irreversible stops and asks you first |
+| **Replaced by a confirmation** | sending, submitting, ~~buying,~~ publishing, deleting. These used to be absent from the `ActionKind` enum. They are now reachable by a click, and every action the browser attests as irreversible stops and asks you first. *(Buying left this row on 2026-09-01: its consent is a ratified `PurchaseAuthorization` with a ceiling, given once on the agreement screen — deliberately NOT a per-purchase confirmation, on ADR-0024 §4's habituation argument — and any buying request outside one is still refused at the network.)* |
 
 **About that first row, and a file you choose yourself** *(2026-08-26)*. The project screen now has
 an *Open a file…* control beside the document. It changes nothing this table says and it is worth

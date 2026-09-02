@@ -54,7 +54,7 @@ or what would make the file **deletable** rather than done
 | 3 | [`03-document-loop.md`](./03-document-loop.md) | ~~~1 week~~ **import, export and the editor done 2026-08-26; items 2 and 5 left** | no |
 | 4 | [`04-quick-fixes.md`](./04-quick-fixes.md) | ~~half a day~~ ~~done 2026-08-26, except item 7~~ **and item 10, added 2026-08-27** | no |
 | 5 | [`05-chrome-web-store.md`](./05-chrome-web-store.md) | 1 day + weeks of waiting | $5 one-off |
-| 6 | [`06-buying-things.md`](./06-buying-things.md) | days, **decided not built** | what it buys |
+| 6 | [`06-buying-things.md`](./06-buying-things.md) | ~~days, **decided not built**~~ **built 2026-09-01, except the live purchase** | what it buys |
 | 7 | [`07-off-the-browser.md`](./07-off-the-browser.md) | **the largest file here**, decided not built | via `01` |
 | 8 | [`08-one-time-codes.md`](./08-one-time-codes.md) | ~200 lines, **decided not built** | no |
 | 9 | [`09-onboarding.md`](./09-onboarding.md) | **unshaped** — written down 2026-08-27, the owner's design pass pending | no |

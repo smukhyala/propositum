@@ -202,6 +202,13 @@ export type RefusalRule =
   | 'password_field'
   | 'key_not_allowed'
   | 'no_document_pinned'
+  /** ADR-0024, add-only like everything above. `purchase_expired` is
+   *  production-coincident with `budget_exhausted` while expiry derives from
+   *  the same pair as the deadline — it exists because `authorize` is pure and
+   *  table-testable, and because a future stored expiry would need it. */
+  | 'purchase_not_authorized'
+  | 'purchase_count_exceeded'
+  | 'purchase_expired'
 
 /**
  * Everything the gate needs about the run in flight. All facts, no judgment.
@@ -265,6 +272,19 @@ export interface RunContext {
   /** What the page says about the element this proposal targets. Page-authored
    *  in every field; see `../domain/execution/reversibility`. */
   readonly targetEvidence?: ElementEvidence | null | undefined
+  /**
+   * Ratified charges SPENT under this contract's authorisation — authorized
+   * `complete-purchase` intents, counted as ATTEMPTS whatever their outcome.
+   * The closed direction for money: a throw after the covered request left
+   * reads `failed` in the ledger, and a success-only count would let a retry
+   * spend the ratified `maxCount` twice across exactly that gap.
+   *
+   * **Fail-closed when absent**, and that is a documented deviation from
+   * `actionsTaken`'s absent-means-zero reading: an unwired counter must never
+   * let money move, so `undefined` here refuses `complete-purchase` with
+   * `purchase_count_exceeded` rather than treating the ledger as empty.
+   */
+  readonly chargesSpent?: number | undefined
 }
 
 /**
@@ -585,6 +605,32 @@ export function authorize(
       // likewise not checked for `type-text`: a missing payload is a validity
       // problem for the tool to throw on, not a permission problem, and the
       // refusal vocabulary is about permission. Text does not widen anything.
+      break
+    }
+    case 'complete-purchase': {
+      // Belt and braces over the allowlist: an accepted contract only carries
+      // this kind when a ratified authorisation exists, but the two facts are
+      // written by different code and this check is the one that cannot drift.
+      if (policy.purchase === undefined) return deny('purchase_not_authorized')
+      if (proposal.params.ref === undefined) return deny('element_ref_missing')
+
+      // Same instant-of-deadline convention as the budget: `>=` refuses AT the
+      // expiry. While expiry derives from `acceptedAt + timeLimitMinutes` this
+      // is production-coincident with `budget_exhausted` above; it stays
+      // because the derivation is an assembly fact, not a gate fact.
+      if (run.nowEpochMs >= policy.purchase.expiresAtEpochMs) {
+        return deny('purchase_expired')
+      }
+
+      // Fail closed on an absent counter — see `RunContext.chargesSpent`.
+      const spent = run.chargesSpent
+      if (spent === undefined) return deny('purchase_count_exceeded')
+      if (spent >= policy.purchase.maxCount) return deny('purchase_count_exceeded')
+
+      // What is deliberately NOT here: the amount. The gate never sees a
+      // request body — the ceiling is compared by the transport against the
+      // request Chrome is actually holding, which is the only place the number
+      // is attested. ADR-0024 §2's table splits the five checks this way.
       break
     }
   }

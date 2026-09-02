@@ -381,11 +381,13 @@ describe('a citation is a join, not a claim', () => {
     expect(written[1]?.citedActionIntentIds).toEqual([myIntent.id])
   })
 
-  it('drops a landed production, because nothing can land today', async () => {
-    // `LANDING_ACTION_KINDS` is empty, so no completed intent of any run carries
-    // a landing kind — and a production claiming otherwise is a model assigning
-    // its own reversibility, which would remove the person's ability to reject
-    // its work by describing the work as already done.
+  it('drops a landed production the ledger does not corroborate', async () => {
+    // ~~`LANDING_ACTION_KINDS` is empty, so no completed intent of any run
+    // carries a landing kind~~ — since 2026-09-01 one kind does, and the rule
+    // is now the one this test was always about: a production claiming to have
+    // landed is a model assigning its own reversibility unless THIS run holds a
+    // succeeded intent of a landing kind under that id. Here it holds only
+    // drafts and reads, so the claim is dropped and counted.
     const { contractId } = await acceptedContract(true)
     const runId = await run(contractId, [...DRAFTS, NO_FINDINGS])
 
@@ -412,6 +414,61 @@ describe('a citation is a join, not a claim', () => {
     expect(recorded.written).toBe(0)
     expect(recorded.dropped).toBe(1)
     expect((await repos.outcomes.forRun(runId)).length).toBe(before)
+  })
+
+  it('writes an external-effect, landed, when the ledger holds the succeeded purchase', async () => {
+    /**
+     * The other half, and the one nothing asserted between 2026-09-01 and
+     * 2026-09-02: the whole chain from a succeeded `complete-purchase` row to
+     * a row a person can read. The intent and its outcome are written here the
+     * way `ledgerFor` writes them, because this test is about `recordOutcomes`
+     * reading the ledger, not about the worker writing it — the worker's half
+     * is `tests/browser-loop.test.ts`.
+     */
+    const { contractId } = await acceptedContract(true)
+    const runId = await run(contractId, [...DRAFTS, NO_FINDINGS])
+
+    const contract = await repos.contracts.byId(contractId)
+    if (!contract) throw new Error('no contract')
+    const workspace = await loadWorkspace(ctx, contract)
+
+    const intent = await db.prisma.actionIntent.create({
+      data: {
+        runId,
+        seq: 900,
+        kind: 'complete-purchase',
+        reason: 'the ratified checkout',
+        params: { ref: 'r1', snapshotId: 'snap-1' },
+        authorized: true,
+      },
+      select: { id: true },
+    })
+    await db.prisma.actionOutcome.create({
+      data: { intentId: intent.id, result: 'succeeded', scopeVerdict: 'within_scope' },
+    })
+
+    const before = (await repos.outcomes.forRun(runId)).length
+
+    const recorded = await recordOutcomes(ctx, {
+      run: { id: runId },
+      contract: { id: contractId },
+      workspace,
+      produced: [
+        { kind: 'landed', intentId: intent.id, what: 'Paid $42.00', where: 'https://shop.example' },
+      ],
+    })
+
+    expect(recorded.written).toBe(1)
+    expect(recorded.dropped).toBe(0)
+
+    const rows = await repos.outcomes.forRun(runId)
+    expect(rows.length).toBe(before + 1)
+    const effect = rows.find((row) => row.kind === 'external-effect')
+    if (!effect) throw new Error('no external-effect row')
+    // Landed, not held: nothing on the re-entry screen may offer to reject it.
+    expect(effect.reversibility).toBe('landed')
+    expect(effect.headline).toBe('Paid $42.00 — https://shop.example')
+    expect(effect.citedActionIntentIds).toEqual([intent.id])
   })
 
   it('says so in the report when something it made could not be kept', async () => {

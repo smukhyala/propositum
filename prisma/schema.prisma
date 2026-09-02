@@ -408,6 +408,27 @@ model HandoffContract {
   /// the branch where a base exists.
   baseVersionId      String?
 
+  /// PurchaseAuthorization (ADR-0024) — five nullable columns, and the five
+  /// are one object: either all are set at draft time or none is, and NULL on
+  /// the first means "this contract authorises no spending", which is the
+  /// deny. Written at createDraft like intentionId above, because the frozen-
+  /// once-accepted trigger makes draft time the only time. No expiry column:
+  /// expiry DERIVES from acceptedAt + timeLimitMinutes, the same immutable
+  /// pair as the deadline, so an authorisation structurally cannot outlive its
+  /// contract.
+  /// An origin, matched exactly by the transport — never by prefix.
+  purchaseOriginPattern  String?
+  /// Display only. Read by the person on the agreement screen, never by the
+  /// gate — EnforcedPolicy.purchase has no field it could occupy.
+  purchaseWhatFor        String?
+  /// The ceiling, in minor units. Nothing may relax it (principle 6).
+  purchaseMaxAmountMinor Int?
+  /// CurrencyCode: USD | EUR | GBP | CAD | AUD | JPY. String because SQLite
+  /// has no enums; the authoritative set is CURRENCY_CODES in src/domain.
+  purchaseCurrency       String?
+  /// How many charges the authorisation permits.
+  purchaseMaxCount       Int?
+
   /// AutonomyControls. Absent from every model-facing schema; defaults are
   /// static product constants, never model-proposed.
   /// follow-closely | use-judgment

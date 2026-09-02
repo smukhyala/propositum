@@ -1095,6 +1095,18 @@ export interface ContractInput {
    * let them hand work over.
    */
   readonly baseVersionId: string | null
+  /**
+   * The five PurchaseAuthorization columns (ADR-0024), one object or nothing.
+   * Optional rather than nullable-required for intentionId's reason: every
+   * existing caller and fixture authorises no spending, and absence is the
+   * deny. Like intentionId, draft time is the only time — the frozen trigger
+   * closes the door after acceptance.
+   */
+  readonly purchaseOriginPattern?: string | null
+  readonly purchaseWhatFor?: string | null
+  readonly purchaseMaxAmountMinor?: number | null
+  readonly purchaseCurrency?: string | null
+  readonly purchaseMaxCount?: number | null
   readonly initiative: string
   readonly progress: string
   readonly output: string
