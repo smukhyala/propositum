@@ -146,8 +146,11 @@ landings ≤ authorised intents by construction.
    [`AGENTS.md`](../../AGENTS.md): if you wire something up, move its assertion out of the deferred
    block in the same change.
 
-8. ~~**Strike the promises, everywhere, in the same commit.**~~ *(done 2026-09-01)* `src/ui/agreement.tsx:298` is the one
-   the guard names, and it is not the only one. `docs/SECURITY_AND_PRIVACY.md`'s *capabilities that
+8. ~~**Strike the promises, everywhere, in the same commit.**~~ *(done 2026-09-01)* ~~`src/ui/agreement.tsx:298`~~
+   **the line number is gone, 2026-09-01, because it had already moved:** the promise the guard
+   names is the *"Buy anything"* row, and the comment beside `ABSENT` in `src/ui/agreement.tsx`
+   records that it left that list on 2026-09-01 and renders conditionally now. Point at the thing;
+   a line number is a count somebody has to maintain by hand. It is not the only promise. `docs/SECURITY_AND_PRIVACY.md`'s *capabilities that
    do not exist* section shrinks, and *"Propositum cannot buy anything"* — true by mechanism today —
    becomes *"cannot buy anything you did not authorise"*, which is a weaker claim and has to read
    like one.

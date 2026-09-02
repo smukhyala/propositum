@@ -951,12 +951,15 @@ and they are written here first because the constraint is one sentence today and
 Deny-by-default; **no denylist**, because a second mechanism creates a precedence question with no
 principled answer. The "I will not…" reassurance panel renders ~~two visually distinct groups: the
 computed complement of `allowedActionKinds` (we chose not to allow this) and capabilities absent
-from the enum entirely (this does not exist)~~ **three, 2026-09-01 — the complement collapsed two
-different facts under one heading that named a choice, and credited the person with switching off
-kinds their shift never offered.** The three: **switched off** (inside `ActionKind`, this shift
-offered it, a dial removed it) · **not in this agreement** (inside `ActionKind`, never offered, so
-there was nothing for a dial to remove) · **does not exist** (absent from the enum entirely). The UI
-must never blur them.
+from the enum entirely (this does not exist)~~ ~~**three, 2026-09-01**~~ **four, 2026-09-01 — two
+splits decided apart and reconciled the same day.** The complement collapsed two different facts
+under one heading that named a choice, and credited the person with switching off kinds their shift
+never offered; and ADR-0024's `complete-purchase` fits none of the groups that leaves. The four:
+**switched off** (inside `ActionKind`, this shift offered it, a dial removed it) · **not in this
+agreement** (inside `ActionKind`, never offered, so there was nothing for a dial to remove) ·
+**ratified-bound** (`complete-purchase` — inside `ActionKind`, on no dial, granted only by
+ratifying a drafted `PurchaseAuthorization`, and shown as its own line with the amount rather than
+in any list) · **does not exist** (absent from the enum entirely). The UI must never blur them.
 
 `approvedSourceIds` defaults to the project sources actually observed this session, one tap to add
 any other — least privilege, cheap to correct. A model may propose a **narrowing**, checked

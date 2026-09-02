@@ -1361,6 +1361,11 @@ interface Performed {
  * gets somewhere. So this set is neither the mutating set nor the browser set,
  * and collapsing it into either would be wrong in both directions.
  *
+ * `complete-purchase` joined it on 2026-09-01 (ADR-0024) and is the least
+ * arguable member of all: a charge that landed is the run's artifact, so a run
+ * that completed one is the exact case `no-progress` waits for rather than the
+ * case it catches.
+ *
  * `tests/worker.test.ts` pins it against `perform`'s own source, because a
  * hand-maintained list that drifts from the handlers fails silently in the
  * dangerous direction — a run that could make progress, exempted from the rule
@@ -1372,6 +1377,7 @@ export const PROGRESSING_ACTION_KINDS: ReadonlySet<ActionKind> = new Set<ActionK
   'click-element',
   'type-text',
   'press-key',
+  'complete-purchase',
 ])
 
 /** Dispatch by kind. Exhaustive over ActionKind, so adding a capability without
