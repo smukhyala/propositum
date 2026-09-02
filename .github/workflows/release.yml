@@ -47,13 +47,26 @@ jobs:
 
       - name: Rust for aarch64-apple-darwin
         run: rustup target add aarch64-apple-darwin
+      # `src-tauri/target` is NOT cached, and the exclusion is the point.
+      #
+      # At post-job time that path holds `bundle/macos/Propositum.app` — the
+      # signed application, and on a build that carried one, the plaintext
+      # `bundled-key` file `scripts/stage-runtime.ts` writes into
+      # `Contents/Resources/runtime`. Tag-scoped caches are not readable from
+      # pull-request runs, so the exposure is narrow; a live credential sitting
+      # in Actions cache storage for no benefit is still not a thing to keep,
+      # and re-caching a freshly signed artefact on every release buys nothing
+      # either — the signature is the part that must be produced fresh.
+      #
+      # What is worth caching is the dependency build, which is where the time
+      # goes and which carries nothing secret.
       - name: Cache cargo
         uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            src-tauri/target
+            src-tauri/target/**/deps
           key: release-${{ runner.os }}-${{ hashFiles('src-tauri/Cargo.lock') }}
 
       - name: Import the signing certificate into a job keychain

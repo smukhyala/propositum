@@ -279,3 +279,40 @@ describe('the typechecker is not handed a second copy of the sources', () => {
     expect(config.exclude ?? []).toContain('dist-runtime')
   })
 })
+
+/**
+ * A release must not leave its own artefact in a cache — #154.
+ *
+ * `release.yml` cached `src-tauri/target`, and at post-job time that path holds
+ * `bundle/macos/Propositum.app`: the signed application, and on a build
+ * carrying one, the plaintext `bundled-key` file `scripts/stage-runtime.ts`
+ * writes into `Contents/Resources/runtime`. Tag-scoped caches are not readable
+ * from pull-request runs, so the exposure was narrow — and a live credential in
+ * Actions cache storage for no benefit is still not a thing to keep.
+ *
+ * Pinned as config text for the reason `vitest.config.ts`'s timeout is: the
+ * failure is invisible in every log, produces no red tick, and is one line in a
+ * file nobody rereads.
+ *
+ * WHAT THIS DOES NOT COVER: `tray.yml`, which caches the same path and may.
+ * That workflow runs `cargo check` and `cargo test` and builds no bundle, so
+ * nothing secret and nothing signed is ever under it — the difference is what
+ * the job produces, not the path it names.
+ */
+describe('the release workflow caches dependencies, not what it just signed', () => {
+  const RELEASE = read('.github/workflows/release.yml')
+
+  it('names the tag it builds from, or the rest of this is about another file', () => {
+    expect(RELEASE).toMatch(/tags:\s*\[\s*'v\*'\s*\]/)
+  })
+
+  it('does not cache the bundle directory the signed app lands in', () => {
+    const cache = RELEASE.slice(RELEASE.indexOf('actions/cache'))
+    const paths = cache.slice(0, cache.indexOf('key:'))
+
+    // The bare path is what swept the bundle in. A narrower one under it is
+    // fine and is what the workflow uses.
+    expect(paths).not.toMatch(/^\s*src-tauri\/target\s*$/m)
+    expect(paths).not.toMatch(/bundle/)
+  })
+})
