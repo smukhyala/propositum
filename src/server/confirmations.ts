@@ -218,6 +218,18 @@ export interface ConfirmationView {
   readonly id: string
   readonly runId: string
   readonly contractId: string
+  /**
+   * The `WorkSession` this contract was handed over from — the address of the
+   * ordinary handover flow, and the whole of what #139 needed here.
+   *
+   * Carried on the view rather than fetched by the page because it costs
+   * nothing: `run` is already joined for `contractId` and `status`, so this is
+   * one more column on a query that was happening anyway. It is an ADDRESS and
+   * not a permission — following it lands on the agreement screen, where a
+   * person ratifies a new `HandoffContract` in full. The shift report's
+   * *Hand over again* is built from the same fact.
+   */
+  readonly sessionId: string
   /** Code-generated from attested facts. Never model prose. */
   readonly summary: string
   readonly askedAt: Date
@@ -374,7 +386,11 @@ export async function confirmationView(
       createdAt: true,
       evidenceId: true,
       verdict: { select: { verdict: true } },
-      run: { select: { contractId: true, status: true } },
+      // `contract.sessionId` is the address of the ordinary handover flow, and
+      // it rides the join that was already here for `contractId` and `status`.
+      run: {
+        select: { contractId: true, status: true, contract: { select: { sessionId: true } } },
+      },
       intent: { select: { kind: true, params: true } },
       // `image` is deliberately NOT selected. It is a multi-megabyte PNG and
       // this function only needs to know whether there is one; the page reads
@@ -421,6 +437,7 @@ export async function confirmationView(
     id: row.id,
     runId: row.runId,
     contractId: row.run.contractId,
+    sessionId: row.run.contract.sessionId,
     summary: row.summary,
     askedAt: row.createdAt,
     verdict: row.verdict?.verdict ?? null,
@@ -620,7 +637,11 @@ export async function rejectRequest(
 ): Promise<AnswerResult> {
   const request = await ctx.db.prisma.confirmationRequest.findUnique({
     where: { id: requestId },
-    select: { id: true, verdict: { select: { verdict: true } } },
+    select: {
+      id: true,
+      verdict: { select: { verdict: true } },
+      run: { select: { contract: { select: { sessionId: true } } } },
+    },
   })
   if (!request) return { ok: false, reason: 'not-found' }
   if (request.verdict) return { ok: false, reason: 'already-answered' }
@@ -630,6 +651,11 @@ export async function rejectRequest(
   // "you never saw it" in the report — and it grants nothing, so the reason to
   // refuse a late yes does not apply to a late no.
   await ctx.repos.confirmations.recordVerdict({ requestId, verdict: 'rejected', decidedAt: now })
+
+  // A no ends the pause with no continuation, so the session comes back. It had
+  // been staying `away` for ever, which made every "hand the work over again"
+  // sentence in the product point at a screen that could not.
+  await handBackTheSession(ctx, request.run.contract.sessionId)
 
   return { ok: true, continuationRunId: null }
 }
@@ -717,7 +743,12 @@ export async function admitRun(
 ): Promise<'proceed' | 'settled'> {
   const run = await ctx.db.prisma.agentRun.findUnique({
     where: { id: runId },
-    select: { id: true, contractId: true, resumesRunId: true },
+    select: {
+      id: true,
+      contractId: true,
+      resumesRunId: true,
+      contract: { select: { sessionId: true } },
+    },
   })
   if (!run) return 'settled'
   if (run.resumesRunId === null) return 'proceed'
@@ -749,11 +780,51 @@ export async function admitRun(
   })
 
   await noteInReport(ctx, run.contractId, admission.report)
+  // The answer was real and arrived too late, so nothing carries on and the
+  // session is the person's again. The report already tells them why.
+  await handBackTheSession(ctx, run.contract.sessionId)
 
   return 'settled'
 }
 
 /* ── expiry: the one thing here that runs on the clock ──────────────────── */
+
+/**
+ * Give the session back to the person, now that the pause is over.
+ *
+ * ── Why this is not `execute-run.ts`'s job, and where it went missing ────
+ *
+ * `executeRun` hands the session back on the two paths it owns, and one of them
+ * carries the sentence this exists to honour: *"Without this it stays `away`
+ * forever, and every control that offers to hand it back is a promise the
+ * product cannot keep."*
+ *
+ * A confirmation pause leaves the session `away` deliberately — ADR-0010's risk
+ * list settles that *"`SessionPhase` has no honest value for a confirmation
+ * pause… Keeping `away` is the smaller lie"* — and that holds **while the
+ * question is live**. It stops holding the moment the pause ends without a
+ * continuation, and three paths do that: a rejection, an expiry, and an answer
+ * that arrived too late. None of them handed the session back, so a session
+ * stayed `away` for ever and `/sessions/<id>` said *"Nothing here can be
+ * changed until it hands back."*
+ *
+ * That was invisible until #139 put a route to that screen on the closed
+ * confirmation, at which point the product's three *"hand the work over again"*
+ * sentences all pointed at a page that could not.
+ *
+ * ── What it does NOT do ─────────────────────────────────────────────────
+ *
+ * It does not touch the run, which each caller has already ended in the way
+ * that fits its own reason. It is not idempotent-by-check either — `setPhase`
+ * is a plain write, and writing `observing` over `observing` is harmless.
+ *
+ * The path it deliberately skips is `confirmRequest`'s: a yes enqueues a
+ * continuation, the work carries on, and the session is still genuinely away.
+ * `executeRun` hands it back when that run ends, like any other.
+ */
+async function handBackTheSession(ctx: ConfirmationContext, sessionId: string): Promise<void> {
+  await ctx.repos.sessions.markObserving(sessionId)
+}
 
 /**
  * Stop waiting for answers nobody gave.
@@ -798,7 +869,12 @@ export async function expireConfirmations(ctx: ConfirmationContext, now: Date): 
       createdAt: { lte: expiredBefore },
       run: { status: 'awaiting-confirmation' },
     },
-    select: { id: true, runId: true, run: { select: { contractId: true } } },
+    select: {
+      id: true,
+      runId: true,
+      // `sessionId` for the hand-back below, off the join already here.
+      run: { select: { contractId: true, contract: { select: { sessionId: true } } } },
+    },
   })
 
   let settled = 0
@@ -816,6 +892,7 @@ export async function expireConfirmations(ctx: ConfirmationContext, now: Date): 
       },
     })
     await noteInReport(ctx, request.run.contractId, CONFIRMATION_EXPIRED_REPORT)
+    await handBackTheSession(ctx, request.run.contract.sessionId)
     settled += 1
   }
 
