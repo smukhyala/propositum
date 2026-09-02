@@ -559,6 +559,50 @@ export async function runWorker(job: WorkerJob, deps: WorkerDeps): Promise<Worke
    */
   let controlLost = false
 
+  /**
+   * Could ANY kind this run is permitted have reported progress?
+   *
+   * ── What it is for ───────────────────────────────────────────────────
+   *
+   * `no-progress` counts completed actions that changed no artifact, and resets
+   * only on one that did. Under `suggestions-only` on a document shift,
+   * `compilePolicy` removes `draft-section` and what survives is reads — so
+   * nothing this run is permitted to do could ever reset the counter, and the
+   * halt landed on the third read every time, on the arithmetic rather than on
+   * anything the run did wrong. `NO_PROGRESS_LIMIT`'s own comment says it was
+   * written for research *before a draft*; here there is no draft for the
+   * research to be a prelude to.
+   *
+   * ── Why the exemption is HERE and not in the rule ────────────────────
+   *
+   * Because it applies to one of four increments. `evaluateStructuralStops` is
+   * a rule over a count, and a rule that skipped `no-progress` for this run
+   * would exempt every way of arriving at the count — a question raised every
+   * turn, a gate refusal every turn, an action that fails every turn. None of
+   * those is *"a read that could not have been anything else"*, and all three
+   * are a run going in circles by any reading. So the counter stops counting
+   * the one thing the dial made meaningless, and the rule is untouched.
+   *
+   * ── What it does NOT cover ───────────────────────────────────────────
+   *
+   * The three increments above: a `decisionNeeded` under
+   * `stop-only-when-blocked`, a refusal that is not a pause, and a failed
+   * action all still count, so a research-only run that asks or breaks its way
+   * through the afternoon still halts at three. Neither does it unbound a run
+   * that reads: `action-limit` (`MAX_ACTIONS_PER_RUN`, a constant nobody sets)
+   * and `budget-exhausted` (the time limit, which the person does set) both
+   * still apply. `tests/worker.test.ts` asserts each of those.
+   *
+   * Read off the COMPILED allowlist, not off the contract's granted kinds. The
+   * dial is what removes `draft-section`, and it is the compiled set the gate
+   * evaluates — so asking the contract would answer a question about what was
+   * offered rather than about what this run can actually do. It is also why a
+   * browser research shift is not exempt: `navigate` survives the dial.
+   */
+  const progressIsPossible = [...policy.actionKindAllowlist].some((kind) =>
+    PROGRESSING_ACTION_KINDS.has(kind),
+  )
+
   const progress = () => ({
     nowEpochMs: deps.now(),
     deadlineEpochMs: job.deadlineEpochMs,
@@ -1071,7 +1115,16 @@ export async function runWorker(job: WorkerJob, deps: WorkerDeps): Promise<Worke
     if (verdict.action.kind === 'complete-purchase') chargesSpent += 1
 
     if (performed !== null) {
-      consecutiveNoProgress = performed.changedSomething ? 0 : consecutiveNoProgress + 1
+      // The one increment `progressIsPossible` exempts, and the only one where
+      // "it changed nothing" says nothing about the run: where no permitted kind
+      // could have changed anything, an action that changed nothing is the run
+      // doing exactly what it was allowed to do. See the const's docblock — a
+      // question, a refusal and a failure are all still counted, above.
+      consecutiveNoProgress = performed.changedSomething
+        ? 0
+        : progressIsPossible
+          ? consecutiveNoProgress + 1
+          : consecutiveNoProgress
 
       if (performed.produced !== undefined) produced.push(performed.produced)
 
@@ -1290,6 +1343,36 @@ interface Performed {
    *  the snapshot. */
   readonly captured?: ScreenCapture | undefined
 }
+
+/**
+ * The kinds whose handler in `perform` can report `changedSomething: true`.
+ *
+ * This is a property OF `perform` below, not a policy and not a taste: it is
+ * the answer to *"if this run may only do these things, could the no-progress
+ * counter ever reset?"*. It lives here rather than in `src/domain` because it
+ * describes the handlers below and would go stale anywhere else — and because
+ * the question is the loop's, not the rule's: `evaluateStructuralStops` is
+ * handed a count and never asked what could have moved it.
+ *
+ * Note what is NOT in it. `observe-page` and `capture-screen` are browser kinds
+ * and report no progress — looking at a page again is the browser's version of
+ * re-reading the same document. And `navigate` IS in it while not being a
+ * mutating kind, for the reason the block below `perform` gives: opening a page
+ * gets somewhere. So this set is neither the mutating set nor the browser set,
+ * and collapsing it into either would be wrong in both directions.
+ *
+ * `tests/worker.test.ts` pins it against `perform`'s own source, because a
+ * hand-maintained list that drifts from the handlers fails silently in the
+ * dangerous direction — a run that could make progress, exempted from the rule
+ * that catches it going in circles.
+ */
+export const PROGRESSING_ACTION_KINDS: ReadonlySet<ActionKind> = new Set<ActionKind>([
+  'draft-section',
+  'navigate',
+  'click-element',
+  'type-text',
+  'press-key',
+])
 
 /** Dispatch by kind. Exhaustive over ActionKind, so adding a capability without
  *  handling it here is a type error rather than a silent no-op. */

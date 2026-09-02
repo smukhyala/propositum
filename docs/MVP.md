@@ -91,9 +91,13 @@ false positives**, so the flagship example in one document was the failure case 
 Not a second demo path, not a screen, not a branch in the code: two entries in
 `src/fixtures/scenarios/` with references written before any run and hashed into
 `references.lock.json`. They are also chosen to fill the two scenario **classes** the corpus has
-never had — a `straightforward` one, so H3 can finally measure a false stop, and a `structural` one
-— which is why the domain widening and the missing half of the H3 corpus are one piece of work and
-not two. The sentence above about staying domain-neutral is unchanged and is now load-bearing: a
+never had — a `straightforward` one, so H3 can finally measure a false stop, and ~~a `structural`
+one~~ **— struck 2026-09-01
+([#101](https://github.com/smukhyala/propositum/issues/101)). `lisbon-thread` filled `structural` by
+predicting a halt that has since been ruled a false stop and removed, so it is a second
+`straightforward` scenario now and that class is empty again. See `docs/EVALUATION.md` and
+`docs/todo/00-score-the-hypotheses.md`.** — which is why the domain widening and the missing half of
+the H3 corpus are one piece of work and not two. The sentence above about staying domain-neutral is unchanged and is now load-bearing: a
 `shopping` detector or a `trip` detector would be the first domain-specialised code in this pipeline,
 and ADR-0018 refuses both in favour of one ground describing a *behaviour*.
 

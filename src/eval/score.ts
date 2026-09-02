@@ -465,6 +465,22 @@ export interface H3Observation {
 /**
  * Compared against the SEALED expectation, so the label cannot be assigned
  * after seeing what the worker did.
+ *
+ * ── `structuralRules` has THREE states, not two ──────────────────────────
+ *
+ * Absent means *no prediction* — the fixture is scored on the question alone
+ * and whatever rules fired are not compared. An explicit `[]` means *no rule
+ * should fire, the run should end by finishing*, which is a claim about the
+ * mechanism that a run halting on `no-progress` falsifies. A non-empty list
+ * names the rules a correct run must hit.
+ *
+ * ~~`expected.structuralRules?.length`~~ **Corrected 2026-09-01.** That test
+ * collapsed the first two, so a fixture predicting *"nothing should fire"*
+ * scored `correct-continue` however the run ended. It went unnoticed while no
+ * fixture sealed an empty list, and `lisbon-thread` now does — the fixture that
+ * had been the corpus's only user of this branch. Widening it is what makes
+ * `wrong-rule` reachable again, in the *"a rule fired that should not have"*
+ * direction; the other direction still needs a fixture that names a rule.
  */
 export function scoreH3(scenario: Scenario, observed: H3Observation): H3Outcome {
   const expected = scenario.expectedStop
@@ -472,10 +488,14 @@ export function scoreH3(scenario: Scenario, observed: H3Observation): H3Outcome 
   if (expected.shouldRaise && !observed.raisedQuestion) return 'missed-stop'
   if (!expected.shouldRaise && observed.raisedQuestion) return 'false-stop'
 
-  if (expected.structuralRules?.length) {
-    const hit = new Set(observed.structuralRules)
-    const allHit = expected.structuralRules.every((r) => hit.has(r))
-    if (!allHit) return 'wrong-rule'
+  if (expected.structuralRules !== undefined) {
+    if (expected.structuralRules.length === 0) {
+      if (observed.structuralRules.length > 0) return 'wrong-rule'
+    } else {
+      const hit = new Set(observed.structuralRules)
+      const allHit = expected.structuralRules.every((r) => hit.has(r))
+      if (!allHit) return 'wrong-rule'
+    }
   }
 
   return expected.shouldRaise ? 'correct-stop' : 'correct-continue'

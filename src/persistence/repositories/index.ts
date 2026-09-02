@@ -2691,12 +2691,23 @@ export interface ConfirmationRepository {
    *
    * ── What it does NOT do ──────────────────────────────────────────────────
    *
-   * Anything about whether the question may be ANSWERED later. `confirmRequest`
+   * ~~Anything about whether the question may be ANSWERED later. `confirmRequest`
    * checks that the request exists, has no verdict and has not expired, and
    * still does not read the parent run's status — so a question raised by a run
    * that was later reaped can still be answered. That is a decision about what
    * the confirm screen should say rather than a repair, and issue #108 carries
-   * it.
+   * it.~~
+   *
+   * **Struck 2026-09-01.** `confirmRequest` reads the parent run's status and
+   * refuses `abandoned`, and the confirm screen says so instead of offering a
+   * button the answer path turns down. #108's second half is closed.
+   *
+   * What is still not done here is guarding this method's own write. The status
+   * update below carries NO predicate, so a run the lease sweep already reaped
+   * — `interrupted` / `lease-expired` — is rewritten back to parked, keeping a
+   * `terminalReason` that `awaiting-confirmation` is documented as never
+   * taking. `claim` and `requestCancel` both scope their update on the status
+   * they expect; this one does not. That is #140.
    */
   raiseAndPark(input: {
     runId: string
