@@ -83,3 +83,6 @@ export declare function parseChargeAmount(
 /** ADR-0024. The synchronous half of one-shot: true exactly once per intentId
  *  per service-worker lifetime. */
 export declare function claimLandingPermitOnce(intentId: unknown): boolean
+/** Arms the one-shot permit, and synchronously empties the claim set — which is
+ *  what keeps that set to one entry and so free of eviction. */
+export declare function armLandingPermit(permit: LandingPermitLike | null): Promise<void>

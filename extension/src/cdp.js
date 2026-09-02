@@ -829,6 +829,11 @@ export async function controlState() {
  */
 export async function armLandingPermit(permit) {
   if (permit === null || typeof permit !== 'object') return
+  // Synchronously, and BEFORE the storage write: the set below only ever needs
+  // to remember the permit currently armed, and a new permit means the previous
+  // one is over. Doing it here is what lets that set be unbounded and so
+  // eviction-free — see `spentPermitIntents`.
+  spentPermitIntents.clear()
   await chrome.storage.session.set({ landingPermit: permit })
 }
 
@@ -857,6 +862,21 @@ export async function clearLandingPermit() {
  * and is bounded by the permit's own `until` (~12s) and the ceiling on each
  * request — the count is the only bound it could breach. Recorded rather than
  * rounded to zero.
+ *
+ * ── ~~Bounded at 64, oldest evicted~~ — removed 2026-09-02 (#151) ────────
+ *
+ * The cap was a backstop against unbounded growth and it was also a second way
+ * to re-grant: an evicted `intentId` could win the claim again, which the
+ * docblock above did not name and which made the worker-death window read as
+ * the only gap. It is gone rather than documented, because there was a shape
+ * with no eviction in it.
+ *
+ * The claim is keyed on the PERMIT's `intentId`, not the request's, so within
+ * one permit's life this set only ever needs to hold one entry — and
+ * `armLandingPermit` clears it, synchronously, before the new permit reaches
+ * storage. Unbounded growth is therefore not possible either: the set is
+ * emptied once per `complete-purchase` command, which is the only thing that
+ * arms a permit.
  */
 const spentPermitIntents = new Set()
 
@@ -864,11 +884,6 @@ export function claimLandingPermitOnce(intentId) {
   if (typeof intentId !== 'string' || intentId === '') return false
   if (spentPermitIntents.has(intentId)) return false
   spentPermitIntents.add(intentId)
-  // Bounded: one entry per complete-purchase command this lifetime, and a
-  // worker lifetime is ~30s idle. The cap is a backstop, not a policy.
-  if (spentPermitIntents.size > 64) {
-    spentPermitIntents.delete(spentPermitIntents.values().next().value)
-  }
   return true
 }
 
