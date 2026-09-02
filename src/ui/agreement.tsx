@@ -158,10 +158,16 @@ import {
   CONFIRMABLE_ACTION_KINDS,
   amountLabel,
   compilePolicy,
+  dialThatRemoved,
   PURCHASE_ACTION_KINDS,
   TIME_LIMIT_CHOICES,
 } from '../domain/handoff/policy'
-import type { ActionKind, AutonomyControls, CurrencyCode } from '../domain/handoff/policy'
+import type {
+  ActionKind,
+  AutonomyDial,
+  AutonomyControls,
+  CurrencyCode,
+} from '../domain/handoff/policy'
 import type { CalendarTimeSuggestion } from '../server/calendar'
 
 export interface AgreementProps {
@@ -291,8 +297,49 @@ export const ACTION_LABEL: Readonly<Record<ActionKind, string>> = {
  * the list because a dial removed it or because the shift was never granted it,
  * and this sentence is true either way. Any wording that names ONE of those
  * reasons has to be earned per kind — see `whyDraftingIsOff`.
+ *
+ * **Still the default, and still for that reason** *(2026-09-02, #137)*. What
+ * changed is that a kind can now EARN better without a bespoke function:
+ * `dialThatRemoved` asks `compilePolicy` which dial took it away, and
+ * `WHY_A_DIAL_REMOVED_IT` below has a sentence for the dials we have wording
+ * for. Everything else — every kind under *"What this agreement doesn't
+ * include"*, every kind no dial explains, every dial nobody has written a
+ * sentence for — still reads this. Naming a cause anywhere else would be the
+ * original lie again.
  */
 const NOT_IN_THIS_AGREEMENT = 'Not part of this agreement. Propositum is refused if it tries.'
+
+/**
+ * One sentence per dial, for a kind that dial provably removed.
+ *
+ * ── The gap this closes, and the one it does not ─────────────────────────
+ *
+ * #130 made *"What you've switched off"* true of every member of its group.
+ * The rows under it were a separate matter and stayed causeless: on a browser
+ * shift set to research only, `click-element`, `type-text` and `press-key` sat
+ * under a heading saying the person switched them off, above a sentence that
+ * declined to say anything about why. `whyDraftingIsOff` was the proof that a
+ * per-kind sentence is affordable; nothing but the work was stopping the rest.
+ *
+ * ── Why this table is allowed to be short ────────────────────────────────
+ *
+ * `output` is the only key here because `output` is the only dial that removes
+ * anything today — and this table does not decide that, `dialThatRemoved`
+ * does, by compiling the policy twice and seeing what comes back. A dial with
+ * no entry falls to `NOT_IN_THIS_AGREEMENT`, which is the correct behaviour and
+ * not an omission: a rule added to `compilePolicy` tomorrow gets the causeless
+ * sentence until somebody writes it one, rather than silently inheriting a
+ * sentence blaming Output.
+ *
+ * Named for the DIAL rather than for the kind, so the sentence stays true of
+ * every kind that dial takes: the phrasing has to work for drafting a section
+ * and for pressing a key, which is why it talks about the setting rather than
+ * about the act.
+ */
+const WHY_A_DIAL_REMOVED_IT: Partial<Record<AutonomyDial, string>> = {
+  output:
+    'Off because you chose research only. Turn that back to “Draft the changes” below and this returns.',
+}
 
 /**
  * Capabilities that are not in `ActionKind` at all.
@@ -423,14 +470,12 @@ export function Agreement({ draft, defaults, sourceLabels, onBack, onHandedOver 
     timeLimitMinutes,
   }
 
-  const policy = compilePolicy(
-    {
-      approvedSourceIds: draft.approvedSourceIds,
-      allowedActionKinds: draft.allowedActionKinds,
-      baseVersionId: '',
-    },
-    controls,
-  )
+  const scope = {
+    approvedSourceIds: draft.approvedSourceIds,
+    allowedActionKinds: draft.allowedActionKinds,
+    baseVersionId: '',
+  }
+  const policy = compilePolicy(scope, controls)
 
   /**
    * The kind that belongs in none of the three lists — ADR-0024.
@@ -483,12 +528,20 @@ export function Agreement({ draft, defaults, sourceLabels, onBack, onHandedOver 
    * made. It is deliberately not derived from `allowedActionKinds` alone,
    * which collapses the two facts — that collapse is the whole bug.
    *
-   * What this does NOT do: name the dial for the kinds it does file under the
+   * ~~What this does NOT do: name the dial for the kinds it does file under the
    * choice heading. Only `draft-section` earns a per-kind sentence today, and
    * the docblock on `NOT_IN_THIS_AGREEMENT` says why the rest may not — a
    * wording that names one reason has to be earned per kind. The heading is
    * now true of every member of its group, which is what was wrong; the
-   * members still explain themselves in the safe, causeless words.
+   * members still explain themselves in the safe, causeless words.~~
+   *
+   * **Done 2026-09-02 (#137), and earned rather than assumed.** `whySwitchedOff`
+   * names the dial, and `dialThatRemoved` establishes which dial by compiling
+   * the policy again with each one flipped — so the sentence is a fact about
+   * `compilePolicy` rather than a belief about it. What this still does NOT do
+   * is name a cause under *"What this agreement doesn't include"*, where every
+   * kind keeps the causeless words: nothing there was the person's to switch
+   * off, and saying otherwise is the defect this family exists to fix.
    */
   const dialledOff = ACTION_KINDS.filter(
     (kind) =>
@@ -559,6 +612,34 @@ export function Agreement({ draft, defaults, sourceLabels, onBack, onHandedOver 
     : draft.documentTitle === null
       ? 'There is no document under this agreement, so there is nothing to draft — Propositum will come back with what it found rather than text for a document.'
       : NOT_IN_THIS_AGREEMENT
+
+  /**
+   * What one kind under *"What you've switched off"* says about itself.
+   *
+   * ── Derived, which is the whole of what #130 deferred ────────────────────
+   *
+   * #130 fixed the heading and named this as deliberately not done, quoting
+   * `NOT_IN_THIS_AGREEMENT`'s own argument rather than overriding it: a
+   * sentence naming ONE reason has to be earned per kind. Earning it means
+   * establishing that a dial is what removed this kind, and `dialThatRemoved`
+   * establishes it the only way that stays true — by compiling the policy again
+   * with each dial flipped and seeing which one brings the kind back.
+   *
+   * So a rule added to `compilePolicy` that removes a kind for some other
+   * reason cannot inherit a sentence blaming Output. It either gets its own
+   * dial's sentence, or — until somebody writes one — the causeless default,
+   * which is the safe direction.
+   *
+   * `draft-section` keeps `whyDraftingIsOff` and is checked first. That
+   * sentence says what a research-only shift comes back with INSTEAD, which is
+   * worth more to a person than naming the dial, and it also covers the
+   * no-document case this function cannot see.
+   */
+  function whySwitchedOff(kind: ActionKind): string {
+    if (kind === 'draft-section') return whyDraftingIsOff
+    const dial = dialThatRemoved(kind, scope, controls)
+    return (dial === null ? undefined : WHY_A_DIAL_REMOVED_IT[dial]) ?? NOT_IN_THIS_AGREEMENT
+  }
 
   function handOver(): void {
     setProblem(null)
@@ -801,7 +882,7 @@ export function Agreement({ draft, defaults, sourceLabels, onBack, onHandedOver 
                     <span>
                       {ACTION_LABEL[kind]}
                       <span className="ag-perm-why">
-                        {kind === 'draft-section' ? whyDraftingIsOff : NOT_IN_THIS_AGREEMENT}
+                        {whySwitchedOff(kind)}
                       </span>
                     </span>
                   </li>

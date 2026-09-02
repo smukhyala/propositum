@@ -689,3 +689,102 @@ export function compilePolicy(scope: ContractScope, controls: AutonomyControls):
         }),
   }
 }
+
+/* ── which dial removed a kind ──────────────────────────────────────────── */
+
+/** The four toggles. `timeLimitMinutes` is not one — it is a number, and it
+ *  removes no kind. */
+export type AutonomyDial = 'initiative' | 'progress' | 'output' | 'interruption'
+
+export const AUTONOMY_DIALS: readonly AutonomyDial[] = [
+  'initiative',
+  'progress',
+  'output',
+  'interruption',
+]
+
+/** The same controls with one dial at its other value. Each has exactly two, so
+ *  "the other one" is total and needs no table to go stale. */
+function flip(controls: AutonomyControls, dial: AutonomyDial): AutonomyControls {
+  switch (dial) {
+    case 'initiative':
+      return {
+        ...controls,
+        initiative: controls.initiative === 'follow-closely' ? 'use-judgment' : 'follow-closely',
+      }
+    case 'progress':
+      return {
+        ...controls,
+        progress: controls.progress === 'current-step-only' ? 'remaining-plan' : 'current-step-only',
+      }
+    case 'output':
+      return {
+        ...controls,
+        output: controls.output === 'suggestions-only' ? 'draft-changes' : 'suggestions-only',
+      }
+    case 'interruption':
+      return {
+        ...controls,
+        interruption:
+          controls.interruption === 'stop-when-uncertain'
+            ? 'stop-only-when-blocked'
+            : 'stop-when-uncertain',
+      }
+  }
+}
+
+/**
+ * Which dial took this kind away — **derived by asking `compilePolicy`, never
+ * by restating its rules.**
+ *
+ * ── Why a permission panel needs this at all ─────────────────────────────
+ *
+ * `src/ui/agreement.tsx` files a missing `ActionKind` under one of three
+ * headings, and one of them is *"What you've switched off"* — a claim about a
+ * decision the person made. Under it, every kind but `draft-section` used to
+ * carry a sentence naming no cause: *"Not part of this agreement. Propositum is
+ * refused if it tries."* True, and unable to support the heading above it. A
+ * person who does not remember flipping a dial had only the heading's word for
+ * it, on the screen whose whole subject is what they chose, at the moment they
+ * can still change their mind.
+ *
+ * ── Why it is derived and not a table ────────────────────────────────────
+ *
+ * `NOT_IN_THIS_AGREEMENT`'s docblock is the thing this has to satisfy: *"a kind
+ * can be off the list because a dial removed it or because the shift was never
+ * granted it… any wording that names ONE of those reasons has to be earned per
+ * kind."* A constant listing today's answers would be earned once and then
+ * silently wrong: a rule added to `compilePolicy` that removes a kind for some
+ * other reason would inherit a sentence blaming Output.
+ *
+ * So this compiles the policy, and then compiles it again with each dial at its
+ * other value. A dial is responsible when moving it — and nothing else — brings
+ * the kind back. That is a fact about the function rather than a belief about
+ * it, and a new rule changes the answer without anybody remembering to.
+ *
+ * ── What it returns null for, which is most of the time ──────────────────
+ *
+ * - **A kind the shift never offered.** Not the person's to switch off, and
+ *   saying otherwise is the defect #130 fixed one layer up.
+ * - **A kind that is still allowed.** Nothing removed it.
+ * - **A kind two dials could each restore, or none can.** Ambiguity and
+ *   inexplicability both fall back to the sentence that names no cause, which
+ *   is the safe default and the reason that default exists.
+ *
+ * Null is not a failure. It means *this screen has earned nothing more specific
+ * than the default*, and the caller renders the default.
+ */
+export function dialThatRemoved(
+  kind: ActionKind,
+  scope: ContractScope,
+  controls: AutonomyControls,
+): AutonomyDial | null {
+  if (!scope.allowedActionKinds.includes(kind)) return null
+  if (compilePolicy(scope, controls).actionKindAllowlist.has(kind)) return null
+
+  const responsible = AUTONOMY_DIALS.filter((dial) =>
+    compilePolicy(scope, flip(controls, dial)).actionKindAllowlist.has(kind),
+  )
+
+  return responsible.length === 1 ? (responsible[0] ?? null) : null
+}

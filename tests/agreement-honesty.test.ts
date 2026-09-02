@@ -422,3 +422,71 @@ describe('the purchase kind is shown where the amount is, and in no permission l
     expect(underHeading(html, NOT_INCLUDED)).not.toContain(PURCHASE_LABEL)
   })
 })
+
+/**
+ * The rows under the choice heading, which #130 left causeless — #137.
+ *
+ * #130 made *"What you've switched off"* true of every member of its group and
+ * said in its own docblock that it was not naming the dial for them. So on a
+ * browser shift set to research only, `click-element`, `type-text` and
+ * `press-key` sat under a heading claiming the person switched them off, above
+ * a sentence declining to say anything about why or how. The weaker version of
+ * the problem #130 fixed: the heading makes a claim about a decision and the
+ * rows say nothing that supports it.
+ *
+ * ── Read through `underHeading`, and that is not incidental ──────────────
+ *
+ * Scoped to `SWITCHED_OFF`, never page-wide. A page-wide `toContain` is exactly
+ * what let the grouping defect survive two commits that reported it — this
+ * file's own §5 docblock says so — and a sentence naming a dial is only correct
+ * in one of the four groups.
+ */
+describe('a kind under the choice heading says which dial took it', () => {
+  it('names the dial for every kind the dial removed, not just for drafting', () => {
+    // Research only on a BROWSER shift, which is the case the issue is written
+    // about: `grantableActionKinds(false)` grants the six browser kinds and
+    // never `draft-section`, so the dial removes three things here and not one
+    // of them was the kind that already had a sentence.
+    const html = screen(BROWSER, { output: 'suggestions-only' })
+    const said = underHeading(html, SWITCHED_OFF)
+
+    expect(said).toContain('Click something on the page')
+    expect(said).toContain('Type into a box on the page')
+    expect(said).toContain('Press Enter, Tab or Escape')
+
+    // One sentence per kind, and it names the dial and where to change it.
+    expect(said).toContain('Off because you chose research only')
+    expect(said).toContain('Draft the changes')
+  })
+
+  it('leaves nothing under that heading saying nothing', () => {
+    const said = underHeading(screen(BROWSER, { output: 'suggestions-only' }), SWITCHED_OFF)
+
+    // The causeless default is what this group is not allowed to carry: it is
+    // true either way, which is precisely why it cannot support a heading that
+    // credits the person with a decision.
+    expect(said).not.toContain('Not part of this agreement.')
+  })
+
+  it('keeps the causeless words where naming a cause would be the original lie', () => {
+    // `grantableActionKinds(false)` never grants a document kind, so on a
+    // browser shift `draft-section` was never the person's to switch off. It
+    // belongs under the other heading, and under that heading no sentence may
+    // name a dial.
+    const html = screen(BROWSER, { output: 'suggestions-only' })
+
+    expect(underHeading(html, NOT_INCLUDED)).toContain('Not part of this agreement.')
+    expect(underHeading(html, NOT_INCLUDED)).not.toContain('Off because you chose')
+  })
+
+  it('says nothing about a dial on a shift where no dial removed anything', () => {
+    // Every granted kind survives `draft-changes`, so the group is empty and
+    // `underHeading` returns '' for a heading that is not on the page. Asserting
+    // the heading is absent is the honest form of this case — the trap this
+    // file's `underHeading` docblock names.
+    const html = screen(BROWSER, { output: 'draft-changes' })
+
+    expect(headings(html)).not.toContain(SWITCHED_OFF)
+    expect(words(html)).not.toContain('Off because you chose research only')
+  })
+})
