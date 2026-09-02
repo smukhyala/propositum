@@ -506,7 +506,22 @@ export async function runWorker(job: WorkerJob, deps: WorkerDeps): Promise<Worke
         turns: [] as HistoryTurn[],
         actionsTaken: 0,
         mutatingActionsTaken: 0,
-        chargesSpent: 0,
+        /**
+         * `undefined`, not `0`, and it is the one field here that differs.
+         *
+         * `RunContext.chargesSpent` documents itself as fail-closed when
+         * absent: *"an unwired counter must never let money move, so
+         * `undefined` here refuses `complete-purchase` … rather than treating
+         * the ledger as empty."* This branch defaulted it to `0` and so always
+         * passed a number, which made that refusal unreachable — a run with no
+         * history reader silently reset the ratified count instead of refusing.
+         *
+         * `actionsTaken` and `mutatingActionsTaken` keep their zeroes on
+         * purpose. Absent-means-zero is the right reading for a bound on
+         * effort; it is the wrong one for a bound on money, and the deviation
+         * is the whole of what that docblock argues.
+         */
+        chargesSpent: undefined as number | undefined,
         orphanedIntentIds: [],
         confirmations: [] as ConfirmedAction[],
         confirmedRequestIds: new Set<string>(),
@@ -520,7 +535,9 @@ export async function runWorker(job: WorkerJob, deps: WorkerDeps): Promise<Worke
   let refusals = 0
   let actionsTaken = rebuilt.actionsTaken
   let mutatingActionsTaken = rebuilt.mutatingActionsTaken
-  let chargesSpent = rebuilt.chargesSpent
+  // Stays `undefined` when nothing rebuilt it, all the way to the gate. See
+  // the branch above, and `RunContext.chargesSpent`.
+  let chargesSpent: number | undefined = rebuilt.chargesSpent
   let consecutiveNoProgress = 0
   let consecutiveRefusals = 0
   let summary: string | undefined
@@ -1112,7 +1129,13 @@ export async function runWorker(job: WorkerJob, deps: WorkerDeps): Promise<Worke
     // consuming a count is recovered by re-ratifying, which is the cheap
     // direction. The rebuild in history.ts counts the same way off durable
     // rows, so the two never disagree.
-    if (verdict.action.kind === 'complete-purchase') chargesSpent += 1
+    // Only counts up from a real count. An authorised purchase cannot have got
+    // past the gate with an absent counter, so this arm is unreachable while
+    // `chargesSpent` is undefined — and incrementing from nothing would invent
+    // the count the gate just refused to guess at.
+    if (verdict.action.kind === 'complete-purchase' && chargesSpent !== undefined) {
+      chargesSpent += 1
+    }
 
     if (performed !== null) {
       // The one increment `progressIsPossible` exempts, and the only one where
@@ -1309,7 +1332,9 @@ function runContext(
     currentSnapshotId: string | null
     actionsTaken: number
     mutatingActionsTaken: number
-    chargesSpent: number
+    /** Absent when nothing rebuilt it. The gate refuses `complete-purchase` on
+     *  an absent count rather than reading it as an empty ledger. */
+    chargesSpent: number | undefined
     targetEvidence: ElementEvidence | null
     confirmedRequestIds: ReadonlySet<string>
   },
