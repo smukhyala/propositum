@@ -1825,6 +1825,26 @@ describe('a document can be brought in and taken out', () => {
     ).toContain(project)
   })
 
+  /**
+   * The same rule as `firstRunState` above, for the same reason.
+   *
+   * `whereItStopped` moved out of `src/app/shifts/[contractId]/page.tsx` on
+   * 2026-09-02 so it could be tested — a `.tsx` server component being the one
+   * thing nothing here can render. That move took only half of the precedent it
+   * cites: `src/server/welcome.ts`'s successor is pinned above, and a
+   * derivation nothing calls is exactly what this file exists to catch.
+   *
+   * Delete the call and every finished shift loses its heading sentence, with
+   * `tests/where-it-stopped.test.ts` still green — that file tests the
+   * derivation and says so in its own docblock.
+   */
+  it('the shift note asks somebody else where the run stopped', () => {
+    expect(
+      callersOf('whereItStopped(', 'src/domain/intention/where-it-stopped.ts'),
+      'nothing renders where the run stopped — the note lost its heading sentence',
+    ).toEqual([join('src', 'app', 'shifts', '[contractId]', 'page.tsx')])
+  })
+
   it('the project screen no longer carries an editor of its own', () => {
     // The half a caller check cannot see. Both components could be rendered
     // and a leftover `<textarea name="content">` in the page would still be
