@@ -576,9 +576,15 @@ export function classifyPausedRequest(paused, approvedOrigins, patternCovers, ma
      *
      *  - origin EQUALS the permit's — never `patternCovers`, never a prefix.
      *    "Somewhere like the merchant" is not a place a ceiling was ratified.
-     *  - the amount parses deterministically (see `parseChargeAmount`), in
-     *    the permit's own currency, or `amount-unparseable` — the refusal
-     *    ADR-0024 §5 predicts will be common, and the caller must report.
+     *  - the amount parses deterministically (see `parseChargeAmount`), or
+     *    `amount-unparseable` — the refusal ADR-0024 §5 predicts will be
+     *    common, and the caller must report.
+     *  - it is in the permit's own currency, or `amount-wrong-currency`.
+     *    Separate from unparseable since 2026-09-02 (#148): a charge that read
+     *    cleanly as €40 under a $50 ceiling was reported as one that could not
+     *    be read at all, which is a false account of a check that worked. No
+     *    conversion is attempted and none ever will be — a rate is a number
+     *    nobody ratified.
      *  - the amount is AT OR UNDER the ceiling, or `amount-over-ceiling`.
      *  - expiry is the CALLER's to enforce, by not passing a stale permit:
      *    this function reads no clock, which is what keeps it a pure table
@@ -596,7 +602,7 @@ export function classifyPausedRequest(paused, approvedOrigins, patternCovers, ma
       contentTypeKey === undefined ? '' : headers[contentTypeKey],
     )
     if (parsed === null) return 'amount-unparseable'
-    if (parsed.currency !== permit.currency) return 'amount-unparseable'
+    if (parsed.currency !== permit.currency) return 'amount-wrong-currency'
     if (parsed.amountMinor > permit.maxAmountMinor) return 'amount-over-ceiling'
     return 'allow-landing'
   }
@@ -1146,6 +1152,7 @@ async function onRequestPaused(state, params, handlers) {
   if (
     (verdict === 'allow-landing' ||
       verdict === 'amount-over-ceiling' ||
+      verdict === 'amount-wrong-currency' ||
       verdict === 'amount-unparseable') &&
     !claimLandingPermitOnce(permit?.intentId)
   ) {
@@ -1204,7 +1211,11 @@ async function onRequestPaused(state, params, handlers) {
     })
     .catch(() => {})
 
-  if (verdict === 'amount-over-ceiling' || verdict === 'amount-unparseable') {
+  if (
+    verdict === 'amount-over-ceiling' ||
+    verdict === 'amount-unparseable' ||
+    verdict === 'amount-wrong-currency'
+  ) {
     // One-shot in the refusing direction too: the permit is spent by the
     // attempt, and whatever the page retries next meets the plain block.
     await clearLandingPermit()

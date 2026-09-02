@@ -1108,7 +1108,9 @@ export async function runWorker(job: WorkerJob, deps: WorkerDeps): Promise<Worke
       // the ledger holds the attempt before the question is raised.
       if (
         error instanceof BrowserControlError &&
-        (error.failure === 'amount-over-ceiling' || error.failure === 'amount-unparseable')
+        (error.failure === 'amount-over-ceiling' ||
+          error.failure === 'amount-unparseable' ||
+          error.failure === 'amount-wrong-currency')
       ) {
         chargeRefused = chargeRefusedQuestion({ failure: error.failure, detail: error.message })
       }
