@@ -473,10 +473,22 @@ export function Agreement({ draft, defaults, sourceLabels, onBack, onHandedOver 
    * whole of the correction — a permission panel may not attribute a decision
    * to someone who did not make it, least of all on the screen where they are
    * about to make one.
+   *
+   * ── And one word of it, corrected 2026-09-01 ─────────────────────────────
+   *
+   * The first arm said Propositum would come back with *"findings"*, which is a
+   * banned word rather than a style preference: CONTEXT.md bans `finding` for
+   * what a run produced, because `ReviewFinding` owns it and that is the
+   * reviewer's advice ABOUT the work rather than the work. What a research-only
+   * shift comes back with is an `answer` — and the second arm below had been
+   * saying it correctly, *"what it found"*, the whole time.
+   *
+   * `tests/consumer-vocabulary.test.ts` did not catch it and could not: it runs
+   * the handful of rows named in its own docblock, and this is not one of them.
    */
   const draftingWasOnOffer = draft.allowedActionKinds.includes('draft-section')
   const whyDraftingIsOff = draftingWasOnOffer
-    ? 'You chose research only, so Propositum will come back with findings, questions and next steps — and no text for your document.'
+    ? 'You chose research only, so Propositum will come back with what it found, the questions it could not settle, and next steps — and no text for your document.'
     : draft.documentTitle === null
       ? 'There is no document under this agreement, so there is nothing to draft — Propositum will come back with what it found rather than text for a document.'
       : NOT_IN_THIS_AGREEMENT

@@ -1314,12 +1314,25 @@ describe('the safety machinery is reachable from the product', () => {
      * could not be carried out. This is that gap closed, and it is asserted here
      * so it cannot silently reopen behind a refactor.
      *
-     * Note what this does NOT assert: that any contract grants one. It does not.
-     * `draftContract` grants `DOCUMENT_ACTION_KINDS`, so the gate refuses every
-     * browser kind with `action_kind_not_allowed` before a tool is reached. The
-     * tools are reachable from the loop; the loop is not yet reachable with a
-     * browser kind in scope, and the panel in `src/ui/agreement.tsx` still tells
-     * the truth because of it.
+     * Note what this does NOT assert: that any contract grants one.
+     *
+     * ~~It does not. `draftContract` grants `DOCUMENT_ACTION_KINDS`, so the gate
+     * refuses every browser kind with `action_kind_not_allowed` before a tool is
+     * reached. The tools are reachable from the loop; the loop is not yet
+     * reachable with a browser kind in scope, and the panel in
+     * `src/ui/agreement.tsx` still tells the truth because of it.~~
+     *
+     * **Struck 2026-09-01 — a contract has granted browser kinds since ADR-0010
+     * was built.** `grantableActionKinds(false)` in `src/domain/handoff/policy.ts`
+     * returns exactly the browser set, and *"a contract can actually grant a
+     * browser kind"* above asserts that `src/server/actions.ts` calls it — that
+     * test exists because this claim stopped being true. So the loop IS
+     * reachable with a browser kind in scope, and the agreement panel's honesty
+     * rests on something else entirely: it branches on what the shift actually
+     * granted rather than on what compiled, which is the correction
+     * `tests/agreement-honesty.test.ts` holds. The scope note itself survives —
+     * a caller-grep still cannot see a grant, which is why that assertion lives
+     * in its own `it`.
      */
     for (const tool of [
       'observePage(',
