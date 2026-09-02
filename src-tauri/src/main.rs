@@ -131,7 +131,44 @@ fn watch_exit_signals(hold: Arc<RuntimeHold>) {
 /// decide with). One poll per second until the children serve; gives up when
 /// the runtime stops, parks, or ten minutes pass — a checkout's first build
 /// can be slow, and a parked launch must never get a window.
-fn open_first_run_when_unfinished(handle: tauri::AppHandle, hold: Arc<RuntimeHold>) {
+/// What a failed poll of `/api/first-run` means for the loop.
+///
+/// The distinction this exists for: `ureq` returns `Err` for any non-2xx, so a
+/// renamed route and an app that has not finished booting were the same value.
+/// The loop retried both, and a 404 therefore spun silently to the ten-minute
+/// deadline with the window never opening and every guard green.
+///
+/// They are not the same fact. One is a race this loop was written to wait out;
+/// the other is the contract between the tray and the app being broken, which
+/// no amount of waiting fixes and which nobody hears about unless it is said.
+#[derive(Debug, PartialEq, Eq)]
+pub enum PollVerdict {
+    /// The app is not listening yet. Keep waiting — this is the ordinary case
+    /// for the first second or two after launch.
+    KeepWaiting,
+    /// The app answered, and said something this build does not expect. Log it
+    /// and stop: a route that is gone will still be gone in nine minutes.
+    BrokenContract(u16),
+}
+
+/// Pure, so the one thing worth testing here can be.
+pub fn classify_poll_failure(error: &ureq::Error) -> PollVerdict {
+    match error {
+        ureq::Error::Status(code, _) => PollVerdict::BrokenContract(*code),
+        // Connection refused, DNS, a timeout — the app is still starting, or
+        // the port is not up. Transport failures are what the deadline is for,
+        // and the wildcard keeps waiting on purpose: a failure this build has
+        // no name for should extend the wait rather than close the window
+        // somebody is owed.
+        _ => PollVerdict::KeepWaiting,
+    }
+}
+
+fn open_first_run_when_unfinished(
+    handle: tauri::AppHandle,
+    hold: Arc<RuntimeHold>,
+    logger: Arc<Logger>,
+) {
     std::thread::spawn(move || {
         let agent = ureq::AgentBuilder::new()
             .timeout_connect(Duration::from_secs(2))
@@ -145,19 +182,37 @@ fn open_first_run_when_unfinished(handle: tauri::AppHandle, hold: Arc<RuntimeHol
                 supervisor::Overall::Stopped | supervisor::Overall::GaveUp(_) => return,
                 _ => {}
             }
-            if let Ok(response) = agent.get(&url).set(origin::CUSTOM_HEADER, "1").call() {
-                let unfinished = response
-                    .into_json::<serde_json::Value>()
-                    .ok()
-                    .and_then(|body| body.get("unfinished").and_then(|bit| bit.as_bool()))
-                    .unwrap_or(false);
-                if unfinished {
-                    let _ = handle.run_on_main_thread({
-                        let handle = handle.clone();
-                        move || menu::first_run_window(&handle)
-                    });
+            match agent.get(&url).set(origin::CUSTOM_HEADER, "1").call() {
+                Ok(response) => {
+                    let unfinished = response
+                        .into_json::<serde_json::Value>()
+                        .ok()
+                        .and_then(|body| body.get("unfinished").and_then(|bit| bit.as_bool()))
+                        .unwrap_or(false);
+                    if unfinished {
+                        let _ = handle.run_on_main_thread({
+                            let handle = handle.clone();
+                            move || menu::first_run_window(&handle)
+                        });
+                    }
+                    return;
                 }
-                return;
+                Err(error) => match classify_poll_failure(&error) {
+                    PollVerdict::BrokenContract(code) => {
+                        // Said once, and then stopped. The alternative is what
+                        // this replaced: ten minutes of silence, and a person
+                        // whose first run never opened with nothing anywhere
+                        // saying why.
+                        logger.line(
+                            "tray",
+                            &format!(
+                                "the first-run endpoint answered {code} — the window will not                                  open. Is the app build current?"
+                            ),
+                        );
+                        return;
+                    }
+                    PollVerdict::KeepWaiting => {}
+                },
             }
             std::thread::sleep(Duration::from_secs(1));
         }
@@ -269,8 +324,8 @@ fn main() {
                 }
                 match preflight::run(&logger, &held_runtime) {
                     preflight::Outcome::Ready => {
-                        hold.replace(Supervisor::start(logger, &held_runtime));
-                        open_first_run_when_unfinished(app_handle, hold);
+                        hold.replace(Supervisor::start(Arc::clone(&logger), &held_runtime));
+                        open_first_run_when_unfinished(app_handle, hold, logger);
                     }
                     preflight::Outcome::Parked(reason) => {
                         hold.replace(Supervisor::parked(logger, reason))
@@ -294,4 +349,46 @@ fn main() {
                 app.state::<Arc<RuntimeHold>>().shutdown();
             }
         });
+}
+
+#[cfg(test)]
+mod poll_tests {
+    use super::{classify_poll_failure, PollVerdict};
+
+    /// The distinction that was missing — #155.
+    ///
+    /// `ureq` returns `Err` for any non-2xx, so a renamed route and an app that
+    /// has not finished booting arrived as the same value and the loop retried
+    /// both. A 404 therefore spun silently to the ten-minute deadline: no
+    /// window, no log line, every guard green.
+    #[test]
+    fn an_answered_error_is_a_broken_contract() {
+        let error = ureq::Error::Status(404, ureq::Response::new(404, "Not Found", "").unwrap());
+        assert_eq!(
+            classify_poll_failure(&error),
+            PollVerdict::BrokenContract(404)
+        );
+    }
+
+    #[test]
+    fn a_500_is_also_answered_and_also_stops() {
+        // Any status is the app talking. Retrying a 500 for ten minutes is the
+        // same silence as retrying a 404.
+        let error = ureq::Error::Status(500, ureq::Response::new(500, "Server Error", "").unwrap());
+        assert_eq!(
+            classify_poll_failure(&error),
+            PollVerdict::BrokenContract(500)
+        );
+    }
+
+    #[test]
+    fn an_unreachable_app_is_worth_waiting_for() {
+        // The ordinary case for the first second or two after launch, and the
+        // whole reason the loop has a deadline rather than one attempt.
+        // Port 1 refuses, which is what "the app has not opened its port yet"
+        // looks like from here. Taken from a real attempt rather than
+        // constructed, so the test exercises the value the loop actually gets.
+        let error = ureq::get("http://127.0.0.1:1/nothing").call().unwrap_err();
+        assert_eq!(classify_poll_failure(&error), PollVerdict::KeepWaiting);
+    }
 }
