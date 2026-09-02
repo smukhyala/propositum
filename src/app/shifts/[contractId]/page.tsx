@@ -37,6 +37,7 @@ import type { ChangeScale, FoldableChange } from '@/domain/document/changeset'
 import { linesOf, normalise } from '@/domain/document/normalise'
 import { MUTATING_ACTION_KINDS } from '@/domain/handoff/policy'
 import { asShiftOutcomeKind, isDecidable, readOutcomeDetail } from '@/domain/outcome/shift-outcome'
+import { whereItStopped } from '@/domain/intention/where-it-stopped'
 import { BackLink, Empty, Masthead, Sheet } from '@/ui/primitives'
 import { Away } from '@/ui/sprites'
 import { DriftedShift, ShiftReport } from '@/ui/shift-report'
@@ -705,64 +706,6 @@ async function gaps(prisma: PrismaClient, sessionId: string): Promise<LogRow[]> 
       mark: 'gap' as const,
     }
   })
-}
-
-/* ── where it stopped ───────────────────────────────────────────────────── */
-
-function whereItStopped(input: {
-  readonly live: boolean
-  readonly status: string
-  readonly terminalReason: string | null
-  readonly reached: number
-  readonly planned: number
-  readonly hasDecision: boolean
-}): { readonly sentence: string; readonly detail: string | null } {
-  const through =
-    input.planned > 0
-      ? `I got through ${Math.min(input.reached, input.planned)} of ${count(input.planned, 'step')}.`
-      : null
-
-  if (input.live) {
-    return {
-      sentence: "Propositum is still working — this note fills in when it stops.",
-      detail: through,
-    }
-  }
-
-  switch (input.terminalReason) {
-    case 'lease-expired':
-      return {
-        sentence: 'I stopped when your Mac slept.',
-        detail: [through, 'I only noticed on wake, so the end time above is when I noticed rather than when I stopped.']
-          .filter(Boolean)
-          .join(' '),
-      }
-    case 'budget-exhausted':
-      return { sentence: 'I ran out of the time you gave me.', detail: through }
-    case 'cancelled':
-      return { sentence: 'You called me back, so I stopped.', detail: through }
-    case 'error':
-      return {
-        sentence: "I hit something I couldn't get past, and stopped rather than carry on.",
-        detail: through,
-      }
-    case 'stop-condition':
-      return {
-        sentence: input.hasDecision
-          ? 'I stopped because this needs a decision only you can make.'
-          : 'I stopped myself rather than keep going.',
-        detail: input.hasDecision
-          ? through
-          : [through, "The record doesn't keep which of my stop rules fired — what I didn't do, and why, is above."]
-              .filter(Boolean)
-              .join(' '),
-      }
-    default:
-      if (input.status === 'failed') {
-        return { sentence: "I couldn't finish, and stopped.", detail: through }
-      }
-      return { sentence: 'I worked through the plan and stopped there.', detail: through }
-  }
 }
 
 /* ── the two states that are not a note ─────────────────────────────────── */

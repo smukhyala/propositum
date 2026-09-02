@@ -267,6 +267,54 @@ describe('where the last one stopped', () => {
     expect(sentence).not.toContain('sunspots')
   })
 
+  /**
+   * The default branch may only answer for a reason nothing here writes.
+   *
+   * `'sunspots'` above is fabricated, and it was the ONLY test of that branch —
+   * so three reasons this version really does write were falling to it and
+   * nothing said so. The list comes from CONTEXT.md's `AgentRun` writers table,
+   * which is the closed set these sentences read.
+   */
+  it('has a word of its own for every reason something in here writes', () => {
+    const unrecognised = said({ lastStop: { status: 'failed', terminalReason: 'sunspots' } })
+
+    for (const reason of [
+      'budget-exhausted',
+      'stop-condition',
+      'boundary-failure',
+      'error',
+      'lease-expired',
+      'cancelled',
+      'answered-too-late',
+      'confirmation-expired',
+    ]) {
+      const sentence = said({ lastStop: { status: 'failed', terminalReason: reason } })
+      expect(sentence, `${reason} falls to the default branch`).not.toBe(unrecognised)
+      expect(sentence, `${reason} reached a screen as a machine word`).not.toContain(reason)
+    }
+  })
+
+  it('says a boundary failure was a boundary failure, not an unknown', () => {
+    // The one worker failure this column can name — `finish` writes it for every
+    // failed result — and it read as "stopped before finishing", which is also
+    // what the screen says when it has never heard of the stored value.
+    const sentence = said({ lastStop: { status: 'failed', terminalReason: 'boundary-failure' } })
+
+    expect(sentence).toContain('could not reach something it needed')
+    expect(sentence).not.toContain('stopped before finishing')
+  })
+
+  it('keeps the two confirmation endings apart, because whose clock ran out differs', () => {
+    const late = said({ lastStop: { status: 'interrupted', terminalReason: 'answered-too-late' } })
+    const never = said({
+      lastStop: { status: 'interrupted', terminalReason: 'confirmation-expired' },
+    })
+
+    expect(late).toContain('after the time limit')
+    expect(never).toContain('waiting a day')
+    expect(late).not.toBe(never)
+  })
+
   it('says nothing at all when Propositum has never held this work', () => {
     expect(said({ sittingsEndedAtEpochMs: [null] })).not.toContain('Last time')
   })

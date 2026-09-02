@@ -477,6 +477,21 @@ function questionsLine(openQuestions: number): string | null {
  * sharing a body. What is genuinely shared is the closed set of stored reasons,
  * and the failure to guard against is a reason that arrives here with no word
  * for it — which is why the default claims nothing rather than guessing.
+ *
+ * ── Three reasons that were falling to that default, 2026-09-02 (#145) ───
+ *
+ * The set is closed and CONTEXT.md's `AgentRun` entry tabulates every writer of
+ * it, and three of them arrived here with no word: `boundary-failure`,
+ * `answered-too-late` and `confirmation-expired`. All three are written by code
+ * in this repository, today. So the default — kept for *"a reason written by a
+ * version this one has never met"* — was answering for reasons this version
+ * writes itself, and the screen could not distinguish **we know what happened**
+ * from **we have never heard of this**.
+ *
+ * `boundary-failure` is the sharpest of the three because it is the ONE worker
+ * failure this column can name. `finish` in `src/runtime/worker-loop.ts` writes
+ * it for every `failed` result, and its own docblock already conceded *"the
+ * shift report renders it through the same default branch either way"*.
  */
 function stoppedLine(stopped: StoppedAt | null): string | null {
   if (stopped === null) return null
@@ -491,6 +506,35 @@ function stoppedLine(stopped: StoppedAt | null): string | null {
         return 'stopped because you called it back'
       case 'error':
         return 'hit something it could not get past, and stopped'
+      /**
+       * A class of failure, never the instance.
+       *
+       * WHICH boundary failed and what it said live in
+       * `WorkerResult.boundaryFailure`, which is in-memory only and
+       * deliberately never reaches this column — so a sentence naming the model
+       * or the browser here would be inventing a detail the row does not carry.
+       * What the row does support is that the failure was in reaching something
+       * outside, which is the honest half and the half that distinguishes this
+       * from `error` two cases above: that one is Propositum failing around the
+       * run, this one is what the run was reaching for failing under it.
+       */
+      case 'boundary-failure':
+        return 'could not reach something it needed, and stopped'
+      /**
+       * The two confirmation endings, which are about a question rather than
+       * about the work.
+       *
+       * Kept apart from each other because the difference is whose clock ran
+       * out. `src/domain/execution/continuation.ts` already writes both
+       * sentences for the shift report; these are the same facts in this
+       * paragraph's third-person voice, and they must not be merged into one
+       * about "a question" — being late and never being asked in time are
+       * different things to be told about your own attention.
+       */
+      case 'answered-too-late':
+        return 'stopped because the answer arrived after the time limit'
+      case 'confirmation-expired':
+        return 'stopped after waiting a day for an answer'
       case 'stop-condition':
         return 'stopped itself rather than keep going'
       case null:
