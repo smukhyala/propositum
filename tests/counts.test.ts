@@ -241,3 +241,41 @@ describe('the CI header says what is true of CI, not of a developer', () => {
     expect(Number((pinned?.[1] ?? '0').replace(/_/g, ''))).toBeGreaterThanOrEqual(30_000)
   })
 })
+
+/**
+ * `npm run typecheck` compiles this repository, and not a copy of it.
+ *
+ * ── The failure this exists for ──────────────────────────────────────────
+ *
+ * `tsconfig.json` includes `**\/*.ts` and excluded only `node_modules`, so it
+ * also compiled everything under `src-tauri/target` and `dist-runtime` — where
+ * the tray build stages a FULL COPY of `src/` into the bundle it ships. Two
+ * trees, the same declarations, and `tsc` comparing them against each other.
+ *
+ * Both exclusions landed with the tray and purchase work rather than with a
+ * guard, and nothing held them. This is the guard, added 2026-09-02 after the
+ * same failure was hit and diagnosed a second time on a branch that predated
+ * them.
+ *
+ * The way it fails is why it is worth pinning. On a clean checkout there is no
+ * `target/` and typecheck passes. After one `cargo` or tray build the copy
+ * exists, is byte-identical, and typecheck STILL passes — so nothing is wrong
+ * until somebody edits a type in `src/`, at which point they are handed a page
+ * of errors about a path they have never opened, in a directory
+ * `src-tauri/.gitignore` calls build output. The signal points at the
+ * developer's own change and the cause is a stale artefact.
+ *
+ * ── What this does NOT check ─────────────────────────────────────────────
+ *
+ * Any other generated tree. `.next` is already named in `include` on purpose,
+ * and there is no general rule here about build output — this pins the two
+ * directories that hold a second copy of the sources, because those are the
+ * ones that turn into a type error rather than into noise.
+ */
+describe('the typechecker is not handed a second copy of the sources', () => {
+  it('excludes the trees the tray build stages the whole of src/ into', () => {
+    const config = JSON.parse(read('tsconfig.json')) as { exclude?: string[] }
+    expect(config.exclude ?? []).toContain('src-tauri/target')
+    expect(config.exclude ?? []).toContain('dist-runtime')
+  })
+})
