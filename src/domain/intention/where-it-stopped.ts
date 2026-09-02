@@ -35,6 +35,25 @@
  * It does not read the clock, open anything, or know which boundary failed.
  * `WorkerResult.boundaryFailure` carries that and is in-memory only — it never
  * reaches `AgentRun.terminalReason`, so no sentence here may pretend to it.
+ *
+ * It also does not know **what the run already did**. Every sentence below is
+ * derived from one status and one reason, and neither says whether an action
+ * completed before the ending. The report's *what I did* list is built from the
+ * ledger and does know; a sentence here that made a claim about it — *"nothing
+ * was left half-done"*, say — would be this module answering a question it has
+ * no field for. One did, on the way to review, and the `boundary-failure` arm
+ * carries the argument.
+ *
+ * ── And the move cost a guard, which is worth stating ────────────────────
+ *
+ * `tests/consumer-vocabulary.test.ts` walks `src/ui` and `src/app` for `.tsx`
+ * files only. These sentences were inside a `.tsx` before 2026-09-02 and are
+ * not now, so the banned-word check no longer reads them — eleven that it used
+ * to see, plus the five added here. `work-so-far.ts` has always sat outside
+ * that walk for the same reason, so this is a widening of an existing hole
+ * rather than a new one, and it is a real cost of making the derivation
+ * testable. Both were weighed; a guard whose limit is unstated reads as a
+ * stronger promise than it is.
  */
 
 /** Local rather than imported: a pluraliser is not worth a dependency from
@@ -99,18 +118,31 @@ export function whereItStopped(input: StoppedWhere): {
      * report could not distinguish knowing what happened from not recognising
      * the row at all.
      *
-     * The detail says what a person can DO, because that is the difference
-     * between this and `error`: an outside thing was unreachable, and trying
-     * again is a reasonable next move. It does not name the model or the
-     * browser, because which one is in `WorkerResult.boundaryFailure` and that
-     * never reaches this column.
+     * ── The detail claims NOTHING about what was already done ───────────
+     *
+     * ~~It said *"Nothing was left half-done. Handing the work over again is
+     * safe."*~~ **Struck before it shipped, on review.** Both halves were
+     * false and the second was dangerous. `failedAt` has two call sites in
+     * `src/runtime/worker-loop.ts`: one before the loop, where nothing has
+     * happened, and one INSIDE it, where turns 0..N-1 have already run — and
+     * those turns include `complete-purchase`, which sits outside
+     * `CONFIRMABLE_ACTION_KINDS` and is authorised inline with no pause. This
+     * column cannot tell the two call sites apart.
+     *
+     * So a run can buy something at turn 3 and fail at turn 5, and the struck
+     * sentence would have told the person that handing over again was safe —
+     * which is the one action that spends the ratified count twice, because
+     * `chargesSpent` is counted per contract and a fresh handover ratifies a
+     * fresh `PurchaseAuthorization`. A note may not recommend an act it cannot
+     * know the cost of.
+     *
+     * What is left is the step count and the report's own *what I did* list,
+     * which is built from the ledger and does know.
      */
     case 'boundary-failure':
       return {
         sentence: "I couldn't reach something I needed, and stopped rather than guess.",
-        detail: [through, 'Nothing was left half-done. Handing the work over again is safe.']
-          .filter(Boolean)
-          .join(' '),
+        detail: through,
       }
     /**
      * The two endings that are about the question rather than about the work.
@@ -121,16 +153,35 @@ export function whereItStopped(input: StoppedWhere): {
      * and they stay apart because whose clock ran out is the whole difference.
      * Neither blames the person for being slow — they were reading a question
      * about something irreversible, which is what we asked them to do.
+     *
+     * ── "Nothing" has to keep its antecedent ─────────────────────────────
+     *
+     * ~~`detail: [through, 'Nothing was done.']`~~ **Struck before it shipped,
+     * on review.** In `CONFIRMATION_EXPIRED_REPORT` that word is anaphoric —
+     * it refers back to *"one thing I could not undo"* in the same sentence.
+     * Split across `sentence` and `detail` with the step count wedged between,
+     * it stops referring to anything and becomes a claim about the whole
+     * shift, rendered directly on top of *"I got through 3 of 5 steps."*
+     *
+     * That combination is the DEFAULT here rather than an edge: the page reads
+     * `terminalReason` off the last run and the plan off the first, and a
+     * continuation is enqueued as another `worker`, so `through` is non-null
+     * by construction on exactly these two endings.
+     *
+     * The antecedent is restored rather than the clause deleted, because what
+     * it says is worth saying: expiry never approves, and a late answer is not
+     * converted into a yes, so the ONE thing that was asked about did not
+     * happen. That is true, narrow, and the fact the person came for.
      */
     case 'answered-too-late':
       return {
         sentence: 'Your answer arrived after the time limit, so I did not go on.',
-        detail: [through, 'Nothing was done.'].filter(Boolean).join(' '),
+        detail: [through, 'The thing I asked about was not done.'].filter(Boolean).join(' '),
       }
     case 'confirmation-expired':
       return {
         sentence: 'I asked you about one thing I could not undo, and stopped after waiting a day.',
-        detail: [through, 'Nothing was done.'].filter(Boolean).join(' '),
+        detail: [through, 'That one thing was not done.'].filter(Boolean).join(' '),
       }
     case 'stop-condition':
       return {

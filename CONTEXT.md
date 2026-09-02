@@ -1395,8 +1395,14 @@ told only that it stopped. ~~Recorded and not fixed here —
 **Fixed 2026-09-02 (#145), and it was three reasons rather than one.** Both renderers now have an arm
 for `boundary-failure`, and for `answered-too-late` and `confirmation-expired`, which were reaching
 the same default and were missed when this note was written. Every row of the table above now has a
-sentence of its own on both surfaces, and both test files assert that against this list — so a row
-added here without an arm goes red rather than quietly reading as *"we have never heard of this"*.
+sentence of its own on both surfaces. ~~Both test files assert that against this list — so a row
+added here without an arm goes red rather than quietly reading as *"we have never heard of this"*.~~
+**Struck the same day, on review, because it was not true when it was written.** Neither test file
+reads this table: each holds its own hand-copied list, so a row added HERE goes green. What the two
+do assert is that every reason on their lists has a sentence distinct from the default — which
+catches a reason deleted from a renderer, and not one added to this table. Keeping the list in three
+places is the cost of the column being a string SQLite cannot constrain, and the only thing closing
+it would be a shared constant the writers and the renderers both read.
 `whereItStopped` moved to `src/domain/intention/where-it-stopped.ts` in the same change: it was
 module-private in a `.tsx` server component, which is why half of this could go wrong unpinned.
 

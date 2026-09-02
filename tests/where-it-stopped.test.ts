@@ -100,13 +100,48 @@ describe('a boundary failure says what it can and no more', () => {
     expect(both).not.toMatch(/model|browser|Chrome|Anthropic|API/i)
   })
 
-  it('says the safe next move, which is what separates it from an internal error', () => {
-    const { detail } = said({ status: 'failed', terminalReason: 'boundary-failure' })
-    expect(detail).toContain('Handing the work over again is safe.')
+  /**
+   * It may not say what was already done, and this is the case that nearly
+   * shipped saying it.
+   *
+   * The detail read *"Nothing was left half-done. Handing the work over again
+   * is safe."* Both halves are outside what one status and one reason can
+   * support: `failedAt` fires from inside the turn loop as well as before it,
+   * and the turns already taken can include `complete-purchase`, which is
+   * authorised inline with no pause. So the sentence recommended the one act
+   * that spends a ratified purchase count twice — `chargesSpent` is per
+   * contract, and handing over again ratifies a fresh authorisation.
+   */
+  it('claims nothing about what the run had already done', () => {
+    const { sentence, detail } = said({ status: 'failed', terminalReason: 'boundary-failure' })
+    const both = `${sentence} ${detail ?? ''}`
+
+    expect(both).not.toMatch(/nothing was left|half-done|is safe|safe to/i)
+    // The step count is what it may say, because the row does carry it.
+    expect(detail).toBe('I got through 2 of 4 steps.')
   })
 })
 
 describe('the two confirmation endings are told apart', () => {
+  /**
+   * "Nothing" needs its antecedent, or it becomes a claim about the shift.
+   *
+   * Both arms nearly shipped with a bare *"Nothing was done."* in the detail,
+   * rendered directly under *"I got through 3 of 5 steps."* — which is the
+   * default combination here, not an edge, because the page reads the reason
+   * off the last run and the plan off the first.
+   */
+  it('scopes what was not done to the thing it asked about', () => {
+    for (const reason of ['answered-too-late', 'confirmation-expired']) {
+      const { detail } = said({ status: 'interrupted', terminalReason: reason, reached: 3, planned: 5 })
+      expect(detail, reason).toContain('I got through 3 of 5 steps.')
+      // Scoped — never a bare claim that the whole shift did nothing, on top of
+      // a sentence saying how much of it happened.
+      expect(detail, reason).toMatch(/thing I asked about|That one thing/)
+      expect(detail, reason).not.toMatch(/(^|\s)Nothing was done\./)
+    }
+  })
+
   it('does not tell somebody who answered late that nobody answered', () => {
     const late = said({ status: 'interrupted', terminalReason: 'answered-too-late' })
     const never = said({ status: 'interrupted', terminalReason: 'confirmation-expired' })
