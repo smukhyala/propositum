@@ -794,6 +794,69 @@ describe('a run goes far enough to produce changes and a terminal reason', () =>
     expect(sheet).toMatch(/structural rules expected: none — it should end by finishing/)
   })
 
+  /**
+   * The worksheet has to answer *what did it do*, not only *how many* — #142.
+   *
+   * `docs/eval-runs/2026-08-27-run.log` records a `draft-changes` shift ending
+   * `succeeded on no-progress` with three actions and zero proposed changes,
+   * and nothing anywhere says what those three actions were. That run cost
+   * money and produced a number nobody can act on: diagnosing it meant paying
+   * for another one and reading the identical three lines back.
+   *
+   * The ledger was already handed every one of these facts and threw them away
+   * — `arrayLedger`'s own docblock claimed *"the worksheet is this path's
+   * traceability"* while discarding the plan and every intent. So this is
+   * asserted on the FREE path, where it costs nothing to keep true.
+   */
+  it('says what the shift proposed, not just how many things it proposed', async () => {
+    const fake = new FakeModelClient(dryReplies(monitor))
+    const run = await runScenario(fake, monitor)
+    const sheet = renderWorksheet(run)
+
+    // Or the assertions under it are about a run that did nothing.
+    expect(run.work?.actionsTaken ?? 0).toBeGreaterThan(0)
+
+    expect(sheet).toMatch(/the plan it was given/)
+    expect(sheet).toMatch(/what it proposed, in order/)
+
+    // Every action reaches the page, with what became of it — the difference
+    // between "3 action(s) taken" and a diagnosis.
+    for (const action of run.work?.actions ?? []) {
+      expect(sheet).toContain(action.kind)
+      expect(sheet).toContain(action.reason)
+    }
+
+    // And the plan, which is the other half of the question: a run that drafted
+    // nothing may have been given nothing to draft.
+    for (const step of run.work?.plan ?? []) expect(sheet).toContain(step.intent)
+  })
+
+  /**
+   * The run path opens no database, and the guard covers the file rather than
+   * the function.
+   *
+   * ~~It sliced `recordingLedger`'s body and grepped that.~~ **Widened on
+   * review**, which measured the slice at 2.6% of the file: an import at the
+   * top and a `createDatabase` in `driveWork` passed it green, so it asserted
+   * the property in its name for one function and nothing for the other
+   * twenty-three.
+   *
+   * WHAT IT DOES NOT COVER: `scripts/eval.ts`, which legitimately opens one —
+   * `--report` reads H2 off `ChangeVerdict` and `OutcomeVerdict` rows, and that
+   * asymmetry is argued in its own header. The property being held here is
+   * narrower and is the one that matters: a scored RUN must not write to the
+   * file the report reads, or every run becomes its own denominator.
+   */
+  it('keeps the run path out of the application database', () => {
+    // Comments stripped, because this file's own docblocks name `--report`'s
+    // database and would satisfy the grep without any code doing so.
+    const source = readFileSync(new URL('../src/eval/run.ts', import.meta.url), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/\/\/.*$/gm, '')
+
+    expect(source).not.toMatch(/prisma|createDatabase|appContext/)
+  })
+
   it('does not say the plan ran out about a run that said it was finished', async () => {
     // Three ways a run ends with no stop rule — a stop rule fired, the model
     // declared itself done, or `follow-closely` reached the end of the plan —

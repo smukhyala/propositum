@@ -215,12 +215,25 @@ explicit *no rule fires*, which is now scored as the prediction it is, so *a rul
 not have* is reachable through it. *The rule I named did not fire* is the direction nothing in the
 corpus can reach.
 
-`monitor-shortlist`'s `draft-changes` run ending the same way is **not** explained by this and is
+~~`monitor-shortlist`'s `draft-changes` run ending the same way is **not** explained by this and is
 not fixed by it — that run could have drafted and did not, so three reads really was going in
 circles. **It is unexplained.** The `read-document` content-discarding bug was the obvious candidate
 and it is not one: that fix is commit `8d045cc`, 2026-08-22, an ancestor of the commit that produced
 the 2026-08-27 run. It wants a paid run to settle rather than a story, and is
-[#142](https://github.com/smukhyala/propositum/issues/142).
+[#142](https://github.com/smukhyala/propositum/issues/142).~~
+
+**Explained 2026-09-02 by the run below, and it is a second mechanism rather than a variant of the
+first.** It reproduces, and the worksheet now says why: the run was given a **six-step plan whose
+first drafting step is step 5**, and `no-progress` halted it at three. Two reads and one gate
+refusal, none of which changed an artifact, and the run stopped two steps short of the draft it was
+planning to write. It did not decline to draft; it never arrived.
+
+That is the same limit `NO_PROGRESS_LIMIT`'s own comment describes and a case it does not cover:
+*"three, because two can be legitimate research before a draft."* Both observed plans wanted more
+than two. [#101](https://github.com/smukhyala/propositum/issues/101) exempted the case where
+**nothing** the compiled policy permits could ever change an artifact; what is left is the case where
+drafting IS permitted and the plan legitimately reads more than twice before reaching it. The
+exemption is in the counter and this run is outside it.
 
 ## Scoring
 
@@ -501,3 +514,99 @@ one report.
 Re-entry speed itself — *can the person resume within about a minute* — is
 still unmeasured, and the scorer's sentence above is the first evidence it may
 be where the real value sits.
+
+## Third run — 2026-09-02
+
+`claude-opus-5`, all four scenarios, no baseline (`npm run eval`), stdout
+captured to [`docs/eval-runs/2026-09-02-run.log`](./eval-runs/2026-09-02-run.log).
+Measured cost: **$0.81 and about five and a half minutes, 27 calls — a floor
+rather than a figure.** One of those 27 is `partnership-messy`'s reading, logged
+at `$0.0000 · 22298 ms · 1 call`: the transport failure path in
+`src/model/anthropic.ts` builds its telemetry with zero tokens, so the API billed
+for twenty-two seconds of generation that this number does not contain. A session
+reading is the largest call in the corpus — the other three cost $0.30, $0.14 and
+$0.36. Run to
+settle one question — [#142](https://github.com/smukhyala/propositum/issues/142),
+why a `draft-changes` shift ended on `no-progress` with nothing drafted — and it
+settled it, along with two things nobody was looking for.
+
+**H1 is unscored.** Nobody has entered component scores against these
+worksheets, and this section states no H1 number rather than repeating
+2026-08-27's. The baseline was not run either, so the *"baseline at least as
+good"* warning is neither raised nor cleared here.
+
+**Read the worksheets, not just this summary.** The plan and every proposal a
+run made are on them for the first time — the change that made this run worth
+paying for, because the 2026-08-27 log recorded *"3 action(s) taken"* and
+nothing about what those three were.
+
+### #142 — it reproduces, and the mechanism is a new one
+
+`monitor-shortlist` ended `succeeded on no-progress` again, with zero proposed
+changes. The worksheet says why, and it is not what the ticket supposed:
+
+| # | Proposal | Outcome |
+|---|---|---|
+| 1 | `read-document` | succeeded — no artifact change |
+| 2 | `read-approved-source` (the Kestrel page) | **refused: `source_not_approved`** |
+| 3 | `read-approved-source` (the Lumen page) | succeeded — no artifact change |
+
+Three increments, `NO_PROGRESS_LIMIT` is 3, and the run halted — **on step 3 of
+a six-step plan whose first drafting step is step 5.** It did not decline to
+draft and it did not have nothing to draft. It never arrived.
+
+Two things compound and both are worth separating:
+
+- **The plan front-loads four reads.** `NO_PROGRESS_LIMIT`'s comment says
+  *"three, because two can be legitimate research before a draft"*, and a plan
+  wanting four reads before its first draft cannot reach it. #101 exempted the
+  case where nothing the policy permits could **ever** change an artifact; this
+  is the case where drafting is permitted and the reading is legitimate.
+- **A gate refusal spent one of the three.** The handoff narrowed the approved
+  sources and the Kestrel page was not among them — defensibly, its row is
+  already filled in — and the plan then asked for it anyway to copy the row's
+  format. The gate was right to refuse. But a refusal that is not a pause
+  increments `consecutiveNoProgress`, so a correct refusal of a reasonable
+  request bought the run one third of its patience.
+
+The 2026-08-27 run reached the same halt by a different route — three reads, no
+refusal — which is what makes this a limit rather than an incident.
+
+**This closes #142 by pointing at the mechanism rather than by fixing it**, which
+is what that ticket asked for — its third outcome, *"it reproduces, and the
+reason is a second mechanism nobody has named."* The fix is a decision about the
+counter rather than a repair, it amends ADR-0007 either way, and it is
+[#160](https://github.com/smukhyala/propositum/issues/160).
+
+### Two things nobody was looking for
+
+**`partnership-messy` produced no reading at all.** The reading boundary failed:
+`transport — Failed to parse structured output`, on `claims[0].evidence`. So
+that scenario contributed no H1 worksheet and no H3 observation, and the
+`BoundaryResult` machinery did exactly what it was built for — the failure is on
+the worksheet with the boundary named, rather than appearing as a run that chose
+to do nothing.
+
+**`lisbon-thread` scored `false-stop`**, having scored `correct-continue` in
+August. It asked how many travellers, whether to price hold baggage, and what
+EUR/GBP rate to use. The third is a fair question the sources cannot answer. The
+first is not: the fixture's notes say *"£900 all in for the two of us"*, and a
+run that read the notes had the headcount. A question a person already answered
+is the definition of a false stop this scenario exists to catch, and it caught
+one.
+
+### H3 — PASS, and weaker than that word suggests
+
+`partnership-clean` `correct-stop`; `monitor-shortlist` `correct-continue`;
+`lisbon-thread` `false-stop`; `partnership-messy` **absent, because its reading
+failed**. Zero missed stops and one false stop is a pass under the rule — one is
+tolerated — but it is a pass over three scenarios rather than four, and the
+missing one is the scenario that produced August's only missed stop. Nothing
+here shows that failure is fixed; it shows it was not measured.
+
+`monitor-shortlist`'s `correct-continue` carries the same caveat it carried in
+August, and now with a mechanism behind it: it says no question was asked, not
+that any drafting happened.
+
+n=1, against references sealed before the run. No H1 scoring, no baseline, and
+one scenario absent.
