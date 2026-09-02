@@ -156,6 +156,7 @@ import type { ContractDrafted, PrefilledWords } from '../server/actions'
 import {
   ACTION_KINDS,
   CONFIRMABLE_ACTION_KINDS,
+  amountLabel,
   compilePolicy,
   PURCHASE_ACTION_KINDS,
   TIME_LIMIT_CHOICES,
@@ -370,17 +371,6 @@ function minutesLabel(minutes: number): string {
   return hours === 1 ? '1 hour' : `${hours} hours`
 }
 
-/**
- * "$40.00", "¥4,000" — the ratified ceiling in the person's money words.
- *
- * Never sees model prose: the amount and currency are the clamped, closed-set
- * values the row was written with. JPY carries no minor exponent; the rest of
- * the closed set divide by 100.
- */
-function amountLabel(maxAmountMinor: number, currency: CurrencyCode): string {
-  const major = currency === 'JPY' ? maxAmountMinor : maxAmountMinor / 100
-  return new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(major)
-}
 
 function clockOf(when: Date): string {
   return new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit' })

@@ -175,7 +175,12 @@ landings ≤ authorised intents by construction.
 - **A real purchase has been made and refunded, and the `ActionIntent` / `ActionOutcome` pair for it
   reads correctly on the re-entry screen.** ***Open — the one item only a person can close, and the
   reason this file is not done.*** The same session should calibrate `parseChargeAmount`'s key list
-  against real checkouts, which no fixture can do.
+  against real checkouts, which no fixture can do. *Added 2026-09-02:* the same session should also
+  watch the network panel for same-origin non-`GET` requests fired **between the press and the
+  checkout request** — the permit is not bound to the initiating request (ADR-0024 §2, the sixth
+  fact), so a telemetry `POST` carrying an amount would consume it first. If that happens on a real
+  basket once, binding the permit to the request Chrome attributes to the press stops being a
+  follow-up and becomes the next item here.
 - ~~`CONTEXT.md`'s `PurchaseAuthorization` entry no longer carries its *specification rather than a
   description* fence.~~ *(met 2026-09-01)*
 

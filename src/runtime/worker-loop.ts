@@ -86,7 +86,7 @@
  * budget decision never depends on when the test ran.
  */
 
-import { ACTION_KINDS, compilePolicy, MUTATING_ACTION_KINDS } from '../domain/handoff/policy'
+import { ACTION_KINDS, amountLabel, compilePolicy, MUTATING_ACTION_KINDS } from '../domain/handoff/policy'
 import type { ActionKind, AutonomyControls, ContractScope, EnforcedPolicy } from '../domain/handoff/policy'
 import { authorize } from '../policy/gate'
 import type { AuthorizedAction, RunContext, ToolProposal } from '../policy/gate'
@@ -1494,9 +1494,14 @@ async function perform(
      *
      * ── What this costs the outcome vocabulary, said plainly ─────────────
      *
-     * `OutcomeProposal` has five shapes and exactly one is produced here:
+     * `OutcomeProposal` has five shapes and ~~exactly one is produced here:
      * `section-prose`, from `draft-section`. `landed` still has no producer,
-     * because `LANDING_ACTION_KINDS` is empty and `click-element` is not in it —
+     * because `LANDING_ACTION_KINDS` is empty~~ **two are — corrected
+     * 2026-09-02:** `section-prose` from `draft-section`, and `landed` from
+     * `complete-purchase`, which became the set's one member on 2026-09-01
+     * (ADR-0024) and produced nothing for a day after, which is why
+     * `tests/reachability.test.ts` now pins the producer and not only the
+     * set. `click-element` is still not in it —
      * landing is about whose act put the effect into the world, not about
      * whether an effect is possible. `src/server/outcomes/` handles all five
      * anyway, and its switch is exhaustive for the same reason this one is: the
@@ -1583,6 +1588,24 @@ async function perform(
         summary: `completed the purchase — ${bought.charge.amountMinor} minor units ${bought.charge.currency} at ${bought.charge.origin}`,
         changedSomething: true,
         observed: bought.observation,
+        /**
+         * The one `landed` producer, added 2026-09-02.
+         *
+         * For a day the arm above returned without this and the charge lived
+         * in the ledger and nowhere else: `recordOutcomes` received no landed
+         * production, wrote no `external-effect` row, and a run whose only
+         * work was the purchase told the person it had produced nothing —
+         * while `externalEffects`' own docblock said the kind was reachable.
+         * The production grants nothing on its own: `externalEffects` drops
+         * it unless the ledger corroborates a succeeded intent of a landing
+         * kind, so this line can say what happened and cannot make it so.
+         */
+        produced: {
+          kind: 'landed',
+          intentId,
+          what: `Paid ${amountLabel(bought.charge.amountMinor, bought.charge.currency)}`,
+          where: bought.charge.origin,
+        },
       }
     }
   }

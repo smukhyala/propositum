@@ -325,7 +325,7 @@ export const chargeSchema = z.object({
   // Pinned to the domain's closed set at the wire too — the extension already
   // narrows, and a version skew that invented a currency should refuse at the
   // door rather than reach the ledger.
-  currency: z.string().refine((code) => (CURRENCY_CODES as readonly string[]).includes(code)),
+  currency: z.enum(CURRENCY_CODES),
   origin: z.string().min(1),
 })
 export type AttestedCharge = z.infer<typeof chargeSchema>

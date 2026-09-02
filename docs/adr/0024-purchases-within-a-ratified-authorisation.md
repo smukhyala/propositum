@@ -133,6 +133,18 @@ At `Fetch.requestPaused`, before the request leaves the machine:
 
 Four of the five cannot be forged by a page. The fifth is the honest weakness and §4 is about it.
 
+**A sixth fact the table does not hold, recorded 2026-09-02 on review of the build:** the permit is
+bound to an origin, a currency, a ceiling and a count — **not to the request the pressed control
+initiated.** The transport releases the *first* same-origin non-`GET` inside the permit's window
+whose body parses to an amount in the permit's currency at or under the ceiling. A same-origin
+telemetry `POST` that happens to carry `amount` and `currency` — a checkout-started event, say —
+could consume the one-shot ahead of the real checkout. Money still fails closed: the real checkout
+then meets the plain block and nothing is charged. What does not fail closed is the ledger's
+sentence, which would record a purchase against a request that bought nothing while the count is
+spent. The live-purchase session in [`docs/todo/06`](../todo/06-buying-things.md) is where the
+frequency of this gets measured against real baskets; binding the permit to the initiating request
+(the `Document` or `XHR` Chrome attributes to the press) is the candidate fix, and it is not built.
+
 **No authorisation on the contract ⇒ every non-`GET` is refused**, exactly as today. *"Find me food
 for dinner"* produces nothing to ratify, so the block is still unconditional for it. This is the case
 `tests/purchase-authorisation.test.ts` carries as a standing fixture, and it is the one that must

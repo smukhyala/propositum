@@ -99,6 +99,14 @@ describe('capabilities the brief excludes do not exist', () => {
     // phrasing outside the lexicon, or by a person who has learned to click
     // yes. Nobody should read a green run of this test as ADR-0004's guarantee
     // surviving intact.
+    //
+    // And since ADR-0024 (2026-09-01) the `purchase` entry below is a statement
+    // about a NAME: `src/policy/tools.ts` exports `completePurchase`, which this
+    // grep does not match, and buying is a thing Propositum does within a
+    // ratified `PurchaseAuthorization`. The entry stays because the two-arm
+    // guard in `tests/purchase-authorisation.test.ts` is what now holds the
+    // promise, and deleting a line here would read as the promise being
+    // dropped rather than moved. Nobody should read it as "no purchasing".
     for (const forbidden of ['sendMessage', 'sendEmail', 'purchase', 'publish', 'deleteFile']) {
       expect(tools).not.toContain(`export function ${forbidden}`)
     }

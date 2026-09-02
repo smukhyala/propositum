@@ -403,6 +403,23 @@ export function currencyOf(value: string): CurrencyCode | null {
 }
 
 /**
+ * "$40.00", "¥4,000" — an amount in the person's money words.
+ *
+ * Shared by the agreement screen (the ratified ceiling) and the worker (the
+ * attested charge), so the same money can never print two ways on two screens.
+ * Never sees model prose: the amount and currency are the clamped, closed-set
+ * values a row was written with. JPY carries no minor exponent; the rest of the
+ * closed set divide by 100.
+ *
+ * What it does not do: pick a locale. `en-US` is fixed so the label is stable
+ * across machines and a test can assert on it.
+ */
+export function amountLabel(amountMinor: number, currency: CurrencyCode): string {
+  const major = currency === 'JPY' ? amountMinor : amountMinor / 100
+  return new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(major)
+}
+
+/**
  * The product's own ceilings on what a drafted authorisation may ask for, in
  * minor units and charges. `draftContract` clamps to these the way it clamps
  * the suggested time limit — safe because the person sees the clamped number on

@@ -1413,6 +1413,18 @@ describe('the safety machinery is reachable from the product', () => {
         outcomes,
         'nothing derives landed from LANDING_ACTION_KINDS — a landed charge would render as held work',
       ).toContain('LANDING_ACTION_KINDS.has(')
+
+      // The derivation is only half the chain, and for a day it was the only
+      // half: the set had its member and `recordOutcomes` could corroborate a
+      // landed production, but `perform`'s `complete-purchase` arm produced
+      // none, so no external-effect row was ever written. The producer is
+      // pinned here beside the derivation because the pin above passed
+      // throughout.
+      const loop = stripComments(readFileSync(join(repo, 'src/runtime/worker-loop.ts'), 'utf8'))
+      expect(
+        loop,
+        "no arm of perform produces a landed proposal — a completed purchase would write no outcome row",
+      ).toContain("kind: 'landed'")
     })
   })
 })

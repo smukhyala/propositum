@@ -548,9 +548,15 @@ export function flattenAXTree(nodes, options) {
  * aborts on an iframe is a bad afternoon, and one that walks off the approved
  * origin unnoticed is the thing this function exists for.
  *
- * Two honest costs of the narrowing, recorded rather than smoothed over: a
- * sign-in redirect to an identity provider outside the approved sources is
- * blocked, and an off-origin `GET` beacon is allowed.
+ * ~~Two~~ Three honest costs of the narrowing, recorded rather than smoothed
+ * over: a sign-in redirect to an identity provider outside the approved
+ * sources is blocked, an off-origin `GET` beacon is allowed, and — added
+ * 2026-09-02 — the landing permit below is bound to origin, currency, ceiling
+ * and count, NOT to the request the pressed control initiated, so a
+ * same-origin non-`GET` beacon whose body carries a parseable amount could
+ * consume the one-shot ahead of the real checkout. Money fails closed (the
+ * checkout then meets the plain block); the ledger's sentence about it does
+ * not. ADR-0024 §2 carries the argument and todo/06 the measurement.
  */
 export function classifyPausedRequest(paused, approvedOrigins, patternCovers, mainFrameId, permit) {
   const method = String(paused?.request?.method ?? '').toUpperCase()
