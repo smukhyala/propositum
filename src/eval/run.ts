@@ -90,6 +90,17 @@ export interface ScenarioWork {
    *  the other four `OutcomeProposal` shapes have no document to land in, and a
    *  count is the honest thing to say about them here. */
   readonly otherProductions: number
+  /**
+   * The ratified plan, and every proposal that reached the gate — #142.
+   *
+   * Facts about the run, like everything else here, and scored by nothing. They
+   * exist because `actionsTaken` is a NUMBER: a run that took three actions and
+   * proposed no change was indistinguishable from any other run that took three
+   * actions, and the only way to find out what it did was to pay for another
+   * one and read the same three lines back.
+   */
+  readonly plan: readonly { ordinal: number; intent: string }[]
+  readonly actions: LedgerTrace['actions']
   readonly stoppedBy: readonly StopRuleId[]
   readonly terminalReason: string | undefined
   readonly questionsRaised: readonly string[]
@@ -262,6 +273,10 @@ async function driveWork(
    */
   const frozen = Date.now()
 
+  // Hoisted so the trace outlives the call. `runWorker` returns what the run
+  // DECIDED; the ledger is the only thing that sees what it did.
+  const { ledger, trace } = recordingLedger()
+
   const result = await runWorker(
     {
       runId: `${scenario.id}-run`,
@@ -297,7 +312,7 @@ async function driveWork(
       // what somebody reads before deciding whether to spend, and the small half
       // of a bill is a worse number than no bill.
       model: tap(client, telemetry),
-      ledger: arrayLedger(),
+      ledger,
       readSource: {
         // The same two-layer seam production uses: the allowlist wraps the
         // fetcher, so a source id that resolved to the wrong URL is refused at
@@ -361,6 +376,8 @@ async function driveWork(
     changes,
     baseHash,
     otherProductions: result.produced.length - drafts.length,
+    plan: trace.steps,
+    actions: trace.actions,
     stoppedBy: result.stoppedBy,
     terminalReason: result.terminalReason,
     questionsRaised: result.decisions.map((d) => d.question),
@@ -372,31 +389,101 @@ async function driveWork(
 }
 
 /**
- * A ledger that keeps nothing.
+ * ~~A ledger that keeps nothing.~~ **One that keeps what the worksheet needs,
+ * 2026-09-02 ([#142](https://github.com/smukhyala/propositum/issues/142)).**
  *
  * `runWorker` writes an `ActionIntent` before every effect and an
- * `ActionOutcome` after, and both are durable rows in production. Here they go
- * nowhere: the run path never opens the application database, and giving the
- * harness one would make every scored run a writer to the same file `--report`
- * reads H2 off. The rows are not needed — the worksheet is this path's
- * traceability — and the intent id is returned unchanged because the loop mints
- * it and the tools use it as an idempotency key.
+ * `ActionOutcome` after, and both are durable rows in production. Here they
+ * still go nowhere durable: the run path never opens the application database,
+ * and giving the harness one would make every scored run a writer to the same
+ * file `--report` reads H2 off. What changed is that they are no longer
+ * DISCARDED — they are held in memory for the length of one scenario and
+ * printed on the worksheet.
+ *
+ * ── Why that was worth changing ──────────────────────────────────────────
+ *
+ * The docblock above claimed *"the worksheet is this path's traceability"*, and
+ * the worksheet said this and nothing else:
+ *
+ *     0 proposed change(s) against a base whose hash did not move
+ *     3 action(s) taken, 0 refused by the gate
+ *     ended succeeded on no-progress (stop-condition)
+ *
+ * Three actions, and no record anywhere of what they were. #142 is a
+ * `draft-changes` run that ended exactly like that with nothing drafted, and it
+ * could not be diagnosed without paying for another run that would produce the
+ * identical three lines. A traceability claim that cannot answer *what did it
+ * do* is not one.
+ *
+ * ── What is deliberately unchanged ───────────────────────────────────────
+ *
+ * It opens nothing and writes nothing. The intent id is still returned
+ * unchanged, because the loop mints it and the tools use it as an idempotency
+ * key — inventing one here would break a dispatch's deduplication in the one
+ * place a fixture could not notice. `recordSteps` still returns synthetic ids
+ * in the same order, because nothing reads them but the loop.
+ *
+ * ── What it does NOT record ──────────────────────────────────────────────
+ *
+ * Page text, screenshots, or anything a source returned. `params` is what the
+ * MODEL proposed, which is already model-authored and already on the worksheet
+ * by way of `reason`; the untrusted half of a run stays out of the log, which
+ * is the same line `docs/SECURITY_AND_PRIVACY.md` draws everywhere else.
  */
-function arrayLedger(): RunLedger {
-  return {
+export interface LedgerTrace {
+  /** The ratified plan, as the worker was given it. Mutable because the ledger
+   *  fills it in; every reader outside this module takes it read-only. */
+  steps: Array<{ ordinal: number; intent: string }>
+  /** Every proposal that reached the gate, in order, with what became of it. */
+  readonly actions: Array<{
+    seq: number
+    kind: string
+    /** The model's own words for why. Model prose, printed as such. */
+    reason: string
+    authorized: boolean
+    refusedRule: string | undefined
+    /** Absent while an authorised action has no outcome — which on a finished
+     *  run means it was abandoned. */
+    result: string | undefined
+    detail: string | undefined
+  }>
+}
+
+function recordingLedger(): { ledger: RunLedger; trace: LedgerTrace } {
+  const trace: LedgerTrace = { steps: [], actions: [] }
+  const bySeq = new Map<string, LedgerTrace['actions'][number]>()
+
+  const ledger: RunLedger = {
     async recordIntent(input) {
+      const row = {
+        seq: input.seq,
+        kind: input.kind,
+        reason: input.reason,
+        authorized: input.authorized,
+        refusedRule: input.refusedRule,
+        result: undefined,
+        detail: undefined,
+      }
+      trace.actions.push(row)
+      bySeq.set(input.id, row)
       return input.id
     },
-    async recordOutcome() {
-      /* nothing to write to */
+    async recordOutcome(input) {
+      const row = bySeq.get(input.intentId)
+      if (!row) return
+      row.result = input.result
+      row.detail = input.detail
     },
     async recordSteps(_runId, steps) {
+      trace.steps = steps.map((step) => ({ ordinal: step.ordinal, intent: step.intent }))
       return steps.map((_, i) => `step-${i + 1}`)
     },
     async advanceProgress() {
       /* nothing to advance */
     },
   }
+
+  return { ledger, trace }
 }
 
 /**
@@ -803,6 +890,41 @@ export function renderWorksheet(run: ScenarioRun): string {
     out.push(`  ended ${w.status} ${ending}`)
     if (w.summary !== undefined) out.push(`  said: ${w.summary}`)
     for (const question of w.questionsRaised) out.push(`  asked: ${question}`)
+
+    /**
+     * The plan and the actions, which is the difference between a number and a
+     * diagnosis — #142.
+     *
+     * Printed here rather than folded into the counts above, because the counts
+     * are what H2 and H3 read and these are what a person reads when the counts
+     * are surprising. `docs/eval-runs/2026-08-27-run.log` has a `draft-changes`
+     * shift ending `succeeded on no-progress` with three actions and zero
+     * proposed changes, and nothing anywhere says what those three were.
+     *
+     * `reason` is the model's own prose about its own proposal. It is printed
+     * as that and scored by nothing.
+     */
+    if (w.plan.length > 0) {
+      out.push('', '  the plan it was given')
+      for (const step of w.plan) out.push(`    ${step.ordinal}. ${step.intent}`)
+    }
+
+    if (w.actions.length > 0) {
+      out.push('', '  what it proposed, in order')
+      for (const action of w.actions) {
+        const verdict = action.authorized
+          ? (action.result ?? 'no outcome recorded')
+          : `refused: ${action.refusedRule ?? 'unknown rule'}`
+        out.push(`    ${action.seq}. ${action.kind} — ${verdict}`)
+        out.push(`       ${action.reason}`)
+        if (action.detail !== undefined) out.push(`       → ${action.detail}`)
+      }
+    } else if (w.actionsTaken === 0) {
+      // An empty list and a zero count agree, and saying so is worth a line:
+      // the alternative reading of a missing block is that the worksheet lost
+      // it, which is the thing this whole section exists to stop.
+      out.push('', '  it proposed nothing at all')
+    }
   }
 
   out.push('', 'TO SCORE — enter 0/1/2 per component, then run the H1 gate:')
