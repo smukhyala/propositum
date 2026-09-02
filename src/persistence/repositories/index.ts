@@ -1389,6 +1389,32 @@ export interface AgentRunRepository {
     controlToken: string | null
     resumesRunId: string | null
   } | null>
+  /**
+   * Move the step marker on, for a run that is still live.
+   *
+   * ── Why this has a predicate, found while fixing #140 ────────────────────
+   *
+   * It did not, and the write is `status: 'running'` as well as the step. So a
+   * run the lease sweep had already reaped — `interrupted` / `lease-expired`,
+   * credential revoked, precisely because we stopped trusting it to be driving
+   * — was put back to `running` by its own worker at the top of the next turn.
+   *
+   * That is not a cosmetic row. `fenceFor` in `src/runtime/worker-process.ts`
+   * decides whether the run may keep going by reading exactly this column:
+   * *"`claimed` and `running` are the two live statuses. Anything else —
+   * `interrupted` from a sweep … means the row this worker is acting under no
+   * longer describes a live run."* The sweep does not touch `claimedBy` and
+   * does not set `cancelRequested`, so status is the ONLY one of the fence's
+   * three signals that a reap moves — and this write moved it back, one step
+   * before the fence read it. The reaped worker then passed its own fence and
+   * carried on driving somebody's browser.
+   *
+   * Scoped on the two live statuses, so a reaped run stays reaped and the fence
+   * sees what the sweep wrote. Returns nothing: the caller is the loop, and the
+   * thing that stops the run is the fence at the next action boundary, which is
+   * where ADR-0007 requires a halt to land. A loop that also read a boolean here
+   * would be a second halt path to keep in agreement with the first.
+   */
   advanceProgress(id: string, step: number): Promise<void>
   /**
    * The person asked this run to stop.
@@ -1497,8 +1523,11 @@ function agentRunRepository(prisma: PrismaClient): AgentRunRepository {
       }),
 
     advanceProgress: async (id, step) => {
-      await prisma.agentRun.update({
-        where: { id },
+      // Scoped, and the scope is the claim fence's own definition of live. An
+      // unpredicated write here put a reaped run back to `running` before the
+      // fence read the column, which is the one signal a lease sweep moves.
+      await prisma.agentRun.updateMany({
+        where: { id, status: { in: ['claimed', 'running'] } },
         data: { progressStep: step, status: 'running' },
       })
     },
@@ -2702,12 +2731,32 @@ export interface ConfirmationRepository {
    * refuses `abandoned`, and the confirm screen says so instead of offering a
    * button the answer path turns down. #108's second half is closed.
    *
-   * What is still not done here is guarding this method's own write. The status
+   * ~~What is still not done here is guarding this method's own write. The status
    * update below carries NO predicate, so a run the lease sweep already reaped
    * — `interrupted` / `lease-expired` — is rewritten back to parked, keeping a
    * `terminalReason` that `awaiting-confirmation` is documented as never
    * taking. `claim` and `requestCancel` both scope their update on the status
-   * they expect; this one does not. That is #140.
+   * they expect; this one does not. That is #140.~~
+   *
+   * **Done 2026-09-02 (#140).** The status write is scoped on the two live
+   * statuses and the transaction reports rather than rewrites. Parking is now a
+   * request that can be declined, which is what the second half of the return
+   * type says.
+   *
+   * ── The order inside the transaction is the whole of the fix ─────────────
+   *
+   * Status first, request second. Creating the question and then finding the
+   * run unparkable would leave a `ConfirmationRequest` against a terminal run —
+   * a question on somebody's phone about work that is over, which is the state
+   * #132 spent a refusal and a screen on. Writing the status first means a
+   * refused park writes nothing at all.
+   *
+   * ── What it does NOT do, on the refusal path ─────────────────────────────
+   *
+   * It does not end the run, complete it, or explain it. The run already ended
+   * — that is what made the park impossible — and whatever reaped it wrote its
+   * own `terminalReason`. Adding a second one here would be this method having
+   * an opinion about a run it lost the race to.
    */
   raiseAndPark(input: {
     runId: string
@@ -2716,7 +2765,7 @@ export interface ConfirmationRepository {
     summary: string
     evidenceId?: string
     endedAt: Date
-  }): Promise<{ id: string }>
+  }): Promise<{ parked: true; id: string } | { parked: false }>
   /** Requests this run raised that nobody has answered yet. */
   pendingForRun(runId: string): Promise<
     Array<{
@@ -2766,18 +2815,11 @@ function confirmationRepository(prisma: PrismaClient): ConfirmationRepository {
 
     raiseAndPark: ({ runId, intentId, summary, evidenceId, endedAt }) =>
       prisma.$transaction(async (tx) => {
-        const request = await tx.confirmationRequest.create({
-          data: {
-            runId,
-            intentId,
-            summary,
-            ...(evidenceId === undefined ? {} : { evidenceId }),
-          },
-          select: { id: true },
-        })
-
-        await tx.agentRun.update({
-          where: { id: runId },
+        // The status FIRST, and scoped — `requestCancel`'s pattern, in the one
+        // place where a rewrite produced a row nobody could read: a status
+        // saying "parked on a question" beside a reason saying "reaped".
+        const { count } = await tx.agentRun.updateMany({
+          where: { id: runId, status: { in: ['claimed', 'running'] } },
           data: {
             status: 'awaiting-confirmation',
             endedAt,
@@ -2789,7 +2831,21 @@ function confirmationRepository(prisma: PrismaClient): ConfirmationRepository {
           },
         })
 
-        return request
+        // Nothing written, and nothing to explain. Whatever ended this run
+        // wrote the reason it ended for.
+        if (count !== 1) return { parked: false }
+
+        const request = await tx.confirmationRequest.create({
+          data: {
+            runId,
+            intentId,
+            summary,
+            ...(evidenceId === undefined ? {} : { evidenceId }),
+          },
+          select: { id: true },
+        })
+
+        return { parked: true, id: request.id }
       }),
 
     pendingForRun: (runId) =>
