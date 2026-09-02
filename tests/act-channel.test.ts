@@ -420,6 +420,26 @@ describe('halting', () => {
     expect(row.status).toBe('abandoned')
   }, 20_000)
 
+  /**
+   * ~~`control-lost`~~ **`not-delivered`, corrected 2026-09-02, and the change
+   * is the halt getting stronger rather than the answer getting worse.**
+   *
+   * This route used to write `cancelRequested` and stop there. It now goes
+   * through `haltRun` like the other door — [ADR-0030](../docs/adr/0030-a-halt-closes-the-question.md)
+   * — which means it also REVOKES THE CONTROL TOKEN, the step `haltRun`'s
+   * docblock has always described as *"the app-side half of removing the
+   * capability"* and this route was skipping.
+   *
+   * So the later dispatch no longer reaches the halted check at all: it is
+   * refused at the door, because the credential it presents is dead. That is
+   * the correct order — the store's memory of a halt is a nicety, and a live
+   * token on a stopped run is a hole. `store.halted` still earns its place for
+   * the dispatch already in flight when the halt lands, which the case above
+   * this one covers and which is where the twenty-five-second socket was.
+   *
+   * What the assertion is still about is unchanged: the run's next action fails
+   * NOW rather than holding a socket open, so the run can end and say so.
+   */
   it('answers a later dispatch immediately rather than holding a socket open', async () => {
     const runId = await actingRun()
     await haltRoute(extensionPost('/api/act/halt', { runId, reason: 'detached' }))
@@ -430,8 +450,20 @@ describe('halting', () => {
       await dispatchRoute(workerRequest(dispatchBody(runId, intentId, 20_000))),
     )
 
-    expect(answer).toMatchObject({ ok: false, failure: 'control-lost' })
+    expect(answer).toMatchObject({ ok: false, failure: 'not-delivered' })
     expect(Date.now() - started).toBeLessThan(1_000)
+  }, 20_000)
+
+  it('revokes the credential, which is the half this door used to skip', async () => {
+    const runId = await actingRun()
+    expect((await ctx.repos.runs.byId(runId))?.controlToken).toBe(TOKEN)
+
+    await haltRoute(extensionPost('/api/act/halt', { runId, reason: 'detached' }))
+
+    // `haltRun` step 2, in its own words: the run may not be reachable, but the
+    // control channel it drives through checks this token, and a revoked token
+    // cannot be un-revoked by a worker that did not notice it was stopped.
+    expect((await ctx.repos.runs.byId(runId))?.controlToken).toBeNull()
   }, 20_000)
 })
 

@@ -619,15 +619,31 @@ describe('the safety machinery is reachable from the product', () => {
   })
 
   it('a halt flags the run, or stopping is a message nothing reads', () => {
-    // Moved up when the halt route landed. `cancelRequested` is written here and
-    // the fence is still only half real: CONTEXT.md §4 requires that every
+    // ~~Moved up when the halt route landed. `cancelRequested` is written here
+    // and the fence is still only half real: CONTEXT.md §4 requires that every
     // action boundary RE-READS `status` and `claimedBy` and aborts without
-    // writing, and no run path does that yet. So this asserts the writer exists,
-    // and the reader is still owed — deliberately not asserted as done.
+    // writing, and no run path does that yet. So this asserts the writer
+    // exists, and the reader is still owed — deliberately not asserted as
+    // done.~~ **Corrected 2026-09-02.** The reader landed with the fence and is
+    // asserted by the case above this one.
+    //
+    // What this case had become is a pin on the WRONG DOOR. It required the
+    // route to call `runs.requestCancel` itself, which is exactly what made
+    // `haltRun`'s "ONE implementation, two doors" false — the route did step 1
+    // and neither of the other two. Naming the route as a direct caller of the
+    // repository was the assertion holding that in place.
+    //
+    // So it asserts the route halts, and asserts it does not reach around the
+    // implementation to do it.
+    expect(
+      callersOf('haltRun', 'src/server/confirmations.ts'),
+      'the halt route stops nothing — it settles sockets and leaves the run running',
+    ).toContain('src/app/api/act/halt/route.ts')
+
     expect(
       callersOf('runs.requestCancel', 'src/persistence/repositories/index.ts'),
-      'nothing flags a run for cancellation — a halt settles sockets and stops nothing',
-    ).toContain('src/app/api/act/halt/route.ts')
+      'the halt route flags the run itself, so it can skip the other two steps again',
+    ).not.toContain('src/app/api/act/halt/route.ts')
   })
 
   it('a human can answer a confirmation, or a raised request strands its run', () => {
@@ -659,6 +675,30 @@ describe('the safety machinery is reachable from the product', () => {
     expect(
       callersOf('runs.requestCancel', 'src/persistence/repositories/index.ts'),
       'nothing flags a run for cancellation — "Take back control" cannot work',
+    ).not.toEqual([])
+
+    /**
+     * The assertion above passed for eleven days while the switch it names did
+     * not exist.
+     *
+     * `POST /api/act/halt` called `runs.requestCancel` directly, so the caller
+     * count was never zero — and `takeBackControl`, which three docblocks call
+     * *"the third kill switch, and the only one that needs the app"*, had NO
+     * CALLER ANYWHERE. The shift screen rendered no such control. This file
+     * exists to catch a capability built and wired to nothing, and it was
+     * watching one door while the other was missing.
+     *
+     * So the two doors are asserted by name. `haltRun` is the one
+     * implementation both reach, and the route no longer reaches around it.
+     */
+    expect(
+      callersOf('takeBackControl', 'src/server/actions.ts'),
+      'nothing calls "Take back control" — the switch on the shift screen does not exist',
+    ).not.toEqual([])
+
+    expect(
+      callersOf('haltRun', 'src/server/confirmations.ts'),
+      'nothing halts a run through the one implementation both doors are meant to share',
     ).not.toEqual([])
   })
 
