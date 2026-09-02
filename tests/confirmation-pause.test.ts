@@ -2016,8 +2016,9 @@ describe('a question is not answerable once the work behind it is over', () => {
     await confirmRequest(ctx, paused.requestId, new Date('2026-05-04T09:06:00Z'))
 
     // The same property expiry has. A refusal that recorded a `confirmed` row
-    // and then declined to act on it would leave a permission on disk for the
-    // next thing that reads one.
+    // and then did not act on it would leave a permission on disk for the next
+    // thing that reads one. ("Declined" stood here until 2026-09-01, and that
+    // is the model's verb — deterministic code refuses.)
     const verdict = await db.prisma.confirmationVerdict.findUnique({
       where: { requestId: paused.requestId },
     })

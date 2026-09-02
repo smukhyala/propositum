@@ -28,18 +28,27 @@ cat eval-scores.json
 ```
 
 **If every `h1` component is `null` and `scoredBy` is `""`, this file is not
-started.** That is the state as of 2026-08-26: two entries, twelve null slots,
-`"ranAt": "2026-08-07"`.
+started.** ~~That is the state as of 2026-08-26: two entries, twelve null slots,
+`"ranAt": "2026-08-07"`.~~ **It is not the state now** *(2026-09-01)*: four
+entries, every slot filled, `"scoredBy": "Mark"`, `"ranAt": "2026-08-27"`. The
+test above is still the right one to run; the answer it gives has changed.
 
-Two further things the file will not tell you:
+~~Two further things the file will not tell you:~~ **Both were true on
+2026-08-26 and neither survived the next day:**
 
-- **`monitor-shortlist` and `lisbon-thread` have no entry at all.** They were
+- ~~**`monitor-shortlist` and `lisbon-thread` have no entry at all.** They were
   sealed into `references.lock.json` on 2026-08-20 and have never been run. The
   scores file is six days older than the lock file it is supposed to score
-  against.
-- **The corpus has not touched a real model since it grew.** `docs/EVALUATION.md`
+  against.~~ **Struck 2026-09-01 — both were run and scored on 2026-08-27**, and
+  the *Done when* list at the foot of this file has carried their numbers
+  (lisbon-thread 11/12, monitor-shortlist 10/12) since that day. Two sentences
+  of this file disagreeing about whether the corpus has ever run is exactly the
+  state the **Is this already done?** command at the top exists to settle.
+- ~~**The corpus has not touched a real model since it grew.** `docs/EVALUATION.md`
   says so in its own voice. Every number in that document describes a two-scenario
-  corpus that no longer exists.
+  corpus that no longer exists.~~ **Struck 2026-09-01.** It touched one on
+  2026-08-27 — 33 calls, $0.99 — and `docs/EVALUATION.md`'s *Second run* section
+  is the four-scenario record that replaced the two-scenario numbers.
 
 This file is done when all four scenarios have a complete entry and
 `npm run eval -- --report` will total them.

@@ -70,8 +70,11 @@ neither is the exact hole the file exists to close.
 
 Beyond the guards:
 
-- **A change without a test that would have failed before it is not done.** The
-  suite runs in about twenty seconds; there is no budget argument here.
+- **A change without a test that would have failed before it is not done.** ~~The
+  suite runs in about twenty seconds;~~ **corrected 2026-09-01:** about twenty
+  seconds on a developer Mac, and roughly twice that on the CI runner, whose
+  two cores are why a Markdown-only pull request went red on timeouts. Either
+  way there is no budget argument here.
 - **A new domain word goes into `CONTEXT.md` before it goes into a schema.** Nothing
   enforces this — it is a convention, and conventions are the ones that rot. If the
   word you need is not in the glossary, either you are inventing language the
@@ -95,6 +98,13 @@ npm run build
 
 All three pass on a clone with no `.env` and no `prisma db push`. If any of them
 needs setup on your machine, that is a bug in the repository, not in your machine.
+
+**"No database" above is about setup, not behaviour** *(said plainly 2026-09-01)*.
+A good share of the suite builds temporary SQLite files of its own and spawns
+`npx prisma db push` for them; what it never touches is yours, because
+`tests/support/no-real-database.ts` points `DATABASE_URL` at a path that does not
+exist. The same sentence in `.github/workflows/ci.yml` had to be struck for being
+read the other way, and `tests/counts.test.ts` now refuses it there.
 
 **CI runs in UTC and your machine probably does not.** Anything that reads the
 real clock and names a date behaves differently there — one test asserted the

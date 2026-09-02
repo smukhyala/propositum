@@ -53,8 +53,13 @@ on:
     branches: [main]
   pull_request:
 
-# A second push to the same branch cancels the first. The suite is ~20 s, so
-# this is about queue noise rather than cost.
+# A second push to the same branch cancels the first. ~~The suite is ~20 s, so
+# this is about queue noise rather than cost.~~ **Corrected 2026-09-01: ~20 s is
+# a developer Mac.** Here the suite step alone measured ~44 s and the whole job
+# ~1m20–1m40 across the day's runs — the same slow runner the header above spends
+# its longest correction on. The argument is unchanged and slightly stronger: a
+# minute and a half of a cancelled job is still queue noise rather than a bill
+# worth writing a rule about.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
