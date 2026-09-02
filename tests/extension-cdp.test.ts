@@ -1141,10 +1141,26 @@ describe('what the browser attests about a request it is holding', () => {
       ).toBe('amount-over-ceiling')
     })
 
-    it('refuses an unreadable or wrong-currency amount, as its own typed verdict', () => {
+    it('refuses an unreadable amount as its own typed verdict', () => {
       expect(
         classifyPausedRequest(checkout('opaque'), approved, patternCovers, MAIN, permit),
       ).toBe('amount-unparseable')
+    })
+
+    /**
+     * ~~Reported as `amount-unparseable`~~ — **its own verdict since 2026-09-02
+     * (#148).**
+     *
+     * €40 under a $50 ceiling parses exactly. Calling that unreadable told the
+     * person the site's charge could not be read, about an amount that was read
+     * — a false account of a check that worked, and the two lead somewhere
+     * different: an unreadable charge is a site this cannot check, a mismatched
+     * currency is a ceiling that does not apply to this shop.
+     *
+     * The refusal itself is unchanged, and no conversion is attempted here or
+     * anywhere: a rate is a number nobody ratified.
+     */
+    it('refuses a clean amount in the wrong currency as a mismatch, not as unreadable', () => {
       expect(
         classifyPausedRequest(
           checkout('{"amount_minor":4000,"currency":"EUR"}'),
@@ -1153,7 +1169,7 @@ describe('what the browser attests about a request it is holding', () => {
           MAIN,
           permit,
         ),
-      ).toBe('amount-unparseable')
+      ).toBe('amount-wrong-currency')
     })
 
     it('matches the origin exactly — never a pattern, never a prefix, never a subdomain', () => {

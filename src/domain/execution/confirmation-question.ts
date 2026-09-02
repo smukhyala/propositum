@@ -155,7 +155,7 @@ export function confirmationQuestion(facts: ConfirmationFacts): string {
  * extension's code-composed report), never page text or model prose.
  */
 export function chargeRefusedQuestion(facts: {
-  readonly failure: 'amount-over-ceiling' | 'amount-unparseable'
+  readonly failure: 'amount-over-ceiling' | 'amount-unparseable' | 'amount-wrong-currency'
   readonly detail: string
 }): { readonly question: string; readonly whyItMatters: string } {
   // `BrowserControlError.message` arrives as `<failure>: <detail>`; strip the
@@ -173,6 +173,37 @@ export function chargeRefusedQuestion(facts: {
         'over again with a ceiling that covers it, or buy it yourself.',
     }
   }
+  /**
+   * The third arm, split out 2026-09-02 (#148).
+   *
+   * A charge that parses cleanly in the wrong currency used to be reported as
+   * one that could not be read — *"The site's charge could not be read as one
+   * exact amount"* — about an amount that was read exactly, in euros, under a
+   * ceiling ratified in dollars. The refusal was right and the account of it
+   * was false, which is the failure `docs/PRODUCT_PRINCIPLES.md` §11 names.
+   *
+   * The two lead somewhere different, which is why they are two sentences: an
+   * unreadable charge is a site this cannot check, and there is nothing the
+   * person can change about that. A mismatched currency is a ceiling that does
+   * not apply to this shop, and the remedy is an authorisation in the currency
+   * the shop actually charges.
+   *
+   * **No conversion, ever.** A rate is a number nobody ratified, it moves
+   * between the ratification and the charge, and a ceiling compared against a
+   * converted amount is a ceiling the person did not set.
+   */
+  if (facts.failure === 'amount-wrong-currency') {
+    return {
+      question:
+        `The shop is charging in a different currency from the one you authorised (${attested}), ` +
+        'so the purchase was refused at the network. Nothing was charged.',
+      whyItMatters:
+        'The ceiling you ratified names a currency, and nothing here converts between them — a ' +
+        'rate is a number you did not agree to, and it moves. If you want this bought, hand the ' +
+        'work over again with a ceiling in the currency this shop charges, or buy it yourself.',
+    }
+  }
+
   return {
     question:
       `The site's charge could not be read as one exact amount (${attested}), so the purchase ` +

@@ -164,10 +164,19 @@ export type ControlFailure =
   | 'amount-over-ceiling'
   /** ADR-0024's predicted common case: the permit was armed and the request
    *  body yielded no single deterministic amount — two candidates, an unknown
-   *  currency, a mismatched one, or an opaque body. Refused, never guessed:
-   *  a model deciding what a charge costs is a model deciding whether it
-   *  needs permission. */
+   *  currency, or an opaque body. Refused, never guessed: a model deciding what
+   *  a charge costs is a model deciding whether it needs permission.
+   *
+   *  ~~a mismatched one~~ — **split out 2026-09-02 (#148).** A charge that
+   *  parsed cleanly in the wrong currency was reported here, and the person
+   *  read that it could not be read at all. It was read; it was in euros. */
   | 'amount-unparseable'
+  /** The amount parsed cleanly and is in a currency the ratified authorisation
+   *  does not name. Its own refusal rather than an unreadable one, because the
+   *  two lead somewhere different: an unreadable charge is a site this cannot
+   *  check, a mismatched one is a ceiling that does not apply. No conversion is
+   *  attempted — a rate is a number nobody ratified. */
+  | 'amount-wrong-currency'
   /** The browser was still working when the wait ran out. Reported BY the
    *  extension about a CDP operation, not by the app about the channel — the
    *  channel's own two endings are `not-delivered` and `not-reported`, which
@@ -301,6 +310,7 @@ export const controlFailureSchema = z.enum([
   'blocked-request',
   'amount-over-ceiling',
   'amount-unparseable',
+  'amount-wrong-currency',
   'timed-out',
 ] as const)
 

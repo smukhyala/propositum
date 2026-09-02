@@ -2075,8 +2075,9 @@ The centrepiece of the initial supported scenario — Propositum completes the d
 one strategic decision — which is only consistent with the run continuing. So this is **not a halt
 and not a gate refusal.** It is not an ActionIntent (nothing was proposed and refused), not a
 ChangeVerdict, and not an `openThread` claim (that is a pre-handoff strand). *(One class is
-narrower since 2026-09-01, ADR-0024's build: a refused CHARGE — `amount-over-ceiling` or
-`amount-unparseable` at the transport — raises a `DecisionNeeded` built by `chargeRefusedQuestion`
+narrower since 2026-09-01, ADR-0024's build: a refused CHARGE — `amount-over-ceiling`,
+`amount-unparseable` or, since 2026-09-02, `amount-wrong-currency` at the transport — raises a
+`DecisionNeeded` built by `chargeRefusedQuestion`
 from the extension's attested account, and there the failed `ActionIntent`/`ActionOutcome` pair
 exists first and the run ends with the question. What made `DecisionNeeded` the right shape anyway
 is its load-bearing property, which is unchanged: the answer is prose and grants nothing — a

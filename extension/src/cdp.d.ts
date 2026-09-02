@@ -66,7 +66,7 @@ export declare function classifyPausedRequest(
   patternCovers?: (pattern: string, origin: string) => boolean,
   mainFrameId?: string | null,
   permit?: LandingPermitLike | null,
-): 'allow' | 'blocked-request' | 'off-origin' | 'allow-landing' | 'amount-over-ceiling' | 'amount-unparseable'
+): 'allow' | 'blocked-request' | 'off-origin' | 'allow-landing' | 'amount-over-ceiling' | 'amount-unparseable' | 'amount-wrong-currency'
 
 /** ADR-0024. A hand-kept copy of `CURRENCY_CODES` in
  *  `src/domain/handoff/policy.ts`; `tests/extension-cdp.test.ts` asserts the
