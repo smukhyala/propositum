@@ -45,6 +45,7 @@ import {
   classifyPausedRequest,
   flattenAXTree,
   isApprovedOrigin,
+  armLandingPermit,
   claimLandingPermitOnce,
   originOf,
   parseChargeAmount,
@@ -350,6 +351,65 @@ describe('one permit has one spender, decided synchronously', () => {
     expect(claimLandingPermitOnce('intent-race-1')).toBe(false)
     // A different command's permit is its own claim.
     expect(claimLandingPermitOnce('intent-race-2')).toBe(true)
+  })
+
+  /**
+   * The eviction that could re-grant — #151, and it is gone rather than capped.
+   *
+   * The claim set was bounded at 64 with the oldest evicted, which is a second
+   * way to re-grant a spent intent: sixty-four claims and the first one wins
+   * again. Not a realistic afternoon, and the docblock named only the
+   * worker-death window as the gap, which made this one invisible.
+   *
+   * The shape that removes it: the claim is keyed on the PERMIT's `intentId`,
+   * so one permit needs one entry, and `armLandingPermit` empties the set
+   * before the new permit reaches storage. Nothing accumulates, so nothing is
+   * evicted.
+   */
+  it('never re-grants a spent intent, however many permits have been armed since', async () => {
+    expect(claimLandingPermitOnce('intent-evict')).toBe(true)
+
+    // Well past the old cap of 64.
+    for (let i = 0; i < 200; i += 1) {
+      expect(claimLandingPermitOnce(`intent-filler-${i}`)).toBe(true)
+    }
+
+    expect(
+      claimLandingPermitOnce('intent-evict'),
+      'an evicted intent won the one-shot a second time',
+    ).toBe(false)
+  })
+
+  it('starts a fresh claim for each permit, which is what keeps the set to one', async () => {
+    expect(claimLandingPermitOnce('intent-armed')).toBe(true)
+    expect(claimLandingPermitOnce('intent-armed')).toBe(false)
+
+    // The one API `armLandingPermit` touches. Stubbed rather than faked whole:
+    // what is under test is the synchronous clear, and the storage write only
+    // has to not throw.
+    const globals = globalThis as unknown as Record<string, unknown>
+    const had = 'chrome' in globals
+    const previous = globals['chrome']
+    globals['chrome'] = { storage: { session: { set: async () => undefined } } }
+
+    try {
+      // Arming is the only thing that clears it, and it is what a new
+      // `complete-purchase` command does. A permit re-armed for the same intent
+      // is a new authorisation and gets its one spend.
+      await armLandingPermit({
+        intentId: 'intent-armed',
+        originPattern: 'https://shop.example',
+        maxAmountMinor: 1,
+        currency: 'USD',
+        until: 1,
+      })
+    } finally {
+      if (had) globals['chrome'] = previous
+      else delete globals['chrome']
+    }
+
+    expect(claimLandingPermitOnce('intent-armed')).toBe(true)
+    expect(claimLandingPermitOnce('intent-armed')).toBe(false)
   })
 
   it('refuses a malformed intent id rather than minting a shared claim', () => {
