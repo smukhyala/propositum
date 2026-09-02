@@ -191,6 +191,23 @@ export interface RebuiltHistory {
    *  moves and what `MAX_MUTATING_ACTIONS_PER_RUN` counts. */
   readonly mutatingActionsTaken: number
   /**
+   * Ratified charges SPENT under this contract: authorized `complete-purchase`
+   * intents, whatever their outcome. Attempts, deliberately, not successes —
+   * the direction money must fail. A press whose page throws after the covered
+   * request left would read `failed` while the charge landed, and a
+   * success-only count would let a retry spend the ratified `maxCount` twice;
+   * counting the attempt closes that gap at the cost of a pre-press failure
+   * consuming a count, which a person recovers by re-ratifying. What
+   * `PurchaseAuthorization.maxCount` counts, and the gate FAILS CLOSED when it
+   * is absent from `RunContext`, so a caller that forgets to thread this
+   * refuses spending rather than resetting it.
+   *
+   * This module reads strings off durable rows, so the kind is compared as a
+   * string here for the same reason `mutatingKinds` is passed in — see the
+   * module header on old rows naming retired capabilities.
+   */
+  readonly chargesSpent: number
+  /**
    * Authorized intents with no outcome at all.
    *
    * The `unknown` ActionStatus, in row form. Under the standing "a local worker
@@ -229,6 +246,7 @@ export async function historyForContract(
   const orphanedIntentIds: string[] = []
   let actionsTaken = 0
   let mutatingActionsTaken = 0
+  let chargesSpent = 0
 
   for (const row of rows) {
     if (!row.authorized) {
@@ -246,6 +264,9 @@ export async function historyForContract(
 
     actionsTaken += 1
     if (deps.mutatingKinds.has(row.kind)) mutatingActionsTaken += 1
+    // Attempts, including ones with no outcome yet — an in-flight charge has
+    // already spent its count, which is the closed direction for money.
+    if (row.kind === 'complete-purchase') chargesSpent += 1
 
     if (row.outcome === null) {
       // Not an orphan if it belongs to the run doing the asking — that is an
@@ -269,6 +290,7 @@ export async function historyForContract(
     turns,
     actionsTaken,
     mutatingActionsTaken,
+    chargesSpent,
     orphanedIntentIds,
     confirmations,
     confirmedRequestIds: new Set(confirmations.map((c) => c.requestId)),

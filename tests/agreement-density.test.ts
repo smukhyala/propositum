@@ -49,8 +49,22 @@ const DEFAULTS: AutonomyControls = {
   timeLimitMinutes: 30,
 }
 
-/** The heaviest honest case: a document shift, so every permission group has
- *  rows in it, and the screen is as long as it legitimately gets. */
+/** ~~The heaviest honest case: a document shift, so every permission group has
+ *  rows in it, and the screen is as long as it legitimately gets.~~
+ *
+ *  **Corrected 2026-09-01.** Since the panel split *"What you've switched off"*
+ *  from *"What this agreement doesn't include"*, this fixture renders no
+ *  switched-off group at all: it offers three kinds and the default dials
+ *  compile all three, so nothing was removed. The heaviest case is a document
+ *  shift under `suggestions-only`, where both off-groups have rows — and a
+ *  browser shift with the dials untouched renders more words again.
+ *
+ *  The fixture is not changed, and the reason is what the ceiling is ON. Every
+ *  permission group sits behind the Adjust disclosure, so the four combinations
+ *  differ by a word or two on arrival, which is the only number asserted below.
+ *  Swapping it would re-baseline what this file has measured since it was
+ *  written for a difference the guard cannot see. What that costs, said plainly:
+ *  nothing here measures the heaviest TOTAL, and nothing ever did. */
 function markup(): string {
   const draft: ContractDrafted = {
     contractId: 'contract-1',

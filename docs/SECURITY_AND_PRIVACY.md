@@ -315,6 +315,15 @@ An hour blocked for something private is the same two numbers as an hour blocked
   longest limit that stops before then. Nothing changes until you press it, the sentence stays there
   after you do, and you can ignore it entirely. Nothing from a calendar reaches the part of
   Propositum that decides what a run is allowed to do — see _Action authorization_, below.
+
+_(2026-09-01 — [ADR-0029](./adr/0029-the-mailbox-and-a-calendar-of-our-own.md), decided and
+unbuilt.)_ Everything above stays true of what is built. What was decided beyond it: a mail scope
+(`gmail.modify` — read, label, archive and draft inside a ratified run; never permanent delete;
+send only inside a `SendAuthorization` you ratified naming its recipients) and a write scope for
+holds (`calendar.app.created` — a busy block on a calendar Propositum creates; your own calendars
+stay unreadable and unwritable by that scope's construction). Each is its own consent screen, each
+lands through the gate, and `grep -rn 'gmail' src/` still returns nothing today. The costs are
+ADR-0029's opening section, not a footnote here.
 - **What Google is told.** The request contains the two ends of the window being asked about, the
   word `primary`, and your access token. **Nothing about your browsing goes with it** — no page, no
   title, no subject, no session. Google cannot tell what you were reading, or why anybody wants to
@@ -429,7 +438,10 @@ merely unimplemented.
   return them, `calendar.events.readonly`, was considered and refused: it carries a field where
   people declare their own intent (_out of office_, _focus time_), which is the best signal in the
   research, and it carries it bundled with the title of every appointment on every calendar. That
-  trade is argued in full in [ADR-0014](./adr/0014-reading-free-busy.md).
+  trade is argued in full in [ADR-0014](./adr/0014-reading-free-busy.md). _(Re-priced 2026-09-01 by
+  [ADR-0029](./adr/0029-the-mailbox-and-a-calendar-of-our-own.md) and refused again: the calendar
+  write it adds uses a scope that can only touch calendars Propositum creates, precisely so this row
+  stays true.)_
   **No list of your calendars.** No calendar but your main one. No calendar belonging to anybody
   else. _(Added 2026-08-18.)_
 - ~~**Other applications.** Chrome only. _(A connected calendar is read over the network from Google,
@@ -472,7 +484,14 @@ all, and it is read once, on demand, at a moment a human is looking at the scree
 facts below therefore still hold exactly as written — there is still no row an external event could
 become, still one writer, and still no model call on a timer. What ADR-0014 spent is the *account*,
 argued at length there and struck below under **Local versus remote**. What it did not spend is
-this.)_ This section
+this.)_
+
+_(Amended again 2026-09-01 — [ADR-0029](./adr/0029-the-mailbox-and-a-calendar-of-our-own.md),
+decided and unbuilt. Mail joins the calendar in the same careful sense: **verbs inside a ratified
+run, not a sensor.** No watch, no poll, no index, no briefing — reading mail happens on demand while
+a run holds a contract that grants it, nothing read is persisted, and there is still no row an email
+could become and still one writer. The do-not-build entry for automatic ingestion stands; ADR-0029
+names any standing mail reader as the thing that reopens it.)_ This section
 exists so the constraint is on record before a later reader takes the absence for an oversight and
 closes it with a connector.
 
@@ -590,7 +609,10 @@ that anybody decided it should be permanent — ADR-0015 records that as open.
 **Nothing from a calendar is retained at all** _(2026-08-18 —
 [ADR-0014](./adr/0014-reading-free-busy.md))_. Busy intervals are read, used to offer one number,
 and dropped; no table holds them. The only thing a calendar connection writes to disk is the
-credential below, and disconnecting deletes it.
+credential below, and disconnecting deletes it. _(2026-09-01 —
+[ADR-0029](./adr/0029-the-mailbox-and-a-calendar-of-our-own.md) decides the same posture for mail
+before any of it is built: nothing read from a mailbox is retained either. What a run **did** there
+lands in the ledger, as everywhere.)_
 
 Export is not implemented. The database is a single SQLite file you own and can copy.
 
@@ -600,7 +622,10 @@ Export is not implemented. The database is a single SQLite file you own and can 
 sent anywhere but Anthropic.~~
 
 **Two, since 2026-08-18 — [ADR-0014](./adr/0014-reading-free-busy.md)**, and they are different kinds
-of thing, which is why they live in different places:
+of thing, which is why they live in different places. _(Still two after
+[ADR-0029](./adr/0029-the-mailbox-and-a-calendar-of-our-own.md), 2026-09-01, decided and unbuilt:
+the new scopes ride the same Google credential. What changes is what that one token can do, which is
+ADR-0029's cost section, not a third row here.)_
 
 | Credential                                                     | Where                        | What it is                                                                                         |
 | -------------------------------------------------------------- | ---------------------------- | -------------------------------------------------------------------------------------------------- |
@@ -675,7 +700,13 @@ outside that list on purpose.** It grants Propositum nothing: it is optional, of
 revocable both here and from Google, and it can only offer a number you were going to set
 yourself — the dial arrives unchanged and the offer is a button beside it. Nothing about it can widen
 what a run may read or change. If it is disconnected, expired or
-broken, every screen behaves exactly as it did before it existed.
+broken, every screen behaves exactly as it did before it existed. _(2026-09-01 —
+[ADR-0029](./adr/0029-the-mailbox-and-a-calendar-of-our-own.md): true of the free/busy connection
+built today, and **it will not survive the build of the decided scopes as written** — mail verbs and
+calendar holds are capabilities a contract grants, so connecting them is inside the permission
+model, not outside it. Each gets its own consent, and what a run may do with them is the contract's
+to grant and the gate's to enforce. The day they are built, this sentence is one of the ones the
+striking rules name.)_
 
 **Approval scopes where Propositum may look. It confers no trust on what is found there.**
 
@@ -803,14 +834,17 @@ decision.
 > **Read this before the table. 2026-08-26.**
 >
 > **Three decisions were accepted today that spend most of this section, and none of them is built
-> yet.** Everything below is true of the code as it stands. It is not true of the product that has
-> been decided on, and the gap between those two things is the most important sentence on this page:
+> yet** *(a fourth joined 2026-09-01 — and later that same day the first row stopped being unbuilt:
+> ADR-0024 landed, and its row below says exactly what that changed)*. Everything below is true of
+> the code as it stands, and the gap between what is decided and what is built is the most
+> important sentence on this page:
 >
 > | Decision | What it spends | Built? |
 > |---|---|---|
-> | [ADR-0024](./adr/0024-purchases-within-a-ratified-authorisation.md) | the unconditional non-`GET` block. **Propositum will buy things**, within a `PurchaseAuthorization` you ratified — bounded by an origin, a ceiling, a count and an expiry | **no** |
+> | [ADR-0024](./adr/0024-purchases-within-a-ratified-authorisation.md) | the unconditional non-`GET` block. **Propositum ~~will~~ can buy things**, within a `PurchaseAuthorization` you ratified — bounded by an origin, a ceiling, a count and an expiry the agreement's own end derives | **~~no~~ yes — 2026-09-01.** Everything else in the row above holds: any non-`GET` without a ratified permit is refused at the network exactly as before, an unreadable or over-ceiling amount refuses and asks, and no live purchase has yet been made ([todo 06](../docs/todo/06-buying-things.md) keeps that open) |
 > | [ADR-0025](./adr/0025-computer-use-beyond-the-browser.md) | rows 1 and 3 of the table below. It will act on the whole machine, inside an allowlist of applications you ratified, and it will sign in by clicking Chrome's own saved-password prompt | **no** |
 > | [ADR-0026](./adr/0026-reading-a-one-time-code.md) | the filesystem qualification below. It will read `~/Library/Messages/chat.db` for a one-time code — one caller, a five-minute window, digits only, nothing stored | **no** |
+> | [ADR-0029](./adr/0029-the-mailbox-and-a-calendar-of-our-own.md) *(added 2026-09-01)* | ADR-0014's single-scope containment. **Propositum will work in your mailbox** — read, label, archive and draft inside a ratified run, never permanent delete, send only inside a `SendAuthorization` naming its recipients — **and place holds** on a calendar of its own inside your account — meant to move your availability, and whether a hold on a secondary calendar actually reads as busy is the build's first check (ADR-0029 §3; the calendar half reopens if it does not) — while the calendars you already keep stay untouchable by that scope's construction | **no** |
 >
 > This block exists rather than a rewrite because rewriting now would describe a product that does
 > not exist, and this document's job is to be true today. `tests/architecture.test.ts` couples the
@@ -838,7 +872,7 @@ What still does not exist, and what replaced what did:
 | **Still absent entirely**      | any capability outside your browser — your filesystem, your other applications, your computer. There is no tool, and an architecture test asserts none exists. *(Qualified 2026-08-26 — see the note under this table. Propositum still cannot reach your filesystem; you can now hand it one file at a time.)*                                                           |
 | **Still absent entirely**      | any way for Propositum to run its own JavaScript in a page you are signed into. No `Runtime.evaluate`, no `element.click()`. Clicks are synthesised input at coordinates                                                |
 | **Still absent entirely**      | any way to learn that another tab exists, or to act in one                                                                                                                                                              |
-| **Replaced by a confirmation** | sending, submitting, buying, publishing, deleting. These used to be absent from the `ActionKind` enum. They are now reachable by a click, and every action the browser attests as irreversible stops and asks you first |
+| **Replaced by a confirmation** | sending, submitting, ~~buying,~~ publishing, deleting. These used to be absent from the `ActionKind` enum. They are now reachable by a click, and every action the browser attests as irreversible stops and asks you first. *(Buying left this row on 2026-09-01: its consent is a ratified `PurchaseAuthorization` with a ceiling, given once on the agreement screen — deliberately NOT a per-purchase confirmation, on ADR-0024 §4's habituation argument — and any buying request outside one is still refused at the network.)* |
 
 **About that first row, and a file you choose yourself** *(2026-08-26)*. The project screen now has
 an *Open a file…* control beside the document. It changes nothing this table says and it is worth

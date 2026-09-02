@@ -86,13 +86,14 @@
  * budget decision never depends on when the test ran.
  */
 
-import { ACTION_KINDS, compilePolicy, MUTATING_ACTION_KINDS } from '../domain/handoff/policy'
-import type { ActionKind, AutonomyControls, ContractScope } from '../domain/handoff/policy'
+import { ACTION_KINDS, amountLabel, compilePolicy, MUTATING_ACTION_KINDS } from '../domain/handoff/policy'
+import type { ActionKind, AutonomyControls, ContractScope, EnforcedPolicy } from '../domain/handoff/policy'
 import { authorize } from '../policy/gate'
 import type { AuthorizedAction, RunContext, ToolProposal } from '../policy/gate'
 import {
   captureScreen,
   clickElement,
+  completePurchase,
   draftSection,
   navigateTo,
   observePage,
@@ -118,7 +119,7 @@ import {
   shouldStop,
 } from '../domain/execution/stop-conditions'
 import type { StopRuleId } from '../domain/execution/stop-conditions'
-import { confirmationQuestion } from '../domain/execution/confirmation-question'
+import { chargeRefusedQuestion, confirmationQuestion } from '../domain/execution/confirmation-question'
 import type { ElementEvidence } from '../domain/execution/reversibility'
 import { SNAPSHOT_BUDGET_CHARS, datamark } from '../model/untrusted'
 import type { Datamarked } from '../model/untrusted'
@@ -505,6 +506,7 @@ export async function runWorker(job: WorkerJob, deps: WorkerDeps): Promise<Worke
         turns: [] as HistoryTurn[],
         actionsTaken: 0,
         mutatingActionsTaken: 0,
+        chargesSpent: 0,
         orphanedIntentIds: [],
         confirmations: [] as ConfirmedAction[],
         confirmedRequestIds: new Set<string>(),
@@ -518,6 +520,7 @@ export async function runWorker(job: WorkerJob, deps: WorkerDeps): Promise<Worke
   let refusals = 0
   let actionsTaken = rebuilt.actionsTaken
   let mutatingActionsTaken = rebuilt.mutatingActionsTaken
+  let chargesSpent = rebuilt.chargesSpent
   let consecutiveNoProgress = 0
   let consecutiveRefusals = 0
   let summary: string | undefined
@@ -555,6 +558,50 @@ export async function runWorker(job: WorkerJob, deps: WorkerDeps): Promise<Worke
    * recoverable hiccup.
    */
   let controlLost = false
+
+  /**
+   * Could ANY kind this run is permitted have reported progress?
+   *
+   * ── What it is for ───────────────────────────────────────────────────
+   *
+   * `no-progress` counts completed actions that changed no artifact, and resets
+   * only on one that did. Under `suggestions-only` on a document shift,
+   * `compilePolicy` removes `draft-section` and what survives is reads — so
+   * nothing this run is permitted to do could ever reset the counter, and the
+   * halt landed on the third read every time, on the arithmetic rather than on
+   * anything the run did wrong. `NO_PROGRESS_LIMIT`'s own comment says it was
+   * written for research *before a draft*; here there is no draft for the
+   * research to be a prelude to.
+   *
+   * ── Why the exemption is HERE and not in the rule ────────────────────
+   *
+   * Because it applies to one of four increments. `evaluateStructuralStops` is
+   * a rule over a count, and a rule that skipped `no-progress` for this run
+   * would exempt every way of arriving at the count — a question raised every
+   * turn, a gate refusal every turn, an action that fails every turn. None of
+   * those is *"a read that could not have been anything else"*, and all three
+   * are a run going in circles by any reading. So the counter stops counting
+   * the one thing the dial made meaningless, and the rule is untouched.
+   *
+   * ── What it does NOT cover ───────────────────────────────────────────
+   *
+   * The three increments above: a `decisionNeeded` under
+   * `stop-only-when-blocked`, a refusal that is not a pause, and a failed
+   * action all still count, so a research-only run that asks or breaks its way
+   * through the afternoon still halts at three. Neither does it unbound a run
+   * that reads: `action-limit` (`MAX_ACTIONS_PER_RUN`, a constant nobody sets)
+   * and `budget-exhausted` (the time limit, which the person does set) both
+   * still apply. `tests/worker.test.ts` asserts each of those.
+   *
+   * Read off the COMPILED allowlist, not off the contract's granted kinds. The
+   * dial is what removes `draft-section`, and it is the compiled set the gate
+   * evaluates — so asking the contract would answer a question about what was
+   * offered rather than about what this run can actually do. It is also why a
+   * browser research shift is not exempt: `navigate` survives the dial.
+   */
+  const progressIsPossible = [...policy.actionKindAllowlist].some((kind) =>
+    PROGRESSING_ACTION_KINDS.has(kind),
+  )
 
   const progress = () => ({
     nowEpochMs: deps.now(),
@@ -889,6 +936,7 @@ export async function runWorker(job: WorkerJob, deps: WorkerDeps): Promise<Worke
         currentSnapshotId: page?.snapshotId ?? null,
         actionsTaken,
         mutatingActionsTaken,
+        chargesSpent,
         // Looked up against the snapshot the RUN last saw, never against the one
         // the proposal named. A proposal naming a stale snapshot is refused
         // before this matters, and looking evidence up by the model's own value
@@ -1014,9 +1062,10 @@ export async function runWorker(job: WorkerJob, deps: WorkerDeps): Promise<Worke
      */
     let performed: Performed | null = null
     let failed: string | null = null
+    let chargeRefused: { question: string; whyItMatters: string } | null = null
 
     try {
-      performed = await perform(verdict.action, intentId, deps, gathered)
+      performed = await perform(verdict.action, intentId, deps, gathered, policy.purchase)
     } catch (error) {
       // Includes every `BrowserControlError`. A channel failure is a recorded
       // fact about one action — the intent is already committed, so the ledger
@@ -1034,6 +1083,18 @@ export async function runWorker(job: WorkerJob, deps: WorkerDeps): Promise<Worke
       if (error instanceof BrowserControlError && error.failure === 'control-lost') {
         controlLost = true
       }
+
+      // ADR-0024 §3's "refuses and asks". The two amount refusals are the
+      // transport doing its job a moment after the person authorised charging,
+      // and they end the run with a question rather than reading as one more
+      // channel failure — the failed outcome is still written below first, so
+      // the ledger holds the attempt before the question is raised.
+      if (
+        error instanceof BrowserControlError &&
+        (error.failure === 'amount-over-ceiling' || error.failure === 'amount-unparseable')
+      ) {
+        chargeRefused = chargeRefusedQuestion({ failure: error.failure, detail: error.message })
+      }
     }
 
     // Attempted either way. An action that was authorised and dispatched counts
@@ -1042,8 +1103,28 @@ export async function runWorker(job: WorkerJob, deps: WorkerDeps): Promise<Worke
     actionsTaken += 1
     if (MUTATING_ACTION_KINDS.has(verdict.action.kind)) mutatingActionsTaken += 1
 
+    // The charge counter spends on the ATTEMPT, like the caps above and for
+    // the caps' own reason — a failure is not a refund. The rejected shape was
+    // success-only counting: it reads exact until a throw lands between the
+    // covered request leaving and the report arriving, where the row says
+    // failed, the charge moved, and a retry would spend the ratified count
+    // twice. Attempts fail closed across that gap; a pre-press failure
+    // consuming a count is recovered by re-ratifying, which is the cheap
+    // direction. The rebuild in history.ts counts the same way off durable
+    // rows, so the two never disagree.
+    if (verdict.action.kind === 'complete-purchase') chargesSpent += 1
+
     if (performed !== null) {
-      consecutiveNoProgress = performed.changedSomething ? 0 : consecutiveNoProgress + 1
+      // The one increment `progressIsPossible` exempts, and the only one where
+      // "it changed nothing" says nothing about the run: where no permitted kind
+      // could have changed anything, an action that changed nothing is the run
+      // doing exactly what it was allowed to do. See the const's docblock — a
+      // question, a refusal and a failure are all still counted, above.
+      consecutiveNoProgress = performed.changedSomething
+        ? 0
+        : progressIsPossible
+          ? consecutiveNoProgress + 1
+          : consecutiveNoProgress
 
       if (performed.produced !== undefined) produced.push(performed.produced)
 
@@ -1075,6 +1156,16 @@ export async function runWorker(job: WorkerJob, deps: WorkerDeps): Promise<Worke
         detail: failed ?? 'unknown',
       })
       history.push({ kind: proposal.kind, summary: proposal.reason, outcome: `failed: ${failed}` })
+
+      // After the row, never before it: the question refers to an attempt the
+      // ledger can show. The run ends here because the extension has already
+      // halted the channel over a refused charge, and forty more proposals
+      // would each meet the plain block — the person's answer is prose, and
+      // the remedy is a re-ratification, not a retry.
+      if (chargeRefused !== null) {
+        decisions.push({ ...chargeRefused, atStep: ordinal })
+        return finish(['decision-needed'], 'succeeded')
+      }
     }
 
     const afterAction = shouldStop(progress(), job.controls.interruption, false)
@@ -1218,6 +1309,7 @@ function runContext(
     currentSnapshotId: string | null
     actionsTaken: number
     mutatingActionsTaken: number
+    chargesSpent: number
     targetEvidence: ElementEvidence | null
     confirmedRequestIds: ReadonlySet<string>
   },
@@ -1252,6 +1344,42 @@ interface Performed {
   readonly captured?: ScreenCapture | undefined
 }
 
+/**
+ * The kinds whose handler in `perform` can report `changedSomething: true`.
+ *
+ * This is a property OF `perform` below, not a policy and not a taste: it is
+ * the answer to *"if this run may only do these things, could the no-progress
+ * counter ever reset?"*. It lives here rather than in `src/domain` because it
+ * describes the handlers below and would go stale anywhere else — and because
+ * the question is the loop's, not the rule's: `evaluateStructuralStops` is
+ * handed a count and never asked what could have moved it.
+ *
+ * Note what is NOT in it. `observe-page` and `capture-screen` are browser kinds
+ * and report no progress — looking at a page again is the browser's version of
+ * re-reading the same document. And `navigate` IS in it while not being a
+ * mutating kind, for the reason the block below `perform` gives: opening a page
+ * gets somewhere. So this set is neither the mutating set nor the browser set,
+ * and collapsing it into either would be wrong in both directions.
+ *
+ * `complete-purchase` joined it on 2026-09-01 (ADR-0024) and is the least
+ * arguable member of all: a charge that landed is the run's artifact, so a run
+ * that completed one is the exact case `no-progress` waits for rather than the
+ * case it catches.
+ *
+ * `tests/worker.test.ts` pins it against `perform`'s own source, because a
+ * hand-maintained list that drifts from the handlers fails silently in the
+ * dangerous direction — a run that could make progress, exempted from the rule
+ * that catches it going in circles.
+ */
+export const PROGRESSING_ACTION_KINDS: ReadonlySet<ActionKind> = new Set<ActionKind>([
+  'draft-section',
+  'navigate',
+  'click-element',
+  'type-text',
+  'press-key',
+  'complete-purchase',
+])
+
 /** Dispatch by kind. Exhaustive over ActionKind, so adding a capability without
  *  handling it here is a type error rather than a silent no-op. */
 async function perform(
@@ -1263,6 +1391,10 @@ async function perform(
   intentId: string,
   deps: WorkerDeps,
   gathered: Array<{ label: string; content: Datamarked }>,
+  /** The compiled, whatFor-free spend bound, when the contract ratified one.
+   *  From `policy.purchase` at the call site — never from deps, which are
+   *  constructed before the policy exists, and never from the proposal. */
+  purchase?: EnforcedPolicy['purchase'],
 ): Promise<Performed> {
   const kind: ActionKind = action.kind
 
@@ -1362,9 +1494,14 @@ async function perform(
      *
      * ── What this costs the outcome vocabulary, said plainly ─────────────
      *
-     * `OutcomeProposal` has five shapes and exactly one is produced here:
+     * `OutcomeProposal` has five shapes and ~~exactly one is produced here:
      * `section-prose`, from `draft-section`. `landed` still has no producer,
-     * because `LANDING_ACTION_KINDS` is empty and `click-element` is not in it —
+     * because `LANDING_ACTION_KINDS` is empty~~ **two are — corrected
+     * 2026-09-02:** `section-prose` from `draft-section`, and `landed` from
+     * `complete-purchase`, which became the set's one member on 2026-09-01
+     * (ADR-0024) and produced nothing for a day after, which is why
+     * `tests/reachability.test.ts` now pins the producer and not only the
+     * set. `click-element` is still not in it —
      * landing is about whose act put the effect into the world, not about
      * whether an effect is possible. `src/server/outcomes/` handles all five
      * anyway, and its switch is exhaustive for the same reason this one is: the
@@ -1428,6 +1565,48 @@ async function perform(
         browserFor(deps, kind),
       )
       return { summary: 'took a picture of the page', changedSomething: false, captured }
+    }
+
+    case 'complete-purchase': {
+      // Second fence, browserFor's shape: the gate already refused the kind
+      // when the policy holds no authorisation, so arriving here without one is
+      // a programming error that must be loud rather than a silent no-op.
+      if (purchase === undefined) {
+        throw new Error(
+          `complete-purchase is authorized but this run holds no compiled authorisation (${intentId})`,
+        )
+      }
+      const bought = await completePurchase(action as AuthorizedAction<'complete-purchase'>, {
+        ...browserFor(deps, kind),
+        purchase,
+      })
+      // Code-composed from the ATTESTED charge, never from page text or model
+      // prose — the sentence the ledger keeps about money keeps the same
+      // discipline confirmationQuestion does. Minor units, named as such, so
+      // the row cannot be misread as dollars.
+      return {
+        summary: `completed the purchase — ${bought.charge.amountMinor} minor units ${bought.charge.currency} at ${bought.charge.origin}`,
+        changedSomething: true,
+        observed: bought.observation,
+        /**
+         * The one `landed` producer, added 2026-09-02.
+         *
+         * For a day the arm above returned without this and the charge lived
+         * in the ledger and nowhere else: `recordOutcomes` received no landed
+         * production, wrote no `external-effect` row, and a run whose only
+         * work was the purchase told the person it had produced nothing —
+         * while `externalEffects`' own docblock said the kind was reachable.
+         * The production grants nothing on its own: `externalEffects` drops
+         * it unless the ledger corroborates a succeeded intent of a landing
+         * kind, so this line can say what happened and cannot make it so.
+         */
+        produced: {
+          kind: 'landed',
+          intentId,
+          what: `Paid ${amountLabel(bought.charge.amountMinor, bought.charge.currency)}`,
+          where: bought.charge.origin,
+        },
+      }
     }
   }
 }

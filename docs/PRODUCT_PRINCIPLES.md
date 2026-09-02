@@ -199,6 +199,17 @@ an accessible name the application wrote. That is the *secondary* mechanism doin
 its two stated gaps get correspondingly larger: the lexicon now has to cover every approved
 application, and `GET`-shaped destruction has a desktop analogue with nothing behind it at all.*)*
 
+*(Qualified again 2026-09-01 —
+[ADR-0029](./adr/0029-the-mailbox-and-a-calendar-of-our-own.md), decided and unbuilt.* **A
+first-party API call has no paused request either.** A mail action or a calendar hold never passes
+Chrome, so what decides is a typed call our own code authors — checked deterministically against a
+ratified authorisation before it is made, and proven afterwards by read-after-write: the draft
+fetched back, the archive query re-run to zero, the hold read back and reported busy. Stronger than
+the desktop case, because both sides of the check are values we construct rather than labels a page
+or an application wrote; still weaker than an attestation, because the checker and the caller are
+the same codebase. The third mechanism doing this principle's job, and the third time that is said
+here rather than assumed.*)*
+
 **Honest limit:** absence of capability was the strongest prohibition available, and a confirmation
 is weaker than an absence — it can be misconfigured, and it can be clicked through. `ActionKind` now
 enumerates mechanisms rather than effects, so `tests/architecture.test.ts` still asserts no

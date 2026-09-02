@@ -172,8 +172,14 @@ describe('the wider calendar scopes appear nowhere in src', () => {
    *
    * The first two would carry `eventType: focusTime`, which is the single best
    * intent signal in this whole research note and is still not worth every
-   * event title on every calendar. The third is not even arguable: this product
-   * never writes to a calendar and has no reason to be able to.
+   * event title on every calendar. ~~The third is not even arguable: this product
+   * never writes to a calendar and has no reason to be able to.~~ Amended
+   * 2026-09-01 — ADR-0029 decides a write, to a calendar Propositum creates,
+   * under `calendar.app.created` (which does not contain any string below, so
+   * these bans survive the build untouched). What stops being true is "never
+   * writes"; what stays true is that none of THESE three scopes ever arrives —
+   * the person's own calendars remain out of reach by test as well as by scope.
+   * docs/todo/11-calendar-holds.md names the assertions that move instead.
    */
   it.each(['calendar.readonly', 'calendar.events.readonly', 'calendar.events'])(
     '%s is absent',

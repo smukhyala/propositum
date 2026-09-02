@@ -28,18 +28,27 @@ cat eval-scores.json
 ```
 
 **If every `h1` component is `null` and `scoredBy` is `""`, this file is not
-started.** That is the state as of 2026-08-26: two entries, twelve null slots,
-`"ranAt": "2026-08-07"`.
+started.** ~~That is the state as of 2026-08-26: two entries, twelve null slots,
+`"ranAt": "2026-08-07"`.~~ **It is not the state now** *(2026-09-01)*: four
+entries, every slot filled, `"scoredBy": "Mark"`, `"ranAt": "2026-08-27"`. The
+test above is still the right one to run; the answer it gives has changed.
 
-Two further things the file will not tell you:
+~~Two further things the file will not tell you:~~ **Both were true on
+2026-08-26 and neither survived the next day:**
 
-- **`monitor-shortlist` and `lisbon-thread` have no entry at all.** They were
+- ~~**`monitor-shortlist` and `lisbon-thread` have no entry at all.** They were
   sealed into `references.lock.json` on 2026-08-20 and have never been run. The
   scores file is six days older than the lock file it is supposed to score
-  against.
-- **The corpus has not touched a real model since it grew.** `docs/EVALUATION.md`
+  against.~~ **Struck 2026-09-01 — both were run and scored on 2026-08-27**, and
+  the *Done when* list at the foot of this file has carried their numbers
+  (lisbon-thread 11/12, monitor-shortlist 10/12) since that day. Two sentences
+  of this file disagreeing about whether the corpus has ever run is exactly the
+  state the **Is this already done?** command at the top exists to settle.
+- ~~**The corpus has not touched a real model since it grew.** `docs/EVALUATION.md`
   says so in its own voice. Every number in that document describes a two-scenario
-  corpus that no longer exists.
+  corpus that no longer exists.~~ **Struck 2026-09-01.** It touched one on
+  2026-08-27 — 33 calls, $0.99 — and `docs/EVALUATION.md`'s *Second run* section
+  is the four-scenario record that replaced the two-scenario numbers.
 
 This file is done when all four scenarios have a complete entry and
 `npm run eval -- --report` will total them.
@@ -168,6 +177,33 @@ commands that say they cost money do.
 - **`budget-exhausted` is unreachable.** The drive freezes the clock, so no
   scenario can expect it.
 - **ADR-0007's `information-missing` stop class still has no scenario at all.**
+- **And as of 2026-09-01 neither does `structural`, which is new and is a
+  regression in coverage rather than an omission.** `lisbon-thread` filled that
+  class by predicting the `no-progress` halt a research-only run hit on its
+  third read. [Issue #101](https://github.com/smukhyala/propositum/issues/101)
+  ruled that halt a false stop and removed it, so the fixture names no rule now
+  and the class is empty again — the exact state that fixture was written to
+  end.
+
+  **`scoreH3`'s `wrong-rule` branch is half-lost, not lost.** The re-sealed
+  fixture predicts an explicit *no rule fires*, and `scoreH3` scores that as the
+  prediction it is, so *a rule fired that should not have* is reachable through
+  it. What no fixture can reach is *the rule I named did not fire*, because
+  none names one.
+
+  It cannot be repaired by editing `lisbon-thread`. Nothing else is in reach for
+  it: three approved sources against `MAX_ACTIONS_PER_RUN`, three reads against
+  that scenario's own `timeLimitMinutes`. Sealing a rule it *might* hit is the
+  guess the blind protocol exists to prevent.
+
+  What is owed is a scenario **constructed** to hit a limit — an afternoon with
+  more to read than the action cap allows, or one whose budget genuinely runs
+  out. That is a written fixture, not an edit, and it is the same size of job as
+  the `information-missing` one above. The gap is pinned in
+  `tests/eval.test.ts`, which asserts the class is empty and says in its own
+  docblock to turn the assertion back the right way round when it is not, and
+  it is ticketed as
+  [#143](https://github.com/smukhyala/propositum/issues/143).
 - **Nobody ratifies the agreement in the harness.** It accepts what the handoff
   boundary drafted, unedited — so handoff correction rate stays unmeasured.
 - **Re-entry quality** — *can the person resume within about a minute* — is

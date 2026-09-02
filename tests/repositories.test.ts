@@ -172,6 +172,52 @@ describe('the contract freezes on accept', () => {
     expect(loaded?.allowedActionKinds).toEqual(['read-approved-source'])
   })
 
+  it('holds no authorisation unless one was drafted — absence is the deny', async () => {
+    const { contract } = await makeContract()
+    const loaded = await repos.contracts.byId(contract.id)
+
+    expect(loaded?.purchaseOriginPattern).toBeNull()
+    expect(loaded?.purchaseMaxAmountMinor).toBeNull()
+  })
+
+  it('round-trips the five purchase columns written at draft time', async () => {
+    const project = await repos.projects.create('purchase-contract')
+    const session = await repos.sessions.start(project.id)
+    const reading = await repos.readings.create({ sessionId: session.id, throughSeq: 0, claims: [] })
+    const contract = await repos.contracts.createDraft({
+      sessionId: session.id,
+      readingId: reading.id,
+      objective: 'buy the ten avocados',
+      definitionOfDone: 'an order confirmation exists',
+      guidance: [],
+      approvedSourceIds: [],
+      allowedActionKinds: ['read-approved-source'],
+      baseVersionId: null,
+      purchaseOriginPattern: 'https://shop.example',
+      purchaseWhatFor: 'ten avocados',
+      purchaseMaxAmountMinor: 4_000,
+      purchaseCurrency: 'USD',
+      purchaseMaxCount: 1,
+      initiative: 'follow-closely',
+      progress: 'current-step-only',
+      output: 'draft-changes',
+      interruption: 'stop-when-uncertain',
+      timeLimitMinutes: 30,
+    })
+
+    const loaded = await repos.contracts.byId(contract.id)
+    expect(loaded?.purchaseOriginPattern).toBe('https://shop.example')
+    expect(loaded?.purchaseWhatFor).toBe('ten avocados')
+    expect(loaded?.purchaseMaxAmountMinor).toBe(4_000)
+    expect(loaded?.purchaseCurrency).toBe('USD')
+    expect(loaded?.purchaseMaxCount).toBe(1)
+
+    // No expiry column, and this assertion is the reason: expiry DERIVES from
+    // acceptedAt + timeLimitMinutes, so a stored one would be a second store
+    // for a truth the frozen contract already holds.
+    expect(loaded !== null && 'purchaseExpiresAt' in loaded).toBe(false)
+  })
+
   it('allows editing a draft', async () => {
     const { contract } = await makeContract()
     await repos.contracts.editDraft(contract.id, { timeLimitMinutes: 45 })

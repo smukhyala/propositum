@@ -20,6 +20,18 @@
  * Source narrowing IS offered, because there the subset check is real: the
  * model may propose a subset of the sources already observed this session, and
  * deterministic code verifies containment before the draft renders.
+ *
+ * ── The purchase proposal rides the same rule, not an exception to it ────
+ *
+ * ADR-0024's `purchase` object (2026-09-01) is only offerable because its
+ * anchor is a narrowing too: `merchantHandle` must be one of the observed
+ * source handles, so "names a merchant" is the same schema-level containment
+ * check as `narrowedSourceHandles` — the model cannot authorise spending at a
+ * place the person was never at. The numbers are Zod-bounded, the currency is
+ * a prose-hint enum that deterministic code re-checks and DROPS on miss, and
+ * an instruction that names nothing to buy must OMIT the object entirely:
+ * absence is the deny, and an absent proposal falls back to nothing (the
+ * empty-narrowing→everything fallback for sources is deliberately not copied).
  */
 
 import { z } from 'zod'
@@ -57,12 +69,39 @@ export function handoffSchema(sourceHandles: ReadonlySet<string>) {
       .number()
       .int()
       .describe('A realistic time budget in minutes. The person can change it.'),
+    purchase: z
+      .object({
+        merchantHandle: z.string().refine((h) => sourceHandles.has(h), {
+          message: 'must be one of the source handles shown in the prompt',
+        }),
+        whatFor: z
+          .string()
+          .min(1)
+          .max(200)
+          .describe('What is being bought, in their words. Shown to the person; grants nothing.'),
+        maxAmountMinor: z
+          .number()
+          .int()
+          .positive()
+          .describe('The most this may cost, in minor units (cents, pence).'),
+        currency: z
+          .string()
+          .describe('ISO 4217 code: USD, EUR, GBP, CAD, AUD or JPY. Anything else is dropped.'),
+        maxCount: z.number().int().positive().describe('How many separate charges. Usually 1.'),
+      })
+      .optional()
+      .describe(
+        'ONLY when the instruction itself names something to buy and where. ' +
+          '"Buy 10 avocados from the grocery site" names both, so propose one; ' +
+          '"find me food for dinner" names neither, so OMIT this entirely — ' +
+          'an omitted proposal authorises nothing, which is the correct reading.',
+      ),
   })
 }
 
 export type HandoffOutput = z.infer<ReturnType<typeof handoffSchema>>
 
-const PROMPT_VERSION = 'handoff@1'
+const PROMPT_VERSION = 'handoff@2'
 
 const SYSTEM = `You turn a reading of someone's work session into a draft working agreement they will review before anything runs.
 
@@ -73,7 +112,8 @@ Rules:
 - "Done" must be checkable. "Improve the document" is not; "Commercials and Close are drafted" is.
 - Narrow the sources to what is actually needed. Fewer is better; you cannot add one that was not listed.
 - Suggest a time budget you would actually need. They can change it.
-- Never invent a constraint or a rule. If the reading mentions one, it is theirs to restate, not yours to encode.`
+- Never invent a constraint or a rule. If the reading mentions one, it is theirs to restate, not yours to encode.
+- Propose a purchase only when the instruction itself names something to buy and the merchant is among the sources listed. When in doubt, omit it: an omitted purchase authorises nothing, and that is the safe and correct answer.`
 
 export const handoffBoundary = (
   sourceHandles: ReadonlySet<string>,

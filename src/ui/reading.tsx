@@ -380,11 +380,14 @@ export function HandedOver({ handed }: { readonly handed: Handed }) {
    * dial removed it or because the shift never offered it, and only a sentence
    * that claims neither is true in both cases.
    */
+  // *"findings"* left both arms on 2026-09-01 for the reason set out beside the
+  // same sentence in `src/ui/agreement.tsx`: CONTEXT.md bans `finding` for what
+  // a run produced, because `ReviewFinding` owns the word.
   const whyNoText = handed.draftingWasOnOffer
-    ? 'You asked for research only, so it will come back with findings, questions and next steps — and no text for your document.'
+    ? 'You asked for research only, so it will come back with what it found, the questions it could not settle, and next steps — and no text for your document.'
     : handed.documentTitle === null
       ? 'There is no document under this agreement, so there is nothing to draft — it will come back with what it found rather than text for a document.'
-      : 'Drafting is not part of this agreement, so it will come back with findings, questions and next steps — and no text for your document.'
+      : 'Drafting is not part of this agreement, so it will come back with what it found, the questions it could not settle, and next steps — and no text for your document.'
 
   return (
     <Section title="You handed over" tone="attention" index={1}>

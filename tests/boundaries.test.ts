@@ -278,6 +278,91 @@ describe('handoff cannot launder page text into instruction', () => {
   })
 })
 
+describe('the purchase proposal is a narrowing, and absence is a legal parse', () => {
+  const schema = handoffSchema(sourceHandlesFor(sources))
+  const base = {
+    objective: 'buy the ten avocados',
+    definitionOfDone: 'an order confirmation exists',
+    narrowedSourceHandles: ['S1'],
+    suggestedTimeLimitMinutes: 30,
+  }
+  const purchase = {
+    merchantHandle: 'S1',
+    whatFor: 'ten avocados',
+    maxAmountMinor: 4000,
+    currency: 'USD',
+    maxCount: 1,
+  }
+
+  it('parses with the object omitted — an instruction naming nothing to buy', () => {
+    const parsed = schema.safeParse(base)
+    expect(parsed.success).toBe(true)
+    if (parsed.success) expect('purchase' in parsed.data).toBe(false)
+  })
+
+  it('rejects a merchant handle it was never shown — spending needs a place the person was at', () => {
+    const parsed = schema.safeParse({
+      ...base,
+      purchase: { ...purchase, merchantHandle: 'S9' },
+    })
+    expect(parsed.success).toBe(false)
+  })
+
+  it('accepts a genuine proposal anchored to an observed source', () => {
+    expect(schema.safeParse({ ...base, purchase }).success).toBe(true)
+  })
+
+  it('holds the exact key set, so a sixth field cannot arrive silently', () => {
+    const parsed = schema.safeParse({
+      ...base,
+      purchase: { ...purchase, cardNumber: '4111', alwaysAllow: true },
+    })
+    expect(parsed.success).toBe(true)
+    if (parsed.success && parsed.data.purchase !== undefined) {
+      expect(Object.keys(parsed.data.purchase).sort()).toEqual([
+        'currency',
+        'maxAmountMinor',
+        'maxCount',
+        'merchantHandle',
+        'whatFor',
+      ])
+    }
+  })
+
+  it('bounds the numbers in Zod, where bounds survive transformation', () => {
+    expect(
+      schema.safeParse({ ...base, purchase: { ...purchase, maxAmountMinor: 0 } }).success,
+    ).toBe(false)
+    expect(
+      schema.safeParse({ ...base, purchase: { ...purchase, maxAmountMinor: -100 } }).success,
+    ).toBe(false)
+    expect(schema.safeParse({ ...base, purchase: { ...purchase, maxCount: 0 } }).success).toBe(
+      false,
+    )
+    expect(
+      schema.safeParse({ ...base, purchase: { ...purchase, maxAmountMinor: 12.5 } }).success,
+    ).toBe(false)
+  })
+
+  it('accepts an unknown currency at the grammar, because the DROP is code-side', () => {
+    // z.enum is a prose hint that does not survive schema transformation, so
+    // the closed set is enforced by currencyOf in draftContract — which drops
+    // the whole proposal rather than mapping. The grammar's job is only shape.
+    expect(
+      schema.safeParse({ ...base, purchase: { ...purchase, currency: 'DOGE' } }).success,
+    ).toBe(true)
+  })
+
+  it('tells the model omission is the safe answer', () => {
+    const prompt = handoffBoundary(sourceHandlesFor(sources)).buildPrompt({
+      claims: [{ kind: 'objective', text: 'buy the avocados' }],
+      sources,
+      documentTitle: 'errands',
+    })
+    expect(prompt.system).toMatch(/omit it: an omitted purchase authorises nothing/i)
+  })
+})
+
 describe('plan is a list, never a graph', () => {
   it('has no dependency field to put an edge in', () => {
     const parsed = planSchema.safeParse({

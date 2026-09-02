@@ -408,6 +408,27 @@ model HandoffContract {
   /// the branch where a base exists.
   baseVersionId      String?
 
+  /// PurchaseAuthorization (ADR-0024) — five nullable columns, and the five
+  /// are one object: either all are set at draft time or none is, and NULL on
+  /// the first means "this contract authorises no spending", which is the
+  /// deny. Written at createDraft like intentionId above, because the frozen-
+  /// once-accepted trigger makes draft time the only time. No expiry column:
+  /// expiry DERIVES from acceptedAt + timeLimitMinutes, the same immutable
+  /// pair as the deadline, so an authorisation structurally cannot outlive its
+  /// contract.
+  /// An origin, matched exactly by the transport — never by prefix.
+  purchaseOriginPattern  String?
+  /// Display only. Read by the person on the agreement screen, never by the
+  /// gate — EnforcedPolicy.purchase has no field it could occupy.
+  purchaseWhatFor        String?
+  /// The ceiling, in minor units. Nothing may relax it (principle 6).
+  purchaseMaxAmountMinor Int?
+  /// CurrencyCode: USD | EUR | GBP | CAD | AUD | JPY. String because SQLite
+  /// has no enums; the authoritative set is CURRENCY_CODES in src/domain.
+  purchaseCurrency       String?
+  /// How many charges the authorisation permits.
+  purchaseMaxCount       Int?
+
   /// AutonomyControls. Absent from every model-facing schema; defaults are
   /// static product constants, never model-proposed.
   /// follow-closely | use-judgment
@@ -479,7 +500,26 @@ model AgentRun {
   /// reaped by the sweep while the person was reading the request, or would
   /// hold a claim for as long as they took to answer, which may be overnight.
   status         String    @default("pending")
-  /// lease-expired | budget-exhausted | stop-condition | cancelled | error
+  /// ~~lease-expired | budget-exhausted | stop-condition | cancelled | error~~
+  /// ~~CORRECTED 2026-09-01: budget-exhausted | stop-condition |
+  /// boundary-failure | lease-expired | cancelled | answered-too-late |
+  /// confirmation-expired~~ — that correction dropped `error`, which is
+  /// written. CORRECTED AGAIN THE SAME DAY: budget-exhausted | stop-condition |
+  /// boundary-failure | error | lease-expired | cancelled | answered-too-late |
+  /// confirmation-expired, and NULL on a run that finished its plan, on one
+  /// whose model declared itself done, and on every `awaiting-confirmation` —
+  /// the request is the explanation.
+  ///
+  /// ~~`error` was never written by anything; the failure reason is
+  /// `boundary-failure`, from `finish` in `src/runtime/worker-loop.ts`.~~
+  /// `boundary-failure` is `finish`'s, in `src/runtime/worker-loop.ts`. `error`
+  /// is written three times in `src/server/execute-run.ts` — a contract that
+  /// will not load, the run-level catch-all, and a reviewer whose model
+  /// boundary came back not ok.
+  ///
+  /// This comment is documentation and NOT a constraint — SQLite has no enums,
+  /// so the column takes any string and the authority is the set of writers
+  /// CONTEXT.md's AgentRun entry now tabulates one by one.
   terminalReason String?
   createdAt      DateTime  @default(now())
   startedAt      DateTime?

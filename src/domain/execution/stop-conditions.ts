@@ -49,8 +49,21 @@
  * So H3 scores model self-report here, and the results must say so.
  */
 
-/** Consecutive completed actions producing no artifact change before we call it
- *  a loop. Three, because two can be legitimate research before a draft. */
+/**
+ * Consecutive completed actions producing no artifact change before we call it
+ * a loop. Three, because two can be legitimate research before a draft.
+ *
+ * **"Before a draft" is load-bearing, and was not read that way until
+ * 2026-09-01.** Where the run has no draft to be working towards — because the
+ * compiled policy permits nothing that could report progress — a completed
+ * action that changed nothing is not evidence of a circle, and the worker stops
+ * counting that one thing towards this limit.
+ *
+ * The number is not lowered and this rule is not conditional: the exemption is
+ * in the counter rather than here, and it is deliberately narrow. See
+ * `progressIsPossible` in `src/runtime/worker-loop.ts` for the argument and for
+ * the three increments it leaves alone.
+ */
 export const NO_PROGRESS_LIMIT = 3
 
 /** Consecutive gate refusals before we conclude the worker is stuck proposing

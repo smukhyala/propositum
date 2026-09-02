@@ -50,9 +50,36 @@ export declare function flattenAXTree(
   options?: { nodeCap?: number; charBudget?: number },
 ): { tree: string; refs: Record<string, number>; truncated: boolean }
 
+/** ADR-0024: the one-shot landing permit, as the classifier sees it. Expiry is
+ *  the caller's to enforce — a stale permit is simply not passed. */
+export interface LandingPermitLike {
+  readonly intentId?: string
+  readonly originPattern: string
+  readonly maxAmountMinor: number
+  readonly currency: string
+  readonly until?: number
+}
+
 export declare function classifyPausedRequest(
   paused: unknown,
   approvedOrigins: unknown,
   patternCovers?: (pattern: string, origin: string) => boolean,
   mainFrameId?: string | null,
-): 'allow' | 'blocked-request' | 'off-origin'
+  permit?: LandingPermitLike | null,
+): 'allow' | 'blocked-request' | 'off-origin' | 'allow-landing' | 'amount-over-ceiling' | 'amount-unparseable'
+
+/** ADR-0024. A hand-kept copy of `CURRENCY_CODES` in
+ *  `src/domain/handoff/policy.ts`; `tests/extension-cdp.test.ts` asserts the
+ *  two agree. */
+export declare const PERMIT_CURRENCY_CODES: readonly string[]
+
+/** ADR-0024. Pure: the one deterministic amount a checkout body names, or
+ *  null, which the caller must refuse as `amount-unparseable`. */
+export declare function parseChargeAmount(
+  postData: unknown,
+  contentType: unknown,
+): { amountMinor: number; currency: string } | null
+
+/** ADR-0024. The synchronous half of one-shot: true exactly once per intentId
+ *  per service-worker lifetime. */
+export declare function claimLandingPermitOnce(intentId: unknown): boolean

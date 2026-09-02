@@ -38,15 +38,19 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import {
   NAME_BUDGET_CHARS,
+  PERMIT_CURRENCY_CODES,
   SNAPSHOT_BUDGET_CHARS,
   SNAPSHOT_NODE_CAP,
   centreOfContentQuad,
   classifyPausedRequest,
   flattenAXTree,
   isApprovedOrigin,
+  claimLandingPermitOnce,
   originOf,
+  parseChargeAmount,
   sanitiseName,
 } from '../extension/src/cdp.js'
+import { CURRENCY_CODES } from '../src/domain/handoff/policy'
 import { patternCovers } from '../extension/src/match-pattern.js'
 import { losesNoCode, stripComments } from './support/strip-comments'
 
@@ -237,6 +241,152 @@ describe('no call that would spend ADR-0010’s central property', () => {
  * a name they agree on. A rename on both sides at once still passes, which is
  * correct — that is a working change, not a defect.
  */
+describe('the amount parse is deterministic, and every ambiguity refuses', () => {
+  // ADR-0024 item 4. These fixtures are the FLOOR, not the claim — real
+  // checkout calibration is the todo's own afternoon of real shopping, and §5
+  // of the ADR predicts unparseable will be common.
+
+  it('reads a Stripe-shaped body: integer minor units plus a currency', () => {
+    expect(parseChargeAmount('{"amount_minor":1299,"currency":"usd"}', 'application/json')).toEqual(
+      { amountMinor: 1299, currency: 'USD' },
+    )
+  })
+
+  it('reads a major-unit decimal string as money, exactly', () => {
+    expect(parseChargeAmount('{"total":"12.99","currency":"USD"}', 'application/json')).toEqual({
+      amountMinor: 1299,
+      currency: 'USD',
+    })
+  })
+
+  it('reads a form-encoded checkout', () => {
+    expect(
+      parseChargeAmount('amount=12.99&currency=USD&item=avocados', 'application/x-www-form-urlencoded'),
+    ).toEqual({ amountMinor: 1299, currency: 'USD' })
+  })
+
+  it('treats a bare number under a major key as MAJOR units — over-reading refuses, under-reading spends', () => {
+    expect(parseChargeAmount('{"total":40,"currency":"USD"}', 'application/json')).toEqual({
+      amountMinor: 4000,
+      currency: 'USD',
+    })
+  })
+
+  it('knows JPY carries no minor exponent', () => {
+    expect(parseChargeAmount('{"amount":4000,"currency":"JPY"}', 'application/json')).toEqual({
+      amountMinor: 4000,
+      currency: 'JPY',
+    })
+  })
+
+  it('descends one level under a payment-shaped parent, and no further', () => {
+    expect(
+      parseChargeAmount('{"payment":{"amount":"5.00","currency":"GBP"}}', 'application/json'),
+    ).toEqual({ amountMinor: 500, currency: 'GBP' })
+    expect(
+      parseChargeAmount('{"a":{"b":{"amount":"5.00","currency":"GBP"}}}', 'application/json'),
+    ).toBeNull()
+  })
+
+  it('refuses two DISTINCT candidate amounts — guessing which is the charge is the judgment this refuses', () => {
+    expect(
+      parseChargeAmount('{"amount":"12.99","total":"15.99","currency":"USD"}', 'application/json'),
+    ).toBeNull()
+    // The same number stated twice agrees with itself.
+    expect(
+      parseChargeAmount('{"amount":"12.99","total":"12.99","currency":"USD"}', 'application/json'),
+    ).toEqual({ amountMinor: 1299, currency: 'USD' })
+  })
+
+  it('refuses a missing, unknown, or conflicting currency', () => {
+    expect(parseChargeAmount('{"amount":"12.99"}', 'application/json')).toBeNull()
+    expect(parseChargeAmount('{"amount":"12.99","currency":"DOGE"}', 'application/json')).toBeNull()
+    expect(
+      parseChargeAmount(
+        '{"amount":"12.99","currency":"USD","payment":{"currency":"EUR"}}',
+        'application/json',
+      ),
+    ).toBeNull()
+  })
+
+  it('refuses more precision than money has', () => {
+    expect(parseChargeAmount('{"amount":"12.999","currency":"USD"}', 'application/json')).toBeNull()
+    expect(parseChargeAmount('{"amount_minor":12.5,"currency":"USD"}', 'application/json')).toBeNull()
+  })
+
+  it('refuses opaque bodies: GraphQL, multipart, binary, empty, absent', () => {
+    expect(
+      parseChargeAmount('{"query":"mutation { checkout }"}', 'application/json'),
+    ).toBeNull()
+    expect(parseChargeAmount('--boundary\r\nContent-Disposition: form-data', 'multipart/form-data')).toBeNull()
+    expect(parseChargeAmount('', 'application/json')).toBeNull()
+    expect(parseChargeAmount(undefined, 'application/json')).toBeNull()
+    expect(parseChargeAmount('not json at all', 'application/json')).toBeNull()
+  })
+
+  it('refuses a zero or negative amount — a refund is not a charge this covers', () => {
+    expect(parseChargeAmount('{"amount":0,"currency":"USD"}', 'application/json')).toBeNull()
+  })
+
+  it('holds the extension currency copy identical to the domain closed set', () => {
+    // The extension is buildless and imports nothing, so PERMIT_CURRENCY_CODES
+    // is a hand-kept copy of CURRENCY_CODES — and this assertion is the only
+    // thing that keeps a hand-kept copy true.
+    expect([...PERMIT_CURRENCY_CODES]).toEqual([...CURRENCY_CODES])
+  })
+})
+
+describe('one permit has one spender, decided synchronously', () => {
+  it('grants a claim exactly once per intent, whatever interleaving asks', () => {
+    /**
+     * The race this pins: two same-origin POSTs from one checkout press, both
+     * holding state snapshots read before either handler's async storage clear
+     * committed. `chrome.storage.session` has no compare-and-swap, so the
+     * one-shot property lives in this synchronous claim — and this test is the
+     * whole reason it is exported.
+     */
+    expect(claimLandingPermitOnce('intent-race-1')).toBe(true)
+    expect(claimLandingPermitOnce('intent-race-1')).toBe(false)
+    expect(claimLandingPermitOnce('intent-race-1')).toBe(false)
+    // A different command's permit is its own claim.
+    expect(claimLandingPermitOnce('intent-race-2')).toBe(true)
+  })
+
+  it('refuses a malformed intent id rather than minting a shared claim', () => {
+    expect(claimLandingPermitOnce(undefined)).toBe(false)
+    expect(claimLandingPermitOnce('')).toBe(false)
+    expect(claimLandingPermitOnce(42)).toBe(false)
+  })
+
+  it('is consulted by the handler before any spending verdict acts', () => {
+    // The grep half: the claim exists and onRequestPaused reads it. The unit
+    // half above proves the semantics; this proves the wiring did not rot.
+    const cdp = stripComments(readFileSync(join(repo, 'extension/src/cdp.js'), 'utf8'))
+    expect(cdp, 'onRequestPaused no longer consults the synchronous claim').toContain(
+      'claimLandingPermitOnce(',
+    )
+  })
+})
+
+describe('no Network domain, still', () => {
+  it('never enables Network.*, so request post data is the ONLY body surface', () => {
+    /**
+     * ADR-0024 reads `paused.request.postData` — a field on the Fetch event
+     * the extension already subscribes to, requiring no new domain. This
+     * assertion pins the line that distinction rests on: `Network.enable`
+     * would unlock getResponseBody-class reads (the forbidden list above), and
+     * reading the one request we are deciding whether to RELEASE is not that.
+     * The day this fails, that argument is being re-litigated — read the
+     * forbidden list's comments before making it pass.
+     */
+    expect(
+      ALL_CODE,
+      'an extension file enables a Network domain — the postData argument does not cover that',
+    ).not.toContain("'Network.enable'")
+    expect(ALL_CODE).not.toContain('"Network.enable"')
+  })
+})
+
 describe('the app and the extension agree on parameter names', () => {
   const tools = stripComments(readFileSync(join(repo, 'src/policy/tools.ts'), 'utf8'))
 
@@ -259,7 +409,18 @@ describe('the app and the extension agree on parameter names', () => {
     expect(
       [...dispatched].sort(),
       'the dispatch shape in tools.ts changed — this guard is now reading nothing',
-    ).toEqual(['inputText', 'key', 'ref', 'snapshotId', 'url'])
+    ).toEqual([
+      'inputText',
+      'key',
+      // The three purchase fields, 2026-09-01 (ADR-0024) — flat on the wire
+      // precisely so this guard can see them.
+      'purchaseCurrency',
+      'purchaseMaxAmountMinor',
+      'purchaseOriginPattern',
+      'ref',
+      'snapshotId',
+      'url',
+    ])
   })
 
   it.each([...dispatched].sort())('cdp.js reads params.%s', (key) => {
@@ -918,13 +1079,16 @@ describe('what the browser attests about a request it is holding', () => {
     frameId,
   })
 
-  it('blocks every non-GET, whatever it is for', () => {
+  it('blocks every non-GET, whatever it is for — the four-argument form, unchanged', () => {
     /**
      * The method is attested by Chrome, not asserted by the page. A page can
      * put the word *Cancel* on a button that posts an order; it cannot make
      * Chrome report a POST as a GET.
      *
-     * Unconditional, and with no exception for the approved origin: the
+     * ~~Unconditional~~ **Permit-conditional since 2026-09-01 (ADR-0024), and
+     * with NO permit in the call this is character-for-character the old
+     * refusal** — which is what every caller outside a complete-purchase
+     * command passes. Still no exception for the approved origin: the
      * dangerous request is usually to the site the person is signed into.
      */
     expect(classifyPausedRequest(paused('POST', 'https://mail.example.com/send'), approved)).toBe(
@@ -933,6 +1097,88 @@ describe('what the browser attests about a request it is holding', () => {
     expect(classifyPausedRequest(paused('DELETE', 'https://mail.example.com/x'), approved)).toBe(
       'blocked-request',
     )
+  })
+
+  describe('the landing permit, at the network (ADR-0024)', () => {
+    const permit = {
+      intentId: 'intent-1',
+      originPattern: 'https://mail.example.com',
+      maxAmountMinor: 4_000,
+      currency: 'USD',
+    }
+    const checkout = (body: string, url = 'https://mail.example.com/checkout'): unknown => ({
+      request: {
+        method: 'POST',
+        url,
+        postData: body,
+        headers: { 'Content-Type': 'application/json' },
+      },
+      resourceType: 'XHR',
+      frameId: MAIN,
+    })
+
+    it('lands the one covered request at or under the ceiling', () => {
+      expect(
+        classifyPausedRequest(
+          checkout('{"amount_minor":4000,"currency":"USD"}'),
+          approved,
+          patternCovers,
+          MAIN,
+          permit,
+        ),
+      ).toBe('allow-landing')
+    })
+
+    it('refuses over the ceiling, as its own typed verdict', () => {
+      expect(
+        classifyPausedRequest(
+          checkout('{"amount_minor":4001,"currency":"USD"}'),
+          approved,
+          patternCovers,
+          MAIN,
+          permit,
+        ),
+      ).toBe('amount-over-ceiling')
+    })
+
+    it('refuses an unreadable or wrong-currency amount, as its own typed verdict', () => {
+      expect(
+        classifyPausedRequest(checkout('opaque'), approved, patternCovers, MAIN, permit),
+      ).toBe('amount-unparseable')
+      expect(
+        classifyPausedRequest(
+          checkout('{"amount_minor":4000,"currency":"EUR"}'),
+          approved,
+          patternCovers,
+          MAIN,
+          permit,
+        ),
+      ).toBe('amount-unparseable')
+    })
+
+    it('matches the origin exactly — never a pattern, never a prefix, never a subdomain', () => {
+      expect(
+        classifyPausedRequest(
+          checkout('{"amount_minor":4000,"currency":"USD"}', 'https://pay.mail.example.com/x'),
+          approved,
+          patternCovers,
+          MAIN,
+          permit,
+        ),
+      ).toBe('blocked-request')
+    })
+
+    it('a GET is untouched by a permit — the permit releases nothing it was not for', () => {
+      expect(
+        classifyPausedRequest(
+          paused('GET', 'https://mail.example.com/page'),
+          approved,
+          patternCovers,
+          MAIN,
+          permit,
+        ),
+      ).toBe('allow')
+    })
   })
 
   it('treats an absent or malformed method as the dangerous case', () => {

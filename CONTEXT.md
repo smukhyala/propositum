@@ -41,7 +41,10 @@ this document is provisional; where a term's shape depends on a later ticket, it
   calendar until somebody presses the offer. It may not reach `compilePolicy`, `EnforcedPolicy` or the gate, may not raise or widen
   anything, and is never persisted. This is the first thing in the vocabulary that comes from neither
   our code nor the person, so the rule the first line of this list states about models is restated
-  here about a third party rather than assumed to generalise.
+  here about a third party rather than assumed to generalise. *(2026-09-01,
+  [ADR-0029](docs/adr/0029-the-mailbox-and-a-calendar-of-our-own.md): unchanged for the read. A
+  `CalendarHold` is not the calendar granting — it is a write a ratified contract granted, going the
+  other way, and the two never trade jobs.)*
 
 ### Why the reversibility rule was weakened, and what holds it up now
 
@@ -952,18 +955,30 @@ table and is not displaced by this. It is restated by it.**
 **Consumer:** "What I'll work on" · "Done means…" · "Guidance — not a hard limit".
 
 ### ContractScope — *value object*
-`approvedSourceIds[]`, `allowedActionKinds[]`, `baseVersionId`. **Two more decided 2026-08-26 and
-neither built:** `approvedApplications[]`
-([ADR-0025](docs/adr/0025-computer-use-beyond-the-browser.md)) and an optional
-`purchaseAuthorization` ([ADR-0024](docs/adr/0024-purchases-within-a-ratified-authorisation.md)).
-`grep -rn 'approvedApplications\|purchaseAuthorization' src/ prisma/` returns nothing — these are a
+`approvedSourceIds[]`, `allowedActionKinds[]`, `baseVersionId`, and — **built 2026-09-01, the first
+of the fenced three to leave the fence** — an optional `purchaseAuthorization`
+([ADR-0024](docs/adr/0024-purchases-within-a-ratified-authorisation.md)): its absence is the deny,
+and only `acceptContract` may grant the kind it unlocks. **Two decided and still unbuilt:**
+`approvedApplications[]`
+([ADR-0025](docs/adr/0025-computer-use-beyond-the-browser.md)) and an optional `sendAuthorization`
+([ADR-0029](docs/adr/0029-the-mailbox-and-a-calendar-of-our-own.md)).
+`grep -rn 'approvedApplications\|sendAuthorization' src/ prisma/` returns
+nothing — those two are a
 **specification rather than a description**, the same fence the `Intention` entry put around itself,
 and they are written here first because the constraint is one sentence today and a migration later.
 
 Deny-by-default; **no denylist**, because a second mechanism creates a precedence question with no
-principled answer. The "I will not…" reassurance panel renders two visually distinct groups: the
+principled answer. The "I will not…" reassurance panel renders ~~two visually distinct groups: the
 computed complement of `allowedActionKinds` (we chose not to allow this) and capabilities absent
-from the enum entirely (this does not exist). The UI must never blur them.
+from the enum entirely (this does not exist)~~ ~~**three, 2026-09-01**~~ **four, 2026-09-01 — two
+splits decided apart and reconciled the same day.** The complement collapsed two different facts
+under one heading that named a choice, and credited the person with switching off kinds their shift
+never offered; and ADR-0024's `complete-purchase` fits none of the groups that leaves. The four:
+**switched off** (inside `ActionKind`, this shift offered it, a dial removed it) · **not in this
+agreement** (inside `ActionKind`, never offered, so there was nothing for a dial to remove) ·
+**ratified-bound** (`complete-purchase` — inside `ActionKind`, on no dial, granted only by
+ratifying a drafted `PurchaseAuthorization`, and shown as its own line with the amount rather than
+in any list) · **does not exist** (absent from the enum entirely). The UI must never blur them.
 
 `approvedSourceIds` defaults to the project sources actually observed this session, one tap to add
 any other — least privilege, cheap to correct. A model may propose a **narrowing**, checked
@@ -1006,15 +1021,31 @@ Guardrails · Sandbox · ACL · Scope (bare) · approved resources · workingCop
 **Consumer:** "What I can look at" · "What I can change" · "Where I can work".
 
 ### PurchaseAuthorization — *value object*
-`originPattern`, `whatFor`, `maxAmount`, `currency`, `maxCount`, `expiresAt`. Optional on
-`ContractScope`; **its absence is the deny.** Decided 2026-08-26,
-[ADR-0024](docs/adr/0024-purchases-within-a-ratified-authorisation.md).
+~~`originPattern`, `whatFor`, `maxAmount`, `currency`, `maxCount`, `expiresAt`.~~ **Built 2026-09-01
+with two field corrections the code decided:** `originPattern`, `whatFor`, `maxAmountMinor` (the
+ceiling was always in minor units; the name now says so), `currency`, `maxCount`,
+`expiresAtEpochMs` — and the expiry is **derived, never stored or drafted**:
+`acceptedAt + timeLimitMinutes`, the same immutable pair the deadline derives from, so an
+authorisation structurally cannot outlive its contract, which is ADR-0024's own *Revisit when*
+tripwire answered by construction. Optional on `ContractScope`; **its absence is the deny.** Decided
+2026-08-26, [ADR-0024](docs/adr/0024-purchases-within-a-ratified-authorisation.md).
 
-**A specification rather than a description.** Nothing in `src/` or `prisma/` holds any of these
-fields, `LANDING_ACTION_KINDS` is still `new Set<ActionKind>()`, and `extension/src/cdp.js:529` still
-refuses every non-`GET` unconditionally — so **Propositum cannot buy anything today**, and
-`src/ui/agreement.tsx` is right to say so. `tests/architecture.test.ts` couples that screen's promise
-to the transport, so the day this is built the suite names the sentence that has to move.
+~~**A specification rather than a description.** Nothing in `src/` or `prisma/` holds any of these
+fields…~~ **The fence came off 2026-09-01: the fields exist** — `src/domain/handoff/policy.ts`
+declares the object, `prisma/schema.prisma` holds five nullable `purchase*` columns on the contract,
+and the gate refuses `complete-purchase` with `purchase_not_authorized`, `purchase_count_exceeded`
+and `purchase_expired`. ~~**What has NOT moved: the transport.**~~ **The transport moved later the
+same day: item 5 landed.** `LANDING_ACTION_KINDS` holds `complete-purchase`, and the extension
+refuses any non-`GET` without a one-shot landing permit a ratified authorisation armed — releasing
+exactly one covered request at or under the ceiling. *The landing permit is the extension-internal
+mechanism of THIS term and deliberately gets no noun of its own in the glossary: it is a
+not-persisted value in `chrome.storage.session`, armed per `complete-purchase` command from these
+fields and dead on consumption, refusal, expiry, or the tab being given up — a projection of the
+authorisation, never a second authority over it.* So **Propositum can buy exactly what a person
+ratified, and still nothing else**; the agreement screen confines *"Buy anything"* to the
+no-authorisation arm, and `tests/architecture.test.ts`'s updated guard couples the two arms the way
+the old one coupled the absolutes. The live purchase has not been made —
+[`docs/todo/06-buying-things.md`](docs/todo/06-buying-things.md) keeps its *Done when* open on it.
 
 What a person ratified about spending, for one contract. A model **drafts** it from the instruction —
 *"Buy 10 avocados from Amazon"* names a merchant, an item and a quantity, so there is something to
@@ -1039,6 +1070,30 @@ switch the ceiling off, because that is a dial pre-approving an irreversible act
 *Displaces:* Budget (which is time — see AutonomyControls) · SpendLimit · PaymentMethod · Wallet ·
 `alwaysAllow`.
 **Consumer:** "What you said I could buy".
+
+### SendAuthorization — *value object*
+`recipients[]`, `whatFor`, `maxCount`, `expiresAt`. Optional on `ContractScope`; **its absence is
+the deny.** Decided 2026-09-01,
+[ADR-0029](docs/adr/0029-the-mailbox-and-a-calendar-of-our-own.md).
+
+**A specification rather than a description.** Nothing in `src/` or `prisma/` holds any of these
+fields and `grep -rn 'gmail' src/` returns nothing — no mail code exists at all, so **Propositum
+cannot send an email today**. `tests/architecture.test.ts` still asserts no send-shaped function
+exists, stated with its known limit: since ADR-0010 that clause is about our function names, not
+reachable effects. It is the guard that must be deliberately updated on the day this is built, and
+[`docs/todo/10-the-mailbox.md`](docs/todo/10-the-mailbox.md) names it.
+
+What a person ratified about sending, for one contract — `PurchaseAuthorization`'s pattern applied
+to the send verb. A model drafts it **only** from an instruction that names its recipient (*"send
+Priya the summary"* names someone, so there is something to draft; *"deal with my inbox"* names no
+one, so the terminal is a `message-draft` held unsent in the drafts folder) and the person ratifies
+it on the screen they already ratify. `recipients` are exact addresses, matched exactly and never by
+domain; `whatFor` is display-only prose the gate never reads; `expiresAt` is never later than the
+contract's own end, because an authorisation that outlives its contract is a
+`WorkingAgreement` in everything but name, and that word stays reserved.
+
+*Displaces:* MailPermission · SendGrant · `sendMessage` (as a capability name) · `alwaysAllow`.
+**Consumer:** "Who you said I could write to".
 
 ### AutonomyControls — *value object*
 The human-set dials. Absent from every model-facing schema; defaults are static product constants,
@@ -1142,6 +1197,12 @@ live only in an ADR:
   recommends; it may never grant** — principle 15's asymmetry, applied to a third party instead of to
   a model or to history.
 
+*(2026-09-01, [ADR-0029](docs/adr/0029-the-mailbox-and-a-calendar-of-our-own.md): the scope this
+entry reads under is no longer the product's only Google scope on paper — a write path is decided,
+and its object is `CalendarHold`, below. Nothing in this entry moves: the read is still
+`calendar.freebusy`, still never persisted, still grants nothing, and a hold is not a BusyInterval
+and never becomes one.)*
+
 **The suggestion gets no term of its own, deliberately.** It is a candidate value of
 `timeLimitMinutes` — offered beside the dial, applied only by a press, and *not* pre-filled into it;
 weaker than `StatedIntent`'s fields, which do arrive pre-filled from a model. Giving the offered
@@ -1161,6 +1222,36 @@ focus block.
 the time limit it would have shown anyway, one sentence saying what the calendar said, and a button
 offering the number that fits. The sentence stays after the button is pressed, so a ratified limit
 never sheds where the number came from.)*
+
+### CalendarHold — *value object*
+`{ start, end, label }` — one busy block Propositum wrote, on a calendar Propositum created. The
+write-side counterpart of a `BusyInterval` and never the same object: one is evidence read from a
+person's availability, the other an action a ratified contract granted. Decided 2026-09-01,
+[ADR-0029](docs/adr/0029-the-mailbox-and-a-calendar-of-our-own.md).
+
+**A specification rather than a description.** `grep -rn 'CalendarHold\|calendar.app.created' src/`
+returns nothing, and `src/server/calendar.ts` still names `calendar/v3/freeBusy` and no other
+endpoint. The build's first job is a stop-the-line verification — a hold that does not make the
+person read as busy reopens the decision rather than shipping anyway —
+[`docs/todo/11-calendar-holds.md`](docs/todo/11-calendar-holds.md) leads with it.
+
+Written under `calendar.app.created`, which can touch only calendars Propositum itself created —
+the person's own calendars have no field this can reach and no call that can return their contents,
+so ADR-0014's *has nowhere to put it* holds in both directions. The consumer wording still says
+*your* calendar deliberately: the secondary calendar sits inside the person's account and moves the
+person's availability, which is the sense a person means — the scope sense (never the calendars they
+keep themselves) is the security fact, said where security is the subject. **The hold itself lives
+on Google, not here** — locally there are only the ledger's rows about the action that placed it,
+the same not-persisted posture as the read. Proof per hold: the event read back
+by its id, and the interval reported busy by the ADR-0014 read — the product's oldest Google read
+becomes the receipt for its first Google write. Removing a hold removes only what Propositum wrote.
+
+The standing rule survives untouched: the calendar's *read* still recommends and never grants. A
+hold grants nothing either — it is *granted*, by a contract, like any other mutating kind.
+
+*Displaces:* TimeBlock · HoldEvent · the write sense of `calendar block` and `focus block` (whose
+read sense stays displaced by `BusyInterval`).
+**Consumer:** "Time held on your calendar".
 
 ### EnforcedPolicy — *computed view*
 The deterministic rule set the gate evaluates, produced by the pure total function
@@ -1242,34 +1333,96 @@ row**: the queue is a status column and one guarded `UPDATE … RETURNING`, not 
 `leaseExpiresAt`, `cancelRequested`, `lastCompletedStepOrdinal`, `startedAt`, `endedAt`,
 `terminalReason`.
 
-`status`: `queued · running · completed · halted · interrupted · failed`.
+~~`status`: `queued · running · completed · halted · interrupted · failed`.~~
+**Corrected 2026-09-01, and it was wrong in both directions.** Three of those six are never written
+for an AgentRun — `queued` is `ActionDispatch`'s, and `completed` and `halted` are nobody's — and
+three the code does write were missing. The seven, agreed between the code and
+`prisma/schema.prisma`'s own AgentRun comment: `pending · claimed · running · succeeded · failed ·
+interrupted · awaiting-confirmation`. `awaiting-confirmation` is now load-bearing outside the worker:
+`confirmRequest` refuses a yes unless the run is still parked on the question, so a value this list
+did not mention decides whether a person's answer is accepted. The divergence below already said this
+entry disagrees with the schema; what changed is that it stopped being only a specification gap.
+~~**The reasons table below still partitions by `completed` and `halted` and is left standing** — the
+terminal reasons are a second divergence, and correcting one list by leaning on the other is how this
+entry got here.~~ **Struck the same day.** Leaving it standing meant leaving a table keyed on two
+statuses the sentence above had just established nobody writes, and the second divergence is closed
+below off the writers rather than off the other list.
 `terminalReason` is closed, **code-assigned**, and partitions strictly by status:
 
 | Status | Reasons |
 |---|---|
-| completed | `plan-exhausted` |
-| halted | `stop-condition` · `human-recall` · `time-budget-exhausted` · `token-budget-exhausted` · `gate-refusal` |
-| interrupted | `lease-expired` |
-| failed | `boundary-failure` |
+| ~~completed~~ | ~~`plan-exhausted`~~ |
+| ~~halted~~ | ~~`stop-condition` · `human-recall` · `time-budget-exhausted` · `token-budget-exhausted` · `gate-refusal`~~ |
+| ~~interrupted~~ | ~~`lease-expired`~~ |
+| ~~failed~~ | ~~`boundary-failure`~~ |
 
-**A slept Mac yields `interrupted / lease-expired`, never `time-budget-exhausted`** — the startup
+**Struck 2026-09-01, and rewritten from the writers.** Two of the four statuses above are written for
+no AgentRun, and five of the eight reasons are written nowhere: `plan-exhausted`, `human-recall`,
+`time-budget-exhausted`, `token-budget-exhausted` and `gate-refusal`. Three of the five are renamings
+— the two budgets are one `budget-exhausted`, and `human-recall` is `cancelled`. **The other two name
+nothing**: a run that exhausts its plan and a run whose model declares itself done both end with **no
+reason at all**, and a gate refusal on an irreversible kind parks the run on a question rather than
+ending it. Every writer, and what it writes:
+
+| Status | Reason | Written by |
+|---|---|---|
+| `succeeded` | `budget-exhausted` · `stop-condition` | `finish` in `src/runtime/worker-loop.ts`, off `STOP_RULES[…].terminalReason` in `src/domain/execution/stop-conditions.ts` |
+| `succeeded` | *(none)* | the same `finish` when no rule fired — the plan ran out, or the model said it was done |
+| `failed` | `boundary-failure` | the same `finish`; which boundary and how is `WorkerResult.boundaryFailure`, not a reason |
+| `failed` | `error` | three places in `src/server/execute-run.ts` — `executeRun` when the run's contract will not load, `executeRun`'s catch-all for anything that threw and was not a claim fence, and `review` when the reviewer's model boundary came back not ok |
+| `interrupted` | `lease-expired` | `runs.sweepExpiredLeases` in `src/persistence/repositories/index.ts` |
+| `interrupted` | `cancelled` | the `cancel-requested` fence in `src/server/execute-run.ts` |
+| `interrupted` | `answered-too-late` | `admitRun` in `src/server/confirmations.ts`, from `ANSWERED_TOO_LATE` in `src/domain/execution/continuation.ts` |
+| `interrupted` | `confirmation-expired` | `expireConfirmations`, from `CONFIRMATION_EXPIRED` in the same file |
+| `awaiting-confirmation` | *(none)* | nothing — the ConfirmationRequest is the explanation, and `runs.complete` documents the omission |
+
+`pending`, `claimed` and `running` are not terminal and carry none. Note what the closed set costs:
+five of the six rules in `STOP_RULES` collapse into `stop-condition`, so **which** rule stopped a run
+is not recoverable from this column — the re-entry screen says so in its own voice rather than
+guessing. ~~Note also a reason the renderers expect and no writer produces: both
+`src/domain/intention/work-so-far.ts` and `src/app/shifts/[contractId]/page.tsx` carry a `case
+'error'`, which is dead, and `boundary-failure` reaches their default branch instead.~~
+
+**Struck 2026-09-01, hours after it was written, and the row above is the one the table was
+missing.** `error` is written — three times, all in `src/server/execute-run.ts` — and both renderers
+render it; `tests/work-so-far.test.ts` drives that arm. The reason with no arm anywhere is
+`boundary-failure`: neither `src/domain/intention/work-so-far.ts` nor
+`src/app/shifts/[contractId]/page.tsx` has a case for it, so the one worker failure this column can
+name falls to the default branch kept for a value a later version might store, and the person is
+told only that it stopped. Recorded and not fixed here —
+[#145](https://github.com/smukhyala/propositum/issues/145) carries the behaviour half.
+
+**A slept Mac yields `interrupted / lease-expired`, never ~~`time-budget-exhausted`~~
+`budget-exhausted`** *(corrected 2026-09-01 — the longer spelling never existed)* — the startup
 sweep fires on lease staleness before any deadline check runs, so the report never blames the clock
 for a lid close. `interrupted` is a real, displayable outcome with a partial shift report, not an
 error state; under the standing "leave your desk, not leave the building" constraint it is routine.
 
-H3 is scored only on the judgment-family reasons, which keeps budget exhaustion out of the stopping
-metric.
+~~H3 is scored only on the judgment-family reasons, which keeps budget exhaustion out of the stopping
+metric.~~ **Struck 2026-09-01: H3 does not read this column at all.** `scoreH3` in `src/eval/score.ts`
+takes whether a question was raised and the `StopRuleId`s of structural origin, which `src/eval/run.ts`
+reads off `WorkerResult.stoppedBy` — the rule ids, not the reason they map to. Nor is budget kept out:
+`budget-exhausted` is a structural rule and lands in that list like any other. What keeps it out of a
+score is a scenario sealing no expectation about it, which is a fact about the corpus and not about
+this entry.
 
 **The claim is a fence.** Every action boundary re-reads `status` and `claimedBy`; a Runner that no
 longer holds the claim aborts without writing. Otherwise a machine that wakes after its run was
 reaped appends actions to a terminal run inside a shift the human already closed.
 
-**That fence has never existed** *(recorded 2026-08-11)*. `claimedBy` and `cancelRequested` are
+~~**That fence has never existed** *(recorded 2026-08-11)*. `claimedBy` and `cancelRequested` are
 described here and are absent from `prisma/schema.prisma`, and this entry's `status` values disagree
 with the schema's. This vocabulary is authoritative and the columns are owed; until they exist the
 paragraph above is a specification rather than a description, and reading it as a description is how
-a guarantee comes to be believed in without ever having been built.
-[ADR-0009](docs/adr/0009-composed-offers.md) records this with the other divergences.
+a guarantee comes to be believed in without ever having been built.~~
+**It exists now** *(corrected 2026-09-01, and the note is kept because it was true for three
+months)*. Both columns are on `model AgentRun` in `prisma/schema.prisma`, and the schema comment on
+`cancelRequested` says in its own words why they arrived: a browser-driving run is the first run
+where a stale claim can press a button on a live page. `src/runtime/worker-process.ts` compares
+`row.claimedBy` against the worker id at every action boundary and `src/server/execute-run.ts` turns
+a lost claim into a `ClaimFenced` that returns **without writing anything at all**. The `status`
+values agree too, as of the correction at the top of this entry.
+[ADR-0009](docs/adr/0009-composed-offers.md) records the divergence this closed.
 
 One handoff produces **two** runs: a worker, then a reviewer whenever the worker completed at least
 one action. The reviewer is **enqueued, not invoked inline** — failure isolation was the reason to
@@ -1410,6 +1563,13 @@ boundary is untouched, because deny-by-default already covers it. The only cost 
 `allowedActionKinds`, so a worker proposing it is refused by the same deny-by-default path as any
 unauthorized kind. The control is therefore enforced by the gate that already exists, at the cost
 of one flag.
+
+**Members decided and not built** *(2026-09-01,
+[ADR-0029](docs/adr/0029-the-mailbox-and-a-calendar-of-our-own.md); a specification rather than a
+description)*: the mail verbs (read, search, label, archive, draft, the evidence-bound unsubscribe)
+and the calendar-hold pair. Their exact member names are the build's to choose — mechanisms, not
+effects, as everything since ADR-0010 — and none exists in the enum today; the fence comes off in
+the commit that adds them.
 *Displaces:* Tool · ToolCall · tool call · Capability · Operation · Verb · Command · Skill ·
 ActionType · allowed actions (as free strings).
 **Consumer:** "What I'm allowed to do" — "Read approved sources" / "Draft a section".
@@ -1537,6 +1697,24 @@ as an **attributed quotation**, exactly as an inferred `constraint` claim is.
 The question is never model-composed. A model that could write the words asking for its own
 permission is a model that can argue for itself, and the page-authored half is quoted with
 attribution rather than spoken in Propositum's voice.
+
+**It is answerable only while the run is still parked on it** *(added 2026-09-01)*. A question whose
+run ended some other way is **abandoned**: closed rather than live, the person told the work stopped
+before their answer arrived, and no verdict written. `abandoned` is the word for that closed state
+wherever it is carried — `AnswerResult.reason`, `ConfirmationView.abandoned`, and the `unanswered`
+the settled screen renders.
+
+It is **a distinct closed state, not a fourth thing expiry does**: a question can close this way one
+minute after it was asked, and telling somebody who answered promptly that they were too slow is the
+failure the two sentences are kept apart to prevent. **When a question is both expired and unparked —
+the ordinary case, because the sweep that notices the expiry is what ends the run — the expiry
+sentence wins**, in `confirmRequest` and on the screen alike, off one tie-break in
+`unansweredReason`. Saying **no** is still accepted, on the standing rule that a rejection grants
+nothing.
+
+**Not `ActionDispatch`'s `abandoned`**, which is an instruction that was queued and never handed out.
+One word, two closed sets, no overlap: this one is about a question a person was asked, that one
+about a command the browser never received.
 *Checked against the banned words:* not bare `action`, not `approval` (displaced by ChangeVerdict),
 not `escalation` (displaced by DecisionNeeded).
 *Displaces:* approval request · permission prompt · escalation · are-you-sure · gate prompt ·
@@ -1864,7 +2042,13 @@ One thing the worker judged it could not safely decide:
 The centrepiece of the initial supported scenario — Propositum completes the draft **and** identifies
 one strategic decision — which is only consistent with the run continuing. So this is **not a halt
 and not a gate refusal.** It is not an ActionIntent (nothing was proposed and refused), not a
-ChangeVerdict, and not an `openThread` claim (that is a pre-handoff strand).
+ChangeVerdict, and not an `openThread` claim (that is a pre-handoff strand). *(One class is
+narrower since 2026-09-01, ADR-0024's build: a refused CHARGE — `amount-over-ceiling` or
+`amount-unparseable` at the transport — raises a `DecisionNeeded` built by `chargeRefusedQuestion`
+from the extension's attested account, and there the failed `ActionIntent`/`ActionOutcome` pair
+exists first and the run ends with the question. What made `DecisionNeeded` the right shape anyway
+is its load-bearing property, which is unchanged: the answer is prose and grants nothing — a
+confirmation would need a yes-path, and a yes-path would need the ceiling relaxed in flight.)*
 
 Naming it is not new abstraction: the brief already mandates "human decisions required" as a
 ShiftReport field, and without a name the demo's headline output is unrepresentable.
@@ -2069,13 +2253,25 @@ say that it does.
     within a `PurchaseAuthorization` a person ratified, bounded by an origin, a ceiling, a count and
     an expiry. [ADR-0025](docs/adr/0025-computer-use-beyond-the-browser.md) removes the bound to one
     Chrome tab, so the blast radius becomes the machine. Both make the product less safe and both say
-    so at the top rather than here.
+    so at the top rather than here. ~~there are now three~~ **Corrected 2026-09-01: four —
+    [ADR-0029](docs/adr/0029-the-mailbox-and-a-calendar-of-our-own.md) overrides the brief's
+    exclusion of *sending*, inside a `SendAuthorization` a person ratified naming its exact
+    recipients. Decided and unbuilt: `grep -rn 'gmail' src/` finds nothing and
+    `tests/architecture.test.ts` still asserts no send-shaped function.**
 
-    **All three are decisions and none is built**, which this entry got wrong for about an hour on the
+    ~~All three~~ **All four, since 2026-09-01,** **are decisions and none is built**, which this
+    entry got wrong for about an hour on the
     day it was written. ~~`LANDING_ACTION_KINDS` … is no longer empty~~ — **it is still empty.**
-    `src/domain/handoff/policy.ts:168` reads `new Set<ActionKind>()`, `extension/src/cdp.js:529` still
+    ~~`src/domain/handoff/policy.ts:168` reads `new Set<ActionKind>()`, `extension/src/cdp.js:529` still
     returns `blocked-request` for every non-`GET`, and `grep -rn 'PurchaseAuthorization' src/` finds
-    nothing. What ADR-0024 changed is the **reason** the set is empty: it was *the transport cannot
+    nothing.~~ **Re-marked 2026-09-01, the day ADR-0024's build began:** the grep finds the object
+    now — the type, the gate rules and the columns exist, and `complete-purchase` is in the enum,
+    grantable only by ratification. ~~`LANDING_ACTION_KINDS` is still empty…~~ **Item 5 landed
+    later the same day: the set holds `complete-purchase`, the extension's refusal is
+    permit-conditional with absence meaning exactly what unconditional meant, and buying happens —
+    once per ratified authorisation, at or under its ceiling, and in no other case.** What ADR-0024
+    changed first was the **reason** the set was empty: it
+    was *the transport cannot
     honour a member* and it is now *the transport has been decided against and nobody has written the
     code*. The correction is left visible rather than tidied because stating a decision in the present
     tense is the exact failure this override's own paragraph warns about, and it happened here, inside

@@ -91,6 +91,16 @@ interface PurchaseAuthorization {
 }
 ```
 
+*(2026-09-01, the build — two corrections the code decided, both toward this document's own
+argument. `maxAmount` became `maxAmountMinor`: the comment above already said minor units, and a
+name that says so cannot be misread by a caller holding dollars. And `expiresAt` is **derived, not
+stored or drafted** — `acceptedAt + timeLimitMinutes`, the immutable pair the deadline already
+derives from — so an authorisation structurally cannot outlive its contract, which answers the
+second *Revisit when* trigger below by construction instead of by review. While the expiry derives
+from that pair it is production-coincident with the budget check; the gate's `purchase_expired`
+rule exists for the day a stored expiry earns its own argument. `CONTEXT.md`'s entry records the
+same corrections, dated.)*
+
 ### 1. Why a structured object, and not the instruction itself
 
 The tempting shape is to let the objective authorise: the person wrote *"buy 10 avocados"*, so
@@ -123,6 +133,18 @@ At `Fetch.requestPaused`, before the request leaves the machine:
 
 Four of the five cannot be forged by a page. The fifth is the honest weakness and §4 is about it.
 
+**A sixth fact the table does not hold, recorded 2026-09-02 on review of the build:** the permit is
+bound to an origin, a currency, a ceiling and a count — **not to the request the pressed control
+initiated.** The transport releases the *first* same-origin non-`GET` inside the permit's window
+whose body parses to an amount in the permit's currency at or under the ceiling. A same-origin
+telemetry `POST` that happens to carry `amount` and `currency` — a checkout-started event, say —
+could consume the one-shot ahead of the real checkout. Money still fails closed: the real checkout
+then meets the plain block and nothing is charged. What does not fail closed is the ledger's
+sentence, which would record a purchase against a request that bought nothing while the count is
+spent. The live-purchase session in [`docs/todo/06`](../todo/06-buying-things.md) is where the
+frequency of this gets measured against real baskets; binding the permit to the initiating request
+(the `Document` or `XHR` Chrome attributes to the press) is the candidate fix, and it is not built.
+
 **No authorisation on the contract ⇒ every non-`GET` is refused**, exactly as today. *"Find me food
 for dinner"* produces nothing to ratify, so the block is still unconditional for it. This is the case
 `tests/purchase-authorisation.test.ts` carries as a standing fixture, and it is the one that must
@@ -133,9 +155,15 @@ never start passing.
 `maxAmount` exists because *"buy 10 avocados"* must not become a $400 charge — through a wrong
 variant, a subscription upsell, a currency confusion, or a page that is not the page we thought.
 
-A charge above the ceiling **refuses and asks**. That is the one confirmation that survives this
-decision, and it is well-behaved precisely because it is rare: it fires only when something has
-already gone wrong, so a person seeing one has reason to read it. A confirmation that fires on every
+A charge above the ceiling **refuses and asks**. ~~That is the one confirmation that survives this
+decision~~ **Corrected 2026-09-01, by the build, toward the stricter verb:** what survives is a
+`DecisionNeeded`, not a `ConfirmationRequest` — the human **answers**, and per ADR-0022 an answer
+grants nothing. A confirmation here would need a yes-path, and a yes-path would need the ceiling to
+travel back to the transport relaxed, which is the relaxation §*below* forbids every dial; the
+person's remedy is a fresh agreement with a ceiling they choose, ratified on the screen that shows
+it. The rest of the paragraph holds as written: it is well-behaved precisely because it is rare — it
+fires only when something has
+already gone wrong, so a person seeing one has reason to read it. A question that fires on every
 purchase teaches people to dismiss it; one that fires when the number is wrong teaches them to look.
 
 **Per [principle 6](../PRODUCT_PRINCIPLES.md), no control may relax this.** A setting may turn

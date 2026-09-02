@@ -28,7 +28,7 @@
  */
 
 import type { ActionParams } from '../policy/gate'
-import type { BrowserReport, ControlFailure, DispatchableKind, PageObservation, ScreenCapture } from '../act/channel'
+import type { AttestedCharge, BrowserReport, ControlFailure, DispatchableKind, PageObservation, ScreenCapture } from '../act/channel'
 import { CONTROL_HEADER, MAX_HOLD_MS, REQUIRED_CONTENT_TYPE, dispatchResponseSchema } from '../act/channel'
 
 /**
@@ -173,5 +173,5 @@ export class BrowserControlError extends Error {
  * of the channel agree on them, and there is exactly one declaration. This is a
  * doorway, not a second home.
  */
-export type { BrowserReport, ControlFailure, DispatchableKind, PageObservation, ScreenCapture }
+export type { AttestedCharge, BrowserReport, ControlFailure, DispatchableKind, PageObservation, ScreenCapture }
 export { DISPATCH_TIMEOUT_MS } from '../act/channel'

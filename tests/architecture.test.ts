@@ -99,6 +99,14 @@ describe('capabilities the brief excludes do not exist', () => {
     // phrasing outside the lexicon, or by a person who has learned to click
     // yes. Nobody should read a green run of this test as ADR-0004's guarantee
     // surviving intact.
+    //
+    // And since ADR-0024 (2026-09-01) the `purchase` entry below is a statement
+    // about a NAME: `src/policy/tools.ts` exports `completePurchase`, which this
+    // grep does not match, and buying is a thing Propositum does within a
+    // ratified `PurchaseAuthorization`. The entry stays because the two-arm
+    // guard in `tests/purchase-authorisation.test.ts` is what now holds the
+    // promise, and deleting a line here would read as the promise being
+    // dropped rather than moved. Nobody should read it as "no purchasing".
     for (const forbidden of ['sendMessage', 'sendEmail', 'purchase', 'publish', 'deleteFile']) {
       expect(tools).not.toContain(`export function ${forbidden}`)
     }
@@ -236,7 +244,12 @@ describe('there is no credential of the person’s, and nowhere to put one', () 
 /**
  * The screen stops saying *"Buy anything"* on the day it stops being true.
  *
- * ── The failure this exists for, which has not happened yet ──────────────
+ * **That day was 2026-09-01.** The guard fired on the commit that moved the
+ * branch, exactly as the paragraphs below predicted, and was deliberately
+ * updated in the same commit — the history below is kept because it is the
+ * argument for the replacement's shape.
+ *
+ * ── The failure this exists for, ~~which has not happened yet~~ ──────────
  *
  * `src/ui/agreement.tsx` renders an `ABSENT` list — *"Send an email or a
  * message · Publish anything · Buy anything · Delete a file"* — under a heading
@@ -271,28 +284,52 @@ describe('there is no credential of the person’s, and nowhere to put one', () 
  * and prose is what holds it.
  */
 describe('what the agreement screen promises about money matches the transport', () => {
-  it('says “Buy anything” only while every non-GET is blocked', () => {
+  /**
+   * ~~says "Buy anything" only while every non-GET is blocked~~ **Deliberately
+   * updated 2026-09-01 — this guard went red on the commit that built ADR-0024,
+   * which is the system working, and its replacement holds the new promise the
+   * way the old one held the old.** The transport is permit-conditional now,
+   * so the coupled claim becomes: the screen may say buying is impossible ONLY
+   * in the arm where no authorisation was ratified, and the transport must
+   * refuse any non-`GET` that arrives without a permit. The screen side is
+   * comment-stripped too, which the old guard did not do — a docblock quoting
+   * the phrase used to satisfy it.
+   */
+  it('confines “Buy anything” to the no-authorisation arm, and the block to the no-permit arm', () => {
     const cdp = stripComments(readFileSync(join(repo, 'extension/src/cdp.js'), 'utf8'))
-    const screen = readFileSync(join(repo, 'src/ui/agreement.tsx'), 'utf8')
+    const screen = stripComments(readFileSync(join(repo, 'src/ui/agreement.tsx'), 'utf8'))
 
-    const blocksEveryNonGet = /method\s*!==\s*'GET'\)\s*return\s*'blocked-request'/.test(cdp)
-    const promisesNoBuying = /'Buy anything'/.test(screen)
+    const unconditionalBlock = /method\s*!==\s*'GET'\)\s*return\s*'blocked-request'/.test(cdp)
+    const permitGuardedBlock =
+      /typeof permit !== 'object'\)\s*\{\s*return 'blocked-request'/.test(cdp)
+    const unconditionalPromise = /ABSENT[^]{0,400}'Buy anything'/.test(screen)
+    const conditionalPromise =
+      /purchaseAuthorization === undefined[^]{0,120}'Buy anything/.test(screen)
 
-    // The canary. If either side is renamed or restructured, both booleans go
-    // false together and the equality below passes while checking nothing.
+    // The canary, both directions: each side must be FOUND before it is judged,
+    // so a rename cannot make the couplings below pass vacuously.
     expect(
-      blocksEveryNonGet || promisesNoBuying,
-      'neither the non-GET block nor the “Buy anything” promise was found — this guard is reading nothing',
+      permitGuardedBlock,
+      'the permit-guarded refusal is gone from extension/src/cdp.js — either the transport ' +
+        'regressed or this guard is reading nothing; read ADR-0024 before making this pass',
+    ).toBe(true)
+    expect(
+      conditionalPromise,
+      'the conditional “Buy anything” arm is gone from src/ui/agreement.tsx — the screen no ' +
+        'longer tells the no-authorisation case the truth about money',
     ).toBe(true)
 
     expect(
-      promisesNoBuying,
-      blocksEveryNonGet
-        ? 'the transport still blocks every non-GET, so the agreement screen should still say so'
-        : 'the non-GET block is gone (ADR-0024) and src/ui/agreement.tsx still tells people ' +
-          'Propositum cannot buy anything — that sentence is now false, on the screen where ' +
-          'somebody decides whether to leave their desk',
-    ).toBe(blocksEveryNonGet)
+      unconditionalBlock,
+      'the unconditional non-GET refusal is back beside the permit-guarded one — two authors ' +
+        'for one refusal is how they drift; there is one branch and ADR-0024 is its argument',
+    ).toBe(false)
+    expect(
+      unconditionalPromise,
+      'src/ui/agreement.tsx puts “Buy anything” back in the static ABSENT list — that sentence ' +
+        'is false the moment an authorisation is ratified, on the screen where somebody decides ' +
+        'whether to leave their desk',
+    ).toBe(false)
   })
 })
 
