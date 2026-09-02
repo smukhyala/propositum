@@ -364,7 +364,10 @@ mod poll_tests {
     #[test]
     fn an_answered_error_is_a_broken_contract() {
         let error = ureq::Error::Status(404, ureq::Response::new(404, "Not Found", "").unwrap());
-        assert_eq!(classify_poll_failure(&error), PollVerdict::BrokenContract(404));
+        assert_eq!(
+            classify_poll_failure(&error),
+            PollVerdict::BrokenContract(404)
+        );
     }
 
     #[test]
@@ -372,7 +375,10 @@ mod poll_tests {
         // Any status is the app talking. Retrying a 500 for ten minutes is the
         // same silence as retrying a 404.
         let error = ureq::Error::Status(500, ureq::Response::new(500, "Server Error", "").unwrap());
-        assert_eq!(classify_poll_failure(&error), PollVerdict::BrokenContract(500));
+        assert_eq!(
+            classify_poll_failure(&error),
+            PollVerdict::BrokenContract(500)
+        );
     }
 
     #[test]
