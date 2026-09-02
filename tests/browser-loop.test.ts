@@ -1395,6 +1395,22 @@ describe('the plan is reporting now', () => {
  * and not from anything a model said.
  */
 describe('a completed purchase is produced as a landed outcome', () => {
+  /**
+   * An empty ledger, said out loud — because saying nothing means something
+   * else here.
+   *
+   * `RunContext.chargesSpent` is fail-closed when absent: an unwired counter
+   * must never let money move. So a run with no `history` dep is refused
+   * `purchase_count_exceeded` rather than read as having spent nothing, and a
+   * test about what a SUCCESSFUL purchase produces has to wire a reader that
+   * reports an empty ledger. Production always wires one; the refusal exists
+   * for the caller that forgets. See the case below.
+   */
+  const emptyLedger: HistoryReader = {
+    intentsForContract: async () => [],
+    confirmationsForContract: async () => [],
+  }
+
   it('yields one landed proposal, for the purchase intent, off the attested charge', async () => {
     const d = deps(
       [
@@ -1411,6 +1427,7 @@ describe('a completed purchase is produced as a landed outcome', () => {
           charge: { amountMinor: 4200, currency: 'USD', origin: 'https://orders.example.com' },
         },
       ],
+      { history: emptyLedger },
     )
 
     const result = await runWorker(
@@ -1443,6 +1460,65 @@ describe('a completed purchase is produced as a landed outcome', () => {
     ])
   })
 
+  /**
+   * The fail-closed branch, made reachable — #149.
+   *
+   * `RunContext.chargesSpent` has said since it was written that an absent
+   * count refuses rather than reading as an empty ledger: *"an unwired counter
+   * must never let money move."* `src/policy/gate.ts` implements that. The loop
+   * defaulted the rebuilt history to `chargesSpent: 0` when no reader was
+   * wired and so always passed a number, which made the refusal unreachable —
+   * a run with no history reader silently reset the ratified count instead of
+   * refusing, once per run, for ever.
+   *
+   * The two cases above wire an empty reader on purpose, which is what a real
+   * empty ledger looks like. This one wires none, which is what a mistake looks
+   * like, and the two must not be the same thing to the gate.
+   */
+  it('refuses to buy anything when nothing rebuilt the count of what was spent', async () => {
+    const d = deps(
+      [
+        plan('buy the thing'),
+        act({ kind: 'observe-page' }),
+        act({ kind: 'complete-purchase', ref: 'r1', snapshotId: 'snap-1' }),
+        done('Tried.'),
+      ],
+      [
+        { ok: true, observation: observed(1) },
+        {
+          ok: true,
+          observation: observed(2),
+          charge: { amountMinor: 4200, currency: 'USD', origin: 'https://orders.example.com' },
+        },
+      ],
+      // No `history`. Everything else is the successful case, byte for byte.
+    )
+
+    const result = await runWorker(
+      job({
+        scope: {
+          approvedSourceIds: ['src-orders'],
+          allowedActionKinds: ['observe-page', 'complete-purchase'],
+          purchaseAuthorization: {
+            originPattern: 'https://orders.example.com',
+            whatFor: 'the thing',
+            maxAmountMinor: 5000,
+            currency: 'USD',
+            maxCount: 1,
+            expiresAtEpochMs: 1_000_000,
+          },
+        },
+      }),
+      d,
+    )
+
+    // Refused at the gate, so no dispatch, no charge, and nothing landed.
+    const purchase = d.recorded.intents.find((i) => i.kind === 'complete-purchase')
+    expect(purchase?.authorized).toBe(false)
+    expect(purchase?.refusedRule).toBe('purchase_count_exceeded')
+    expect(result.produced.filter((p) => p.kind === 'landed')).toEqual([])
+  })
+
   it('produces nothing when the permit was never consumed, because nothing was bought', async () => {
     // An ok report with no charge means the press landed nothing. The tool
     // throws, the outcome row reads failed, and there is no landed proposal
@@ -1458,6 +1534,7 @@ describe('a completed purchase is produced as a landed outcome', () => {
         { ok: true, observation: observed(1) },
         { ok: true, observation: observed(2) },
       ],
+      { history: emptyLedger },
     )
 
     const result = await runWorker(
