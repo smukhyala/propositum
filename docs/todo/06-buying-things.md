@@ -107,8 +107,12 @@ landings ≤ authorised intents by construction.
    and the second fence is the one that gets missed because it is inside somebody else's entry.
 
 2. ~~**`PurchaseAuthorization` on `ContractScope`, optional, absence is the deny.**~~ *(done 2026-09-01)*
-   `src/domain/handoff/policy.ts:336`. Six fields, and the closed set — currency — gets its Zod
-   schema in `src/domain` like every other closed set, because Prisma's SQLite provider has no enums.
+   ~~`src/domain/handoff/policy.ts:336`~~ **the line number is gone, 2026-09-01, because it had
+   already moved:** line 336 is a docblock about plan length now. The exported
+   `PurchaseAuthorization` interface and the optional `purchaseAuthorization` field on
+   `ContractScope` are both in `src/domain/handoff/policy.ts`. Six fields, and the closed set —
+   currency — gets its Zod schema in `src/domain` like every other closed set, because Prisma's
+   SQLite provider has no enums.
    Nothing in `AutonomyControls` gains a field: per
    [principle 6](../PRODUCT_PRINCIPLES.md) a dial may switch purchasing off and may never relax the
    ceiling.
@@ -128,7 +132,9 @@ landings ≤ authorised intents by construction.
    says will be common, and the interface has to say that honestly rather than implying the ceiling
    binds everywhere.
 
-5. ~~**Then, and only then, stop refusing every non-`GET`.**~~ *(done 2026-09-01)* One branch in `extension/src/cdp.js:553`.
+5. ~~**Then, and only then, stop refusing every non-`GET`.**~~ *(done 2026-09-01)* One branch in
+   `classifyPausedRequest`, in `extension/src/cdp.js` — ~~`:553`~~ **struck 2026-09-01: it named
+   a line of the docblock above the branch, not the branch itself.**
    Everything above is inert until this line moves, which is why it is fifth and not first: the
    product is safe throughout steps 1–4 and stops being safe at step 5.
 
