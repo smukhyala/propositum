@@ -1414,6 +1414,21 @@ export interface AgentRunRepository {
    * thing that stops the run is the fence at the next action boundary, which is
    * where ADR-0007 requires a halt to land. A loop that also read a boolean here
    * would be a second halt path to keep in agreement with the first.
+   *
+   * ── The two writes beside it, and why only one of them mattered ─────────
+   *
+   * `renewLease` on the very next line of the loop is unscoped too, and is
+   * harmless: nothing reads `leaseUntil` except `sweepExpiredLeases`, which is
+   * itself scoped to the live statuses, so a reaped run renewing its own lease
+   * changes nothing about what anybody decides.
+   *
+   * `complete` is not harmless and is not fixed here. It is a plain `update` by
+   * id and the terminal write of every run, so a reaped run whose worker
+   * reaches the end of its loop is written `succeeded` while keeping
+   * `terminalReason: 'lease-expired'` — the same uninterpretable row #140 is
+   * about. Narrowing the one function every run ends through is a change with
+   * its own blast radius and its own argument to make; naming it here is the
+   * alternative to a fix that pretends the class is closed.
    */
   advanceProgress(id: string, step: number): Promise<void>
   /**

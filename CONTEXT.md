@@ -1431,7 +1431,16 @@ is the only one of its three signals a lease sweep moves — the sweep touches n
 `status: 'running'` with no predicate. So a reaped run put itself back to live one step before its
 own fence read the column, passed, and carried on driving. The paragraph above was true of the check
 and false of the run. Both that write and `confirmations.raiseAndPark`'s are now scoped on the live
-statuses, so a reap holds against the worker it reaped.
+statuses, so those two cannot resurrect a reaped run.
+
+**What is still unscoped, said here rather than left to be found:** `runs.complete` is a plain
+`update` by id, and it is the terminal write of every run. A reaped run whose worker reaches the end
+of its loop is completed `succeeded` and keeps `terminalReason: 'lease-expired'` — the same
+uninterpretable row this correction is about, one function away in the same file. It is out of reach
+of the fence for the same reason `advanceProgress` was, and it is not fixed here because `complete`
+is on every run's path and narrowing it is a change with its own blast radius. `renewLease` is
+unscoped too and is harmless: nothing reads the lease except the sweep, which is itself scoped to
+the live statuses.
 
 One handoff produces **two** runs: a worker, then a reviewer whenever the worker completed at least
 one action. The reviewer is **enqueued, not invoked inline** — failure isolation was the reason to
