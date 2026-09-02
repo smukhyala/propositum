@@ -1323,36 +1323,77 @@ interrupted · awaiting-confirmation`. `awaiting-confirmation` is now load-beari
 `confirmRequest` refuses a yes unless the run is still parked on the question, so a value this list
 did not mention decides whether a person's answer is accepted. The divergence below already said this
 entry disagrees with the schema; what changed is that it stopped being only a specification gap.
-**The reasons table below still partitions by `completed` and `halted` and is left standing** — the
+~~**The reasons table below still partitions by `completed` and `halted` and is left standing** — the
 terminal reasons are a second divergence, and correcting one list by leaning on the other is how this
-entry got here.
+entry got here.~~ **Struck the same day.** Leaving it standing meant leaving a table keyed on two
+statuses the sentence above had just established nobody writes, and the second divergence is closed
+below off the writers rather than off the other list.
 `terminalReason` is closed, **code-assigned**, and partitions strictly by status:
 
 | Status | Reasons |
 |---|---|
-| completed | `plan-exhausted` |
-| halted | `stop-condition` · `human-recall` · `time-budget-exhausted` · `token-budget-exhausted` · `gate-refusal` |
-| interrupted | `lease-expired` |
-| failed | `boundary-failure` |
+| ~~completed~~ | ~~`plan-exhausted`~~ |
+| ~~halted~~ | ~~`stop-condition` · `human-recall` · `time-budget-exhausted` · `token-budget-exhausted` · `gate-refusal`~~ |
+| ~~interrupted~~ | ~~`lease-expired`~~ |
+| ~~failed~~ | ~~`boundary-failure`~~ |
 
-**A slept Mac yields `interrupted / lease-expired`, never `time-budget-exhausted`** — the startup
+**Struck 2026-09-01, and rewritten from the writers.** Two of the four statuses above are written for
+no AgentRun, and five of the eight reasons are written nowhere: `plan-exhausted`, `human-recall`,
+`time-budget-exhausted`, `token-budget-exhausted` and `gate-refusal`. Three of the five are renamings
+— the two budgets are one `budget-exhausted`, and `human-recall` is `cancelled`. **The other two name
+nothing**: a run that exhausts its plan and a run whose model declares itself done both end with **no
+reason at all**, and a gate refusal on an irreversible kind parks the run on a question rather than
+ending it. Every writer, and what it writes:
+
+| Status | Reason | Written by |
+|---|---|---|
+| `succeeded` | `budget-exhausted` · `stop-condition` | `finish` in `src/runtime/worker-loop.ts`, off `STOP_RULES[…].terminalReason` in `src/domain/execution/stop-conditions.ts` |
+| `succeeded` | *(none)* | the same `finish` when no rule fired — the plan ran out, or the model said it was done |
+| `failed` | `boundary-failure` | the same `finish`; which boundary and how is `WorkerResult.boundaryFailure`, not a reason |
+| `interrupted` | `lease-expired` | `runs.sweepExpiredLeases` in `src/persistence/repositories/index.ts` |
+| `interrupted` | `cancelled` | the `cancel-requested` fence in `src/server/execute-run.ts` |
+| `interrupted` | `answered-too-late` | `admitRun` in `src/server/confirmations.ts`, from `ANSWERED_TOO_LATE` in `src/domain/execution/continuation.ts` |
+| `interrupted` | `confirmation-expired` | `expireConfirmations`, from `CONFIRMATION_EXPIRED` in the same file |
+| `awaiting-confirmation` | *(none)* | nothing — the ConfirmationRequest is the explanation, and `runs.complete` documents the omission |
+
+`pending`, `claimed` and `running` are not terminal and carry none. Note what the closed set costs:
+five of the six rules in `STOP_RULES` collapse into `stop-condition`, so **which** rule stopped a run
+is not recoverable from this column — the re-entry screen says so in its own voice rather than
+guessing. Note also a reason the renderers expect and no writer produces: both
+`src/domain/intention/work-so-far.ts` and `src/app/shifts/[contractId]/page.tsx` carry a `case
+'error'`, which is dead, and `boundary-failure` reaches their default branch instead.
+
+**A slept Mac yields `interrupted / lease-expired`, never ~~`time-budget-exhausted`~~
+`budget-exhausted`** *(corrected 2026-09-01 — the longer spelling never existed)* — the startup
 sweep fires on lease staleness before any deadline check runs, so the report never blames the clock
 for a lid close. `interrupted` is a real, displayable outcome with a partial shift report, not an
 error state; under the standing "leave your desk, not leave the building" constraint it is routine.
 
-H3 is scored only on the judgment-family reasons, which keeps budget exhaustion out of the stopping
-metric.
+~~H3 is scored only on the judgment-family reasons, which keeps budget exhaustion out of the stopping
+metric.~~ **Struck 2026-09-01: H3 does not read this column at all.** `scoreH3` in `src/eval/score.ts`
+takes whether a question was raised and the `StopRuleId`s of structural origin, which `src/eval/run.ts`
+reads off `WorkerResult.stoppedBy` — the rule ids, not the reason they map to. Nor is budget kept out:
+`budget-exhausted` is a structural rule and lands in that list like any other. What keeps it out of a
+score is a scenario sealing no expectation about it, which is a fact about the corpus and not about
+this entry.
 
 **The claim is a fence.** Every action boundary re-reads `status` and `claimedBy`; a Runner that no
 longer holds the claim aborts without writing. Otherwise a machine that wakes after its run was
 reaped appends actions to a terminal run inside a shift the human already closed.
 
-**That fence has never existed** *(recorded 2026-08-11)*. `claimedBy` and `cancelRequested` are
+~~**That fence has never existed** *(recorded 2026-08-11)*. `claimedBy` and `cancelRequested` are
 described here and are absent from `prisma/schema.prisma`, and this entry's `status` values disagree
 with the schema's. This vocabulary is authoritative and the columns are owed; until they exist the
 paragraph above is a specification rather than a description, and reading it as a description is how
-a guarantee comes to be believed in without ever having been built.
-[ADR-0009](docs/adr/0009-composed-offers.md) records this with the other divergences.
+a guarantee comes to be believed in without ever having been built.~~
+**It exists now** *(corrected 2026-09-01, and the note is kept because it was true for three
+months)*. Both columns are on `model AgentRun` in `prisma/schema.prisma`, and the schema comment on
+`cancelRequested` says in its own words why they arrived: a browser-driving run is the first run
+where a stale claim can press a button on a live page. `src/runtime/worker-process.ts` compares
+`row.claimedBy` against the worker id at every action boundary and `src/server/execute-run.ts` turns
+a lost claim into a `ClaimFenced` that returns **without writing anything at all**. The `status`
+values agree too, as of the correction at the top of this entry.
+[ADR-0009](docs/adr/0009-composed-offers.md) records the divergence this closed.
 
 One handoff produces **two** runs: a worker, then a reviewer whenever the worker completed at least
 one action. The reviewer is **enqueued, not invoked inline** — failure isolation was the reason to

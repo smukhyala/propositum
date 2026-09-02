@@ -81,7 +81,11 @@ ever. `npm run seed:shift` and `npm run seed:offer` produce something to look at
 an afternoon.
 
 `test`, `typecheck` and `build` all pass on a clone with no `.env` and no database. If one needs setup
-on your machine, that is a bug in the repository.
+on your machine, that is a bug in the repository. **"No database" is a statement about setup, not
+about behaviour** *(said plainly 2026-09-01)*: a good share of the suite builds temporary SQLite files
+of its own and spawns `npx prisma db push` for them. What it never touches is *yours* —
+`tests/support/no-real-database.ts` points `DATABASE_URL` at a path that does not exist. The same
+sentence in `.github/workflows/ci.yml` had to be struck for being read the other way.
 
 **`npm run test:live` and `npm run eval` are different.** They call the real API, cost money, and are
 never part of `npm test`. `npm run capture:afternoon` writes a profile of your own browsing to a file
@@ -206,8 +210,10 @@ one of them.
 
 Beyond the guards:
 
-- **A change without a test that would have failed before it is not done.** The suite runs in about
-  twenty seconds; there is no budget argument here.
+- **A change without a test that would have failed before it is not done.** ~~The suite runs in about
+  twenty seconds;~~ **corrected 2026-09-01:** about twenty seconds on a developer Mac, and roughly
+  twice that on the CI runner, which is where the day's timeouts came from. Either way there is no
+  budget argument here.
 - **A new domain word goes into `CONTEXT.md` before it goes into a schema.** ~~Nothing enforces
   this.~~ **Partly, since 2026-08-26:** `tests/consumer-vocabulary.test.ts` runs the banned-words
   table against every screen, so a *banned* word reaching a surface is caught. A *missing* word — one

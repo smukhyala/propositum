@@ -263,7 +263,7 @@ describe('the panel says why drafting is off, and never invents the reason', () 
     const said = words(screen(DOCUMENT, { output: 'suggestions-only' }, 'The supplier proposal'))
 
     expect(said).toContain(
-      'You chose research only, so Propositum will come back with findings, questions and next steps',
+      'You chose research only, so Propositum will come back with what it found',
     )
     expect(said).not.toContain('There is no document under this agreement, so there is nothing to draft')
   })

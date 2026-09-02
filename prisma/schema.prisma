@@ -500,7 +500,17 @@ model AgentRun {
   /// reaped by the sweep while the person was reading the request, or would
   /// hold a claim for as long as they took to answer, which may be overnight.
   status         String    @default("pending")
-  /// lease-expired | budget-exhausted | stop-condition | cancelled | error
+  /// ~~lease-expired | budget-exhausted | stop-condition | cancelled | error~~
+  /// CORRECTED 2026-09-01: budget-exhausted | stop-condition | boundary-failure
+  /// | lease-expired | cancelled | answered-too-late | confirmation-expired,
+  /// and NULL on a run that finished its plan, on one whose model declared
+  /// itself done, and on every `awaiting-confirmation` — the request is the
+  /// explanation. `error` was never written by anything; the failure reason is
+  /// `boundary-failure`, from `finish` in `src/runtime/worker-loop.ts`.
+  ///
+  /// This comment is documentation and NOT a constraint — SQLite has no enums,
+  /// so the column takes any string and the authority is the set of writers
+  /// CONTEXT.md's AgentRun entry now tabulates one by one.
   terminalReason String?
   createdAt      DateTime  @default(now())
   startedAt      DateTime?
