@@ -113,10 +113,12 @@ export const CONFIRM_CSS = `
 
 .cf-acts { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 2rem; }
 .cf-settled { margin: 0 0 1rem; font-family: var(--serif); font-size: 1.0625rem; }
-/* The one control on a closed question. Deliberately the drifted shift
-   report's ps-go rule to the pixel: it is the same act, and a handover that
-   looked different depending on which screen offered it would read as a
-   different thing. */
+/* The one control on a closed question. The button rule is the drifted shift
+   report's ps-go to the pixel — it is the same act, and a handover that looked
+   different depending on which screen offered it would read as a different
+   thing. The row around it is not: this one needs a top margin because it
+   follows a paragraph rather than a section, and the note beside it says
+   something different because what carries over is different. */
 .cf-settle { display: flex; gap: 0.75rem; align-items: baseline; flex-wrap: wrap; margin-top: 1.5rem; }
 .cf-settle-note { margin: 0; font-size: 0.8125rem; color: var(--muted); max-width: 34rem; }
 .cf-go { display: inline-block; font: inherit; font-size: 0.8125rem; line-height: 1.4; padding: 0.35rem 0.9rem; border: 1px solid var(--accent); border-radius: 3px; background: var(--accent); color: var(--ground); text-decoration: none; }

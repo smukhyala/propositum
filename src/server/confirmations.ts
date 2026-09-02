@@ -637,7 +637,11 @@ export async function rejectRequest(
 ): Promise<AnswerResult> {
   const request = await ctx.db.prisma.confirmationRequest.findUnique({
     where: { id: requestId },
-    select: { id: true, verdict: { select: { verdict: true } } },
+    select: {
+      id: true,
+      verdict: { select: { verdict: true } },
+      run: { select: { contract: { select: { sessionId: true } } } },
+    },
   })
   if (!request) return { ok: false, reason: 'not-found' }
   if (request.verdict) return { ok: false, reason: 'already-answered' }
@@ -647,6 +651,11 @@ export async function rejectRequest(
   // "you never saw it" in the report — and it grants nothing, so the reason to
   // refuse a late yes does not apply to a late no.
   await ctx.repos.confirmations.recordVerdict({ requestId, verdict: 'rejected', decidedAt: now })
+
+  // A no ends the pause with no continuation, so the session comes back. It had
+  // been staying `away` for ever, which made every "hand the work over again"
+  // sentence in the product point at a screen that could not.
+  await handBackTheSession(ctx, request.run.contract.sessionId)
 
   return { ok: true, continuationRunId: null }
 }
@@ -734,7 +743,12 @@ export async function admitRun(
 ): Promise<'proceed' | 'settled'> {
   const run = await ctx.db.prisma.agentRun.findUnique({
     where: { id: runId },
-    select: { id: true, contractId: true, resumesRunId: true },
+    select: {
+      id: true,
+      contractId: true,
+      resumesRunId: true,
+      contract: { select: { sessionId: true } },
+    },
   })
   if (!run) return 'settled'
   if (run.resumesRunId === null) return 'proceed'
@@ -766,11 +780,51 @@ export async function admitRun(
   })
 
   await noteInReport(ctx, run.contractId, admission.report)
+  // The answer was real and arrived too late, so nothing carries on and the
+  // session is the person's again. The report already tells them why.
+  await handBackTheSession(ctx, run.contract.sessionId)
 
   return 'settled'
 }
 
 /* ── expiry: the one thing here that runs on the clock ──────────────────── */
+
+/**
+ * Give the session back to the person, now that the pause is over.
+ *
+ * ── Why this is not `execute-run.ts`'s job, and where it went missing ────
+ *
+ * `executeRun` hands the session back on the two paths it owns, and one of them
+ * carries the sentence this exists to honour: *"Without this it stays `away`
+ * forever, and every control that offers to hand it back is a promise the
+ * product cannot keep."*
+ *
+ * A confirmation pause leaves the session `away` deliberately — ADR-0010's risk
+ * list settles that *"`SessionPhase` has no honest value for a confirmation
+ * pause… Keeping `away` is the smaller lie"* — and that holds **while the
+ * question is live**. It stops holding the moment the pause ends without a
+ * continuation, and three paths do that: a rejection, an expiry, and an answer
+ * that arrived too late. None of them handed the session back, so a session
+ * stayed `away` for ever and `/sessions/<id>` said *"Nothing here can be
+ * changed until it hands back."*
+ *
+ * That was invisible until #139 put a route to that screen on the closed
+ * confirmation, at which point the product's three *"hand the work over again"*
+ * sentences all pointed at a page that could not.
+ *
+ * ── What it does NOT do ─────────────────────────────────────────────────
+ *
+ * It does not touch the run, which each caller has already ended in the way
+ * that fits its own reason. It is not idempotent-by-check either — `setPhase`
+ * is a plain write, and writing `observing` over `observing` is harmless.
+ *
+ * The path it deliberately skips is `confirmRequest`'s: a yes enqueues a
+ * continuation, the work carries on, and the session is still genuinely away.
+ * `executeRun` hands it back when that run ends, like any other.
+ */
+async function handBackTheSession(ctx: ConfirmationContext, sessionId: string): Promise<void> {
+  await ctx.repos.sessions.markObserving(sessionId)
+}
 
 /**
  * Stop waiting for answers nobody gave.
@@ -815,7 +869,12 @@ export async function expireConfirmations(ctx: ConfirmationContext, now: Date): 
       createdAt: { lte: expiredBefore },
       run: { status: 'awaiting-confirmation' },
     },
-    select: { id: true, runId: true, run: { select: { contractId: true } } },
+    select: {
+      id: true,
+      runId: true,
+      // `sessionId` for the hand-back below, off the join already here.
+      run: { select: { contractId: true, contract: { select: { sessionId: true } } } },
+    },
   })
 
   let settled = 0
@@ -833,6 +892,7 @@ export async function expireConfirmations(ctx: ConfirmationContext, now: Date): 
       },
     })
     await noteInReport(ctx, request.run.contractId, CONFIRMATION_EXPIRED_REPORT)
+    await handBackTheSession(ctx, request.run.contract.sessionId)
     settled += 1
   }
 

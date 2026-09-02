@@ -2471,3 +2471,97 @@ describe('a question that is over offers the handover its own copy asks for', ()
     expect(view.sessionId).not.toBe('')
   })
 })
+
+/**
+ * The link #139 adds has to reach a screen that can actually hand over.
+ *
+ * `/sessions/<id>` renders its *Write the working agreement* control only while
+ * the session is `observing` (`src/ui/reading.tsx`); on `away` it says *"Nothing
+ * here can be changed until it hands back."* A confirmation pause leaves the
+ * session `away` on purpose — ADR-0010 settles that as the smaller lie — and
+ * that holds while the question is LIVE.
+ *
+ * It stopped holding the moment the pause ended without a continuation, and
+ * three paths do that. None handed the session back, so it stayed `away` for
+ * ever and the closed confirmation's new route landed on a dead end one click
+ * further away — the exact defect #139 exists to remove. `executeRun` carries
+ * the sentence: *"Without this it stays `away` forever, and every control that
+ * offers to hand it back is a promise the product cannot keep."*
+ */
+describe('a pause that ends without a continuation gives the session back', () => {
+  /**
+   * `pausedShift` builds its rows straight through the repositories and never
+   * marks the session away — the real handover does that. Set it here so each
+   * case starts from the state the product is actually in when a run parks.
+   */
+  async function parkedAndAway(over: { acceptedAt: Date; askedAt: Date }) {
+    const paused = await pausedShift(over)
+    const contract = await db.prisma.handoffContract.findUniqueOrThrow({
+      where: { id: paused.contractId },
+      select: { sessionId: true },
+    })
+    await repos.sessions.markAway(contract.sessionId)
+    return paused
+  }
+
+  async function phaseOf(contractId: string): Promise<string> {
+    const contract = await db.prisma.handoffContract.findUniqueOrThrow({
+      where: { id: contractId },
+      select: { sessionId: true },
+    })
+    const session = await db.prisma.workSession.findUniqueOrThrow({
+      where: { id: contract.sessionId },
+    })
+    return session.phase
+  }
+
+  it('hands it back when the person says no', async () => {
+    const paused = await parkedAndAway({
+      acceptedAt: new Date('2026-07-01T09:00:00Z'),
+      askedAt: new Date('2026-07-01T09:05:00Z'),
+    })
+    expect(await phaseOf(paused.contractId)).toBe('away')
+
+    const answered = await rejectRequest(ctx, paused.requestId, new Date('2026-07-01T09:06:00Z'))
+    expect(answered.ok).toBe(true)
+
+    expect(await phaseOf(paused.contractId), 'a no left the session away for ever').toBe('observing')
+  })
+
+  it('hands it back when the question expires unanswered', async () => {
+    const paused = await parkedAndAway({
+      acceptedAt: new Date('2026-07-02T09:00:00Z'),
+      askedAt: new Date('2026-07-02T09:05:00Z'),
+    })
+
+    await expireConfirmations(ctx, new Date('2026-07-03T09:10:00Z'))
+
+    expect(await phaseOf(paused.contractId)).toBe('observing')
+  })
+
+  it('leaves it away while the question is still live, which is the argued case', async () => {
+    // The half ADR-0010 settled and this must not spend: a person being asked a
+    // question is not a person the work has come back to.
+    const paused = await parkedAndAway({
+      acceptedAt: new Date('2026-07-04T09:00:00Z'),
+      askedAt: new Date('2026-07-04T09:05:00Z'),
+    })
+
+    expect(await phaseOf(paused.contractId)).toBe('away')
+  })
+
+  it('leaves it away on a yes, because the work carries on', async () => {
+    // A continuation is enqueued and `executeRun` hands the session back when
+    // that run ends, like any other. Handing it back here would say the work
+    // came back while a new run is about to claim a browser credential.
+    const paused = await parkedAndAway({
+      acceptedAt: new Date('2026-07-05T09:00:00Z'),
+      askedAt: new Date('2026-07-05T09:05:00Z'),
+    })
+
+    const answered = await confirmRequest(ctx, paused.requestId, new Date('2026-07-05T09:06:00Z'))
+    expect(answered.ok).toBe(true)
+
+    expect(await phaseOf(paused.contractId)).toBe('away')
+  })
+})
