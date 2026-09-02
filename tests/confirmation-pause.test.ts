@@ -2565,3 +2565,138 @@ describe('a pause that ends without a continuation gives the session back', () =
     expect(await phaseOf(paused.contractId)).toBe('away')
   })
 })
+
+/* ══════════════════ 13. a stop that closes the question ══════════════════ */
+
+/**
+ * ADR-0030, and the state it replaced.
+ *
+ * `haltRun` did three things and on a run parked in `awaiting-confirmation`
+ * each was a no-op: `requestCancel` is scoped to the three live statuses and a
+ * parked run matched none, the park had already revoked the token, and the
+ * parked run's one unfinished intent is the refused one, which is not
+ * authorised and has no outcome. So the person pressed Stop, was told nothing
+ * had happened, and the question stayed live — and answering yes afterwards
+ * still enqueued a continuation, which claims a run and mints a fresh control
+ * token, on a shift they had stopped.
+ *
+ * Not a permission failure: the yes is real and the person gave it. Stop and
+ * yes are two decisions by the same person about the same work, arriving in an
+ * order nobody reconciled, and the later one silently won.
+ *
+ * ── What these tests do NOT cover ────────────────────────────────────────
+ *
+ * That a stop works with the app closed. The extension detaches the debugger
+ * before telling the app, and nothing in this repository can assert that —
+ * ADR-0010 says so about itself.
+ */
+describe('stopping a run parked on a question closes the question', () => {
+  it('ends the parked run rather than reporting that nothing happened', async () => {
+    const paused = await pausedShift({
+      acceptedAt: new Date('2026-06-01T09:00:00Z'),
+      askedAt: new Date('2026-06-01T09:05:00Z'),
+    })
+
+    const halted = await haltRun(ctx, paused.runId)
+
+    // Before ADR-0030 this was `false` — true of the flag, false of what the
+    // person had just done.
+    expect(halted.stopped).toBe(true)
+
+    const run = await db.prisma.agentRun.findUniqueOrThrow({ where: { id: paused.runId } })
+    expect(run.status).toBe('interrupted')
+    // The cancel fence's own reason, not a new one: the person called the run
+    // back, and both renderers already have a sentence for that.
+    expect(run.terminalReason).toBe('cancelled')
+    expect(run.controlToken).toBeNull()
+  })
+
+  it('turns the yes down afterwards, instead of starting a run on a stopped shift', async () => {
+    const paused = await pausedShift({
+      acceptedAt: new Date('2026-06-02T09:00:00Z'),
+      askedAt: new Date('2026-06-02T09:05:00Z'),
+    })
+
+    await haltRun(ctx, paused.runId)
+
+    const answered = await confirmRequest(ctx, paused.requestId, new Date('2026-06-02T09:06:00Z'))
+    expect(answered.ok).toBe(false)
+    if (answered.ok) return
+    // The refusal #132 wrote for a run reaped before it parked. A halted run
+    // joins that population by the front door, which is the whole argument for
+    // this option over the other two — nothing new had to be built to make the
+    // closure mean something.
+    expect(answered.reason).toBe('abandoned')
+
+    // And no continuation. This is the sentence the ADR is about: a yes on a
+    // stopped shift used to claim a run and mint a fresh control token.
+    const runs = await db.prisma.agentRun.findMany({
+      where: { contractId: paused.contractId },
+      select: { id: true, resumesRunId: true },
+    })
+    expect(runs.filter((run) => run.resumesRunId !== null)).toEqual([])
+  })
+
+  it('says so on the screen, rather than offering a button the answer turns down', async () => {
+    const paused = await pausedShift({
+      acceptedAt: new Date('2026-06-03T09:00:00Z'),
+      askedAt: new Date('2026-06-03T09:05:00Z'),
+    })
+
+    await haltRun(ctx, paused.runId)
+
+    const view = await confirmationView(ctx, paused.requestId, Date.parse('2026-06-03T09:06:00Z'))
+    expect(view).not.toBeNull()
+    if (!view) return
+
+    // Derived off the same column `confirmRequest` reads, so the screen and the
+    // answer path cannot disagree about this row. Within its day, so not expiry.
+    expect(view.abandoned).toBe(true)
+    expect(view.expired).toBe(false)
+    expect(view.verdict).toBeNull()
+  })
+
+  it('leaves a run that some other path already ended exactly as it found it', async () => {
+    const paused = await pausedShift({
+      acceptedAt: new Date('2026-06-04T09:00:00Z'),
+      askedAt: new Date('2026-06-04T09:05:00Z'),
+    })
+
+    // Reaped first. The status write is scoped for this reason as well as the
+    // live-run one: an unpredicated `update` here would reintroduce #140's
+    // defect in a new place, rewriting a terminal run and its reason.
+    await db.prisma.agentRun.update({
+      where: { id: paused.runId },
+      data: { status: 'interrupted', terminalReason: 'lease-expired', controlToken: null },
+    })
+
+    await haltRun(ctx, paused.runId)
+
+    const run = await db.prisma.agentRun.findUniqueOrThrow({ where: { id: paused.runId } })
+    expect(run.terminalReason).toBe('lease-expired')
+  })
+
+  it('still stops a live run the way it always did', async () => {
+    // The guard has to close the question WITHOUT taking over the job of
+    // stopping a run that can still act — that one is flagged and halts itself
+    // at its next action boundary, because it may be mid-navigation.
+    const paused = await pausedShift({
+      acceptedAt: new Date('2026-06-05T09:00:00Z'),
+      askedAt: new Date('2026-06-05T09:05:00Z'),
+    })
+    const runId = paused.runId
+    await db.prisma.agentRun.update({
+      where: { id: runId },
+      data: { status: 'running', terminalReason: null, controlToken: 'token-live' },
+    })
+
+    const halted = await haltRun(ctx, runId)
+    expect(halted.stopped).toBe(true)
+
+    const run = await repos.runs.byId(runId)
+    expect(run?.cancelRequested).toBe(true)
+    expect(run?.controlToken).toBeNull()
+    // Not ended from outside. The status write is scoped to a parked run.
+    expect(run?.status).not.toBe('interrupted')
+  })
+})

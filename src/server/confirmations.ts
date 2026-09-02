@@ -1027,6 +1027,14 @@ async function recordRecoveryOutcome(
 
 /** What a halt did. `stopped` is false when there was nothing left to stop. */
 export interface Halted {
+  /**
+   * Something was stopped — a live run flagged, or a question closed.
+   *
+   * Both, since [ADR-0030](../../docs/adr/0030-a-halt-closes-the-question.md).
+   * It used to read the flag alone, which meant a halt on a run parked on a
+   * question reported `false` and the person was told nothing had happened —
+   * true of the column and false of what they had just done.
+   */
   readonly stopped: boolean
   /** Actions that were in flight and are now recorded as unverified. */
   readonly unfinished: number
@@ -1058,8 +1066,25 @@ export interface Halted {
  * never leaves an intent with no outcome — and that is preserved by moving the
  * writer, which is the third step below.
  *
- * ── Three steps, in this order ───────────────────────────────────────────
+ * ── ~~Three~~ FOUR steps, in this order ──────────────────────────────────
  *
+ * ~~The three below read as though they applied to every run. On a run parked
+ * in `awaiting-confirmation` all three were no-ops~~ **— corrected 2026-09-02,
+ * [ADR-0030](../../docs/adr/0030-a-halt-closes-the-question.md).** Step 0 is
+ * new and exists because of exactly that: `requestCancel` is scoped to the
+ * three live statuses and a parked run matched none, the park had already
+ * revoked the token, and the parked run's one unfinished intent is the refused
+ * one, which is not authorised and has no outcome to settle. So the person
+ * pressed Stop, was told nothing happened, and the question stayed answerable —
+ * and a yes afterwards enqueued a continuation that claims a run and mints a
+ * fresh control token, on a shift they had stopped.
+ *
+ * 0. **End a run that is parked on a question.** `interrupted` /
+ *    `cancelled`, scoped on the status so nothing else is touched. Everything
+ *    that makes the closure mean something is already built: `confirmRequest`
+ *    refuses a question whose run is no longer parked, and
+ *    `confirmationView.abandoned` is derived off the same column, so the screen
+ *    says so rather than offering a button the answer path turns down.
  * 1. **Flag it.** `cancelRequested` is a column, not a kill. The run re-reads
  *    it at its next action boundary and halts itself, which is the only way to
  *    stop cleanly when the thing being stopped may be mid-navigation.
@@ -1071,8 +1096,38 @@ export interface Halted {
  *    terminal. `settleAbandonedIntents` refuses a live run for good reason: a
  *    recovery row over an in-flight intent makes the worker's real write throw
  *    on a unique key and turns a clean stop into a failed shift.
+ *
+ * ── What step 0 does NOT do ──────────────────────────────────────────────
+ *
+ * **It writes no note in the shift report**, unlike `admitRun` and
+ * `expireConfirmations`, which end a parked run for reasons the person was not
+ * present for. This one they did themselves, and the report already has a
+ * sentence for it — `whereItStopped`'s `cancelled` arm says *"You called me
+ * back, so I stopped."* A second sentence explaining a stop to the person who
+ * pressed Stop is the report talking to itself.
+ *
+ * **It mints no new terminal reason.** `cancelled` is the cancel fence's, and
+ * it is the true one: the person called the run back, and whether the run
+ * happened to be mid-action or waiting on them at that moment is not their
+ * concern. ADR-0030's *Revisit when* carries the case for ever telling the two
+ * apart.
  */
 export async function haltRun(ctx: ConfirmationContext, runId: string): Promise<Halted> {
+  /**
+   * Scoped on `awaiting-confirmation`, and the scope is doing two jobs.
+   *
+   * It leaves a live run to steps 1–3, which is where a run that can still act
+   * has to be stopped from — a status write here would end a run mid-navigation
+   * from outside, which is the thing `cancelRequested` exists to avoid. And it
+   * refuses to rewrite a run that some other path already ended, which is the
+   * defect #140 fixed one layer down; an unpredicated `update` here would have
+   * reintroduced it in a new place.
+   */
+  const closed = await ctx.db.prisma.agentRun.updateMany({
+    where: { id: runId, status: 'awaiting-confirmation' },
+    data: { status: 'interrupted', terminalReason: 'cancelled', endedAt: new Date() },
+  })
+
   const stopped = await ctx.repos.runs.requestCancel(runId)
 
   // Revoked whether or not there was anything to flag. A run that already ended
@@ -1081,7 +1136,10 @@ export async function haltRun(ctx: ConfirmationContext, runId: string): Promise<
 
   const unfinished = await settleAbandonedIntents(ctx, runId)
 
-  return { stopped, unfinished }
+  // `stopped` is "something was stopped", not "a flag was set". Before ADR-0030
+  // a halt on a parked run reported false and the person was told nothing had
+  // happened, which was true of the flag and false of their intent.
+  return { stopped: stopped || closed.count === 1, unfinished }
 }
 
 /**

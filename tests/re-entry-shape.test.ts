@@ -95,6 +95,9 @@ function report(over: Partial<ShiftReportProps> = {}): ShiftReportProps {
     didnt: [],
     missed: [],
     stopped: { sentence: 'I ran out of time.', detail: null },
+    // Over, which is what every case in this file is about. A live shift's
+    // control is `tests/take-back-control.test.ts`.
+    liveRunId: null,
     resume: 'Pick up at the Wednesday line.',
     up: { href: '/projects/p1', label: 'Kauai' },
     contractId: 'contract-1',
@@ -465,5 +468,48 @@ describe('the note renders the honest empty cases', () => {
     const markup = html(report({ changes: [], made: [] }))
 
     expect(markup).toContain('Propositum proposed no text.')
+  })
+})
+
+/**
+ * The third kill switch, which was described in three docblocks and rendered
+ * nowhere.
+ *
+ * `takeBackControl` in `src/server/actions.ts` calls itself *"the third kill
+ * switch, and the only one that needs the app"* and *"the switch available to
+ * somebody on the 'While you were away' screen"*. Until 2026-09-02 that file
+ * was the only one in the repository naming it: this screen had no such
+ * control, and the only *"Take back control"* string in the product was a link
+ * label on the home page pointing at the session.
+ *
+ * `tests/reachability.test.ts` did not catch it, because it asserted on
+ * `runs.requestCancel` — which the halt route called. The guard for a thing
+ * built and wired to nothing was watching one door while the other was missing.
+ * It now asserts on `takeBackControl` by name; this file asserts the control is
+ * on the screen.
+ */
+describe('a shift still going can be stopped from the screen that reports it', () => {
+  it('offers the control while a run is live', () => {
+    const markup = html(report({ liveRunId: 'run-live' }))
+
+    expect(markup).toContain('Take back control')
+  })
+
+  it('offers nothing on a shift that has already ended', () => {
+    // Every other case in this file passes `liveRunId: null`, which is the
+    // ordinary state of a re-entry note: the person is reading about work that
+    // is over. A stop control there would be a button that does nothing.
+    expect(html(report())).not.toContain('Take back control')
+  })
+
+  it('says it lands at a boundary, and names the two switches that do not wait', () => {
+    const markup = html(report({ liveRunId: 'run-live' }))
+    const said = markup.replace(/<[^>]*>/g, ' ').replace(/&#x27;|&rsquo;/g, "'")
+
+    // A flag, not a kill. Copy implying an instant stop would be the interface
+    // overpromising about the one control that has to mean what it says — and a
+    // person who needs the browser cut off NOW has two switches that do that.
+    expect(said).toContain("stops at the end of what it's doing now")
+    expect(said).toMatch(/side panel/i)
   })
 })

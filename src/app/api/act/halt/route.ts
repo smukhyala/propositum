@@ -16,10 +16,18 @@
  *      blocked on a report is told now rather than in twenty seconds. That is
  *      the difference between "I lost the browser" and a run that appears to
  *      hang.
- *   2. Flags the run. `cancelRequested` is a flag, not a kill — the run reads it
- *      at its next action boundary and halts itself. Nothing here interrupts
- *      anything, which is the only way to stop cleanly when the thing being
- *      stopped may be mid-navigation in a real browser.
+ *   2. ~~Flags the run. `cancelRequested` is a flag, not a kill — the run reads
+ *      it at its next action boundary and halts itself.~~ **Corrected
+ *      2026-09-02 — it calls `haltRun`.** The sentence was right about the
+ *      flag and wrong about the door: this route wrote `cancelRequested`
+ *      directly and did neither of `haltRun`'s other steps, so the credential
+ *      was not revoked and nothing in flight was settled. `haltRun`'s own
+ *      docblock has claimed "ONE implementation, two doors" since it was
+ *      written, and this was the door that was not one.
+ *
+ * Step 1 stays here rather than moving into `haltRun`, and the split is the
+ * point: it is about a SOCKET, and `haltRun` is about rows. The worker process
+ * calls `haltRun` too and has no `actStore` to settle.
  *
  * ── The run id, which the poll deliberately does not hand out ────────────
  *
@@ -43,6 +51,7 @@ import { NextResponse } from 'next/server'
 import { admitControl, haltRequestSchema } from '@/act/channel'
 import { actStore } from '@/server/act-store'
 import { appContext } from '@/server/db'
+import { haltRun } from '@/server/confirmations'
 import { expectedOrigin } from '@/server/capture-store'
 
 export async function POST(request: Request) {
@@ -71,15 +80,19 @@ export async function POST(request: Request) {
   // written by us.
   const stopped = actStore().halt(runId, `the browser was detached: ${reason}`)
 
-  const { repos } = await appContext()
+  const ctx = await appContext()
 
   // Settling the socket is only half of stopping. The row is still `queued`, and
   // a queued row nobody is waiting for is precisely the instruction a later poll
   // would hand to a browser after the person pressed Stop. `abandon` refuses a
   // delivered row, so this can only ever discard something that never left.
-  for (const dispatchId of stopped) await repos.dispatches.abandon(dispatchId)
+  for (const dispatchId of stopped) await ctx.repos.dispatches.abandon(dispatchId)
 
-  const flagged = await repos.runs.requestCancel(runId)
+  // The other half, through the one implementation. `flagged` keeps its name and
+  // its place in the response because the extension reads it, but it now means
+  // what `Halted.stopped` means — something was stopped, which since ADR-0030
+  // includes closing a question a parked run was waiting on.
+  const { stopped: flagged } = await haltRun(ctx, runId)
 
   return NextResponse.json({ ok: true, settled: stopped.length, flagged })
 }

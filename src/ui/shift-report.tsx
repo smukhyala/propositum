@@ -69,6 +69,7 @@ import {
   finishShift,
   recordOutcomeVerdict,
   recordVerdict,
+  takeBackControl,
 } from '../server/actions'
 
 /* ── the one stylesheet ─────────────────────────────────────────────────── */
@@ -111,6 +112,12 @@ const CSS = `
    a button that goes somewhere breaks the back button and the keyboard. */
 .ps-go { display: inline-block; font: inherit; font-size: 0.8125rem; line-height: 1.4; padding: 0.35rem 0.9rem; border: 1px solid var(--accent); border-radius: 3px; background: var(--accent); color: var(--ground); text-decoration: none; }
 .ps-go:hover { filter: brightness(1.07); }
+/* The kill switch, and deliberately NOT ps-go's accent fill. Stopping a run is
+   not the encouraged act on this screen — it is the one that has to be there. */
+.ps-stop { font: inherit; font-size: 0.8125rem; line-height: 1.4; padding: 0.35rem 0.9rem; border: 1px solid var(--rule); border-radius: 3px; background: transparent; color: var(--ink); cursor: pointer; }
+.ps-stop:hover:not(:disabled) { border-color: var(--attention); color: var(--attention); }
+.ps-stop:disabled { opacity: 0.55; cursor: default; }
+.ps-stop:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .ps-go:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 `
 
@@ -210,6 +217,15 @@ export interface ShiftReportProps {
   readonly didnt: readonly LogRow[]
   readonly missed: readonly LogRow[]
   readonly stopped: { readonly sentence: string; readonly detail: string | null }
+  /**
+   * The run still going, if one is — the third kill switch's target.
+   *
+   * Null on a shift that has ended, which is what keeps the control off a
+   * report about work that is over. Named for the run rather than derived from
+   * `stopped.sentence`, because a control that appeared because a string
+   * matched would be a control nobody could reason about.
+   */
+  readonly liveRunId: string | null
   /** Where to pick up. Null when there is nothing waiting. */
   readonly resume: string | null
   readonly up: UpOneLevel
@@ -352,11 +368,71 @@ function WhatIMissed({ rows }: { readonly rows: readonly LogRow[] }) {
   )
 }
 
-function WhereIStopped({ stopped }: { readonly stopped: ShiftReportProps['stopped'] }) {
+/**
+ * Where the shift ended — and, while it has not, the way to end it.
+ *
+ * ── Why the control is here and was nowhere ──────────────────────────────
+ *
+ * `takeBackControl` in `src/server/actions.ts` is described by three docblocks
+ * as *"the third kill switch, and the only one that needs the app"*, the switch
+ * *"available to somebody on the 'While you were away' screen"*. It had **no
+ * caller anywhere in the repository** until 2026-09-02: that screen rendered no
+ * such control, and the only *"Take back control"* string in the product was a
+ * link label on the home page pointing at the session.
+ *
+ * `tests/reachability.test.ts` passed throughout, because it asserted on
+ * `runs.requestCancel` — which `POST /api/act/halt` did call. So the guard that
+ * exists to catch a thing built and wired to nothing was watching one door
+ * while the other was missing, and that is now asserted on `takeBackControl`
+ * itself.
+ *
+ * ── It is a flag, and the copy has to not overpromise ────────────────────
+ *
+ * Nothing here interrupts anything: the run re-reads `cancelRequested` at its
+ * next action boundary and halts itself, which is the only way to stop cleanly
+ * when the thing being stopped may be mid-navigation. The note under the button
+ * says that rather than implying an instant kill — and points at the two
+ * switches that ARE instant, because a person who needs the browser to stop NOW
+ * should not be waiting on this one.
+ */
+function WhereIStopped({
+  stopped,
+  liveRunId,
+}: {
+  readonly stopped: ShiftReportProps['stopped']
+  readonly liveRunId: string | null
+}) {
+  const [busy, startStopping] = useTransition()
+  const [problem, setProblem] = useState<string | null>(null)
+  const [asked, setAsked] = useState(false)
+
+  function stop() {
+    if (liveRunId === null) return
+    setProblem(null)
+    startStopping(async () => {
+      const result = await takeBackControl(liveRunId)
+      if (result.ok) setAsked(true)
+      else setProblem(result.problem.message)
+    })
+  }
+
   return (
     <Section title="Where I stopped">
       <p className="ps-stopped">{stopped.sentence}</p>
       {stopped.detail === null ? null : <p className="ps-stopped-why">{stopped.detail}</p>}
+      {liveRunId === null ? null : (
+        <div className="ps-settle">
+          <button className="ps-stop" type="button" onClick={stop} disabled={busy || asked}>
+            {asked ? 'Asked it to stop' : 'Take back control'}
+          </button>
+          <p className="ps-settle-note">
+            {asked
+              ? "It stops at the end of what it's doing now, so nothing is left half-done. This page fills in when it has."
+              : "It stops at the end of what it's doing now rather than mid-way, so nothing is left half-done. To cut the browser off this instant, use Stop in the side panel or Cancel on Chrome's own bar."}
+          </p>
+          {problem === null ? null : <p className="ps-problem">{problem}</p>}
+        </div>
+      )}
     </Section>
   )
 }
@@ -716,7 +792,7 @@ export function ShiftReport(props: ShiftReportProps) {
       <WhatIDid rows={props.did} />
       <WhatIDidnt rows={props.didnt} />
       <WhatIMissed rows={props.missed} />
-      <WhereIStopped stopped={props.stopped} />
+      <WhereIStopped stopped={props.stopped} liveRunId={props.liveRunId} />
 
       <div className="ps-resume">
         <div className="ps-resume-row">
@@ -922,7 +998,10 @@ export function DriftedShift(props: DriftedShiftProps) {
       <WhatIDid rows={props.did} />
       <WhatIDidnt rows={props.didnt} />
       <WhatIMissed rows={props.missed} />
-      <WhereIStopped stopped={props.stopped} />
+      {/* A drifted report is by definition about a shift that ended, so there
+          is nothing here to stop. `null` rather than plumbing a prop that could
+          only ever be null. */}
+      <WhereIStopped stopped={props.stopped} liveRunId={null} />
     </Sheet>
   )
 }

@@ -1371,7 +1371,7 @@ ending it. Every writer, and what it writes:
 | `failed` | `boundary-failure` | the same `finish`; which boundary and how is `WorkerResult.boundaryFailure`, not a reason |
 | `failed` | `error` | three places in `src/server/execute-run.ts` — `executeRun` when the run's contract will not load, `executeRun`'s catch-all for anything that threw and was not a claim fence, and `review` when the reviewer's model boundary came back not ok |
 | `interrupted` | `lease-expired` | `runs.sweepExpiredLeases` in `src/persistence/repositories/index.ts` |
-| `interrupted` | `cancelled` | the `cancel-requested` fence in `src/server/execute-run.ts` |
+| `interrupted` | `cancelled` | the `cancel-requested` fence in `src/server/execute-run.ts`, and — since 2026-09-02, [ADR-0030](docs/adr/0030-a-halt-closes-the-question.md) — `haltRun` in `src/server/confirmations.ts`, for a run parked on a question when the person stops it. Both are the same fact about the same act: the person called the run back, and whether it was mid-action or waiting on them at that moment is not their concern |
 | `interrupted` | `answered-too-late` | `admitRun` in `src/server/confirmations.ts`, from `ANSWERED_TOO_LATE` in `src/domain/execution/continuation.ts` |
 | `interrupted` | `confirmation-expired` | `expireConfirmations`, from `CONFIRMATION_EXPIRED` in the same file |
 | `awaiting-confirmation` | *(none)* | nothing — the ConfirmationRequest is the explanation, and `runs.complete` documents the omission |

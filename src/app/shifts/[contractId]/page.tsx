@@ -250,6 +250,23 @@ export default async function ShiftPage({ params }: { params: Promise<{ contract
   const worker = runs.find((run) => run.role === 'worker') ?? runs[0]!
   const last = runs[runs.length - 1]!
   const live = runs.some((run) => run.status === 'pending' || run.status === 'claimed' || run.status === 'running')
+  /**
+   * The run "Take back control" would stop, or null.
+   *
+   * The newest live one rather than the first, because a shift's runs are a
+   * chain — a continuation carrying `resumesRunId` is what picks the work up
+   * after a confirmation — and the one still going is the one at the end.
+   * Halting an earlier one would report success and stop nothing.
+   *
+   * A parked run is deliberately NOT here. It is not live by the test above,
+   * and stopping it is reached from the question's own screen, where a person
+   * can see what they are closing.
+   */
+  const liveRunId =
+    [...runs]
+      .reverse()
+      .find((run) => run.status === 'pending' || run.status === 'claimed' || run.status === 'running')
+      ?.id ?? null
   const endedAt = live ? null : last.endedAt
   const sweptAwake = last.terminalReason === 'lease-expired'
 
@@ -641,6 +658,7 @@ export default async function ShiftPage({ params }: { params: Promise<{ contract
       didnt={didnt}
       missed={missed}
       stopped={stopped}
+      liveRunId={liveRunId}
       resume={
         changes.length > 0
           ? `Pick up at ${changes[0]?.where ?? 'the top of the document'}, where the first change is waiting.`
