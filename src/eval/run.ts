@@ -100,7 +100,7 @@ export interface ScenarioWork {
    * one and read the same three lines back.
    */
   readonly plan: readonly { ordinal: number; intent: string }[]
-  readonly actions: LedgerTrace['actions']
+  readonly actions: ReadonlyArray<Readonly<LedgerTrace['actions'][number]>>
   readonly stoppedBy: readonly StopRuleId[]
   readonly terminalReason: string | undefined
   readonly questionsRaised: readonly string[]
@@ -423,12 +423,31 @@ async function driveWork(
  * place a fixture could not notice. `recordSteps` still returns synthetic ids
  * in the same order, because nothing reads them but the loop.
  *
- * ── What it does NOT record ──────────────────────────────────────────────
+ * ── What it does NOT record, and the half of that which is circumstantial ─
  *
- * Page text, screenshots, or anything a source returned. `params` is what the
- * MODEL proposed, which is already model-authored and already on the worksheet
- * by way of `reason`; the untrusted half of a run stays out of the log, which
- * is the same line `docs/SECURITY_AND_PRIVACY.md` draws everywhere else.
+ * It copies no page text, no screenshot and nothing a source returned. Every
+ * field it keeps is code-assigned or model-authored: `kind`, `authorized` and
+ * `refusedRule` come from the gate, `result` from the outcome, and `reason` and
+ * `detail` are the model's own words.
+ *
+ * **That is not the same as the worksheet holding no page text, and the
+ * difference matters more after this change than before it.** `reason` is
+ * written by a model that was just handed `datamark(source text)`, and it
+ * restates what it read — the committed run log has quoted rates, prices and a
+ * verbatim document fragment, all of them in model prose rather than copied
+ * fields. `detail` is the same shape: `read ${source.title}` here, and in the
+ * production path a URL Chrome attested.
+ *
+ * Today that is safe because the corpus is fixtures. It is safe by
+ * CIRCUMSTANCE, not by construction, and the circumstance is one command away
+ * from changing: `npm run capture:afternoon` writes a profile of somebody's
+ * REAL browsing, and `src/fixtures/capture-afternoon.ts` already warns that
+ * committing one publishes it "for as long as the history exists". Under the
+ * old worksheet that published counts. Under this one it publishes the model's
+ * prose about what it read.
+ *
+ * So: never commit a run log produced against a captured afternoon, and read
+ * one before committing it against anything else.
  */
 export interface LedgerTrace {
   /** The ratified plan, as the worker was given it. Mutable because the ledger

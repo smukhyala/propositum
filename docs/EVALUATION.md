@@ -519,7 +519,13 @@ be where the real value sits.
 
 `claude-opus-5`, all four scenarios, no baseline (`npm run eval`), stdout
 captured to [`docs/eval-runs/2026-09-02-run.log`](./eval-runs/2026-09-02-run.log).
-Measured cost: **$0.81 and about five and a half minutes, 27 calls.** Run to
+Measured cost: **$0.81 and about five and a half minutes, 27 calls — a floor
+rather than a figure.** One of those 27 is `partnership-messy`'s reading, logged
+at `$0.0000 · 22298 ms · 1 call`: the transport failure path in
+`src/model/anthropic.ts` builds its telemetry with zero tokens, so the API billed
+for twenty-two seconds of generation that this number does not contain. A session
+reading is the largest call in the corpus — the other three cost $0.30, $0.14 and
+$0.36. Run to
 settle one question — [#142](https://github.com/smukhyala/propositum/issues/142),
 why a `draft-changes` shift ended on `no-progress` with nothing drafted — and it
 settled it, along with two things nobody was looking for.

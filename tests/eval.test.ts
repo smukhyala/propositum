@@ -831,17 +831,30 @@ describe('a run goes far enough to produce changes and a terminal reason', () =>
     for (const step of run.work?.plan ?? []) expect(sheet).toContain(step.intent)
   })
 
-  it('keeps the harness out of the application database while doing it', async () => {
-    // The recording ledger holds a trace in memory for one scenario and opens
-    // nothing. A harness that wrote real rows would make every scored run a
-    // writer to the same file `--report` reads H2 off, which is the property
-    // `arrayLedger` was protecting and this must not spend.
+  /**
+   * The run path opens no database, and the guard covers the file rather than
+   * the function.
+   *
+   * ~~It sliced `recordingLedger`'s body and grepped that.~~ **Widened on
+   * review**, which measured the slice at 2.6% of the file: an import at the
+   * top and a `createDatabase` in `driveWork` passed it green, so it asserted
+   * the property in its name for one function and nothing for the other
+   * twenty-three.
+   *
+   * WHAT IT DOES NOT COVER: `scripts/eval.ts`, which legitimately opens one —
+   * `--report` reads H2 off `ChangeVerdict` and `OutcomeVerdict` rows, and that
+   * asymmetry is argued in its own header. The property being held here is
+   * narrower and is the one that matters: a scored RUN must not write to the
+   * file the report reads, or every run becomes its own denominator.
+   */
+  it('keeps the run path out of the application database', () => {
+    // Comments stripped, because this file's own docblocks name `--report`'s
+    // database and would satisfy the grep without any code doing so.
     const source = readFileSync(new URL('../src/eval/run.ts', import.meta.url), 'utf8')
-    const ledger = source.slice(source.indexOf('function recordingLedger('))
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/\/\/.*$/gm, '')
 
-    expect(ledger.slice(0, ledger.indexOf('return { ledger, trace }'))).not.toMatch(
-      /prisma|createDatabase|appContext/,
-    )
+    expect(source).not.toMatch(/prisma|createDatabase|appContext/)
   })
 
   it('does not say the plan ran out about a run that said it was finished', async () => {

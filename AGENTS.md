@@ -8,7 +8,9 @@ for them. *Propositum* is Latin for intention.
 **Status: pre-alpha.** The slice runs end to end~~ and no hypothesis has a number yet. `eval-scores.json`
 is still a blank worksheet~~ — **scored 2026-08-27: H1 passed one scenario of four, H3 failed on a
 missed stop, and the baseline read at least as well on all four (`docs/EVALUATION.md`, Second
-run)**. `README.md` is the authority on setup and on what is built; it says
+run)**. **A third run 2026-09-02 reads H3 PASS over three scenarios, not four** — one reading
+boundary failed, and the scenario it lost is the one that produced the missed stop, so that result
+is unmeasured rather than fixed. H1 unscored, no baseline. `README.md` is the authority on setup and on what is built; it says
 plainly where the gaps are, and so should you.
 
 This file is the agent-facing manual. `CLAUDE.md` is a stub that imports it, so Claude Code and other
