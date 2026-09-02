@@ -12,10 +12,16 @@
  *
  * A constant listing today's answers would be earned once and then silently
  * wrong. So `dialThatRemoved` compiles the policy again with each dial flipped
- * and reports the one that brings the kind back, and the load-bearing case in
- * this file is the last one: a rule that removes a kind for a reason no single
+ * and reports the one that brings the kind back.
+ *
+ * The property that matters — a rule removing a kind for a reason no single
  * dial explains gets NO dial, and the panel falls back to the causeless
- * sentence rather than blaming Output.
+ * sentence rather than blaming Output — has **no direct test, because it has no
+ * reachable input**. `compilePolicy` has one gate, so every removal is
+ * explained by exactly one flip. What holds it is the emptiness sweep below,
+ * which walks every dial combination and asserts the ambiguous set is empty;
+ * the day a second rule lands, that goes red and somebody decides what the
+ * panel says about a kind two settings each took away.
  *
  * ── What this does NOT cover ─────────────────────────────────────────────
  *
@@ -114,14 +120,22 @@ describe('and everything else names nothing, which is the safe direction', () =>
   it('has no kind today that two dials or no dial explains', () => {
     const ambiguous: ActionKind[] = []
 
+    // All four toggles, not the two that happen to matter today. The
+    // conclusion would be the same either way — `compilePolicy` has one gate —
+    // but a sweep that skips a dial cannot go red when that dial starts
+    // removing something, which is the whole job this assertion is holding.
     for (const scope of [BROWSER, DOCUMENT]) {
       for (const output of ['suggestions-only', 'draft-changes'] as const) {
         for (const progress of ['current-step-only', 'remaining-plan'] as const) {
-          const controls = dials({ output, progress })
-          const allowed = compilePolicy(scope, controls).actionKindAllowlist
-          for (const kind of scope.allowedActionKinds) {
-            if (allowed.has(kind)) continue
-            if (dialThatRemoved(kind, scope, controls) === null) ambiguous.push(kind)
+          for (const initiative of ['follow-closely', 'use-judgment'] as const) {
+            for (const interruption of ['stop-when-uncertain', 'stop-only-when-blocked'] as const) {
+              const controls = dials({ output, progress, initiative, interruption })
+              const allowed = compilePolicy(scope, controls).actionKindAllowlist
+              for (const kind of scope.allowedActionKinds) {
+                if (allowed.has(kind)) continue
+                if (dialThatRemoved(kind, scope, controls) === null) ambiguous.push(kind)
+              }
+            }
           }
         }
       }
@@ -131,16 +145,22 @@ describe('and everything else names nothing, which is the safe direction', () =>
   })
 
   /**
-   * The case this whole derivation exists for.
+   * ~~The case this whole derivation exists for.~~ **Corrected on review: it is
+   * the guard clause, not the ambiguity branch.**
    *
-   * If a second dial ever removes a kind that Output also removes, no single
-   * flip restores it, and the answer must be *"I cannot say"* rather than
-   * *"Output"*. Constructed here by flipping two dials at once against a kind
-   * only one of them touches — which proves the shape rather than the current
-   * rule set: the function reports a dial only when moving THAT dial and
-   * nothing else brings the kind back.
+   * It was described as *"flipping two dials at once against a kind only one of
+   * them touches"*. It flips no second dial — it removes the kind from
+   * `allowedActionKinds`, which is answered by the FIRST line of the function
+   * and never reaches the `responsible` count at all. The same path the
+   * never-offered case above already covers.
+   *
+   * It stays because the pairing is worth pinning — a kind that WAS explained
+   * by a dial stops being explained the moment the shift stops offering it —
+   * but it is not the ambiguity branch. That branch has no test, because it has
+   * no reachable input: the emptiness sweep above is what says so, and what
+   * goes red the day it does.
    */
-  it('refuses to name one dial when one dial is not the answer', () => {
+  it('stops naming a dial once the shift no longer offers the kind', () => {
     const controls = dials({ output: 'suggestions-only' })
     const kind: ActionKind = 'click-element'
 
