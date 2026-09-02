@@ -1330,6 +1330,7 @@ ending it. Every writer, and what it writes:
 | `succeeded` | `budget-exhausted` · `stop-condition` | `finish` in `src/runtime/worker-loop.ts`, off `STOP_RULES[…].terminalReason` in `src/domain/execution/stop-conditions.ts` |
 | `succeeded` | *(none)* | the same `finish` when no rule fired — the plan ran out, or the model said it was done |
 | `failed` | `boundary-failure` | the same `finish`; which boundary and how is `WorkerResult.boundaryFailure`, not a reason |
+| `failed` | `error` | three places in `src/server/execute-run.ts` — `executeRun` when the run's contract will not load, `executeRun`'s catch-all for anything that threw and was not a claim fence, and `review` when the reviewer's model boundary came back not ok |
 | `interrupted` | `lease-expired` | `runs.sweepExpiredLeases` in `src/persistence/repositories/index.ts` |
 | `interrupted` | `cancelled` | the `cancel-requested` fence in `src/server/execute-run.ts` |
 | `interrupted` | `answered-too-late` | `admitRun` in `src/server/confirmations.ts`, from `ANSWERED_TOO_LATE` in `src/domain/execution/continuation.ts` |
@@ -1339,9 +1340,18 @@ ending it. Every writer, and what it writes:
 `pending`, `claimed` and `running` are not terminal and carry none. Note what the closed set costs:
 five of the six rules in `STOP_RULES` collapse into `stop-condition`, so **which** rule stopped a run
 is not recoverable from this column — the re-entry screen says so in its own voice rather than
-guessing. Note also a reason the renderers expect and no writer produces: both
+guessing. ~~Note also a reason the renderers expect and no writer produces: both
 `src/domain/intention/work-so-far.ts` and `src/app/shifts/[contractId]/page.tsx` carry a `case
-'error'`, which is dead, and `boundary-failure` reaches their default branch instead.
+'error'`, which is dead, and `boundary-failure` reaches their default branch instead.~~
+
+**Struck 2026-09-01, hours after it was written, and the row above is the one the table was
+missing.** `error` is written — three times, all in `src/server/execute-run.ts` — and both renderers
+render it; `tests/work-so-far.test.ts` drives that arm. The reason with no arm anywhere is
+`boundary-failure`: neither `src/domain/intention/work-so-far.ts` nor
+`src/app/shifts/[contractId]/page.tsx` has a case for it, so the one worker failure this column can
+name falls to the default branch kept for a value a later version might store, and the person is
+told only that it stopped. Recorded and not fixed here —
+[#145](https://github.com/smukhyala/propositum/issues/145) carries the behaviour half.
 
 **A slept Mac yields `interrupted / lease-expired`, never ~~`time-budget-exhausted`~~
 `budget-exhausted`** *(corrected 2026-09-01 — the longer spelling never existed)* — the startup
