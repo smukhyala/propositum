@@ -90,6 +90,20 @@ function stripComments(source: string): string {
  * So the limit stands, and `nothing a stripper eats is a component render`
  * below is what makes it loud instead of silent. The fix at a call site is an
  * entity — `&#42;` — with a comment saying why.
+ *
+ * ~~Twice~~ **Three times, 2026-09-03, and the third was not JSX.**
+ * `src/policy/fetcher.ts` split an origin pattern on the literal two characters
+ * `/` and `*` — ordinary code, in a string — which opened a comment that ran to
+ * the end of the next docblock and swallowed `export function isAllowed`, a
+ * function this very file pins the callers of. Nothing went red: a blind guard
+ * passes. The render canary could not see it, because what was lost was a
+ * declaration rather than a `<Name`, so a second canary sits beside it now —
+ * `nothing a stripper eats is an exported declaration`. In a string the fix is
+ * an escape, `'/\u002a'`, since an HTML entity means nothing there.
+ *
+ * Found while wiring a Playwright route interceptor, whose natural glob
+ * `'**\/*'` would have been a fourth. That call site uses a regular expression
+ * instead, for this reason and no other.
  */
 function componentRenders(source: string): string[] {
   return [...source.matchAll(/^\s*<([A-Z][A-Za-z0-9]*)/gm)].map((match) => match[1]!)
@@ -146,6 +160,47 @@ describe('the greps can see the files they read', () => {
       expect(
         lost,
         `${relative(repo, file)} loses ${lost.join(', ')} to the comment stripper — look for “/” next to “*” in JSX text, and write &#42;`,
+      ).toEqual([])
+    }
+  })
+
+  /**
+   * The same limit, caught on the half the render canary above cannot see.
+   *
+   * A component render was the shape that went missing the first two times, so
+   * that is what got a canary. The third instance, 2026-09-03, was not JSX at
+   * all: `src/policy/fetcher.ts` split an origin pattern on the literal two
+   * characters `/` and `*`, which opened a block comment that ran to the end of
+   * the next docblock and took `export function isAllowed` with it. The guard
+   * went blind to a function this file pins the callers of, and every test
+   * stayed green — which is the whole failure mode, not a symptom of it.
+   *
+   * So this checks the other shape a stripper has no business removing: an
+   * exported declaration at the start of a line. Between them the two canaries
+   * cover what a guard actually looks for — the definitions and the renders.
+   *
+   * What it does NOT cover: a declaration that is not exported, a name eaten
+   * inside a call rather than at its definition, and any file outside
+   * `PRODUCTION`. It narrows the hole rather than closing it, and the stripper's
+   * documented limit above is still the thing to read first.
+   */
+  it('nothing a stripper eats is an exported declaration', () => {
+    const declarations = (source: string): string[] =>
+      [...source.matchAll(/^export (?:async )?(?:function|const|class|interface|type) ([A-Za-z_$][\w$]*)/gm)].map(
+        (match) => match[1]!,
+      )
+
+    for (const file of PRODUCTION) {
+      const source = readFileSync(file, 'utf8')
+      const before = declarations(source)
+      if (before.length === 0) continue
+
+      const after = declarations(stripComments(source))
+      const lost = before.filter((name) => !after.includes(name))
+
+      expect(
+        lost,
+        `${relative(repo, file)} hides ${lost.join(', ')} from the comment stripper — look for “/” next to “*” in a string, and write '/\\u002a'`,
       ).toEqual([])
     }
   })

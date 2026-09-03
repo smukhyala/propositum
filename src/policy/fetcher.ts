@@ -108,7 +108,16 @@ export function matchesPattern(url: string, pattern: string): boolean {
   // out of the allowlist entirely.
   if (target.protocol !== 'https:' && target.protocol !== 'http:') return false
 
-  const [patternOrigin, ...rest] = pattern.split('/*')
+  // `'/\u002a'` is the two characters `/` and `*`, written as an escape so
+  // they do not sit next to each other in the source. Spelled literally,
+  // they open a block comment to `tests/reachability.test.ts`'s stripper,
+  // which then eats everything to the next close marker — here that was the
+  // docblock below, taking `isAllowed`'s declaration with it and leaving the
+  // guard blind to a function it is supposed to be pinning. Third instance
+  // of that class in this repository; the stripper's own docblock records
+  // the first two, and `hides no declaration from the stripper` in
+  // `tests/reachability.test.ts` is what now catches a fourth.
+  const [patternOrigin, ...rest] = pattern.split('/\u002a')
   if (rest.length === 0) return url === pattern
 
   let allowed: URL
