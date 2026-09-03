@@ -203,8 +203,13 @@ own events.~~ **Pinned 2026-09-03.** `manifest.json` carries the public key and
 the id is **`oeeehaokemppjoedlccgggmhlmhcdeln`** on every machine — Chrome's
 derivation is SHA-256 of the DER public key, first 128 bits, hex digits mapped
 `a`–`p`, and `tests/extension-permissions.test.ts` recomputes it so this
-sentence and the manifest cannot drift apart. The private half is the owner's,
-outside the repository; nothing in the product reads it and it is needed only
+sentence and the manifest cannot drift apart. The private half is ~~the owner's,
+outside the repository~~ **not in the repository, and that is the whole of what
+this repository can say about it — the test states the same limit. Struck
+2026-09-03, the day it was written: it was generated in an agent's session and
+left in that session's scratchpad, which is temporary; moving it somewhere kept
+is a row in [`docs/todo/05`](../docs/todo/05-chrome-web-store.md), and until
+somebody does that it is nobody's**; nothing in the product reads it and it is needed only
 to pack a `.crx`. **Regenerating it mints a new id and orphans every install**,
 including any `/first-run` pairing, which is why pinning it was the owner's
 call and not a quick fix.
