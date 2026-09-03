@@ -75,7 +75,9 @@ over…`, which is now the *correct* answer rather than a job, and no longer hit
 deliberate.
 
 **~~Seven left, not nine.~~ ~~One left, and it is item 7.~~ ~~Two left, 2026-08-27 — item 7 and item
-10.~~ One left again, 2026-09-03 — item 7.** Everything struck below
+10.~~ ~~One left again, 2026-09-03 — item 7.~~ Two left, 2026-09-03, later the same day — item 7 and
+item 11. Item 10 was built and item 11 arrived in the same afternoon, from different work, and the
+count was right for about an hour.** Everything struck below
 is struck rather than deleted, because a checklist that silently loses its
 finished items reads as though they were never on it.
 
