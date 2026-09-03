@@ -350,12 +350,34 @@ after it.
 - **Only an origin you already approved for that project.** The address is matched against your
   `ApprovedSource` list before anything is requested, so an unapproved host is never asked and never
   learns you looked. The control cannot approve a source; there is no field on it that could.
+- **A redirect off that origin is refused before it is taken**, which is the part of the sentence
+  above that has to be earned rather than asserted. *(Added 2026-09-03, on the day the clause was
+  found to be false. What it said was true of the address you typed and false of anywhere that
+  address sent us: the reader followed redirects and compared origins afterwards, so an approved
+  host that was hostile — or that merely carried somebody's open redirect — could answer with
+  `https://anything.example/…` and that host would have your IP, the moment, and whatever the
+  address encoded, before the refusal ran. It never got a cookie, never learned the address you
+  typed, and its page was never read; it did learn you looked. Now every hop's destination is
+  checked against your approved origin **before** anything is requested from it, and an off-origin
+  hop is refused with nothing sent to it. A chain of more than five hops is refused too, rather than
+  followed for ever.)*
+- **A redirect inside that origin is followed**, including to a path outside the one you approved.
+  The origin check is per hop; the path check ran once, against the address you typed. Same host,
+  same bytes it was already willing to serve — but it is a gap between two checks and it is stated
+  rather than implied closed.
 - **200,000 characters is the third published product constant**, named `IMPORT_BUDGET_CHARS`, and
   it is the same number a file import already refuses past. It bounds a document you are composing
   rather than what Propositum retains about your browsing — the 2,000 above is that promise and is
   unchanged.
 - **Nothing is stored until you save.** The text lands in the box on screen, unsaved, under whatever
   is already there. No version, no observation event and no ledger row is written by the import.
+- **Five million bytes is what the app process will hold from a host**, and past it the read is
+  refused. *(Added 2026-09-03.)* This is a transport ceiling rather than a fourth published bound:
+  the 200,000 above is a promise about what a document may contain, and it was checked on the
+  extracted text — after the whole response had already been buffered. An approved host that chose to
+  answer with a gigabyte would have been held in full and then politely refused. That was a resource
+  cost rather than a privacy one and it was stated nowhere. It sits well above the 200,000, so a page
+  refused for its length still gets that sentence rather than this one.
 - **No credential goes with the request.** No cookies, no profile, no referrer. The host learns your
   address and the moment you pressed, which is true of any fetch and is the cost stated in the ADR.
 - **Propositum runs none of the page's code.** The app process does not launch a browser, which is

@@ -147,7 +147,7 @@ somebody actually asks.
 
 ---
 
-## One defect this surfaced
+## Two defects this surfaced
 
 **`normalise` did not fold `\r\n`**, so a document imported from a Windows file
 stored one carriage return per structural line: identical on screen, different
@@ -163,6 +163,26 @@ Struck and narrowed with the measurements beside it, and the real behaviour is
 pinned. Not fixed on purpose — the failure makes the addressable unit *smaller*,
 which is the safe direction, and `linesOf` hands out offsets that live changesets
 already point at.
+
+---
+
+**And a second, found the day after by a privacy review of the import itself.**
+`src/policy/http-fetcher.ts` requested with `redirect: 'follow'` and compared origins **afterwards**,
+so an approved origin that was hostile — or that merely carried somebody's open redirect — could
+answer `302 https://anything.example/…` and that host would have the person's IP, their TLS
+fingerprint and the moment before the refusal ran. `docs/SECURITY_AND_PRIVACY.md` §5, added by the
+same change, promised the opposite in as many words. **Fixed 2026-09-03**: manual redirects, each
+hop's `Location` checked against the approved origin before anything is asked of it, a five-hop
+bound, and the transport ceiling on the body that the same review found missing. ADR-0032 §1 is
+struck and dated where it said *"refused after the fact"*.
+
+**`src/policy/playwright-fetcher.ts` was left alone, and now differs.** It has the same
+follow-then-check shape, pre-existing and outside ADR-0032. It matters less — it runs in the worker's
+own OS process rather than the one holding the SQLite file and the API key, and the origin it is
+reading was authorised through the gate rather than typed into a box — but *less* is not *not at
+all*, and a person's IP still reaches whatever an approved source points at. Closing it means a
+Playwright request interceptor with a per-hop veto, which is a bigger change than the one it would
+ride in on, and it wants its own ticket rather than a line here.
 
 ---
 

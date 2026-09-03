@@ -57,8 +57,19 @@ absence this decision leans on, rather than a rule about what nobody should add.
 
 Two smaller refusals ride along, both already in `matchesPattern`: only `http:` and `https:`, so a
 `file:` or `data:` address is not an address here; and a redirect that lands on a different origin
-from the one approved is refused after the fact, the way `src/policy/playwright-fetcher.ts` already
-refuses one.
+from the one approved is refused, ~~after the fact, the way `src/policy/playwright-fetcher.ts`
+already refuses one~~ **corrected 2026-09-03: before the hop is taken, which the Playwright fetcher
+does not do.** *After the fact* was what shipped and it was not enough:
+`docs/SECURITY_AND_PRIVACY.md` §5, added by this same change, promised that *"an unapproved host is
+never asked and never learns you looked"*, and a refusal that runs once the second request has
+completed makes that false — the host gets the person's IP, their TLS fingerprint and the moment,
+whatever we then do with its body. `src/policy/http-fetcher.ts` now requests with
+`redirect: 'manual'` and checks each hop's `Location` against the approved origin before requesting
+anything from it, with a bound of five hops. **The decision is unchanged; the implementation now
+matches what it claimed.** `src/policy/playwright-fetcher.ts` still follows and then checks: it runs
+in the worker's own process rather than the one holding the database and the API key, per-hop veto
+there means a request interceptor, and it is out of this ADR's scope —
+[`docs/todo/03-document-loop.md`](../todo/03-document-loop.md) records it.
 
 ### 2. It is not a tool, and it mints no `AuthorizedAction`
 
