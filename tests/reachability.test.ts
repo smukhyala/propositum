@@ -276,15 +276,46 @@ describe('the safety machinery is reachable from the product', () => {
      *
      * ── What this does NOT say ───────────────────────────────────────────
      *
-     * `machine_slept` is STILL unwritable, and the caller does not change that:
-     * elapsed silence cannot tell a slept machine from a dead service worker.
-     * One of the two reasons this pin used to cover is closed and the other is
-     * exactly as open as it was — which is why the title says *a* gap reason.
+     * ~~`machine_slept` is STILL unwritable, and the caller does not change
+     * that: elapsed silence cannot tell a slept machine from a dead service
+     * worker. One of the two reasons this pin used to cover is closed and the
+     * other is exactly as open as it was — which is why the title says *a* gap
+     * reason.~~
+     *
+     * **Corrected 2026-09-03 (ADR-0033).** Still true of elapsed silence, and
+     * no longer true of the gap watch, which sampled its own tick's lateness
+     * and got a second signal out of a clock it already had. The two pins below
+     * are what keep that signal connected; this one is unchanged and its title
+     * still says *a* gap reason, because silence is still one reason's evidence
+     * and not the other's.
      */
     expect(
       callersOf('sweepForGap(', 'src/server/gap-sweeper.ts'),
       'the gap sweeper lost its caller — silence stopped being recordable',
     ).not.toEqual([])
+  })
+
+  it('something samples the tick for lateness, or machine_slept is unwritable again', () => {
+    /**
+     * The detector is the whole of what separates a slept machine from a dead
+     * service worker. Uncalled, it is a correct and tested module while the
+     * timeline goes on telling everybody who closed their lid that our software
+     * fell over — which is the failure this file exists for, in the form that
+     * looks most like working software.
+     */
+    expect(
+      callersOf('createSuspensionDetector', 'src/server/suspension.ts'),
+      'nothing samples the sweep tick — a slept machine is recorded as a dead service worker',
+    ).toContain('src/server/gap-watch.ts')
+  })
+
+  it('and the sweeper is what is told, so the reason is decided before the write', () => {
+    // One caller is the correct number. A second would be a second author of
+    // the reason on a row nobody can UPDATE afterwards.
+    expect(
+      callersOf('noteSuspension', 'src/server/capture-session.ts'),
+      'nothing hands the suspension to the sweeper — the signal is taken and dropped',
+    ).toEqual(['src/server/gap-sweeper.ts'])
   })
 
   it('events reach the ledger writer rather than a repository', () => {

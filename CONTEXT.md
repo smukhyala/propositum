@@ -489,6 +489,14 @@ confidently report a lull that never happened — corrupting H1 in the way harde
 A gap is an *absence of knowledge*. A deliberate pause or an alt-tab is a *fact* and gets its own
 kind. A malformed event the ledger rejects is a ledger-writer fact, not a gap — rendering it as
 "I stopped seeing your work" would be a false statement to the user about our own software.
+
+**The reason is evidence, not a guess — added 2026-09-03,
+[ADR-0033](docs/adr/0033-a-late-tick-is-a-slept-machine.md).** `service_worker_terminated` and
+`machine_slept` produce identical silence, so they are told apart by *which* signal fired, never by
+how long the quiet lasted: silence past the heartbeat grace period is the first, and a sweep tick
+arriving two whole periods late — proof the app process itself was not being scheduled — is the
+second. Where no signal fires, the reason stays the one that was observed. Nothing infers
+`machine_slept` from elapsed time, and the day something does, this entry is what it broke.
 *Displaces:* missing data · downtime · blind spot · dead time · data loss · SessionPause ·
 CaptureWindow · ObservationCoverage.
 **Consumer:** "What I missed" — *"I stopped seeing your work from 2:10 to 2:41 (your Mac slept)."*

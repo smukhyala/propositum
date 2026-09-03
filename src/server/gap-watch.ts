@@ -34,14 +34,32 @@
  * stray tick is inert rather than wrong — the binding is about not running a
  * timer nobody needs, not about correctness.
  *
- * ── What this does NOT do ────────────────────────────────────────────────
+ * ── The clock is also the sensor ─────────────────────────────────────────
  *
- * It does not make `machine_slept` writable. That reason needs something that
+ * ~~It does not make `machine_slept` writable. That reason needs something that
  * can tell a slept machine from a dead service worker, and elapsed time alone
  * cannot: both look identical from here. This file closes one of the two
- * unreachable reasons and leaves the other exactly as unreachable as it was.
+ * unreachable reasons and leaves the other exactly as unreachable as it was.~~
  *
- * It also does not survive a process restart mid-session. A dev-server reload
+ * **Corrected 2026-09-03
+ * ([ADR-0033](../../docs/adr/0033-a-late-tick-is-a-slept-machine.md)):** it
+ * does now, and the thing that made it possible was already in this file. The
+ * struck paragraph is right about *elapsed time* and wrong about what this
+ * timer knows. Elapsed silence is the extension's clock and it is ambiguous.
+ * **The lateness of this interval's own tick is ours**, and it is not: a dead
+ * service worker does not stop the app process being scheduled, and a suspended
+ * machine stops everything. So each tick is sampled by
+ * `createSuspensionDetector` before anything else happens, and a tick that
+ * arrives a minute or more past its period is handed to the sweeper as proof
+ * that nobody was watching over that window.
+ *
+ * `src/server/suspension.ts` states what this cannot separate — a stopped
+ * process, and a wall clock stepped forward — and neither is a thing that
+ * happens on a machine doing ordinary work.
+ *
+ * ── What this does NOT do ────────────────────────────────────────────────
+ *
+ * It does not survive a process restart mid-session. A dev-server reload
  * clears the interval along with everything else on `globalThis`; the next
  * session start re-arms it, and a gap that opened during the reload is recorded
  * on the first tick after it if the extension is still silent.
@@ -49,6 +67,7 @@
 
 import { sweepForGap } from './gap-sweeper'
 import { captureStore } from './capture-store'
+import { createSuspensionDetector, type Suspension } from './suspension'
 import { existingAppContext } from './db'
 
 /**
@@ -62,9 +81,22 @@ import { existingAppContext } from './db'
  */
 export const GAP_SWEEP_INTERVAL_MS = 30_000
 
+/**
+ * How late a tick has to be before the lateness is evidence of a suspension —
+ * two whole periods past the one it was scheduled for.
+ *
+ * Derived rather than typed, so there is one number here and it is the interval
+ * above. The size is chosen against what else can make a timer late: scheduler
+ * jitter and a contended SQLite write are milliseconds, and this process does
+ * not block its own loop for a minute while it is running.
+ */
+export const SUSPENSION_TOLERANCE_MS = GAP_SWEEP_INTERVAL_MS * 2
+
 declare global {
   // eslint-disable-next-line no-var
   var __propositumGapWatch: ReturnType<typeof setInterval> | undefined
+  // eslint-disable-next-line no-var
+  var __propositumSuspensionDetector: ReturnType<typeof createSuspensionDetector> | undefined
 }
 
 /**
@@ -95,11 +127,16 @@ declare global {
  * by the time this ticks; if one somehow does not, the sweep is inert, which is
  * the correct behaviour for a process with no session in it.
  */
-async function sweepOnce(): Promise<void> {
+async function sweepOnce(suspension: Suspension | null): Promise<void> {
   try {
     const context = await existingAppContext()
     if (!context) return
-    await sweepForGap({ store: captureStore(), ledger: context.ledger, now: () => Date.now() })
+    await sweepForGap({
+      store: captureStore(),
+      ledger: context.ledger,
+      now: () => Date.now(),
+      ...(suspension === null ? {} : { suspension }),
+    })
   } catch (error) {
     console.error(
       `[gap-watch] sweep failed: ${error instanceof Error ? error.message : String(error)}`,
@@ -113,14 +150,39 @@ async function sweepOnce(): Promise<void> {
  */
 export function startGapWatch(): void {
   if (globalThis.__propositumGapWatch) return
-  const timer = setInterval(() => void sweepOnce(), GAP_SWEEP_INTERVAL_MS)
+
+  const detector = createSuspensionDetector({
+    intervalMs: GAP_SWEEP_INTERVAL_MS,
+    toleranceMs: SUSPENSION_TOLERANCE_MS,
+  })
+  // On `globalThis` for the same reason the timer is, and for one more: it is
+  // how a test can see that the detector dies with the timer rather than
+  // outliving it into the next session. The tick reads the closure.
+  globalThis.__propositumSuspensionDetector = detector
+
+  // Sampled synchronously, in the callback rather than inside `sweepOnce`, so
+  // the reading is when the timer fired and not when a database happened to
+  // answer. An await between the two would be measuring ourselves.
+  const timer = setInterval(
+    () => void sweepOnce(detector.sample(Date.now())),
+    GAP_SWEEP_INTERVAL_MS,
+  )
   // Never hold the process open for this. A sweep is housekeeping.
   timer.unref?.()
   globalThis.__propositumGapWatch = timer
 }
 
-/** Disarm it. Safe to call when nothing is armed. */
+/**
+ * Disarm it. Safe to call when nothing is armed.
+ *
+ * The detector goes with the timer rather than outliving it. Its whole state is
+ * the previous tick's reading, and that reading only means anything while the
+ * timer that took it is still running — kept across a disarm, it would compare
+ * the first tick of the next session against a moment before the app went idle
+ * and report the idle as sleep.
+ */
 export function stopGapWatch(): void {
+  globalThis.__propositumSuspensionDetector = undefined
   if (!globalThis.__propositumGapWatch) return
   clearInterval(globalThis.__propositumGapWatch)
   globalThis.__propositumGapWatch = undefined
