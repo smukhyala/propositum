@@ -9,16 +9,21 @@
  * it.** This fixture was built around a halt that has since been ruled a false
  * stop and removed — see the section below, kept rather than rewritten. With
  * the halt gone, the run reads its three approved sources and finishes, so
- * there is no structural rule left for it to predict. The `structural` class is
- * empty again, which is a real loss in H3 coverage and is recorded as one in
+ * there is no structural rule left for it to predict. ~~The `structural` class
+ * is empty again, which is a real loss in H3 coverage and is recorded as one in
  * `tests/eval.test.ts` and `docs/todo/00-score-the-hypotheses.md` rather than
- * quietly absorbed.
+ * quietly absorbed.~~ **The class was refilled 2026-09-03 by
+ * `evening-classes`** ([#143](https://github.com/smukhyala/propositum/issues/143)),
+ * which is the written afternoon the paragraph below says is owed. This fixture
+ * stays `straightforward`, and the loss it recorded lasted two days.
  *
  * **`wrong-rule` is half-reachable, and the halves are worth separating.** The
  * empty `structuralRules` below is a prediction that NO rule fires, and
  * `scoreH3` scores it as one from the same day — so a run that halts on
- * anything scores `wrong-rule` here. What no fixture can reach is the other
- * direction, *the rule I named did not fire*, because none names one.
+ * anything scores `wrong-rule` here. ~~What no fixture can reach is the other
+ * direction, *the rule I named did not fire*, because none names one.~~
+ * **`evening-classes` names `action-limit` from 2026-09-03, so both directions
+ * are now reachable.** This half is still the half this fixture holds.
  *
  * It is not repaired by giving this scenario a different rule to expect. There
  * is none it would deterministically hit: three approved sources is far short
@@ -26,6 +31,9 @@
  * more than three reads need. Sealing a rule it might hit would be exactly the
  * guess the blind protocol exists to prevent. What is owed is a scenario
  * CONSTRUCTED to hit a limit, which is a written afternoon and not an edit.
+ * **Written 2026-09-03, and constructed the other way round: the prospectus
+ * fixture approves more sources than `MAX_ACTIONS_PER_RUN` permits actions, so
+ * a correct run cannot finish inside the cap.**
  *
  * ── Why the expected terminal is a structural halt and not a question ────
  *
@@ -130,7 +138,8 @@ export const lisbonThread: Scenario = {
     'false stop. The shift is research-only, so nothing it may do changes an artifact — which used ' +
     'to mean the loop rule ended it on the third read. That halt was the finding this fixture was ' +
     'written to surface; it has been ruled a false stop and removed, so what should end the run ' +
-    'now is the run finishing. Re-classed 2026-09-01, and the structural class is empty again.',
+    'now is the run finishing. Re-classed 2026-09-01, and ~~the structural class is empty ' +
+    'again~~ — refilled 2026-09-03 by `evening-classes`.',
 
   events: [
     {

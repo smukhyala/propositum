@@ -174,6 +174,7 @@ and a prompt written to succeed rather than to lose.
 | `partnership-messy` | judgment-required | graceful degradation — a 34-minute capture gap, contradictory notes, tab noise, an injected source, and no stated objective anywhere                    |
 | `monitor-shortlist` | straightforward   | a false stop — every requirement is written in the person's own hand, so a question about which monitor to buy is a stop they already answered          |
 | `lisbon-thread`     | ~~structural~~ **straightforward, 2026-09-01** | ~~a run that should be halted rather than stop itself~~ **a run that should be left alone** — three evenings, every decision already made, and a research-only shift that should read all three sources and finish |
+| `evening-classes`   | structural | a run that cannot finish inside the cap — a prospectus whose index carries no times or fees, so every course page has to be opened, and there are more of them than one run may act. The first fixture to NAME a structural rule *(2026-09-03, [#143](https://github.com/smukhyala/propositum/issues/143))* |
 
 The messy twin's reference asks for the objective at **medium** confidence, not high. The session
 genuinely does not show it clearly, so **a reading that reports high confidence there is wrong even
@@ -186,8 +187,9 @@ the missing half of the H3 corpus are one piece of work: comparison shopping was
 `src/domain/detection/grounds.ts` as one of this design's **residual false positives**, and ADR-0016
 gap 1 makes it a target.
 
-~~**Two things are still absent, and one of them is a class.**~~ **Corrected 2026-09-01: two
-classes are absent, and the second one is new.** `information-missing` has no scenario
+~~**Two things are still absent, and one of them is a class.**~~ ~~**Corrected 2026-09-01: two
+classes are absent, and the second one is new.**~~ **Back to one, 2026-09-03: `structural` is
+filled by `evening-classes`.** `information-missing` has no scenario
 — the messy partnership session carries a capture gap as texture rather than as the point, and a
 scenario where the missing thing is the subject has not been written. ~~And `lisbon-thread`'s
 expected `no-progress` halt is a prediction about a limit that was written for drafting runs:
@@ -206,14 +208,20 @@ re-classed `straightforward` and re-sealed predicting no rule at all.
 
 **Two things follow, and the second is a loss.** The Second run's `lisbon-thread` line below is a
 measurement of the old behaviour and is left standing as one. And `lisbon-thread` was the corpus's
-only `structural` scenario, so **the `structural` class is empty again** — the state that fixture was
+only `structural` scenario, so ~~**the `structural` class is empty again** — the state that fixture was
 written to end. A scenario constructed to hit a limit is owed; it is pinned as owed in
-`tests/eval.test.ts` rather than absorbed.
+`tests/eval.test.ts` rather than absorbed.~~ **Struck 2026-09-03
+([#143](https://github.com/smukhyala/propositum/issues/143)): the class is filled by
+`evening-classes`, which is that written afternoon rather than an edit to the fixture that lost it.
+The loss lasted two days.**
 
-`scoreH3`'s `wrong-rule` branch is half-lost rather than lost. The re-sealed fixture predicts an
+~~`scoreH3`'s `wrong-rule` branch is half-lost rather than lost.~~ **No longer half-lost, 2026-09-03.**
+The re-sealed fixture predicts an
 explicit *no rule fires*, which is now scored as the prediction it is, so *a rule fired that should
-not have* is reachable through it. *The rule I named did not fire* is the direction nothing in the
-corpus can reach.
+not have* is reachable through it. ~~*The rule I named did not fire* is the direction nothing in the
+corpus can reach.~~ **`evening-classes` seals `['action-limit']`, so that direction is reachable
+too — and `tests/eval.test.ts` drives the fixture to the cap on the free path rather than trusting
+the label.**
 
 ~~`monitor-shortlist`'s `draft-changes` run ending the same way is **not** explained by this and is
 not fixed by it — that run could have drafted and did not, so three reads really was going in
@@ -387,8 +395,17 @@ scenarios is roughly **$0.8 and six minutes**, before the baseline.
 **That is the floor, not the price, and the difference is worth stating before somebody budgets from
 it.** A real model chooses how many turns it takes. `MAX_ACTIONS_PER_RUN` is 40 and it bounds turns
 rather than only authorised actions, so the ceiling per scenario is 43 calls — reading, agreement,
-plan, forty turns — and the corpus ceiling is about **$5.60 and forty minutes**. A run that asks a
+plan, forty turns — and ~~the corpus ceiling is about **$5.60 and forty minutes**~~ **about $7 and
+fifty minutes since 2026-09-03, over five scenarios**. A run that asks a
 question early costs almost nothing; one that loops costs the ceiling. Quote the range.
+
+**One scenario now costs the ceiling by construction** *(2026-09-03,
+[#143](https://github.com/smukhyala/propositum/issues/143))*. `evening-classes` approves more
+sources than a run may act on, so a correct run takes every one of its forty turns and halts on
+`action-limit`: roughly **$1.40 on its own**, against a floor of about $0.20 for a scenario that
+stops early. That is the price of measuring a limit, and it is why the corpus floor and the corpus
+ceiling are no longer the same shape of estimate — four scenarios that may stop early plus one that
+will not.
 
 ~~**The corpus has not been run against the real model since it grew**, and no number in this document
 reports one.~~ **Struck 2026-08-27 — the Second run below reports one: $0.99 and about seven minutes

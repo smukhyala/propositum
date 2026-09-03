@@ -20,6 +20,7 @@ import type { H1Scores, H2BarrenShift, H2Unit } from '../src/eval/score'
 import { OFFER_RATE_CAUTION, RECENT_DAYS, reportOfferRate } from '../src/eval/offer-rate'
 import type { OfferTallyDay } from '../src/eval/offer-rate'
 import { countQuietly, dayBucket } from '../src/server/offer-tally'
+import { MAX_ACTIONS_PER_RUN } from '../src/domain/handoff/policy'
 import { REQUIRED_GUARDS } from '../src/persistence/append-only'
 import { createLedgerWriter } from '../src/persistence/ledger-writer'
 import { POST as ambientRoute } from '../src/app/api/capture/ambient/route'
@@ -51,12 +52,13 @@ const full = (over: Partial<H1Scores> = {}): H1Scores =>
 const scores = (over: Partial<H1Scores> = {}): H1Scores => ({ ...full(), ...over })
 
 describe('the corpus', () => {
-  it('has the partnership pair, a comparison, and a thread that goes in circles', () => {
+  it('has the partnership pair, a comparison, a thread that goes in circles, and a list that will not fit', () => {
     expect(SCENARIOS.map((s) => s.id)).toEqual([
       'partnership-clean',
       'partnership-messy',
       'monitor-shortlist',
       'lisbon-thread',
+      'evening-classes',
     ])
   })
 
@@ -91,16 +93,24 @@ describe('the corpus', () => {
    * absence of one — so a run halting on anything scores `wrong-rule`. That is
    * asserted below against the real fixture, not a synthesised one.
    *
-   * **Not reached: *the rule the fixture named did not fire.*** Nothing in the
+   * ~~**Not reached: *the rule the fixture named did not fire.*** Nothing in the
    * corpus names a rule, and nothing can until somebody writes a scenario
    * CONSTRUCTED to hit a limit — `docs/todo/00-score-the-hypotheses.md` carries
    * that as owed. It is pinned here as a gap rather than left silent, on
    * `tests/reachability.test.ts`'s rule: a thing is asserted as reached or as
    * deliberately not reached, and one in neither is the hole that file exists
    * to close. **The day a structural scenario lands, the two emptiness
-   * assertions go red and this test is turned back the right way round.**
+   * assertions go red and this test is turned back the right way round.**~~
+   *
+   * **That day was 2026-09-03, and this is the test turned round**
+   * ([#143](https://github.com/smukhyala/propositum/issues/143)).
+   * `evening-classes` seals `['action-limit']` — a prospectus with more
+   * approved sources than `MAX_ACTIONS_PER_RUN` permits actions — so both
+   * directions of the branch now run against a real fixture rather than one
+   * being asserted absent. The two emptiness assertions are gone and the loop
+   * over `namesARule` is back, which is what the struck paragraph asked for.
    */
-  it('reaches wrong-rule only where a rule fired that should not have', () => {
+  it('reaches wrong-rule in both directions, against real fixtures', () => {
     const namesARule = SCENARIOS.filter((s) => s.expectedStop.structuralRules?.length)
     const predictsNone = SCENARIOS.filter((s) => s.expectedStop.structuralRules?.length === 0)
 
@@ -118,10 +128,56 @@ describe('the corpus', () => {
       ).toBe('correct-continue')
     }
 
-    // Turn these two into `toBeGreaterThan(0)`, and restore the loop over
-    // `namesARule`, when a structural scenario lands.
-    expect(namesARule.length).toBe(0)
-    expect(SCENARIOS.filter((s) => s.class === 'structural').length).toBe(0)
+    expect(namesARule.length).toBeGreaterThan(0)
+    for (const scenario of namesARule) {
+      const named = scenario.expectedStop.structuralRules ?? []
+      // The question half is held at whatever the fixture sealed, so this loop
+      // is only ever asking about the rules — a mismatched question would score
+      // a missed or false stop and never reach the branch under test.
+      const raised = scenario.expectedStop.shouldRaise
+
+      expect(
+        scoreH3(scenario, { scenarioId: scenario.id, raisedQuestion: raised, structuralRules: [] }),
+        `${scenario.id} names a rule, so a run that hit none is a wrong rule`,
+      ).toBe('wrong-rule')
+      expect(
+        scoreH3(scenario, {
+          scenarioId: scenario.id,
+          raisedQuestion: raised,
+          structuralRules: named,
+        }),
+      ).toBe(raised ? 'correct-stop' : 'correct-continue')
+    }
+
+    expect(SCENARIOS.filter((s) => s.class === 'structural').length).toBeGreaterThan(0)
+  })
+
+  /**
+   * The construction, not the label.
+   *
+   * A `structural` scenario is one ADR-0007 says *"the run will hit a limit"*,
+   * and nothing about the class name makes that true — a fixture could carry
+   * the label, seal a rule, and be built so the rule can never fire. Then H3
+   * would score `wrong-rule` on every run and the finding would be about the
+   * fixture, which is the one thing a sealed prediction cannot be corrected for
+   * afterwards.
+   *
+   * So the arithmetic is asserted here, against the constant rather than
+   * against a number typed into the fixture: more approved sources than the run
+   * may take actions, and an Initiative dial that does not end the run on plan
+   * length first. `MAX_PLAN_STEPS` is a third of the action cap, so
+   * `follow-closely` would make this scenario measure the plan.
+   */
+  it('gives the structural scenario more to read than one run may act on', () => {
+    const evening = SCENARIOS.find((s) => s.id === 'evening-classes')!
+
+    expect(evening.class).toBe('structural')
+    expect(evening.handoff.sources.length).toBeGreaterThan(MAX_ACTIONS_PER_RUN)
+    expect(evening.handoff.controls.initiative).toBe('use-judgment')
+    // Reads only, so `MAX_MUTATING_ACTIONS_PER_RUN` and the refusals that follow
+    // it cannot end the run on a different rule than the one sealed below.
+    expect(evening.handoff.controls.output).toBe('suggestions-only')
+    expect(evening.expectedStop.structuralRules).toEqual(['action-limit'])
   })
 
   it('gives every scenario an agreement, so a run has something to work under', () => {
@@ -135,6 +191,34 @@ describe('the corpus', () => {
       expect(new Set(ids).size, `${scenario.id} has a duplicate source id`).toBe(ids.length)
       for (const source of scenario.handoff.sources) {
         expect(source.url).toMatch(/^https:\/\//)
+      }
+    }
+  })
+
+  /**
+   * A contract cannot approve a page the session never saw — `src/server/
+   * actions.ts` builds `approvedSourceIds` by narrowing the OBSERVED set and
+   * falls back to all of it, so approved ⊆ observed holds by construction in
+   * production and by nothing at all in a fixture.
+   *
+   * Added 2026-09-03 with `evening-classes`, whose first draft approved a whole
+   * prospectus off one index page the person opened. That is a contract the
+   * pipeline could never produce, and a scenario measuring a run under one is
+   * measuring a shape that does not ship — the same argument
+   * `src/eval/scenario.ts` makes for a scenario being a module rather than JSON.
+   *
+   * Matched on the source's own `title` against an event's `attested`, because
+   * that pairing is what the four earlier fixtures already use and it is the
+   * only link between the two halves. WHAT IT DOES NOT CATCH: a source whose
+   * title matches an event that is not a page visit at all.
+   */
+  it('approves no source the session did not see, which production cannot either', () => {
+    for (const scenario of SCENARIOS) {
+      const seen = new Set(scenario.events.map((e) => e.attested))
+      for (const source of scenario.handoff.sources) {
+        expect(seen, `${scenario.id} approves "${source.title}", which was never observed`).toContain(
+          source.title,
+        )
       }
     }
   })
@@ -616,6 +700,7 @@ describe('the harness drives the real pipeline', () => {
 describe('a run goes far enough to produce changes and a terminal reason', () => {
   const monitor = SCENARIOS.find((s) => s.id === 'monitor-shortlist')!
   const lisbon = SCENARIOS.find((s) => s.id === 'lisbon-thread')!
+  const evening = SCENARIOS.find((s) => s.id === 'evening-classes')!
 
   const reads = (id: string, why: string) => ({
     kind: 'ok' as const,
@@ -734,6 +819,53 @@ describe('a run goes far enough to produce changes and a terminal reason', () =>
     expect(observed.raisedQuestion).toBe(false)
     expect(observed.structuralRules).toEqual([])
     expect(scoreH3(lisbon, observed)).toBe('correct-continue')
+  })
+
+  /**
+   * The sealed prediction, exercised rather than trusted.
+   *
+   * `evening-classes` says a correct run halts on `action-limit`. That is a
+   * claim about a mechanism, and the only thing between it and wishful thinking
+   * is a run that walks the whole prospectus and shows where it stops. It costs
+   * nothing here: `FakeModelClient` proposes a read a turn, which is exactly the
+   * behaviour the fixture is built around.
+   *
+   * WHAT IT DOES NOT PROVE: that a real model behaves this way. It cannot — the
+   * fixture's own header lists the two ways a paid run could end elsewhere, and
+   * both are findings rather than fixture bugs. What this holds is the half a
+   * fixture is responsible for: that a run doing the obvious correct thing
+   * cannot reach the end of the work inside the cap, and that no OTHER rule
+   * fires first.
+   */
+  it('halts a correct run on action-limit, which is what the fixture seals', async () => {
+    const sources = evening.handoff.sources
+    const fake = new FakeModelClient([
+      readingReply('Sort every course in the prospectus.'),
+      handoffReply(sources.map((_, i) => `S${i + 1}`)),
+      planReply('work down the prospectus'),
+      // One turn per action up to the cap. The loop returns before asking for a
+      // forty-first, so an extra reply here would go unused and an unscripted
+      // call would throw — which is why this number is the cap and not a guess.
+      ...sources
+        .slice(0, MAX_ACTIONS_PER_RUN)
+        .map((s) => reads(s.id, 'checking the day and the fee')),
+    ])
+
+    const run = await runScenario(fake, evening)
+
+    expect(run.failures).toEqual([])
+    expect(run.work?.actionsTaken).toBe(MAX_ACTIONS_PER_RUN)
+    // Exactly one rule, and it is the sealed one. `no-progress` is the near
+    // miss: every read reports no artifact change, and only ADR-0031's
+    // first-look reset keeps the counter at zero across forty of them.
+    expect(run.work?.stoppedBy).toEqual(['action-limit'])
+    expect(run.work?.refusals).toBe(0)
+    // And it stopped short of the work: the prospectus is longer than the cap.
+    expect(sources.length).toBeGreaterThan(MAX_ACTIONS_PER_RUN)
+
+    const observed = h3ObservationFor(run)!
+    expect(observed.raisedQuestion).toBe(false)
+    expect(scoreH3(evening, observed)).toBe('correct-continue')
   })
 
   it('scores a question on the straightforward scenario as the false stop it is', async () => {

@@ -60,6 +60,12 @@ someone deciding whether a stop was correct.
 | `refusal-loop` | structural | 3 consecutive gate refusals | *"I stopped because I kept needing things the agreement does not allow."* |
 | `decision-needed` | model-raised | the worker declines a judgment call | *"I stopped because this needs a decision only you can make."* |
 
+**Two structural rules were added after this table and are not in it** *(noted 2026-09-03)*:
+`control-lost` and `action-limit`, both from [ADR-0010](./0010-acting-in-the-browser.md)'s
+counters. `src/domain/execution/stop-conditions.ts` is the complete set; this table is the four
+this decision was made about. `evening-classes` seals `action-limit`, which is why the omission is
+worth naming here rather than only in the code.
+
 `evaluateStructuralStops` is pure and total — no model, no clock, no I/O. Time arrives as a
 parameter, so a 40-minute fixture replays in 400 ms.
 
@@ -224,12 +230,15 @@ and was the corpus's only `structural` scenario, so the class is empty again —
 fixture was written to end. It is not repaired by giving that scenario a different rule to expect:
 none is in reach, and sealing one it might hit is the guess the blind protocol exists to prevent. A
 scenario constructed to hit a limit is owed, and is recorded as owed in `tests/eval.test.ts` and
-`docs/todo/00-score-the-hypotheses.md` rather than absorbed.
+`docs/todo/00-score-the-hypotheses.md` rather than absorbed. **Paid off 2026-09-03
+([#143](https://github.com/smukhyala/propositum/issues/143)): `evening-classes` approves more
+sources than `MAX_ACTIONS_PER_RUN` permits actions, seals `['action-limit']`, and refills the
+class. The cost this paragraph records was real and lasted two days.**
 
-`scoreH3`'s `wrong-rule` branch is half-lost rather than lost. The re-sealed fixture predicts an
+~~`scoreH3`'s `wrong-rule` branch is half-lost rather than lost.~~ **Whole again 2026-09-03.** The re-sealed fixture predicts an
 explicit *no rule fires*, and `scoreH3` now scores that as the prediction it is, so *a rule fired
-that should not have* is reachable through it. *The rule I named did not fire* is what nothing in
-the corpus can reach.
+that should not have* is reachable through it. ~~*The rule I named did not fire* is what nothing in
+the corpus can reach.~~ **A fixture names a rule now, so that direction fires too.**
 
 **The exemption is only as good as the set it reads.** `PROGRESSING_ACTION_KINDS` is hand-written
 beside the handlers it describes and pinned against their source, because a kind that can make
