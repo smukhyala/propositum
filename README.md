@@ -140,7 +140,7 @@ scenarios expect a stop — so the false-stop half of H3 has nothing to score ag
 **Struck 2026-08-20, by the harness that landed the same day.** Three claims in one sentence, and
 the corpus moved under all three. A run now goes reading → handoff → plan → the worker loop → a
 changeset, and `scripts/eval.ts` calls `scoreH3` on every driven run. ~~The corpus is four scenarios,
-not two.~~ **Five since 2026-09-03; `src/eval/index.ts` is what knows how many.** `monitor-shortlist` and `lisbon-thread` seal `shouldRaise: false`, which is exactly the
+not two.~~ **Six since 2026-09-03; `src/eval/index.ts` is what knows how many.** `monitor-shortlist` and `lisbon-thread` seal `shouldRaise: false`, which is exactly the
 input `scoreH3`'s `false-stop` arm needs, and `tests/eval.test.ts` asserts that outcome against the
 real fixture. [`docs/EVALUATION.md`](./docs/EVALUATION.md) was corrected by the same workstream and
 this line was not — one claim in two places, one of which nothing checks, which is the failure
@@ -154,8 +154,9 @@ person after a run, because a model judge shares the generator's blind spots. A 
 an H2 *rate* — a rate needs verdicts, a verdict is what a person did to real work, and a fixture
 accepts nothing; `renderH2FromRuns` reports the denominator and says the numerator is missing, and
 the rate is read off the database by `npm run eval -- --report` and nowhere else. `budget-exhausted`
-is unreachable because the drive freezes the clock, and ADR-0007's `information-missing` class still
-has no scenario.
+is unreachable because the drive freezes the clock, ~~and ADR-0007's `information-missing` class still
+has no scenario~~ **and ADR-0007's four scenario classes all have one since 2026-09-03 —
+`topsoil-order` closed the last of them, and it is sealed and unscored**.
 
 Work is tracked on the [wayfinder map](https://github.com/smukhyala/propositum/issues/1).
 
