@@ -52,6 +52,7 @@ import { Timeline } from '@/ui/timeline'
 import type { TimelineEvent } from '@/ui/timeline'
 import {
   approveSource,
+  bringInPage,
   createDocument,
   endSession,
   refileSession,
@@ -222,6 +223,26 @@ export default async function ProjectPage({
     )
     if (!result.ok) redirect(`${here}?problem=${encodeURIComponent(result.problem.message)}`)
     redirect(here)
+  }
+
+  /**
+   * A page from a source this project already approved — ADR-0032.
+   *
+   * The only server action on this screen that RETURNS rather than redirects,
+   * and the reason is what it is for: the text has to land in the box the
+   * person is looking at, unsaved, so they read it before Propositum stores
+   * anything. A redirect would mean it had been stored, which is the thing the
+   * ADR refuses.
+   *
+   * The project id is bound here and is never a parameter the client sends.
+   * Which sources are approved is a fact about this project, and a screen that
+   * could name a different one would be a screen that could borrow somebody
+   * else's allowlist.
+   */
+  async function bringIn(address: string) {
+    'use server'
+
+    return bringInPage(projectId, address)
   }
 
   async function editDocument(formData: FormData) {
@@ -657,7 +678,7 @@ export default async function ProjectPage({
               title="There is no document in this project."
               next="Paste in what you are working on, or open a Markdown or text file. Propositum works on your words — it never starts from a blank page, and it never reads a file you did not hand it."
             />
-            <DocumentDraft action={pasteDocument} />
+            <DocumentDraft action={pasteDocument} bringIn={bringIn} />
           </>
         ) : (
           <>
@@ -689,6 +710,7 @@ export default async function ProjectPage({
               saved={base?.content ?? ''}
               ordinal={base?.ordinal ?? 0}
               action={editDocument}
+              bringIn={bringIn}
             />
           </>
         )}

@@ -38,9 +38,28 @@
  * the export helpers are pure and tested directly. The by-hand step in
  * `docs/todo/03-document-loop.md` is what checks that a real file arrives.
  *
- * **It says nothing about URL import**, which is not built and needs an ADR
+ * ~~**It says nothing about URL import**, which is not built and needs an ADR
  * before it is: text fetched from the network is untrusted in a way a file a
- * person chose is not.
+ * person chose is not.~~
+ *
+ * **Struck 2026-09-03 — [ADR-0032](../docs/adr/0032-a-page-from-a-source-already-approved.md)
+ * is that ADR, and a page from an approved source is built.** The premise the
+ * struck sentence states is kept and is why the import fetches nothing until
+ * the address has matched one of the project's own `ApprovedSource` rows.
+ * `tests/page-import.test.ts` holds that half. What is added HERE is the half
+ * this file already owned: **the absence of an upload endpoint survives**, and
+ * the component's only way to the network is one named server action rather
+ * than a `fetch` of its own.
+ *
+ * ── One correction this file owed itself ─────────────────────────────────
+ *
+ * *"Nothing in the component reaches the network"* was the honest name for the
+ * assertion when a file was the only way in, and it is not now: a server action
+ * is a network call, made by React rather than by this component. So the
+ * assertion is renamed to the property it actually holds — no `fetch`, no XHR
+ * and no `sendBeacon` **of the component's own**, so everything leaving the
+ * page goes through the form or through a server action the screen passed in.
+ * The old name would have gone on passing while meaning something weaker.
  */
 
 import { describe, expect, it } from 'vitest'
@@ -54,15 +73,24 @@ import {
   DocumentDraft,
   DocumentWorkbench,
   IMPORT_LIMIT_BYTES,
+  appended,
   countWords,
   fileNameFor,
 } from '../src/ui/document'
+import type { BringIn } from '../src/ui/document'
+import { IMPORT_BUDGET_CHARS } from '../src/model/untrusted'
 import { normalise } from '../src/domain/document/normalise'
 
 const repo = fileURLToPath(new URL('..', import.meta.url))
 const read = (relative: string) => readFileSync(join(repo, relative), 'utf8')
 
-const draft = () => renderToStaticMarkup(createElement(DocumentDraft, { action: () => undefined }))
+/** Never called: `renderToStaticMarkup` runs one render and presses nothing. */
+const neverPressed: BringIn = async () => ({ ok: false, problem: { message: 'not pressed' } })
+
+const draft = () =>
+  renderToStaticMarkup(
+    createElement(DocumentDraft, { action: () => undefined, bringIn: neverPressed }),
+  )
 const workbench = (over: { saved?: string; ordinal?: number } = {}) =>
   renderToStaticMarkup(
     createElement(DocumentWorkbench, {
@@ -71,6 +99,7 @@ const workbench = (over: { saved?: string; ordinal?: number } = {}) =>
       saved: 'A first sentence.\nA second one.\n',
       ordinal: 3,
       action: () => undefined,
+      bringIn: neverPressed,
       ...over,
     }),
   )
@@ -126,15 +155,62 @@ describe('a file goes into the box a person is looking at, and nowhere else', ()
     }
   })
 
-  it('nothing in the component reaches the network', () => {
-    // If the file could be posted somewhere directly, everything above is
-    // decoration. `fetch`, XHR and `navigator.sendBeacon` are the three ways
-    // out of a page that do not go through the form.
+  it('the component opens no channel of its own to the network', () => {
+    // ~~"nothing in the component reaches the network"~~ **renamed 2026-09-03,
+    // ADR-0032.** A page import IS a network call; it is made by React, on the
+    // component's behalf, through a server action the screen passed in. The
+    // property this assertion actually holds — and the one worth holding — is
+    // that the component opens no channel of its own. `fetch`, XHR and
+    // `navigator.sendBeacon` are the three ways out of a page that go neither
+    // through the form nor through an action the screen chose.
     const source = read('src/ui/document.tsx')
 
     expect(source).not.toMatch(/\bfetch\s*\(/)
     expect(source).not.toMatch(/XMLHttpRequest/)
     expect(source).not.toMatch(/sendBeacon/)
+  })
+
+  it('a page comes in through a prop the screen supplies, never an address the component holds', () => {
+    /**
+     * The structural half of ADR-0032 §1 as this file can see it: the component
+     * is handed `(address) => result` and has no idea which project it is in.
+     * A component that knew a project id could ask for a different project's
+     * allowlist; a component that held a host could ask for a host nobody
+     * approved. It holds neither.
+     */
+    const source = read('src/ui/document.tsx')
+
+    expect(source, 'the import prop is gone — the control has some other way in').toContain(
+      'bringIn',
+    )
+    expect(source, 'the component now knows a project id').not.toMatch(/\bprojectId\b/)
+  })
+
+  it('the import control cannot approve a source', () => {
+    // ADR-0032 §1: approving is the form higher up the screen, mirroring a
+    // Chrome host grant. A control that could add an origin would make the
+    // allowlist something the import widens on its way past.
+    const source = read('src/ui/document.tsx')
+
+    for (const forbidden of ['approveSource', 'originPattern', 'allowThisOnce', 'addSource']) {
+      expect(source, `${forbidden} reached the document editor`).not.toContain(forbidden)
+    }
+  })
+
+  it('still has no upload route after the page import landed', () => {
+    // Restated rather than assumed. ADR-0032 adds a way IN and adds no
+    // endpoint: the server action returns text to the box, and the box is
+    // submitted by the form that already existed.
+    const actions = read('src/server/actions.ts')
+    const bringIn = actions.slice(actions.indexOf('export async function bringInPage'))
+
+    expect(bringIn.slice(0, 2000), 'the import writes a version of its own').not.toContain(
+      'addVersion',
+    )
+    expect(bringIn.slice(0, 2000), 'the import creates a document of its own').not.toContain(
+      'documents.create',
+    )
+    expect(bringIn.slice(0, 2000), 'the import appends to a ledger').not.toContain('ledger.')
   })
 
   it('there is no upload route for one to appear beside', () => {
@@ -179,6 +255,19 @@ describe('a file too big is refused rather than truncated', () => {
     // the three possible behaviours, and it is the one that happens when a cap
     // is a magic number inside a `slice`.
     expect(IMPORT_LIMIT_BYTES).toBe(200_000)
+  })
+
+  it('a page and a file are refused at the same size', () => {
+    /**
+     * ADR-0032 §3: a document arriving from a host and a document arriving from
+     * a disk are one object and should not have two caps. The two constants
+     * live in different layers — one is the browser's refusal, one is the
+     * datamark door's budget — and nothing but this line makes them agree.
+     *
+     * If this goes red, one of the two moved and the other did not, and a
+     * person can now bring in through one door what the other refuses.
+     */
+    expect(IMPORT_BUDGET_CHARS).toBe(IMPORT_LIMIT_BYTES)
   })
 
   it('the component refuses on size before it reads anything', () => {
@@ -307,6 +396,28 @@ describe('a document survives going out and coming back', () => {
     // The single likeliest difference between a paste and a file, and the one
     // that would otherwise mint a spurious version on the first save.
     expect(normalise(ORIGINAL.replace(/\n/g, '\r\n'))).toBe(normalise(ORIGINAL))
+  })
+})
+
+describe('a page lands under what is already in the box', () => {
+  /**
+   * The one behaviour of the import that can destroy work, pinned as the
+   * absence of that destruction. Nothing in the box is saved — that is the
+   * whole point of landing there first — so a replacement would take words
+   * away with no version to get them back from.
+   */
+  it('appends after a blank line when there is already text', () => {
+    expect(appended('What we agreed.', 'From the page.')).toBe('What we agreed.\n\nFrom the page.')
+  })
+
+  it('sets the box when it is empty, rather than starting with a blank line', () => {
+    expect(appended('', 'From the page.')).toBe('From the page.')
+    expect(appended('   \n\n', 'From the page.')).toBe('From the page.')
+  })
+
+  it('keeps every word that was already there', () => {
+    const before = '# Heading\n\nA sentence somebody typed.'
+    expect(appended(before, 'Fetched.')).toContain(before)
   })
 })
 

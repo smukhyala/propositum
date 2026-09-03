@@ -59,10 +59,20 @@
  * different feature wearing this one's name. What changed is the face, the
  * measure and the leading: it now reads like prose, because it is prose.
  *
- * **Not `.docx`, and not a URL.** The first is a dependency nobody has asked
+ * ~~**Not `.docx`, and not a URL.** The first is a dependency nobody has asked
  * for. The second is a capability rather than a convenience — text fetched from
  * the network is untrusted in a way a file a person chose is not — and it needs
- * its own ADR before it needs a control.
+ * its own ADR before it needs a control.~~
+ *
+ * **Half struck 2026-09-03 — [ADR-0032](../../docs/adr/0032-a-page-from-a-source-already-approved.md).**
+ * `.docx` is still absent and still a dependency nobody has asked for. A page
+ * from a host is now a control, because the ADR the sentence demanded exists.
+ * The premise the struck text states is the one the ADR keeps: fetched bytes
+ * are not a file a person chose, so the address is matched against the
+ * project's own approved sources before anything is requested, the text crosses
+ * `datamark()` on the way back, and it lands **in the box** — nothing is stored
+ * until the person presses the same save button a paste always used. The
+ * control cannot approve a source, and there is no field on it that could.
  *
  * **Not an autosave.** Saving is a button, because every save mints a version
  * and a run pins the one it started against. A keystroke is not a decision.
@@ -97,6 +107,12 @@ const CSS = `
 
 .dc-said { margin: 0; font-size: 0.8125rem; color: var(--muted); min-height: 1.2rem; }
 .dc-said[data-trouble="true"] { color: var(--attention); }
+
+/* The address bar for a page coming in. Full width under the controls rather
+   than beside them, because a web address does not fit in a button-sized box
+   and a field a person has to scroll inside is a field they cannot check. */
+.dc-bring { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; }
+.dc-bring input { flex: 1 1 18rem; font: inherit; font-size: 0.8125rem; padding: 0.35rem 0.5rem; border: 1px solid var(--rule); background: var(--ground); color: var(--ink); border-radius: 3px; }
 `
 
 /**
@@ -112,6 +128,19 @@ export const IMPORT_LIMIT_BYTES = 200_000
  *  budget's unit, and reusing it here would imply the two are related. */
 export function countWords(content: string): number {
   return content.split(/\s+/).filter((word) => word.length > 0).length
+}
+
+/**
+ * Where a brought-in page goes in a box that may already hold work.
+ *
+ * Appended after a blank line, never a replacement. The box is not saved yet —
+ * that is the whole point of landing here first — so swapping its contents for
+ * a fetched page would destroy work with no version to go back to. On an empty
+ * box appending is setting, which is the ordinary case.
+ */
+export function appended(existing: string, brought: string): string {
+  const kept = existing.replace(/\s+$/, '')
+  return kept === '' ? brought : `${kept}\n\n${brought}`
 }
 
 /** What the file will be called when it lands in somebody's downloads. */
@@ -182,11 +211,128 @@ function PickFile({ onText, onTrouble, label }: PickProps) {
   )
 }
 
+/* ── a page from a source already approved ───────────────────────────────── */
+
+/**
+ * What the server action hands back, described structurally.
+ *
+ * Deliberately NOT imported from `src/server/actions.ts`. That module is
+ * `'use server'`, and a client component reaching into it for a type is one
+ * refactor away from reaching into it for a value. Structural compatibility is
+ * all React needs across the boundary, and writing the shape here says exactly
+ * which fields this screen may read — the raw text is not among them, because
+ * there is no arm of `BroughtInPage` that carries it.
+ */
+export type BroughtIn =
+  | {
+      readonly ok: true
+      readonly value: {
+        readonly title: string
+        readonly url: string
+        readonly sourceLabel: string
+        readonly text: string
+        readonly hidden: boolean
+      }
+    }
+  | { readonly ok: false; readonly problem: { readonly message: string } }
+
+/** A page comes in through a server action, and the component holds no address
+ *  of its own. `(address) => result`, wrapped by the screen. */
+export type BringIn = (address: string) => Promise<BroughtIn>
+
+interface BringInProps {
+  readonly bringIn: BringIn
+  readonly onText: (text: string) => void
+  readonly onTrouble: (said: string, bad: boolean) => void
+}
+
+/**
+ * Bring in a page from a site the person already approved — ADR-0032.
+ *
+ * ── Why the text is APPENDED and never replaces the box ──────────────────
+ *
+ * `appended()` above holds the reasoning and the two screens share it: the box
+ * may already hold work, nothing is saved yet, and a control that swapped its
+ * contents for a fetched page would destroy that on one press with no version
+ * to go back to.
+ *
+ * ── Why the button and not the Enter key submits ─────────────────────────
+ *
+ * This field sits inside the document's own form, so Enter would submit that
+ * form and save the document with the address never fetched. The keydown
+ * handler turns Enter into the import instead, which is what a person means.
+ *
+ * ── What this cannot do ──────────────────────────────────────────────────
+ *
+ * Approve anything. There is no field here for a site, no "allow this once",
+ * and no path from a refusal to a grant — a source is approved by the form
+ * higher up the same screen, which mirrors a Chrome host permission. The
+ * refusal says so and stops.
+ */
+function BringInPage({ bringIn, onText, onTrouble }: BringInProps) {
+  const [address, setAddress] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  const go = async () => {
+    if (busy || address.trim() === '') return
+    setBusy(true)
+    onTrouble('Reading that page…', false)
+    try {
+      const result = await bringIn(address)
+      if (!result.ok) {
+        onTrouble(result.problem.message, true)
+        return
+      }
+      const { title, sourceLabel, text, hidden } = result.value
+      onText(text)
+      setAddress('')
+      // The hidden-character warning is the one sentence a person genuinely
+      // needs before they save: benign article text does not contain zero-width
+      // joiners, and a page that does was written to be read two ways.
+      onTrouble(
+        hidden
+          ? `Brought in ${title || 'that page'} from ${sourceLabel}. It contained characters that hide text from a reader — they were removed, and the rest is worth checking before you save.`
+          : `Brought in ${title || 'that page'} from ${sourceLabel}. Nothing is saved until you press the button below.`,
+        hidden,
+      )
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="dc-bring">
+      <input
+        type="url"
+        inputMode="url"
+        aria-label="A web address on a site you approved"
+        placeholder="https://northwind.example.com/partners"
+        value={address}
+        disabled={busy}
+        onChange={(event) => setAddress(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key !== 'Enter') return
+          event.preventDefault()
+          void go()
+        }}
+      />
+      <button className="dc-btn" type="button" disabled={busy} onClick={() => void go()}>
+        {busy ? 'Reading…' : 'Bring in a page'}
+      </button>
+    </div>
+  )
+}
+
 /* ── the first document ──────────────────────────────────────────────────── */
 
 export interface DocumentDraftProps {
   /** `createDocument`, wrapped by the screen. Takes `title` and `content`. */
   readonly action: (formData: FormData) => void | Promise<void>
+  /** `bringInPage`, wrapped by the screen. Required rather than optional: a
+   *  screen that renders this form has a project, and a project is what decides
+   *  which sources are approved. An optional prop would let a screen show the
+   *  editor with the control quietly missing. */
+  readonly bringIn: BringIn
 }
 
 /**
@@ -198,7 +344,7 @@ export interface DocumentDraftProps {
  * export. One component switching on null would carry both sets of controls and
  * hide half of them.
  */
-export function DocumentDraft({ action }: DocumentDraftProps) {
+export function DocumentDraft({ action, bringIn }: DocumentDraftProps) {
   const [text, setText] = useState('')
   const [said, setSaid] = useState('')
   const [trouble, setTrouble] = useState(false)
@@ -234,6 +380,11 @@ export function DocumentDraft({ action }: DocumentDraftProps) {
             />
           </span>
         </div>
+        <BringInPage
+          bringIn={bringIn}
+          onText={(brought) => setText((was) => appended(was, brought))}
+          onTrouble={note}
+        />
         <textarea
           className="pj-input dc-text"
           name="content"
@@ -251,11 +402,12 @@ export function DocumentDraft({ action }: DocumentDraftProps) {
         Save it
       </button>
       <p className="pj-hint">
-        Markdown, pasted or opened from a <code>.md</code> or <code>.txt</code> file — a file goes
-        into the box above first, so you read it before Propositum does. It is laid out one sentence
-        per line when it saves, so a change can point at the sentence it changed; no words are
-        altered. Every save keeps the previous version, and Propositum always works against the
-        version it pinned.
+        Markdown, pasted, opened from a <code>.md</code> or <code>.txt</code> file, or brought in
+        from a page on a site you approved — all three go into the box above first, so you read them
+        before Propositum does. A page is only ever fetched from a source you already approved, and
+        Propositum runs none of its code. It is laid out one sentence per line when it saves, so a
+        change can point at the sentence it changed; no words are altered. Every save keeps the
+        previous version, and Propositum always works against the version it pinned.
       </p>
     </form>
   )
@@ -271,6 +423,8 @@ export interface DocumentWorkbenchProps {
   readonly ordinal: number
   /** `saveDocument`, wrapped by the screen. Takes `documentId` and `content`. */
   readonly action: (formData: FormData) => void | Promise<void>
+  /** `bringInPage`, wrapped by the screen. See `DocumentDraftProps`. */
+  readonly bringIn: BringIn
 }
 
 export function DocumentWorkbench({
@@ -279,6 +433,7 @@ export function DocumentWorkbench({
   saved,
   ordinal,
   action,
+  bringIn,
 }: DocumentWorkbenchProps) {
   const [text, setText] = useState(saved)
   const [said, setSaid] = useState('')
@@ -345,6 +500,11 @@ export function DocumentWorkbench({
           </span>
         </div>
 
+        <BringInPage
+          bringIn={bringIn}
+          onText={(brought) => setText((was) => appended(was, brought))}
+          onTrouble={note}
+        />
         <textarea
           className="pj-input dc-text"
           name="content"
@@ -362,9 +522,10 @@ export function DocumentWorkbench({
       </button>
       <p className="pj-hint">
         Copy and Download give you what is in the box, not the last version Propositum stored &mdash;
-        the line above says which of the two that is. Your edit always wins: Propositum never locks
-        your document, and if it is working against an older version, its changes are refused rather
-        than applied over the top of yours.
+        the line above says which of the two that is. A page brought in from an approved source
+        lands in the box too, under what is already there, and nothing is stored until you save.
+        Your edit always wins: Propositum never locks your document, and if it is working against an
+        older version, its changes are refused rather than applied over the top of yours.
       </p>
     </form>
   )
