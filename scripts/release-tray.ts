@@ -21,16 +21,26 @@
  *
  * ── What is assessed, and what is not ────────────────────────────────────
  *
- * On a notarised build, `stapler validate` and `spctl -a -t install` both run
- * against the .app AND the .dmg (the .dmg half since 2026-09-03 — before that
- * the image was stapled and validated but never assessed, so the one file a
- * stranger downloads was the one Gatekeeper was never asked about;
- * `tests/reachability.test.ts` pins both invocations now). What this still
- * does not simulate is a first launch on a clean machine: `spctl` here runs
- * on the build host, which already trusts the signing identity, and it says
- * nothing about the quarantine bit a browser download sets, the dialog
- * Gatekeeper shows, or whether the app then starts. Only a stranger's Mac
- * answers those, and todo 01's last Done-when bullet is that stranger.
+ * On a notarised build, `stapler validate` runs against the .app and the
+ * .dmg, and `spctl` assesses both (the .dmg half since 2026-09-03 — before
+ * that the image was stapled and validated but never assessed by this
+ * script, so the one file a stranger downloads was the one it never asked
+ * Gatekeeper about; `tests/reachability.test.ts` pins both invocations now).
+ * The two assessments are not the same policy. The .app is assessed with
+ * `-t install`, unchanged since 2026-08-28; `man spctl` names that the
+ * installer-package policy and knows no disk-image type at all. The .dmg is
+ * assessed with the form Apple documents for a disk image,
+ * `-t open --context context:primary-signature`. On this host both forms
+ * accepted two downloaded, notarised Developer ID images on 2026-09-03; the
+ * verdict on an image this script produced has not been observed, because
+ * the script needs signing identities to reach that line.
+ *
+ * What this still does not simulate is a first launch on a clean machine:
+ * `spctl` here runs on the build host, which already trusts the signing
+ * identity, and it says nothing about the quarantine bit a browser download
+ * sets, the dialog Gatekeeper shows, or whether the app then starts. Only a
+ * stranger's Mac answers those, and todo 01's last Done-when bullet is that
+ * stranger.
  *
  * ── The audit, and the assumption it is a tripwire for ───────────────────
  *
@@ -179,10 +189,15 @@ async function build() {
     execFileSync('xcrun', ['stapler', 'validate', app], { stdio: 'inherit' })
     execFileSync('xcrun', ['stapler', 'validate', dmg], { stdio: 'inherit' })
     execFileSync('spctl', ['-a', '-vvv', '-t', 'install', app], { stdio: 'inherit' })
-    // The .dmg is what a stranger downloads, and until 2026-09-03 it was
-    // stapled and validated but never assessed — `-t install` is the
-    // disk-image assessment type and it was aimed at the .app alone.
-    execFileSync('spctl', ['-a', '-vvv', '-t', 'install', dmg], { stdio: 'inherit' })
+    // The .dmg is what a stranger downloads, and until 2026-09-03 this script
+    // never assessed it. The form is the one Apple documents for a disk image;
+    // `-t install` above is the installer-package policy, not a disk-image
+    // one — the docblock says what has and has not been observed of either.
+    execFileSync(
+      'spctl',
+      ['-a', '-vvv', '-t', 'open', '--context', 'context:primary-signature', dmg],
+      { stdio: 'inherit' },
+    )
     say('notarised, stapled and Gatekeeper-accepted — the .app and the .dmg both')
   } else if (identity !== undefined) {
     say('signed but not notarised — the notary env (APPLE_API_ISSUER/KEY/KEY_PATH) is not set')

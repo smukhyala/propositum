@@ -2029,21 +2029,33 @@ describe('a document can be brought in and taken out', () => {
    * The match is on the invocation's argument list, comments stripped, so a
    * docblock mentioning the command cannot satisfy it. The variable names are
    * the script's own (`app`, `dmg`) — renaming one fails this and says so.
+   * The two artefacts get different policies and the regex pins each: the
+   * .app keeps `-t install` as it has since 2026-08-28, and the .dmg gets the
+   * form Apple documents for a disk image, `-t open --context
+   * context:primary-signature` — `man spctl` has no disk-image type, and the
+   * first draft of this test pinned `-t install` on the image on the belief
+   * that it was one.
    *
    * WHAT THIS DOES NOT COVER: what Gatekeeper answers. `spctl` needs a signed,
    * notarised artefact and a Mac to run on, and a first launch on a clean
-   * machine is not simulated by anything in this repository.
+   * machine is not simulated by anything in this repository. Nor does it say
+   * whether either policy is the one a downloaded image actually meets — it
+   * pins the invocation the script's docblock argues for, and no more.
    */
   it('the release script asks Gatekeeper about the disk image as well as the app', () => {
     const release = stripComments(readFileSync(join(repo, 'scripts/release-tray.ts'), 'utf8'))
-    const assessed = (artefact: string) =>
-      new RegExp(String.raw`'spctl',\s*\[\s*'-a',\s*'-vvv',\s*'-t',\s*'install',\s*${artefact}\s*\]`)
+    const assessed = (artefact: string, ...policy: string[]) => {
+      const args = ['-a', '-vvv', ...policy].map((a) => `'${a}'`).join(String.raw`,\s*`)
+      return new RegExp(String.raw`'spctl',\s*\[\s*${args},\s*${artefact}\s*\]`)
+    }
 
-    expect(release, 'the .app is no longer assessed by Gatekeeper').toMatch(assessed('app'))
+    expect(release, 'the .app is no longer assessed by Gatekeeper').toMatch(
+      assessed('app', '-t', 'install'),
+    )
     expect(
       release,
       'the .dmg is stapled and validated but never assessed by Gatekeeper — the artefact a stranger downloads is the one nothing asks about',
-    ).toMatch(assessed('dmg'))
+    ).toMatch(assessed('dmg', '-t', 'open', '--context', 'context:primary-signature'))
   })
 
   it('the project screen no longer carries an editor of its own', () => {
