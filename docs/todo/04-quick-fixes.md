@@ -271,17 +271,31 @@ from the greps at the top rather than from the code.
     `APIError` check in front of it takes those first. So the branch is now
     reachable by almost nothing.
 
-    Fixing it is one clause and it is deliberately not taken here, because the
+    ~~Fixing it is one clause and it is deliberately not taken here, because the
     consequence of taking it is a behaviour change nothing exercises: an
     oversized request would be filed `truncation`, `recoveryFor` would double the
     budget, and the doubled budget crosses `NON_STREAMING_MAX_TOKENS` and flips
     the call onto the streaming path — which is almost certainly what the comment
-    intended and is a recovery no test has ever watched happen.
+    intended and is a recovery no test has ever watched happen.~~ **Struck
+    2026-09-03 — the arithmetic was wrong and the clause is taken.**
+    `NON_STREAMING_MAX_TOKENS` is 21 333 (`src/model/client.ts`) and the largest
+    budget in `src/model/boundaries` is 8192 (`grep -rn maxTokens
+    src/model/boundaries/`), so the doubled budget stays under it: the retry runs
+    on the same transport, and nothing flips. `classifyThrow` now files the
+    message as `truncation`, and `tests/model-boundary.test.ts` asserts the
+    doubling against the constant for every boundary, pins the constant to the
+    installed SDK's `calculateNonstreamingTimeout`, and watches the retry happen
+    through `run` — two attempts, both `truncation`, no third.
 
-    It is close to unreachable in practice: `NON_STREAMING_MAX_TOKENS` is what
+    ~~It is close to unreachable in practice: `NON_STREAMING_MAX_TOKENS` is what
     keeps a boundary off that path, and the largest budget in `src/model/boundaries`
     is nowhere near it. That is the argument for it being small, not for it being
-    right.
+    right.~~ **Struck 2026-09-03 — true for the default model only.** The SDK
+    has a second, model-keyed cap, `MODEL_NONSTREAMING_TOKENS` in
+    `@anthropic-ai/sdk/src/internal/constants.ts`, that refuses the opus-4 family
+    at a budget under the constant, so a `PROPOSITUM_MODEL` in that family meets
+    this message on a doubled budget the constant calls safe. Nothing reads that
+    map; the docblock on `classifyThrow` says so.
 
 ---
 
