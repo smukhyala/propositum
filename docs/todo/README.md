@@ -48,22 +48,25 @@ or what would make the file **deletable** rather than done
 
 | | File | Rough size | Costs money |
 |---|---|---|---|
-| 0 | [`00-score-the-hypotheses.md`](./00-score-the-hypotheses.md) | ~~1–2 days~~ **done 2026-08-27** | ~~$1–$6 of API~~ $0.99 measured |
+| 0 | [`00-score-the-hypotheses.md`](./00-score-the-hypotheses.md) | ~~1–2 days~~ ~~**done 2026-08-27**~~ **re-opened 2026-09-03 — the corpus grew `evening-classes` and it is unscored; `npm run eval -- --report` exits 1 saying so (the file's own status)** | ~~$1–$6 of API~~ $0.99 measured, and $0.81 more on 2026-09-02 |
 | 1 | [`01-menu-bar-app.md`](./01-menu-bar-app.md) | ~~2–3 weeks, **narrowed**~~ ~~stage 1 done 2026-08-27; stage 2 (signing, bundling, release) open~~ **stage 2's code landed 2026-08-28 ([ADR-0027](../adr/0027-a-sealed-bundle-and-where-the-state-moves.md)); what stays open in the file: the credential steps and first tagged release, the stranger-timing metric, and the update feed (refused for now)** | ~~$99/yr Apple Developer~~ **enrolment approved, owner-reported** |
 | 2 | [`02-phone-thread.md`](./02-phone-thread.md) | **done 2026-08-26** | no |
-| 3 | [`03-document-loop.md`](./03-document-loop.md) | ~~~1 week~~ **import, export and the editor done 2026-08-26; items 2 and 5 left** | no |
-| 4 | [`04-quick-fixes.md`](./04-quick-fixes.md) | ~~half a day~~ ~~done 2026-08-26, except item 7~~ **and item 10, added 2026-08-27** | no |
+| 3 | [`03-document-loop.md`](./03-document-loop.md) | ~~~1 week~~ ~~import, export and the editor done 2026-08-26; items 2 and 5 left~~ **Struck 2026-09-03 — item 2 is built ([ADR-0032](../adr/0032-a-page-from-a-source-already-approved.md); `grep -rln 'importApprovedPage' src/` returns hits), so only item 5 is left** | no |
+| 4 | [`04-quick-fixes.md`](./04-quick-fixes.md) | ~~half a day~~ ~~done 2026-08-26, except item 7~~ ~~and item 10, added 2026-08-27~~ **Struck 2026-09-03 — item 10 is built ([ADR-0033](../adr/0033-a-late-tick-is-a-slept-machine.md); `grep -rln 'machine_slept' src/` returns hits) and item 11 opened the same day; the two left are 7 and 11** | no |
 | 5 | [`05-chrome-web-store.md`](./05-chrome-web-store.md) | 1 day + weeks of waiting | $5 one-off |
 | 6 | [`06-buying-things.md`](./06-buying-things.md) | ~~days, **decided not built**~~ **built 2026-09-01, except the live purchase** | what it buys |
 | 7 | [`07-off-the-browser.md`](./07-off-the-browser.md) | **the largest file here**, decided not built | via `01` |
 | 8 | [`08-one-time-codes.md`](./08-one-time-codes.md) | ~200 lines, **decided not built** | no |
-| 9 | [`09-onboarding.md`](./09-onboarding.md) | **unshaped** — written down 2026-08-27, the owner's design pass pending | no |
+| 9 | [`09-onboarding.md`](./09-onboarding.md) | ~~**unshaped** — written down 2026-08-27, the owner's design pass pending~~ **Struck 2026-09-03 — designed 2026-08-29, built 2026-08-30 ([#127](https://github.com/smukhyala/propositum/issues/127)); `ls src/app/first-run/page.tsx src/server/first-run.ts` returns both** | no |
 | 10 | [`10-the-mailbox.md`](./10-the-mailbox.md) | days, **decided not built** | no — until a build leaves the tester circle, then the CASA bill |
 | 11 | [`11-calendar-holds.md`](./11-calendar-holds.md) | ~a day, **decided not built**, and it opens with a stop-the-line check | no |
 
 **6, 7 and 8 were written 2026-08-26**, hours after the decisions that made them necessary and in the
-same pass that noticed this folder did not have them. All three are **decided, not built** — the
-argument is finished, the ADR is accepted, and `grep` finds nothing in `src/`. Each carries the
+same pass that noticed this folder did not have them. ~~All three are **decided, not built** — the
+argument is finished, the ADR is accepted, and `grep` finds nothing in `src/`.~~ **Struck 2026-09-03 —
+6 is built (2026-09-01, as its table row says): its own proving grep returns hits across `src/`, and
+`extension/src/cdp.js` now releases one covered non-`GET` under a ratified permit rather than refusing
+them all. 7 and 8 are still decided, not built — their proving greps return nothing.** Each carries the
 command that proves it. **10 and 11 joined the same class on 2026-09-01**, in the same change that
 accepted [ADR-0029](../adr/0029-the-mailbox-and-a-calendar-of-our-own.md) — the rule about writing
 the file beside the decision held this time.
@@ -106,7 +109,9 @@ and the H2 numerator, which needs a person doing real work and therefore needs 1
 
 **6, 7 and 8 come last, and the reason is not size.** Each one makes the product
 measurably less safe, and each one is currently held shut by a mechanism rather
-than a rule: `extension/src/cdp.js` refuses every non-`GET`, there is no native
+than a rule: ~~`extension/src/cdp.js` refuses every non-`GET`~~ *(spent 2026-09-01
+with 06 — it now releases one covered non-`GET` under a ratified permit,
+`extension/src/cdp.js:633`)*, there is no native
 binary to hold a TCC permission, and nothing reads a file on the disk. Those are
 the strongest guarantees this product has, and **0 is what decides whether they
 are worth spending.** Building any of them before H1, H2 and H3 have numbers is

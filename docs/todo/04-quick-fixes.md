@@ -2,9 +2,14 @@
 
 **Status:** ~~not started~~ ~~done 2026-08-26, except item 7, which is the owner's.~~ ~~Two left,
 2026-08-27: item 7, which is the owner's, and item 10, which was added the same day and is not a
-quick fix at all — it is here so nobody rediscovers why it cannot be one.~~ **Two left, 2026-09-03,
-and they are not the same two:** item 7, which is the owner's, and item 11, added the day the
-structured-output classification was fixed and left unfixed beside it on purpose. Item 10 was built
+quick fix at all — it is here so nobody rediscovers why it cannot be one.~~ ~~**Two left, 2026-09-03,
+and they are not the same two:** item 7, which is the owner's, and~~ ~~**One left, 2026-09-03, later
+still — item 7 was pinned the same day on the owner's say-so (`grep -L '"key"'
+extension/manifest.json` prints nothing; item 7 below). What is left is** item 11, added the day the
+structured-output classification was fixed and left unfixed beside it on purpose.~~ **None left,
+2026-09-03, the same afternoon — item 11 went with the SDK refusal classified as truncation
+(`grep -L 'Streaming is required' tests/model-boundary.test.ts` prints nothing; item 11 below), and
+the two closed in the same change.** Item 10 was built
 the same day [ADR-0033](../adr/0033-a-late-tick-is-a-slept-machine.md) was accepted — it was never a
 quick fix and it never became one; what changed is that the signal it said nothing supplied turned
 out to be in the sweeper's own timer.
@@ -52,7 +57,11 @@ grep -rn 'Hand this over\|Take over\|Handing over' --include='*.tsx' src/ui src/
 grep -rn 'this shift has no document\|Read the claims below' --include='*.tsx' src/ui
 
 # 5. the extension id is not pinned
-grep -c '"key"' extension/manifest.json
+#    NOTE (2026-09-03): this was `grep -c '"key"'`, which printed `0` while the
+#    job was open and prints `1` now that it is done — the sense flipped the day
+#    the key landed. -L prints the file when the key is ABSENT, so output here
+#    means unpinned and still to do, the same way item 6 reads.
+grep -L '"key"' extension/manifest.json
 
 # 6. the SDK's own refusal of an oversized non-streaming request is not caught
 #    (added 2026-09-03 — item 11). -L prints the file when the words are ABSENT,
@@ -71,13 +80,16 @@ struck form, so it is **done**; (3) and (4) still hit; (5) returns `0`.~~
 already there when this file was written, which the original note missed; (2)
 matches the struck form — done; (3) still hits `Hand this over` and `Handing
 over…`, which is now the *correct* answer rather than a job, and no longer hits
-`Take over`; (4) returns nothing; (5) still returns `0`, and that one is
-deliberate.
+`Take over`; (4) returns nothing; (5) ~~still returns `0`, and that one is
+deliberate~~ **prints nothing since 2026-09-03 — pinned, and the command flipped
+to `-L` so silence is still the finished answer.**
 
 **~~Seven left, not nine.~~ ~~One left, and it is item 7.~~ ~~Two left, 2026-08-27 — item 7 and item
-10.~~ ~~One left again, 2026-09-03 — item 7.~~ Two left, 2026-09-03, later the same day — item 7 and
-item 11. Item 10 was built and item 11 arrived in the same afternoon, from different work, and the
-count was right for about an hour.** Everything struck below
+10.~~ ~~One left again, 2026-09-03 — item 7.~~ ~~Two left, 2026-09-03, later the same day — item 7 and
+item 11.~~ ~~One left, 2026-09-03, later still — item 11; item 7 was pinned.~~ None left, 2026-09-03,
+the same afternoon — item 11 went with the SDK refusal classified. Item 10 was built and
+item 11 arrived in the same afternoon, from different work, and the count was right for about an
+hour, and then item 7 moved before the day was out.** Everything struck below
 is struck rather than deleted, because a checklist that silently loses its
 finished items reads as though they were never on it.
 
@@ -96,14 +108,17 @@ from the greps at the top rather than from the code.
 
 ## What you have to do yourself
 
-**Nothing external**, with one exception:
+**Nothing external**, ~~with one exception:~~ **and since 2026-09-03 no exception
+either — the one below was done. What it left behind that is not software is
+the private half of the key, which is [`05`](./05-chrome-web-store.md)'s now.**
 
-- **Pinning the extension `key`** means generating a keypair and pasting the
+- ~~**Pinning the extension `key`** means generating a keypair and pasting the
   public half into `extension/manifest.json`. That is a command, not an
   application — but decide it once and never change it, because the id is
   derived from it and `PROPOSITUM_EXTENSION_ID`, the loopback `Origin` check and
   anybody's existing install all follow it. `manifest.json`'s own comment says
-  *"REPLACE before any real install — this is a placeholder."*
+  *"REPLACE before any real install — this is a placeholder."*~~ **Done
+  2026-09-03 — item 7.**
 
 ---
 
@@ -180,14 +195,22 @@ from the greps at the top rather than from the code.
    exactly what the front door cannot serve. Deleting it would take the accept
    path off both surfaces.
 
-7. **Pin the extension `key`.** **Still open, deliberately, 2026-08-26 — this
-   one is the owner's.** It is a command rather than an application, but it
+7. ~~**Pin the extension `key`.**~~ ~~**Still open, deliberately, 2026-08-26 — this
+   one is the owner's.**~~ **Done 2026-09-03, on the owner's say-so, knowing it
+   orphans the development pairing.** The id is
+   `oeeehaokemppjoedlccgggmhlmhcdeln`; `tests/extension-permissions.test.ts`
+   derives it from the key in `manifest.json` and fails if either moves. The
+   private half is ~~the owner's, outside the repository~~ **not in the
+   repository, and not yet the owner's either — it was written to the generating
+   session's scratchpad, named in [`05`](./05-chrome-web-store.md), and moving it
+   somewhere durable is a job there** and is needed only to
+   pack a `.crx`. Re-pair once on `/first-run`. It is a command rather than an application, but it
    permanently fixes the extension id and therefore invalidates any install that
    already exists, including the working development pairing on the machine this
    was written on. Doing that on somebody's behalf is not a quick fix, it is a
    decision with a blast radius, so it is left named rather than made.
-   `manifest.json`'s own comment still says *"REPLACE before any real install —
-   this is a placeholder."*
+   ~~`manifest.json`'s own comment still says *"REPLACE before any real install —
+   this is a placeholder."*~~ That sentence is struck in the manifest too.
 
 8. ~~**Fix the ADR-0023 misattribution.**~~ **Done 2026-08-26, and there were
    two.** `docs/adr/0001-worker-runtime.md` makes the same mistake, and it
@@ -254,43 +277,66 @@ from the greps at the top rather than from the code.
     went quiet — rather than with a guess about why, which is the correct fail
     direction and is worth keeping if this is ever built.
 
-11. **`classifyThrow` does not catch the SDK's own refusal of an oversized
-    non-streaming request.** *(Added 2026-09-03, found while fixing the
-    structured-output classification beside it.)*
+11. ~~**`classifyThrow` does not catch the SDK's own refusal of an oversized
+    non-streaming request.**~~ **Done 2026-09-03** — the check below returns
+    nothing, `classifyThrow` in `src/model/anthropic.ts` files the message as
+    `truncation`, and `answered` in `src/server/compose-offer.ts` says why it
+    settles it. *(Added 2026-09-03, found while fixing the structured-output
+    classification beside it.)*
 
     ```bash
     grep -L 'Streaming is required' tests/model-boundary.test.ts
     ```
 
-    The branch reads `/max_tokens/i.test(message)` and its comment says it is
-    there for *"a local throw for an oversized non-streaming request"*. The SDK
+    ~~The branch reads `/max_tokens/i.test(message)` and its comment says it is
+    there for *"a local throw for an oversized non-streaming request"*.~~
+    **Struck 2026-09-03 — that comment is gone; the docblock on `classifyThrow`
+    now names both arms and which SDK message each is for.** The SDK
     raises that as a bare `AnthropicError` reading **"Streaming is required for
     operations that may take longer than 10 minutes"** — which names no field at
-    all, so the test has never matched it. What the regex does match is an API
+    all, so the test had never matched it. What the regex does match is an API
     error body that happens to mention `max_tokens`, and since 2026-09-03 the
-    `APIError` check in front of it takes those first. So the branch is now
-    reachable by almost nothing.
+    `APIError` check in front of it takes those first. So that branch is
+    reachable by almost nothing, and is kept for a version that words the
+    refusal that way.
 
-    Fixing it is one clause and it is deliberately not taken here, because the
+    ~~Fixing it is one clause and it is deliberately not taken here, because the
     consequence of taking it is a behaviour change nothing exercises: an
     oversized request would be filed `truncation`, `recoveryFor` would double the
     budget, and the doubled budget crosses `NON_STREAMING_MAX_TOKENS` and flips
     the call onto the streaming path — which is almost certainly what the comment
-    intended and is a recovery no test has ever watched happen.
+    intended and is a recovery no test has ever watched happen.~~ **Struck
+    2026-09-03 — the arithmetic was wrong and the clause is taken.**
+    `NON_STREAMING_MAX_TOKENS` is 21 333 (`src/model/client.ts`) and the largest
+    budget in `src/model/boundaries` is 8192 (`grep -rn maxTokens
+    src/model/boundaries/`), so the doubled budget stays under it: the retry runs
+    on the same transport, and nothing flips. `classifyThrow` now files the
+    message as `truncation`, and `tests/model-boundary.test.ts` asserts the
+    doubling against the constant for every boundary, pins the constant to the
+    installed SDK's `calculateNonstreamingTimeout`, and watches the retry happen
+    through `run` — two attempts, both `truncation`, no third.
 
-    It is close to unreachable in practice: `NON_STREAMING_MAX_TOKENS` is what
+    ~~It is close to unreachable in practice: `NON_STREAMING_MAX_TOKENS` is what
     keeps a boundary off that path, and the largest budget in `src/model/boundaries`
     is nowhere near it. That is the argument for it being small, not for it being
-    right.
+    right.~~ **Struck 2026-09-03 — true for the default model only.** The SDK
+    has a second, model-keyed cap, `MODEL_NONSTREAMING_TOKENS` in
+    `@anthropic-ai/sdk/src/internal/constants.ts`, that refuses the opus-4 family
+    at a budget under the constant, so a `PROPOSITUM_MODEL` in that family meets
+    this message on a doubled budget the constant calls safe. Nothing reads that
+    map; the docblock on `classifyThrow` says so.
 
 ---
 
 ## Done when
 
-- `npm test` and `npm run typecheck` are green. **They are: 77 files, and
-  `npm run build` too.**
-- The five commands under *Is this already done?* return what a finished repo
-  returns. **Four of five do; the fifth is item 7 and is the owner's.**
+- `npm test` and `npm run typecheck` are green. **They are: ~~77 files~~ *(struck 2026-09-03 — the
+  count had moved on and will again; `npm test`'s own summary line is the thing that knows it, and
+  both were green again today)*, and `npm run build` too.**
+- ~~The five commands~~ **The commands** *(the block has grown; struck 2026-09-03)* under *Is this
+  already done?* return what a finished repo returns. ~~**Four of five do; the fifth is item 7 and
+  is the owner's.**~~ **All of them do, 2026-09-03 — item 7's went quiet when the key was pinned and
+  item 11's when the SDK's refusal was classified, the same afternoon.**
 - ~~Each fix has a test that would have failed before it. `tests/canonical-terms.test.ts`
   and `tests/handover-honesty.test.ts` are the right homes for items 3, 4 and 5.~~
   **`tests/canonical-terms.test.ts` was the wrong file** — it is about typo
@@ -314,7 +360,8 @@ from the greps at the top rather than from the code.
 - **Responsive layout.** The app is a single desktop column with no header, no
   navigation and two padding breakpoints. That is a deliberate register, not an
   oversight, and changing it is a design decision rather than a fix.
-- **Item 7.** Named, argued, and left for the owner. See above.
+- ~~**Item 7.** Named, argued, and left for the owner. See above.~~ **Struck
+  2026-09-03 — pinned, on the owner's say-so. Item 7 above.**
 
 ---
 

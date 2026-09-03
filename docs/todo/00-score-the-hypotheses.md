@@ -1,10 +1,17 @@
 # 00 — Put a number on H1 and H3
 
-**Status:** ~~not started~~ **done 2026-08-27** — the corpus ran ($0.99, 33
+**Status:** ~~not started~~ ~~**done 2026-08-27**~~ — the corpus ran ($0.99, 33
 calls), the owner scored it, and the numbers are in: **H1 one pass in four, H3
 one missed stop, `baselineAtLeastAsGood` true on every scenario.**
-`docs/EVALUATION.md`'s *Second run* section is the record.
-**Blocked by:** nothing. This has been unblocked for nineteen days.
+`docs/EVALUATION.md`'s *Second run* section is the record. **Re-opened
+2026-09-03 — `evening-classes` is sealed in `references.lock.json` with no
+entry in `eval-scores.json`, so `npm run eval -- --report` prints
+`evening-classes  not scored — run --worksheet` and exits 1; the first two
+*Done when* rows below say the same.** A *Third run* on 2026-09-02 ($0.81, no
+baseline) read H3 PASS over three scenarios rather than four —
+`partnership-messy`'s reading boundary failed — and left H1 unscored
+(`docs/EVALUATION.md`, *Third run*).
+**Blocked by:** nothing. ~~This has been unblocked for nineteen days.~~ *(a hand-maintained count, frozen at 2026-08-27 and deleted 2026-09-03)*
 **Blocks:** every other file here, in the sense that a failing H1 makes them
 premature rather than impossible.
 
@@ -133,12 +140,14 @@ commands that say they cost money do.
    scored* and is deliberately distinct from `0`, which is a judgment —
    `--report` refuses to total a partial entry.
 
-5. **Answer `baselineAtLeastAsGood`.** It is `null` on both existing entries,
+5. **Answer `baselineAtLeastAsGood`.** ~~It is `null` on both existing entries,
    which means the single question the baseline exists to answer has never been
-   answered — despite the first run's own finding that *"The baseline is very
-   good — and on the messy scenario it may be better than the structured
-   reading."* If that repeats, it is the most important result in the project and
-   it belongs in the README the same day.
+   answered — despite the first run's own finding~~ **Struck 2026-09-03 — `true`
+   on all four entries since 2026-08-27 (`grep -c '"baselineAtLeastAsGood": true'
+   eval-scores.json` prints 4), which repeated the first run's finding** that
+   *"The baseline is very good — and on the messy scenario it may be better than
+   the structured reading."* If that repeats, it is the most important result in
+   the project and it belongs in the README the same day.
 
 6. **Read the report.**
    ```bash

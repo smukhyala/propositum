@@ -115,7 +115,17 @@ consulting `stop_reason`**, so a parse-first design reports "schema mismatch" fo
 > `stop_reason` is read first and Zod second, which is what this section asked
 > for in the first place. `classifyThrow` is the fallback for a throw that
 > arrives anyway, and it reads the whole `APIError` family as `transport`
-> structurally before testing any message.
+> structurally before testing any message. *(Added 2026-09-03: the SDK's own
+> local refusal of an oversized non-streaming request — "Streaming is required
+> for operations that may take longer than 10 minutes", a bare `AnthropicError`
+> naming no field — is `truncation` too, so it gets the one doubled retry below
+> rather than `transport`'s none. Every budget in `src/model/boundaries` doubled
+> stays under `NON_STREAMING_MAX_TOKENS`, so that retry runs on the same
+> transport; `tests/model-boundary.test.ts` holds both. The one consumer that
+> reads the word, `answered` in `src/server/compose-offer.ts`, settles it as it
+> settles a real truncation — a second attempt is the same local throw. What it
+> does not cover: a retry the SDK refuses again, which is filed `truncation` a
+> second time and ends there.)*
 >
 > **The table below is unchanged**, including `transport → none`: the SDK backs
 > off already, and stacking our own retries multiplies the delay and hides the
@@ -246,6 +256,9 @@ person authorized, and the ledger they _read_ must not list them.
 - Streaming is not a cost lever. It is required above `max_tokens ≈ 21,333`, where the SDK throws
   locally before any HTTP call, and it is a genuine liveness signal for an unattended run. Encoded
   as `NON_STREAMING_MAX_TOKENS` so a boundary raising its budget cannot silently become unrunnable.
+  *(Incomplete since noticed 2026-09-03: the same throw also fires under a per-model cap,
+  `MODEL_NONSTREAMING_TOKENS` in `@anthropic-ai/sdk/src/internal/constants.ts`, which the constant
+  does not encode and the default model is not subject to.)*
 - Untrusted content has a labelled slot in the prompt (`page text:`) and a system-prompt rule that
   it is evidence, never instruction. **Datamarking itself is [#18](https://github.com/smukhyala/propositum/issues/18).**
   The field exists so the boundary is ready rather than needing reshaping.

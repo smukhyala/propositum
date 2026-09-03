@@ -49,9 +49,13 @@ was stale. **This is the only structural decision in this file that matters:** t
 the MVP, and never paraphrases it.
 
 What is true today, and MVP.md is the authority on it: the slice runs end to end, and ~~**no hypothesis
-has a number yet.**~~ **numbered 2026-08-27 — H1 one pass in four, H3 a missed stop, the baseline at
+has a number yet.**~~ ~~**numbered 2026-08-27 — H1 one pass in four, H3 a missed stop, the baseline at
 least as good on every scenario (`docs/EVALUATION.md`, Second run). H2, the one that can kill the
-product, is still unmeasured.**
+product, is still unmeasured.**~~ **Struck 2026-09-03 — no longer the latest run. The Third run of
+2026-09-02 (`docs/EVALUATION.md`, Third run) reads H3 PASS over three scenarios with
+`partnership-messy` absent because its reading failed — the scenario that produced August's missed
+stop, so that is unmeasured rather than fixed; H1 unscored, no baseline, $0.81 as a floor. H2 is
+still unmeasured.**
 
 ---
 
@@ -92,13 +96,18 @@ permissions.** History can recommend a setting; it can never silently create one
 *"Richer permissions" is about what Propositum may **do**, not about what it may **watch** (added
 2026-08-17).* Widening delegation is this stage's subject. Widening observation is a separate
 decision taken separately, and ~~the only one taken so far is a refusal —
-[ADR-0012](./adr/0012-screen-capture-refused.md)~~ **there are now three, and two of them widen —
-corrected 2026-08-26.** [ADR-0025](./adr/0025-computer-use-beyond-the-browser.md) takes Screen
+[ADR-0012](./adr/0012-screen-capture-refused.md)~~ ~~**there are now three, and two of them widen —
+corrected 2026-08-26.**~~ **Struck 2026-09-03 — the count went stale within a week, so this file
+stops keeping one; the list below is the thing that knows.**
+[ADR-0025](./adr/0025-computer-use-beyond-the-browser.md) takes Screen
 Recording and reads the accessibility tree of every application on a ratified allowlist;
 [ADR-0026](./adr/0026-reading-a-one-time-code.md) takes Full Disk Access for one reader over
-`chat.db`. Neither is built as this is corrected. **The sentence below survives unchanged and is now
+`chat.db`. ~~Neither is built as this is corrected.~~ **And since 2026-09-01,
+[ADR-0029](./adr/0029-the-mailbox-and-a-calendar-of-our-own.md) takes `gmail.modify`, which reads the
+mailbox. None of them is built as of 2026-09-03 — `grep -rn 'approvedApplications\|gmail' src/`
+finds nothing.** **The sentence below survives unchanged and is now
 doing all the work**, which is why it is worth reading twice: history may recommend a setting, and it
-may never grant a view — none of the three came from history, and each is ratified per contract or
+may never grant a view — none of ~~the three~~ **them** came from history, and each is ratified per contract or
 granted once by a person in System Settings. The sentence above applies to sensors with no softening.
 
 ---

@@ -2017,6 +2017,47 @@ describe('a document can be brought in and taken out', () => {
     expect(scripts.scripts['tray:build']).toContain('release-tray')
   })
 
+  /**
+   * Gatekeeper is asked about the disk image, not only the app inside it.
+   *
+   * Until 2026-09-03 the script stapled the `.dmg`, ran `stapler validate` on
+   * it, and then aimed `spctl -a -t install` at the `.app` alone — so the one
+   * artefact a stranger downloads was the one thing the pipeline never asked
+   * Gatekeeper about, while todo 01's Done-when said both checks passed on the
+   * shipped `.dmg`. Both invocations stay; this pins the one that was missing.
+   *
+   * The match is on the invocation's argument list, comments stripped, so a
+   * docblock mentioning the command cannot satisfy it. The variable names are
+   * the script's own (`app`, `dmg`) — renaming one fails this and says so.
+   * The two artefacts get different policies and the regex pins each: the
+   * .app keeps `-t install` as it has since 2026-08-28, and the .dmg gets the
+   * form Apple documents for a disk image, `-t open --context
+   * context:primary-signature` — `man spctl` has no disk-image type, and the
+   * first draft of this test pinned `-t install` on the image on the belief
+   * that it was one.
+   *
+   * WHAT THIS DOES NOT COVER: what Gatekeeper answers. `spctl` needs a signed,
+   * notarised artefact and a Mac to run on, and a first launch on a clean
+   * machine is not simulated by anything in this repository. Nor does it say
+   * whether either policy is the one a downloaded image actually meets — it
+   * pins the invocation the script's docblock argues for, and no more.
+   */
+  it('the release script asks Gatekeeper about the disk image as well as the app', () => {
+    const release = stripComments(readFileSync(join(repo, 'scripts/release-tray.ts'), 'utf8'))
+    const assessed = (artefact: string, ...policy: string[]) => {
+      const args = ['-a', '-vvv', ...policy].map((a) => `'${a}'`).join(String.raw`,\s*`)
+      return new RegExp(String.raw`'spctl',\s*\[\s*${args},\s*${artefact}\s*\]`)
+    }
+
+    expect(release, 'the .app is no longer assessed by Gatekeeper').toMatch(
+      assessed('app', '-t', 'install'),
+    )
+    expect(
+      release,
+      'the .dmg is stapled and validated but never assessed by Gatekeeper — the artefact a stranger downloads is the one nothing asks about',
+    ).toMatch(assessed('dmg', '-t', 'open', '--context', 'context:primary-signature'))
+  })
+
   it('the project screen no longer carries an editor of its own', () => {
     // The half a caller check cannot see. Both components could be rendered
     // and a leftover `<textarea name="content">` in the page would still be
@@ -2030,14 +2071,22 @@ describe('a document can be brought in and taken out', () => {
   })
 })
 
-describe('the channel can speak, from two feeds and no others', () => {
+describe('the channel can speak, from the feeds named here and no others', () => {
   /**
-   * Two feeds, because the facts live in two processes.
+   * ~~Two feeds, because the facts live in two processes.~~
    *
    * A composed offer is in an in-memory map in the Next app process and ADR-0008
    * refuses to give it a row, so the worker cannot see one. Everything else is
-   * durable and the worker can. A third caller is a third place that decides
-   * when Propositum speaks, which is the thing Principle 13 says erodes first.
+   * durable and the worker can. ~~A third caller is a third place that decides
+   * when Propositum speaks, which is the thing Principle 13 says erodes first.~~
+   *
+   * **Struck 2026-09-03.** A third feed exists and is pinned below: the gap
+   * watch, in the app process again, because a silence lives in
+   * `captureStore()` and the worker cannot see that either. The rule that
+   * survives is the one that was always doing the work — a feed sits where its
+   * fact lives, and every feed goes through `src/server/thread.ts`. The title
+   * stopped counting them for the reason AGENTS.md gives: the list below is
+   * the thing that knows how long it is.
    */
   it('is sent from the orchestrator and from nowhere else', () => {
     for (const message of [
@@ -2052,6 +2101,30 @@ describe('the channel can speak, from two feeds and no others', () => {
         `${message} has a second caller — every message goes through src/server/thread.ts`,
       ).toEqual([join('src', 'server', 'thread.ts')])
     }
+  })
+
+  /**
+   * The gap feed has one caller, and it is the sweep.
+   *
+   * The inversion this file's deferred block exists to prevent, found the
+   * other way round: from 2026-08-26 to 2026-09-03 `sayCaptureGap` was
+   * exported, `captureGapMessage(` was asserted above as sent from
+   * `thread.ts` only, and nothing called `sayCaptureGap` — so the assertion
+   * above was green over a sentence that could never go. ADR-0021's table
+   * lists *"a CaptureGap while away"* as one of the five things the thread
+   * says; for eight days it was four.
+   *
+   * The caller is the gap watch and not the sweeper, because the sweeper is
+   * handed its dependencies and the watch is where the `AppContext` is.
+   * Whether the session is away is decided inside `sayCaptureGap`, which is
+   * why this pins the caller and `tests/thread-channel.test.ts` pins the
+   * saying.
+   */
+  it('says a gap from the gap watch and from nowhere else', () => {
+    expect(
+      callersOf('sayCaptureGap(', 'src/server/thread.ts'),
+      'sayCaptureGap lost its caller, or gained a second — a gap while away is either unsaid or decided in two places',
+    ).toEqual([join('src', 'server', 'gap-watch.ts')])
   })
 
   /**

@@ -20,7 +20,9 @@ grep -n 'the channel can speak' tests/reachability.test.ts
 
 The two assertions this file was written to close have **moved out of the
 deferred block** and now assert the opposite — that the channel speaks, from
-exactly two feeds and no others. `tests/reachability.test.ts` records the move
+~~exactly two feeds and no others~~ **the feeds that hold the facts and no
+others — three since 2026-09-03, when the gap feed was found exported and
+called by nothing (`grep -rn 'sayCaptureGap(' src/` is the count)**. `tests/reachability.test.ts` records the move
 in its own voice: *"These were in deferred, and asserted as deferred for two
 commits… They went red the way that block is supposed to."*
 
@@ -33,6 +35,7 @@ What shipped, and it is more than this file asked for:
 | Pairing UI, with the BotFather steps written out | ~~`src/app/welcome/page.tsx`~~ `src/app/first-run/page.tsx`, the phone card *(renamed 2026-08-30)* |
 | The loudness coupling | `sayOffer(` sits inside `newlyShown(` in the poll route, so a send and ADR-0015's count fire on **one gate** |
 | The disclosure | *"What goes through Telegram"* — that the sentences sit on Telegram's servers and are **not encrypted end to end** |
+| The gap while away — ADR-0021's fifth member | ~~`sayCaptureGap` in `src/server/thread.ts`~~ **Exported and called by nothing from 2026-08-26 to 2026-09-03**, while the message it renders was asserted as sent. Wired 2026-09-03 from the gap watch's tick; said once per shift, and only while the session is `away`. `tests/thread-channel.test.ts` holds what it says and `tests/reachability.test.ts` holds who may call it. |
 
 The refusal held too: `parseReply` still has no member a confirmation answer
 could become, so an irreversible action cannot be confirmed from a phone. That
@@ -58,8 +61,11 @@ Unchanged, and now written on the pairing screen rather than only here:
   already names this gap for offers; the channel inherits it. The offer rate
   counts how often Propositum spoke, not whether it should have.
 - **Telegram only.** A second provider is a second argument, not a second case
-  in a switch — and the one-transport test would go red, correctly, if somebody
-  tried.
+  in a switch — ~~and the one-transport test would go red, correctly, if somebody
+  tried.~~ **Struck 2026-09-03 — it would not:** `tests/reachability.test.ts`
+  (*keeps the provider behind one transport*) pins the string `api.telegram.org`
+  to `src/runtime/thread-channel.ts` and nothing else; a Signal transport holds
+  no such string, so a second file goes green.
 - **`docs/SECURITY_AND_PRIVACY.md` is now behind rather than ahead.** It
   disclosed the third egress before the code landed, which was the right order.
   Check the three-egress table reads as present tense.

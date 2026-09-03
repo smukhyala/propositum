@@ -9,9 +9,14 @@
  */
 
 import { describe, it, expect, afterEach } from 'vitest'
-import { AnthropicError, APIConnectionError, APIError } from '@anthropic-ai/sdk'
-import { classifyStopReason, recoveryFor } from '../src/model/client'
-import type { CallTelemetry, FailureKind } from '../src/model/client'
+import Anthropic, { AnthropicError, APIConnectionError, APIError } from '@anthropic-ai/sdk'
+import {
+  BOUNDARY_NAMES,
+  NON_STREAMING_MAX_TOKENS,
+  classifyStopReason,
+  recoveryFor,
+} from '../src/model/client'
+import type { CallTelemetry, FailureKind, ModelBoundary } from '../src/model/client'
 import { AnthropicModelClient, classifyThrow } from '../src/model/anthropic'
 import { FakeModelClient } from '../src/model/fake'
 import {
@@ -20,6 +25,13 @@ import {
   sessionReadingSchema,
 } from '../src/model/boundaries/session-reading'
 import type { PromptEvent } from '../src/model/boundaries/session-reading'
+import { handoffBoundary } from '../src/model/boundaries/handoff'
+import { offerBoundary } from '../src/model/boundaries/offer'
+import { planBoundary } from '../src/model/boundaries/plan'
+import { reviewBoundary } from '../src/model/boundaries/review'
+import { shiftReportBoundary } from '../src/model/boundaries/shift-report'
+import { subjectBoundary } from '../src/model/boundaries/subject'
+import { workerActionBoundary } from '../src/model/boundaries/worker-action'
 import { datamark } from '../src/model/untrusted'
 
 const events: PromptEvent[] = [
@@ -402,6 +414,21 @@ describe('classifying a throw out of the SDK', () => {
     )
   })
 
+  it('reads the SDK’s own refusal of an oversized non-streaming request as truncation', () => {
+    // The message the installed SDK actually raises, verbatim from
+    // `calculateNonstreamingTimeout` in `@anthropic-ai/sdk/src/client.ts`. It
+    // names no field, so the `max_tokens` arm above never matched it, and until
+    // 2026-09-03 it was filed `transport` — the one classification that grants
+    // no retry. Item 11 of `docs/todo/04-quick-fixes.md`.
+    const refused = new AnthropicError(
+      'Streaming is required for operations that may take longer than 10 minutes. ' +
+        'See https://github.com/anthropics/anthropic-sdk-typescript#long-requests for more details',
+    )
+
+    expect(classifyThrow(refused)).toBe('truncation')
+    expect(recoveryFor(classifyThrow(refused))).toBe('escalate-tokens')
+  })
+
   it('reads the SDK parser’s own throw as a shape failure, so the repair turn fires', () => {
     // What `partnership-messy` produced, and what was filed as `transport`.
     // The `cause:` in that log line is TEXT INSIDE THE MESSAGE — the SDK
@@ -421,5 +448,125 @@ describe('classifying a throw out of the SDK', () => {
   it('leaves anything else as transport, which grants no retry of ours', () => {
     expect(classifyThrow(new Error('something else entirely'))).toBe('transport')
     expect(classifyThrow('not an error at all')).toBe('transport')
+  })
+})
+
+/* ── the doubled budget, against the constants ──────────────────────────── */
+
+/**
+ * What `escalate-tokens` does to every budget in `src/model/boundaries`.
+ *
+ * The todo that deferred the arm above claimed the doubled budget "crosses
+ * `NON_STREAMING_MAX_TOKENS` and flips the call onto the streaming path". It
+ * does not: the largest budget doubled is still under the constant, so the
+ * retry `recoveryFor('truncation')` buys runs on the SAME transport as the
+ * attempt it retries. This is asserted against the boundaries and the constant
+ * rather than against a copied number, so a budget raised past half the
+ * threshold fails here and not at 2am.
+ *
+ * The constant itself is pinned to the installed SDK through the public
+ * `calculateNonstreamingTimeout`, which is the function that throws: one token
+ * over is refused, the constant itself is not.
+ *
+ * What this does NOT cover: the SDK's per-model cap, `MODEL_NONSTREAMING_TOKENS`
+ * in `@anthropic-ai/sdk/src/internal/constants.ts`, which refuses the opus-4
+ * family well under the constant. The default model is not in that map, and
+ * nothing here reads it — a `PROPOSITUM_MODEL` in that family can meet the
+ * refusal on a doubled budget this file calls safe.
+ */
+describe('the doubled budget stays on the non-streaming path', () => {
+  const someHandles: ReadonlySet<string> = new Set(['E1'])
+  const budgets: ReadonlyArray<ModelBoundary<unknown, unknown>> = [
+    sessionReadingBoundary(someHandles),
+    handoffBoundary(someHandles),
+    reviewBoundary(someHandles),
+    offerBoundary,
+    planBoundary,
+    subjectBoundary,
+    shiftReportBoundary,
+    workerActionBoundary,
+  ] as ReadonlyArray<ModelBoundary<unknown, unknown>>
+
+  it('names every boundary once', () => {
+    // A boundary added to `BOUNDARY_NAMES` without a line above would make the
+    // arithmetic below a statement about fewer budgets than exist. The closed
+    // set is the thing that knows how many there are; no count is kept here.
+    expect(new Set(budgets.map((b) => b.name)).size).toBe(budgets.length)
+    expect(budgets.map((b) => b.name).sort()).toEqual([...BOUNDARY_NAMES].sort())
+  })
+
+  it('doubles under NON_STREAMING_MAX_TOKENS for every boundary', () => {
+    expect(recoveryFor('truncation')).toBe('escalate-tokens')
+    for (const b of budgets) {
+      expect(b.maxTokens * 2, `${b.name} doubled`).toBeLessThanOrEqual(NON_STREAMING_MAX_TOKENS)
+    }
+  })
+
+  it('has NON_STREAMING_MAX_TOKENS pinned to the installed SDK’s threshold', () => {
+    const sdk = new Anthropic({ apiKey: 'not-a-real-key' })
+
+    expect(() => sdk.calculateNonstreamingTimeout(NON_STREAMING_MAX_TOKENS)).not.toThrow()
+    expect(() => sdk.calculateNonstreamingTimeout(NON_STREAMING_MAX_TOKENS + 1)).toThrow(
+      /Streaming is required/,
+    )
+  })
+})
+
+/* ── the retry, watched ─────────────────────────────────────────────────── */
+
+/**
+ * The escalation the arm above unlocks, seen through `run`.
+ *
+ * No real budget can reach the SDK's refusal: `attempt` flips to streaming
+ * above `NON_STREAMING_MAX_TOKENS` before the SDK sees the request, and the
+ * suite above says every doubled budget is under it. So the boundary here is
+ * contrived on purpose — `stream: false` said explicitly, which `attempt`
+ * honours over its own guard, and a budget one over the threshold. The SDK
+ * then refuses locally, before `fetch`, on both attempts.
+ *
+ * What is being watched is the loop: one attempt, one `truncation`, one
+ * doubled retry, one more `truncation`, no third. Before 2026-09-03 the same
+ * run recorded ONE `transport` failure and stopped. What this does NOT cover
+ * is a retry that succeeds — that needs the SDK's threshold to be the thing
+ * the doubling fixes, and here it is not, which is the honest shape of this
+ * recovery when the message is the cause.
+ */
+describe('the refusal, through the loop', () => {
+  const realFetch = globalThis.fetch
+
+  afterEach(() => {
+    globalThis.fetch = realFetch
+  })
+
+  it('retries once at double the budget, files both as truncation, and stops', async () => {
+    let fetches = 0
+    globalThis.fetch = (async () => {
+      fetches += 1
+      throw new Error('the SDK must refuse before any request is built')
+    }) as unknown as typeof globalThis.fetch
+
+    const seen: Array<{ t: CallTelemetry; f?: FailureKind }> = []
+    const client = new AnthropicModelClient({
+      apiKey: 'not-a-real-key',
+      onCall: (t, f) => seen.push({ t, ...(f === undefined ? {} : { f }) }),
+    })
+
+    const oversized: typeof boundary = {
+      ...boundary,
+      maxTokens: NON_STREAMING_MAX_TOKENS + 1,
+      stream: false,
+    }
+
+    const result = await client.run(oversized, { events, notes: [] })
+
+    expect(fetches).toBe(0)
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.failure).toBe('truncation')
+    expect(result.detail).toMatch(/Streaming is required/)
+
+    expect(seen.map((s) => s.f)).toEqual(['truncation', 'truncation'])
+    expect(seen.map((s) => s.t.repairTurns)).toEqual([0, 1])
+    expect(seen[0]?.t.inputTokens).toBeNull()
   })
 })

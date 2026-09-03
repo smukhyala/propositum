@@ -341,7 +341,8 @@ function PhoneCard({
           <Disclosure summary="What goes through Telegram">
             <p className="fr-note" style={{ marginTop: 0 }}>
               Sentences Propositum writes about your own work &mdash; what it thinks you are on, why
-              it stopped, what it needs from you. They sit on Telegram&rsquo;s servers and are not
+              it stopped, that it stopped seeing your work while you were away, what it needs from
+              you. They sit on Telegram&rsquo;s servers and are not
               encrypted end to end. The bot is yours: you made it, nobody else holds it, and
               unpairing deletes the token from this machine. Leave this card and nothing is sent
               anywhere.

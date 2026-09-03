@@ -47,9 +47,27 @@ export interface GapSweeperDeps {
    * sweep arrived late enough to prove one. Absent on every ordinary tick.
    */
   readonly suspension?: Suspension
+  /**
+   * Told which session a gap was just recorded for, once per pass — after the
+   * row is written, never before, so the phone is never told about a gap the
+   * ledger refused. Absent in a sweep with nowhere to say it.
+   *
+   * A callback rather than a transport, because this file is handed its
+   * dependencies and tested without a thread; whether the session is away, and
+   * whether anything is paired, are the callee's questions (`sayCaptureGap` in
+   * `./thread.ts`). It must not throw — the sweeper is under a timer — and the
+   * one caller swallows on its own side.
+   */
+  readonly say?: (sessionId: string) => Promise<unknown>
 }
 
-/** One pass. Returns true when at least one gap was recorded. */
+/**
+ * One pass. Returns true when at least one gap was recorded.
+ *
+ * `say` fires once however many gaps the pass wrote: a slept machine and a
+ * dead service worker in one tick are two rows and one sentence, and the
+ * sentence is deduped per shift downstream anyway.
+ */
 export async function sweepForGap(deps: GapSweeperDeps): Promise<boolean> {
   const live = deps.store.current()
   if (!live) return false
@@ -87,5 +105,6 @@ export async function sweepForGap(deps: GapSweeperDeps): Promise<boolean> {
     recorded = true
   }
 
+  if (recorded && deps.say) await deps.say(live.sessionId)
   return recorded
 }

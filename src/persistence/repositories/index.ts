@@ -3460,10 +3460,13 @@ export interface ThreadConnectionRepository {
    * Claim a message key before sending it.
    *
    * Returns `false` when this key has already been said. **Claim, not check** —
-   * the UNIQUE index decides, so two feeds racing on the same key produce one
+   * the UNIQUE index decides, so ~~two feeds~~ **two callers (struck
+   * 2026-09-03: there are three feeds now, and their key prefixes are disjoint,
+   * so the racers are two copies of one feed rather than two feeds — see the
+   * header of `src/server/thread.ts`)** racing on the same key produce one
    * send and one `false` rather than two sends and a green test. A read followed
-   * by a write would leave exactly that gap, and the two feeds run in different
-   * processes where the gap is widest.
+   * by a write would leave exactly that gap, and ~~the two feeds run~~ **the
+   * feeds run** in different processes where the gap is widest.
    *
    * A send that then fails leaves the row behind, so that message is not
    * retried. That is the deliberate direction: this channel's messages are all

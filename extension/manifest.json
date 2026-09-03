@@ -233,8 +233,27 @@
     "Pinned so the extension id is stable. Without it the id changes if the repo",
     "moves, and the Origin check on the loopback transport starts rejecting our",
     "own events.",
-    "REPLACE before any real install — this is a placeholder."
+    "~~REPLACE before any real install — this is a placeholder.~~ PINNED",
+    "2026-09-03, on the owner's say-so. The id derived from the key below is",
+    "oeeehaokemppjoedlccgggmhlmhcdeln — sha256 of the DER public key, first",
+    "128 bits, hex digits mapped a-p — and tests/extension-permissions.test.ts",
+    "recomputes it from this file so the two cannot drift. The private half",
+    "~~lives outside the repository, with the owner~~ is not in this repository,",
+    "and that is all this file can say (struck 2026-09-03, the day it was",
+    "written: it was left in the generating session's scratchpad, and moving it",
+    "somewhere kept is a row in docs/todo/05). It is needed only to pack",
+    "a .crx; nothing in the product reads it. Changing this key mints a new id",
+    "and orphans every install that exists, including the development pairing",
+    "on the machine it was pinned from — that is why it was left for the owner",
+    "and why it is not to be regenerated.",
+    "A public id changes what a page can learn only if this manifest ever gains",
+    "web_accessible_resources or externally_connectable. It has neither and no",
+    "content_scripts block, so no chrome-extension://oeee…/ URL is fetchable",
+    "from a page and chrome.runtime is exposed to none. Either key would make",
+    "this id a stable install fingerprint on every site — argue it here first",
+    "(privacy review, 2026-09-03)."
   ],
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA2IkohTavTLpmsJnC3a97e+8T7TBmOcS6zUOGKH+4k7/92Zt5cEma6Xd9PESw+diUrXxu3MlqRTX0mV1hLWdbnmHaZB7+9BzPV3YbdHCQ+pBBVV6pZnj6omLAebDyOVwwa4ACbtMUNrcEyJpnlPiCcNNm/K0FtLe2y8OJX8lq0jE3v0EcFJaU4tUS+6XMIoN/pBocpMRVQGFojCrn7zbNNBlJjX8kCkgdrNaRdS9BOG24dmcQxUCF/Ec+FChYv9F7hPrAHXrtgyVJXaE9NzVcxG5R4VdSTAOkiWfGOeUZd2EkiFMdkIbEjMVUw29CqCR1QzuGqxknY6YmWvwV2INLMQIDAQAB",
 
   "background": {
     "service_worker": "src/service-worker.js",

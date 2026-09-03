@@ -16,7 +16,12 @@ and a `v*` tag runs `release.yml`. **What stays open:** ~~the two credential
 steps only a person can do (the *What you have to do yourself* table — minutes,
 now that enrolment is approved),~~ **done 2026-08-30 — the certificate and
 notary key exist, the first signed, notarised, stapled `.app` and `.dmg` both
-passed `spctl` and `stapler validate` locally, and the six CI secrets are
+passed `spctl` and `stapler validate` locally *(qualified 2026-09-03: that
+day's script ran `spctl` on the `.app` alone —
+`git show a8f0536:scripts/release-tray.ts | grep spctl` — so the `.dmg`'s
+`spctl` pass was a hand run or is unrecorded, and which policy it was asked
+under is not written down; the script assesses the image itself since
+2026-09-03)*, and the six CI secrets are
 set** — the first tagged release, and the *Done when*
 below, which stays open until a stranger has installed one. The update feed
 half of item 10 is **deferred, not built** — ADR-0027 §4 is the argument. ~~**Narrowed twice on 2026-08-26:**
@@ -45,8 +50,12 @@ running."*
 ### What ADR-0025 did to this file
 
 **ADR-0023's prohibition 1 — that the tray app requests no TCC permission — is
-amended, not deleted.** The binary this file describes is now the thing that
-holds **Accessibility, Screen Recording and Full Disk Access**. That is a very
+amended, not deleted.** The binary this file describes ~~is now the thing that
+holds~~ **is the thing ADR-0025 decided will hold — and holds none today,
+2026-09-03: `tests/tray-permissions.test.ts` bans all three literals, pins
+`src-tauri/entitlements.plist` to two hardened-runtime JIT carve-outs, and
+passes; [`07`](./07-off-the-browser.md) is where they get taken** —
+**Accessibility, Screen Recording and Full Disk Access**. That is a very
 different install from a status light, and ADR-0023 said so about itself: a tray
 app requesting none was *"the prohibition the other four exist to protect."*
 
@@ -283,9 +292,17 @@ resisting a fifth.
 - Quitting the app leaves no orphaned Node process.
 - Killing either child brings it back.
 - `spctl -a -vvv` and `xcrun stapler validate` both pass on the shipped `.dmg`.
-  *(2026-08-28: `scripts/release-tray.ts` runs both on every signed build and
-  fails it when either fails — so this bullet closes with the first tagged
-  release, and stays closed by machine rather than by memory.)*
+  *(2026-08-28: ~~`scripts/release-tray.ts` runs both on every signed build and
+  fails it when either fails~~ **Struck 2026-09-03 — half true: it ran
+  `stapler validate` on the `.dmg` and `spctl -a -t install` on the `.app`
+  alone, so the file a stranger downloads was never assessed by the script
+  (the line above records a local pass on 2026-08-30 that the script did not
+  produce). Both run on the `.dmg` now — `spctl` in the form Apple documents
+  for a disk image, `-t open --context context:primary-signature`, whose
+  verdict on an image of ours is unobserved — and `tests/reachability.test.ts`
+  ("asks Gatekeeper about the disk image") fails if either invocation goes** —
+  so this bullet closes with the
+  first tagged release, and stays closed by machine rather than by memory.)*
 - **Then hand it to a stranger and time them to first offer.** That number is the
   product metric that does not exist today. *(Still open, 2026-08-28 — the code
   half of this file is done and this bullet is deliberately not struck: nothing

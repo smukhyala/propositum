@@ -37,8 +37,12 @@ ADR-0026, re-marked here 2026-08-27. They decide that Propositum may buy inside 
 [`PurchaseAuthorization`](./adr/0024-purchases-within-a-ratified-authorisation.md), may
 [drive macOS rather than one Chrome tab](./adr/0025-computer-use-beyond-the-browser.md), and may
 [read a one-time code](./adr/0026-reading-a-one-time-code.md) out of `~/Library/Messages/chat.db`.
-`grep -rn 'approvedApplications\|purchaseAuthorization' src/` returns nothing, so the column is
-unchanged and correct. What was **not** correct is that four passages below stated the old bounds as
+~~`grep -rn 'approvedApplications\|purchaseAuthorization' src/` returns nothing, so the column is
+unchanged and correct.~~ **Struck 2026-09-03: that grep now hits — `purchaseAuthorization` was
+built 2026-09-01 (`src/domain/handoff/policy.ts`, and §7 below) — and only
+`grep -rn 'approvedApplications' src/` still returns nothing. The cells are still correct; what
+failed was this self-check, which tied two fields to one grep.** What was **not** correct is that
+four passages below stated the old bounds as
 permanent rather than as current: **State Ingestion**, **Delegation / Policy**, **Execution Runtime**
 and **Where computer use sits**. Each now carries the correction beside the claim. Read the ADRs for
 what was decided and the code for what runs; where they disagree, the code is right.
@@ -286,12 +290,17 @@ types are constructed so they cannot receive prose, and the `@ts-expect-error` d
 That file ends in `-test.ts` rather than `.test.ts`, so vitest never runs it — **`npm run typecheck`
 is the assertion.** Neither command is a superset of the other.
 
-**Not built: two fields decided 2026-08-26** *(a third, 2026-09-01)*. `ContractScope` gains
+**Not built: two fields decided 2026-08-26** *(a third, 2026-09-01; one of the three built since,
+struck below)*. `ContractScope` gains
 `purchaseAuthorization`
 ([ADR-0024](./adr/0024-purchases-within-a-ratified-authorisation.md)), `approvedApplications`
 ([ADR-0025](./adr/0025-computer-use-beyond-the-browser.md)) and `sendAuthorization`
 ([ADR-0029](./adr/0029-the-mailbox-and-a-calendar-of-our-own.md)). All are optional and **absence is
-the deny**; none exists in `src/` or `prisma/`, and `CONTEXT.md` carries the entries behind its
+the deny**; ~~none exists in `src/` or `prisma/`~~ **struck 2026-09-03 — the first is built
+(`purchaseAuthorization` in `src/domain/handoff/policy.ts`, the `purchase*` columns in
+`prisma/schema.prisma`, `CONTEXT.md`'s fence on it already struck; §7 below says what it does), and
+`grep -rn 'approvedApplications\|sendAuthorization' src/ prisma/` still returns nothing, so *not
+built* holds for the other two**, and `CONTEXT.md` carries the entries behind its
 *specification rather than a description* fence. The second replaces the bound ADR-0010 had, and it
 is weaker — that one was Chrome refusing, this one is our code remembering. The third shares that
 weakness and names it: a first-party API call has no paused request for Chrome to attest, so what
@@ -710,9 +719,13 @@ anyone builds that surface.
   `CONTEXT.md` terms, and nothing should be named after one in code, schema, prompts or UI. The
   glossary is the authority on what things are called; this file is the authority on nothing except
   what is built.
-- **`GUARDED_TABLES` in `src/persistence/errors.ts` names 7 tables while 13 are guarded**, so a
-  trigger firing on six of them still surfaces as Prisma's P2003 "Foreign key constraint violated"
-  lie. Not this document's job to fix; recorded so the next person to read an implausible error
+- **`GUARDED_TABLES` in `src/persistence/errors.ts` names ~~7 tables while 13 are guarded~~ fewer
+  tables than `REQUIRED_GUARDS` in `src/persistence/append-only.ts` guards** *(struck 2026-09-03:
+  the second number had already drifted — `action_evidence` is guarded too — so the two constants
+  are what know, and no count is repeated here)*, so a trigger firing on ~~six of them~~ **any
+  table in the second list and not the first** still surfaces as Prisma's P2003 "Foreign key
+  constraint violated" lie. Not this document's job to fix; recorded so the next person to read an
+  implausible error
   message finds the explanation.
 
 Vocabulary is [`CONTEXT.md`](../CONTEXT.md), which is this repository's single glossary. Scope and the

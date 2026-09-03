@@ -151,6 +151,17 @@ const COMPOSE_ATTEMPTS = 2
  * wrong shape, which the client already spent its one repair turn on. Asking
  * again asks the same model the same thing.
  *
+ * Since 2026-09-03 `truncation` is also the SDK refusing to SEND the request —
+ * "Streaming is required", thrown before any fetch (`classifyThrow`). That is
+ * not an answer, and it is settled here anyway, for a different reason: the
+ * refusal is a function of the budget and the model, both fixed by
+ * `offerBoundary`, so a second `run` re-issues the same request and is refused
+ * the same way before any fetch. `tests/model-boundary.test.ts` watches one
+ * `run` refused on both its attempts with zero fetches; the second `run` this
+ * loop could spend is the first one over again. What this does not decide: a
+ * budget the SDK would accept on the streaming path, which is `attempt`'s
+ * choice in `src/model/anthropic.ts` and not this file's.
+ *
  * `transport` is network or 5xx — the call did not complete, so there is no
  * answer to settle. Note the deliberate disagreement with `recoveryFor`, which
  * returns `'none'` for `transport`: that function is about whether the CLIENT
@@ -386,9 +397,10 @@ export async function composeOffer(
 
     if (!outcome.ok) {
       // Settled as "no offer" rather than retried. Either the model answered —
-      // declined, ran out of room, or produced the wrong shape — or the call
-      // failed to arrive `COMPOSE_ATTEMPTS` times, which is an outage rather
-      // than a blip. The deterministic suggestion stands: it says what was seen,
+      // declined, ran out of room, or produced the wrong shape — or the SDK
+      // refused the budget before sending and would again, or the call failed
+      // to arrive `COMPOSE_ATTEMPTS` times, which is an outage rather than a
+      // blip. The deterministic suggestion stands: it says what was seen,
       // which is less than this would have said and is never wrong.
       store.finishComposing(signature)
       return
