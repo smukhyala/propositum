@@ -43,6 +43,16 @@
 #     honest. `vitest.config.ts` now sets `testTimeout`, and states what that
 #     costs.
 #
+#     **And measured 2026-09-03 (#138), which names which half is the cost.**
+#     One test file's database setup, median, same script on both machines:
+#     `npx prisma db push` is 809 ms on an M-series Mac and **1449 ms here**;
+#     reinstalling and verifying the triggers is 12 ms there and **35 ms here**.
+#     So the spawn is 1.8x slower on this runner and is ~98% of the setup, while
+#     the trigger install — the explanation #97 raised and PR #131 did not look
+#     at — is 2.9x slower and 23 ms. The contention above is twenty-odd Node
+#     process starts, not the DDL. `src/persistence/append-only.ts` carries the
+#     full table beside the code it is about.
+#
 # Verified before this file was committed: a clone with no `.env`, no
 # `prisma db push` and nothing but `npm ci` passes all four steps below.
 

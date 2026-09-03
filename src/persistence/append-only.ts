@@ -242,10 +242,48 @@ function splitStatements(sql: string): string[] {
  * How long the install may hold its connection.
  *
  * Generous on purpose: the default interactive-transaction timeout is five
- * seconds, and this runs ~75 DDL statements on a machine that may be running a
- * test suite at the same time. A timeout here fails startup, and startup
- * failing because a laptop was busy is a worse outcome than holding one SQLite
+ * seconds, and this runs every statement in `prisma/triggers.sql` — ~~about 75
+ * DDL statements~~ **corrected 2026-09-03: however many that file holds, which
+ * is the only thing that knows** — on a machine that may be running a test
+ * suite at the same time. A timeout here fails startup, and startup failing
+ * because a laptop was busy is a worse outcome than holding one SQLite
  * connection for a few seconds at boot.
+ *
+ * ── What it actually costs, measured 2026-09-03 (#138) ───────────────────
+ *
+ * [#97](https://github.com/smukhyala/propositum/issues/97) offered three
+ * explanations for three tests timing out on CI and passing on a re-run of the
+ * same commit. PR #131 answered with the first — a global `testTimeout` — and
+ * left the third: nobody had measured what this costs on `ubuntu-latest` as
+ * against a developer machine. A throwaway script and workflow took the
+ * measurement and were deleted in the same commit as this comment, in the
+ * manner of PR #82.
+ *
+ * Median of one test file's database setup, split in two, same script both
+ * sides:
+ *
+ * | | `prisma db push` | this install | install's share |
+ * |---|---|---|---|
+ * | M-series Mac, node 25 | 809 ms | **12 ms** | 1.4% |
+ * | `ubuntu-latest`, node 22 | 1449 ms | **35 ms** | 2.4% |
+ *
+ * **The answer is that this is not where the time goes.** The install is ~2.9x
+ * slower on Linux against the push's ~1.8x, so it is disproportionate as a
+ * RATIO and irrelevant as a NUMBER: 23 ms of extra wall time per test file, and
+ * roughly half a second across every file in the suite that builds a database.
+ * The push is thirty seconds of the same total.
+ *
+ * So the question #97 raised about this function is closed, and the fact worth
+ * carrying forward belongs to its neighbour: what makes CI slow is spawning
+ * `npx prisma db push` once per file, and that spawn is 1.8x slower on the
+ * runner than on a laptop. `.github/workflows/ci.yml`'s header carries that
+ * number now.
+ *
+ * WHAT THE MEASUREMENT DID NOT DO: reproduce #97. Both sides ran the two
+ * operations sequentially and alone, and #97 is about contention between
+ * parallel vitest workers — reproducing that would have measured the runner's
+ * scheduler rather than this function. It answers the question the issue asked,
+ * which is what one install costs, on both machines, with the same code.
  */
 const INSTALL_TIMEOUT_MS = 60_000
 
