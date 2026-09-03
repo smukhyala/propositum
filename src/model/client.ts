@@ -54,6 +54,15 @@ export type BoundaryName = (typeof BOUNDARY_NAMES)[number]
  * Above this, the Anthropic TypeScript SDK throws LOCALLY before any HTTP call
  * unless the request streams. Verified in #6's research; encoded here so a
  * boundary that raises its budget cannot silently become unrunnable.
+ *
+ * **It is not the only such bound, found 2026-09-03.** The SDK also carries a
+ * PER-MODEL non-streaming cap — `MODEL_NONSTREAMING_TOKENS` in
+ * `internal/constants.js`, 8,192 for the Opus 4 family — and refuses the same
+ * way when a budget under this number exceeds that one. Nothing here can know
+ * it: the model comes from `PROPOSITUM_MODEL` at runtime and the table is the
+ * SDK's private business. So this constant keeps a boundary off the refusal on
+ * the default model and cannot promise more than that; `classifyThrow` in
+ * `anthropic.ts` is what handles the refusal when it happens anyway.
  */
 export const NON_STREAMING_MAX_TOKENS = 21_333
 
@@ -158,7 +167,17 @@ export interface CallTelemetry {
 export type FailureKind =
   /** The model declined. Terminal — retrying reproduces it. */
   | 'refusal'
-  /** Ran out of tokens mid-object. One doubled-budget escalation. */
+  /**
+   * Ran out of tokens mid-object. One doubled-budget escalation.
+   *
+   * Since 2026-09-03 it carries a second thing that is not that: the SDK's own
+   * refusal to send a non-streaming request whose budget it cannot time out.
+   * The cause is the opposite way round — our request was too big, rather than
+   * the reply being cut off — and the kind is shared because the recovery is
+   * the same one, and because doubling the budget is what flips that call onto
+   * the streaming path. `classifyThrow` in `anthropic.ts` argues it, including
+   * the two shapes where the doubling does not help.
+   */
   | 'truncation'
   /** Well-formed JSON, wrong shape. Exactly one repair turn quoting the issues. */
   | 'schema-mismatch'

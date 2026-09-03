@@ -476,8 +476,10 @@ function structuredOutput(schema: ZodType): StructuredOutput {
  * that never opened, an abort — because `APIConnectionError` and
  * `APIConnectionTimeoutError` are subclasses of it. That is the whole
  * `transport` family in one `instanceof`, and it is checked FIRST so a 400
- * whose body happens to mention `max_tokens` is not mistaken for our own
- * oversized request.
+ * whose body happens to mention `max_tokens` — or an API error that uses the
+ * word *streaming* — is not mistaken for one of our own local refusals. The
+ * order is load-bearing: both message tests below assume the HTTP family has
+ * already left.
  *
  * Everything else the SDK raises is a bare `AnthropicError`, thrown locally.
  * There is no subclass and no `cause` to read: `betaZodOutputFormat` builds
@@ -489,16 +491,75 @@ function structuredOutput(schema: ZodType): StructuredOutput {
  * `Failed to parse structured output`, and it says nothing about which field
  * failed beyond what the message carries.
  *
+ * ── The oversized non-streaming request, caught 2026-09-03 ───────────────
+ *
+ * This docblock used to say that refusal was NOT caught, and it was right.
+ * The branch below tested `/max_tokens/i` and its comment claimed the local
+ * refusal; the sentence the SDK actually raises names no field at all:
+ *
+ *   *"Streaming is required for operations that may take longer than 10
+ *   minutes. See https://github.com/anthropics/anthropic-sdk-typescript
+ *   #long-requests for more details"*
+ *
+ * — `calculateNonstreamingTimeout` in `client.js` of `@anthropic-ai/sdk`
+ * 0.71.2, raised as a bare `AnthropicError` before the request is even built.
+ * So it has been `transport` for its whole life, and `recoveryFor('transport')`
+ * is `none`: the escalation the comment promised has never once fired.
+ *
+ * What is matched now is `streaming is required` — the claim rather than the
+ * link, and the half both of the SDK's two raise sites share verbatim. **It is
+ * a message test and it is version-coupled**, exactly like the
+ * `output_format` / `output_config.format` split in the file header: it stops
+ * matching the day that sentence is reworded, and there is nothing structural
+ * underneath it, because the error carries a `message` and a `name` and
+ * nothing else. What breaks it is an SDK upgrade, not a change here.
+ *
+ * ── What `truncation` then does — measured, not assumed ──────────────────
+ *
+ * `recoveryFor('truncation')` is `escalate-tokens`, so `run` retries once at
+ * `boundary.maxTokens * 2` and `attempt` recomputes
+ * `stream = boundary.stream ?? maxTokens > NON_STREAMING_MAX_TOKENS`. Where
+ * the doubled budget crosses that line, the retry goes out streaming — the one
+ * shape the SDK will send — and the call succeeds. That is the recovery the
+ * old comment intended, happening for the first time, and it is pinned rather
+ * than argued: see *an oversized non-streaming request* in
+ * `tests/model-boundary.test.ts`.
+ *
+ * `truncation` is not what happened. Nothing ran out of tokens; our request
+ * was too big for the call shape we chose. It is used anyway, deliberately:
+ * the kind names the recovery this needs rather than the cause, and a fifth
+ * `FailureKind` would widen a closed set that `answered()` in
+ * `src/server/compose-offer.ts` and `sayWhyTheModelFailed` in
+ * `src/server/actions.ts` both switch on exhaustively. That is an ADR, and it
+ * would be one written for a path no boundary is on today.
+ *
+ * ── Where the escalation does NOT land, and what that costs ──────────────
+ *
+ * Two shapes, both measured:
+ *
+ *  1. A doubled budget still under `NON_STREAMING_MAX_TOKENS`. Reachable
+ *     because the constant is not the only bound — the SDK carries a
+ *     PER-MODEL non-streaming cap in `internal/constants.js` (8,192 for the
+ *     Opus 4 family), which `NON_STREAMING_MAX_TOKENS` knows nothing about,
+ *     and `PROPOSITUM_MODEL` chooses the model.
+ *  2. A boundary that declares `stream: false`, where `boundary.stream ??`
+ *     short-circuits the recompute and no budget can flip it.
+ *
+ * Both are refused a second time and end terminal as `truncation`, carrying
+ * the SDK's own sentence as `detail`. The wasted attempt costs microseconds
+ * and nothing else: the refusal is raised before any request is built, so
+ * neither attempt reaches the network and neither is billed. That is what
+ * makes it safe to hand this to a recovery it does not always fit — and it is
+ * still an improvement on `transport`, which said the network had failed when
+ * no request had been sent.
+ *
  * ── What it does not cover ───────────────────────────────────────────────
  *
- * `max_tokens` is a message test on a bare `AnthropicError`, kept as it was.
- * It does NOT catch the SDK's own local refusal of an oversized non-streaming
- * request, which reads *"Streaming is required for operations that may take
- * longer than 10 minutes"* and mentions no field at all — so that one still
- * falls through to `transport` and gets no escalation. Left as it was found,
- * because widening it is a behaviour change on a path nothing exercises;
- * `NON_STREAMING_MAX_TOKENS` is what keeps a boundary off it in the first
- * place.
+ * `max_tokens` is a message test on a bare `AnthropicError`, kept as it was
+ * found. Nothing in 0.71.2 is known to raise one naming that field — the API
+ * errors that do are `APIError`s and have already left above — so it is a net
+ * for a future rewording rather than a branch anything reaches today, and it
+ * is no longer the branch this function relies on.
  *
  * Nothing here is a substitute for `structuredOutput`. This is the fallback
  * for a throw that reaches us anyway; the fix is upstream, where the throw
@@ -508,6 +569,10 @@ export function classifyThrow(error: unknown): FailureKind {
   if (error instanceof APIError) return 'transport'
 
   const message = error instanceof Error ? error.message : String(error)
+
+  // The SDK refusing to send a non-streaming request it cannot time out. Our
+  // request, not the network's failure — and the escalation streams it.
+  if (error instanceof AnthropicError && /streaming is required/i.test(message)) return 'truncation'
 
   // A budget this call shape cannot carry is our bug, not the network's.
   if (/max_tokens/i.test(message)) return 'truncation'

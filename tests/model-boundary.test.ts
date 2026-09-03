@@ -37,6 +37,20 @@ const events: PromptEvent[] = [
 const handles = handlesFor(events)
 const boundary = sessionReadingBoundary(handles)
 
+/**
+ * The SDK's own refusal, verbatim.
+ *
+ * From `calculateNonstreamingTimeout` in `client.js` of `@anthropic-ai/sdk`
+ * 0.71.2, raised as a bare `AnthropicError` before the request is built.
+ * Copied rather than imported, because it is not exported and the whole point
+ * of these tests is that our classification still matches the words the
+ * installed SDK ships. **If an upgrade reworks that sentence this string is
+ * the thing to re-check**, and the tests below will say so by going red.
+ */
+const SDK_STREAMING_REFUSAL =
+  'Streaming is required for operations that may take longer than 10 minutes. ' +
+  'See https://github.com/anthropics/anthropic-sdk-typescript#long-requests for more details'
+
 const validClaim = {
   kind: 'objective' as const,
   text: 'Drafting the Northwind partnership proposal.',
@@ -402,6 +416,34 @@ describe('classifying a throw out of the SDK', () => {
     )
   })
 
+  it('reads the refusal the SDK actually raises, which names no field at all', () => {
+    // The branch above is not what catches this. Until 2026-09-03 the only
+    // local-refusal test here was `/max_tokens/i`, and the sentence the SDK
+    // ships mentions no field — so this was `transport`, and
+    // `recoveryFor('transport')` is `none`. The escalation its comment
+    // promised had never once fired.
+    expect(SDK_STREAMING_REFUSAL).not.toMatch(/max_tokens/i)
+    expect(classifyThrow(new AnthropicError(SDK_STREAMING_REFUSAL))).toBe('truncation')
+    expect(recoveryFor(classifyThrow(new AnthropicError(SDK_STREAMING_REFUSAL)))).toBe(
+      'escalate-tokens',
+    )
+  })
+
+  it('does not mistake an API error using the same words for our own refusal', () => {
+    // The same reason the `max_tokens` case runs after the HTTP check: the
+    // words are only ours when nothing was sent. A 400 saying them is a round
+    // trip that happened, and doubling the budget would not answer it.
+    const httpError = new APIError(
+      400,
+      { message: SDK_STREAMING_REFUSAL },
+      undefined,
+      new Headers(),
+    )
+
+    expect(classifyThrow(httpError)).toBe('transport')
+    expect(recoveryFor(classifyThrow(httpError))).toBe('none')
+  })
+
   it('reads the SDK parser’s own throw as a shape failure, so the repair turn fires', () => {
     // What `partnership-messy` produced, and what was filed as `transport`.
     // The `cause:` in that log line is TEXT INSIDE THE MESSAGE — the SDK
@@ -421,5 +463,176 @@ describe('classifying a throw out of the SDK', () => {
   it('leaves anything else as transport, which grants no retry of ours', () => {
     expect(classifyThrow(new Error('something else entirely'))).toBe('transport')
     expect(classifyThrow('not an error at all')).toBe('transport')
+  })
+})
+
+/* ── the request the SDK will not send ──────────────────────────────────── */
+
+/**
+ * What happens once that refusal is classified, end to end.
+ *
+ * ── Why the model here is an Opus 4 id ───────────────────────────────────
+ *
+ * Because it is the only way to reach the refusal at all. `attempt` computes
+ * `stream = boundary.stream ?? maxTokens > NON_STREAMING_MAX_TOKENS`, so a
+ * budget over that constant already streams and never asks the SDK for the
+ * shape it refuses. What the constant does not know is that the SDK carries a
+ * PER-MODEL non-streaming cap as well — `MODEL_NONSTREAMING_TOKENS` in
+ * `internal/constants.js`, 8,192 for the Opus 4 family — and `PROPOSITUM_MODEL`
+ * picks the model at runtime. A 12,000-token budget on that model is under our
+ * bound, over the SDK's, and refused locally: the real reachable case rather
+ * than a contrivance.
+ *
+ * No boundary in `src/model/boundaries` is sized to hit this on the default
+ * model, and that is said rather than hidden — what these two buy is that the
+ * recovery is watched happening at all, on a path where it was only ever a
+ * comment.
+ *
+ * They do NOT cover a live call, an SDK that has reworded its refusal, or the
+ * repair turn — that is `describe('a reply that is whole and the wrong shape')`
+ * above, and `tests/model-boundary.live.test.ts` for the real API.
+ */
+describe('an oversized non-streaming request', () => {
+  const realFetch = globalThis.fetch
+
+  afterEach(() => {
+    globalThis.fetch = realFetch
+  })
+
+  /** A model the SDK holds a non-streaming cap for. See the block above. */
+  const CAPPED_MODEL = 'claude-opus-4-1-20250805'
+
+  /** One streamed assistant reply, as the API would put it on the wire. */
+  function streamed(json: string): string {
+    const wire: ReadonlyArray<readonly [string, unknown]> = [
+      [
+        'message_start',
+        {
+          type: 'message_start',
+          message: {
+            id: 'msg_streamed',
+            type: 'message',
+            role: 'assistant',
+            model: CAPPED_MODEL,
+            content: [],
+            stop_reason: null,
+            stop_sequence: null,
+            usage: { input_tokens: 640, output_tokens: 1 },
+          },
+        },
+      ],
+      [
+        'content_block_start',
+        { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
+      ],
+      [
+        'content_block_delta',
+        { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: json } },
+      ],
+      ['content_block_stop', { type: 'content_block_stop', index: 0 }],
+      [
+        'message_delta',
+        {
+          type: 'message_delta',
+          delta: { stop_reason: 'end_turn', stop_sequence: null },
+          usage: { output_tokens: 812 },
+        },
+      ],
+      ['message_stop', { type: 'message_stop' }],
+    ]
+
+    return wire.map(([name, data]) => `event: ${name}\ndata: ${JSON.stringify(data)}\n\n`).join('')
+  }
+
+  /** Answers a streaming request and nothing else — a non-streaming one that
+   *  reached here would mean the escalation had not flipped the call shape. */
+  function streamingOnlyFetch(): {
+    fetch: typeof globalThis.fetch
+    requests: Array<Record<string, unknown>>
+  } {
+    const requests: Array<Record<string, unknown>> = []
+
+    const fetch = (async (_url: unknown, init: { body?: unknown }) => {
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      requests.push(body)
+
+      if (body.stream !== true) {
+        return new Response(
+          JSON.stringify({
+            type: 'error',
+            error: { type: 'invalid_request_error', message: 'this stub only answers a stream' },
+          }),
+          { status: 400, headers: { 'content-type': 'application/json' } },
+        )
+      }
+
+      return new Response(streamed(JSON.stringify({ claims: [validClaim] })), {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' },
+      })
+    }) as unknown as typeof globalThis.fetch
+
+    return { fetch, requests }
+  }
+
+  function clientOn(model: string) {
+    const script = streamingOnlyFetch()
+    globalThis.fetch = script.fetch
+    const seen: Array<{ t: CallTelemetry; f?: FailureKind }> = []
+
+    const client = new AnthropicModelClient({
+      apiKey: 'not-a-real-key',
+      model,
+      onCall: (t, f) => seen.push({ t, ...(f === undefined ? {} : { f }) }),
+    })
+
+    return { client, seen, requests: script.requests }
+  }
+
+  it('escalates onto the streaming path, which is the one shape the SDK will send', async () => {
+    const { client, seen, requests } = clientOn(CAPPED_MODEL)
+
+    const result = await client.run({ ...boundary, maxTokens: 12_000 }, { events, notes: [] })
+
+    // The first attempt never reached the network: the SDK refuses before it
+    // builds a request, which is why filing this as `transport` was a claim
+    // about a round trip that had not happened.
+    expect(requests).toHaveLength(1)
+    expect(requests[0]?.max_tokens).toBe(24_000)
+    expect(requests[0]?.stream).toBe(true)
+    // The streaming call shape, not the parse one. See the file header in
+    // `anthropic.ts` for why the two cannot be one field.
+    expect(requests[0]).toHaveProperty('output_config')
+
+    expect(seen).toHaveLength(2)
+    expect(seen[0]?.f).toBe('truncation')
+    // Null rather than zero: there was no message and so no usage on it.
+    expect(seen[0]?.t.inputTokens).toBeNull()
+    expect(seen[1]?.f).toBeUndefined()
+    expect(seen[1]?.t.repairTurns).toBe(1)
+
+    expect(result.ok).toBe(true)
+    if (result.ok) expect(result.value.claims[0]?.kind).toBe('objective')
+  })
+
+  it('says the budget was the problem, not the network, when doubling does not help', async () => {
+    // 9,000 doubles to 18,000 — over the SDK's per-model cap, under ours — so
+    // the retry is refused the same way and the call ends terminal. It costs
+    // nothing but microseconds: neither attempt is built, sent or billed. Worth
+    // pinning because it is the honest half — what the fix buys here is a truer
+    // report, not a recovery.
+    const { client, seen, requests } = clientOn(CAPPED_MODEL)
+
+    const result = await client.run({ ...boundary, maxTokens: 9_000 }, { events, notes: [] })
+
+    expect(requests).toHaveLength(0)
+    expect(seen).toHaveLength(2)
+    expect(seen.every((call) => call.f === 'truncation')).toBe(true)
+
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.failure).toBe('truncation')
+      expect(result.detail).toMatch(/streaming is required/i)
+    }
   })
 })

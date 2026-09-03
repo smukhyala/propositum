@@ -2,9 +2,11 @@
 
 **Status:** ~~not started~~ ~~done 2026-08-26, except item 7, which is the owner's.~~ ~~Two left,
 2026-08-27: item 7, which is the owner's, and item 10, which was added the same day and is not a
-quick fix at all — it is here so nobody rediscovers why it cannot be one.~~ **Two left, 2026-09-03,
+quick fix at all — it is here so nobody rediscovers why it cannot be one.~~ ~~**Two left, 2026-09-03,
 and they are not the same two:** item 7, which is the owner's, and item 11, added the day the
-structured-output classification was fixed and left unfixed beside it on purpose. Item 10 was built
+structured-output classification was fixed and left unfixed beside it on purpose.~~ **One left again,
+2026-09-03, later still: item 7, which is the owner's.** Item 11 was built the same day it was
+written, which is the third time a file in this folder has been overtaken within hours. Item 10 was built
 the same day [ADR-0033](../adr/0033-a-late-tick-is-a-slept-machine.md) was accepted — it was never a
 quick fix and it never became one; what changed is that the signal it said nothing supplied turned
 out to be in the sweeper's own timer.
@@ -72,12 +74,15 @@ already there when this file was written, which the original note missed; (2)
 matches the struck form — done; (3) still hits `Hand this over` and `Handing
 over…`, which is now the *correct* answer rather than a job, and no longer hits
 `Take over`; (4) returns nothing; (5) still returns `0`, and that one is
-deliberate.
+deliberate. **(6) was added 2026-09-03 and returned the filename the same day;
+it returns nothing now** — `tests/model-boundary.test.ts` holds the SDK's
+refusal verbatim and pins what it classifies as.
 
 **~~Seven left, not nine.~~ ~~One left, and it is item 7.~~ ~~Two left, 2026-08-27 — item 7 and item
-10.~~ ~~One left again, 2026-09-03 — item 7.~~ Two left, 2026-09-03, later the same day — item 7 and
+10.~~ ~~One left again, 2026-09-03 — item 7.~~ ~~Two left, 2026-09-03, later the same day — item 7 and
 item 11. Item 10 was built and item 11 arrived in the same afternoon, from different work, and the
-count was right for about an hour.** Everything struck below
+count was right for about an hour.~~ One left, 2026-09-03, later still — item 7, and item 11 lasted
+an afternoon.** Everything struck below
 is struck rather than deleted, because a checklist that silently loses its
 finished items reads as though they were never on it.
 
@@ -254,9 +259,10 @@ from the greps at the top rather than from the code.
     went quiet — rather than with a guess about why, which is the correct fail
     direction and is worth keeping if this is ever built.
 
-11. **`classifyThrow` does not catch the SDK's own refusal of an oversized
-    non-streaming request.** *(Added 2026-09-03, found while fixing the
-    structured-output classification beside it.)*
+11. ~~**`classifyThrow` does not catch the SDK's own refusal of an oversized
+    non-streaming request.**~~ **Done 2026-09-03, the same day it was written.**
+    *(Added 2026-09-03, found while fixing the structured-output classification
+    beside it.)*
 
     ```bash
     grep -L 'Streaming is required' tests/model-boundary.test.ts
@@ -271,26 +277,56 @@ from the greps at the top rather than from the code.
     `APIError` check in front of it takes those first. So the branch is now
     reachable by almost nothing.
 
-    Fixing it is one clause and it is deliberately not taken here, because the
+    ~~Fixing it is one clause and it is deliberately not taken here~~ *(taken
+    2026-09-03 — see below)*, because the
     consequence of taking it is a behaviour change nothing exercises: an
     oversized request would be filed `truncation`, `recoveryFor` would double the
     budget, and the doubled budget crosses `NON_STREAMING_MAX_TOKENS` and flips
     the call onto the streaming path — which is almost certainly what the comment
     intended and is a recovery no test has ever watched happen.
 
-    It is close to unreachable in practice: `NON_STREAMING_MAX_TOKENS` is what
+    ~~It is close to unreachable in practice: `NON_STREAMING_MAX_TOKENS` is what
     keeps a boundary off that path, and the largest budget in `src/model/boundaries`
-    is nowhere near it. That is the argument for it being small, not for it being
+    is nowhere near it.~~ That is the argument for it being small, not for it being
     right.
+
+    **What the fix turned out to be, and the one thing this entry had wrong.**
+    The match is on `streaming is required` — a message test, version-coupled to
+    `@anthropic-ai/sdk` 0.71.2 and documented as the weak line, because the error
+    carries a `message` and a `name` and nothing else to key on. The escalation
+    was then followed through rather than assumed, which is where the entry above
+    was wrong: `NON_STREAMING_MAX_TOKENS` is **not** what keeps a boundary off
+    that path, or not all of it. The SDK holds a per-model non-streaming cap too
+    — 8,192 for the Opus 4 family, in its own `internal/constants.js` — so a
+    12,000-token budget on a model `PROPOSITUM_MODEL` can name is under our bound
+    and over the SDK's. That is the case the new tests drive, and it is a real
+    one rather than a contrivance.
+
+    On that path the recovery does what the old comment intended and had never
+    once done: doubled to 24,000 it crosses our constant, `attempt` recomputes
+    `stream`, and the retry goes out on the streaming path and succeeds. Where
+    the doubling does **not** cross the line the retry is refused again and the
+    call ends terminal as `truncation` — no worse than before and costing
+    nothing, since neither attempt is built, sent or billed. Both halves are
+    pinned in `tests/model-boundary.test.ts`.
+
+    `truncation` was kept rather than a fifth `FailureKind` added: the cause is
+    the opposite way round from the name, but the recovery is the right one, and
+    widening a closed set two server files switch on exhaustively is an ADR
+    rather than a diff. ADR-0005 is amended with the argument, and
+    `NON_STREAMING_MAX_TOKENS` now says in its own docblock that it is a bound
+    and not the bound.
 
 ---
 
 ## Done when
 
-- `npm test` and `npm run typecheck` are green. **They are: 77 files, and
-  `npm run build` too.**
-- The five commands under *Is this already done?* return what a finished repo
-  returns. **Four of five do; the fifth is item 7 and is the owner's.**
+- `npm test` and `npm run typecheck` are green. ~~**They are: 77 files, and
+  `npm run build` too.**~~ **They are, and `npm run build` too. Corrected
+  2026-09-03: the file count is struck rather than raised — it was ten short by
+  the time anybody read it, and `npm test` is the thing that knows.**
+- ~~The five commands~~ **six, since 2026-09-03** under *Is this already done?* return what a
+  finished repo returns. **Five of six do; the one that does not is item 7 and is the owner's.**
 - ~~Each fix has a test that would have failed before it. `tests/canonical-terms.test.ts`
   and `tests/handover-honesty.test.ts` are the right homes for items 3, 4 and 5.~~
   **`tests/canonical-terms.test.ts` was the wrong file** — it is about typo

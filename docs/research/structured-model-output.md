@@ -453,7 +453,7 @@ if (expectedTime > 10 * 60 * 1000)
   )
 ```
 
-That is `max_tokens > 21,333` → throws `AnthropicError` at request-build time. Any boundary whose `max_tokens` exceeds ~21k **must** stream. Boundaries 1, 2, 3, 5 will not come close. Boundary 4 (a large `ActionProposal[]`) and boundary 6 (a full shift report) plausibly could, especially once adaptive thinking tokens are counted against the same cap.
+That is `max_tokens > 21,333` → throws `AnthropicError` at request-build time. Any boundary whose `max_tokens` exceeds ~21k **must** stream. ~~And that is the whole condition.~~ **Corrected 2026-09-03: it is not.** On 0.71.2 the same function also refuses when `max_tokens` exceeds a **per-model** cap the SDK keeps in `internal/constants.js` — 8,192 for the Opus 4 family — so a 12,000-token budget on one of those models throws with a number well under 21,333. The refusal is the same sentence either way, which is why `classifyThrow` keys on the sentence rather than on a number. Boundaries 1, 2, 3, 5 will not come close. Boundary 4 (a large `ActionProposal[]`) and boundary 6 (a full shift report) plausibly could, especially once adaptive thinking tokens are counted against the same cap.
 
 **2. Liveness for an unattended run.** The default non-streaming timeout is 10 minutes with no signal in between. A streamed request emits `ping` events and per-token deltas, so a watchdog can detect a stalled generation in seconds rather than waiting out the timeout. For a 2am run where a hung request costs you the whole night, this is a real operational argument — and it is the strongest reason to stream boundaries 4 and 6 regardless of their token count.
 

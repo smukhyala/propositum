@@ -128,6 +128,30 @@ consulting `stop_reason`**, so a parse-first design reports "schema mismatch" fo
 > so. What it does **not** cover: `FakeModelClient` still reports zero, because a
 > scripted reply genuinely spent nothing.
 
+> **Amended again 2026-09-03, later the same day — one more failure was being
+> called `transport`, and no request had been sent at all.** The SDK refuses a
+> non-streaming request whose budget it cannot time out, before it builds
+> anything: *"Streaming is required for operations that may take longer than 10
+> minutes"*. `classifyThrow` had a branch for that and it tested `/max_tokens/i`
+> — a field the refusal does not name — so the refusal was `transport`, which
+> grants no recovery, and the escalation the branch's own comment promised had
+> never fired.
+>
+> It is filed `truncation` now, and the table below is still unchanged.
+> `truncation` is not what happened — our request was too big for the call shape
+> we chose, rather than the reply being cut off — and the kind is shared anyway,
+> because doubling the budget is the thing that flips such a call onto the
+> streaming path, where the SDK will send it. Measured rather than assumed:
+> `tests/model-boundary.test.ts` watches a refused call come back streaming and
+> succeed. **A fifth `FailureKind` was the alternative and was rejected**: it
+> widens a closed set that two server files switch on exhaustively, for a path
+> no boundary is sized to reach today.
+>
+> **What that recovery does not fix**, stated because the fix is partly a better
+> report rather than a rescue: where the doubled budget stays under the line the
+> retry is refused the same way and the call ends terminal. It costs nothing —
+> neither attempt reaches the network, so neither is billed.
+
 | Failure           | Recovery                                        | Why                                                                                                     |
 | ----------------- | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
 | `refusal`         | **none**                                        | Terminal. Retrying asks the same model the same thing.                                                  |
@@ -246,6 +270,11 @@ person authorized, and the ledger they _read_ must not list them.
 - Streaming is not a cost lever. It is required above `max_tokens ≈ 21,333`, where the SDK throws
   locally before any HTTP call, and it is a genuine liveness signal for an unattended run. Encoded
   as `NON_STREAMING_MAX_TOKENS` so a boundary raising its budget cannot silently become unrunnable.
+  ~~That number is the bound.~~ **Corrected 2026-09-03: it is _a_ bound.** The SDK carries a
+  per-model non-streaming cap as well — 8,192 for the Opus 4 family, in its own
+  `internal/constants.js` — and refuses the same way for a budget under 21,333 that exceeds it.
+  Nothing here can encode that: `PROPOSITUM_MODEL` picks the model at runtime and the table is the
+  SDK's. The constant keeps a boundary off the refusal on the default model and promises no more.
 - Untrusted content has a labelled slot in the prompt (`page text:`) and a system-prompt rule that
   it is evidence, never instruction. **Datamarking itself is [#18](https://github.com/smukhyala/propositum/issues/18).**
   The field exists so the boundary is ready rather than needing reshaping.
