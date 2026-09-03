@@ -2,8 +2,10 @@
 
 **Status:** ~~not started~~ ~~done 2026-08-26, except item 7, which is the owner's.~~ ~~Two left,
 2026-08-27: item 7, which is the owner's, and item 10, which was added the same day and is not a
-quick fix at all — it is here so nobody rediscovers why it cannot be one.~~ **Two left, 2026-09-03,
-and they are not the same two:** item 7, which is the owner's, and item 11, added the day the
+quick fix at all — it is here so nobody rediscovers why it cannot be one.~~ ~~**Two left, 2026-09-03,
+and they are not the same two:** item 7, which is the owner's, and~~ **One left, 2026-09-03, later
+still — item 7 was pinned the same day on the owner's say-so (`grep -L '"key"'
+extension/manifest.json` prints nothing; item 7 below). What is left is** item 11, added the day the
 structured-output classification was fixed and left unfixed beside it on purpose. Item 10 was built
 the same day [ADR-0033](../adr/0033-a-late-tick-is-a-slept-machine.md) was accepted — it was never a
 quick fix and it never became one; what changed is that the signal it said nothing supplied turned
@@ -52,7 +54,11 @@ grep -rn 'Hand this over\|Take over\|Handing over' --include='*.tsx' src/ui src/
 grep -rn 'this shift has no document\|Read the claims below' --include='*.tsx' src/ui
 
 # 5. the extension id is not pinned
-grep -c '"key"' extension/manifest.json
+#    NOTE (2026-09-03): this was `grep -c '"key"'`, which printed `0` while the
+#    job was open and prints `1` now that it is done — the sense flipped the day
+#    the key landed. -L prints the file when the key is ABSENT, so output here
+#    means unpinned and still to do, the same way item 6 reads.
+grep -L '"key"' extension/manifest.json
 
 # 6. the SDK's own refusal of an oversized non-streaming request is not caught
 #    (added 2026-09-03 — item 11). -L prints the file when the words are ABSENT,
@@ -71,13 +77,15 @@ struck form, so it is **done**; (3) and (4) still hit; (5) returns `0`.~~
 already there when this file was written, which the original note missed; (2)
 matches the struck form — done; (3) still hits `Hand this over` and `Handing
 over…`, which is now the *correct* answer rather than a job, and no longer hits
-`Take over`; (4) returns nothing; (5) still returns `0`, and that one is
-deliberate.
+`Take over`; (4) returns nothing; (5) ~~still returns `0`, and that one is
+deliberate~~ **prints nothing since 2026-09-03 — pinned, and the command flipped
+to `-L` so silence is still the finished answer.**
 
 **~~Seven left, not nine.~~ ~~One left, and it is item 7.~~ ~~Two left, 2026-08-27 — item 7 and item
-10.~~ ~~One left again, 2026-09-03 — item 7.~~ Two left, 2026-09-03, later the same day — item 7 and
-item 11. Item 10 was built and item 11 arrived in the same afternoon, from different work, and the
-count was right for about an hour.** Everything struck below
+10.~~ ~~One left again, 2026-09-03 — item 7.~~ ~~Two left, 2026-09-03, later the same day — item 7 and
+item 11.~~ One left, 2026-09-03, later still — item 11; item 7 was pinned. Item 10 was built and
+item 11 arrived in the same afternoon, from different work, and the count was right for about an
+hour, and then item 7 moved before the day was out.** Everything struck below
 is struck rather than deleted, because a checklist that silently loses its
 finished items reads as though they were never on it.
 
@@ -96,14 +104,17 @@ from the greps at the top rather than from the code.
 
 ## What you have to do yourself
 
-**Nothing external**, with one exception:
+**Nothing external**, ~~with one exception:~~ **and since 2026-09-03 no exception
+either — the one below was done. What it left behind that is not software is
+the private half of the key, which is [`05`](./05-chrome-web-store.md)'s now.**
 
-- **Pinning the extension `key`** means generating a keypair and pasting the
+- ~~**Pinning the extension `key`** means generating a keypair and pasting the
   public half into `extension/manifest.json`. That is a command, not an
   application — but decide it once and never change it, because the id is
   derived from it and `PROPOSITUM_EXTENSION_ID`, the loopback `Origin` check and
   anybody's existing install all follow it. `manifest.json`'s own comment says
-  *"REPLACE before any real install — this is a placeholder."*
+  *"REPLACE before any real install — this is a placeholder."*~~ **Done
+  2026-09-03 — item 7.**
 
 ---
 
@@ -180,14 +191,22 @@ from the greps at the top rather than from the code.
    exactly what the front door cannot serve. Deleting it would take the accept
    path off both surfaces.
 
-7. **Pin the extension `key`.** **Still open, deliberately, 2026-08-26 — this
-   one is the owner's.** It is a command rather than an application, but it
+7. ~~**Pin the extension `key`.**~~ ~~**Still open, deliberately, 2026-08-26 — this
+   one is the owner's.**~~ **Done 2026-09-03, on the owner's say-so, knowing it
+   orphans the development pairing.** The id is
+   `oeeehaokemppjoedlccgggmhlmhcdeln`; `tests/extension-permissions.test.ts`
+   derives it from the key in `manifest.json` and fails if either moves. The
+   private half is ~~the owner's, outside the repository~~ **not in the
+   repository, and not yet the owner's either — it was written to the generating
+   session's scratchpad, named in [`05`](./05-chrome-web-store.md), and moving it
+   somewhere durable is a job there** and is needed only to
+   pack a `.crx`. Re-pair once on `/first-run`. It is a command rather than an application, but it
    permanently fixes the extension id and therefore invalidates any install that
    already exists, including the working development pairing on the machine this
    was written on. Doing that on somebody's behalf is not a quick fix, it is a
    decision with a blast radius, so it is left named rather than made.
-   `manifest.json`'s own comment still says *"REPLACE before any real install —
-   this is a placeholder."*
+   ~~`manifest.json`'s own comment still says *"REPLACE before any real install —
+   this is a placeholder."*~~ That sentence is struck in the manifest too.
 
 8. ~~**Fix the ADR-0023 misattribution.**~~ **Done 2026-08-26, and there were
    two.** `docs/adr/0001-worker-runtime.md` makes the same mistake, and it
@@ -312,9 +331,8 @@ from the greps at the top rather than from the code.
   both were green again today)*, and `npm run build` too.**
 - ~~The five commands~~ **The commands** *(the block has grown; struck 2026-09-03)* under *Is this
   already done?* return what a finished repo returns. ~~**Four of five do; the fifth is item 7 and
-  is the owner's.**~~ **Struck 2026-09-03 — every command but the two that name items 7 and 11
-  does; those two still print (`0` for the key count, the file name from the `-L`), the first the
-  owner's and the second left unfixed on purpose.**
+  is the owner's.**~~ **All of them do, 2026-09-03 — item 7's went quiet when the key was pinned and
+  item 11's when the SDK's refusal was classified, the same afternoon.**
 - ~~Each fix has a test that would have failed before it. `tests/canonical-terms.test.ts`
   and `tests/handover-honesty.test.ts` are the right homes for items 3, 4 and 5.~~
   **`tests/canonical-terms.test.ts` was the wrong file** — it is about typo
@@ -338,7 +356,8 @@ from the greps at the top rather than from the code.
 - **Responsive layout.** The app is a single desktop column with no header, no
   navigation and two padding breakpoints. That is a deliberate register, not an
   oversight, and changing it is a design decision rather than a fix.
-- **Item 7.** Named, argued, and left for the owner. See above.
+- ~~**Item 7.** Named, argued, and left for the owner. See above.~~ **Struck
+  2026-09-03 — pinned, on the owner's say-so. Item 7 above.**
 
 ---
 

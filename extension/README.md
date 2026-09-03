@@ -143,7 +143,10 @@ first-class event with `service_worker_terminated` as one of its reasons.
    [`/first-run`](http://127.0.0.1:3117/first-run) instead. The extension knocks on
    its own heartbeat, the page says *"Something just knocked."* and shows the id
    verbatim so you can compare it against `chrome://extensions`, and one click
-   pairs it. No file to edit and **no restart**:
+   pairs it. *(Since 2026-09-03 you know what it will say before you look: the
+   id is `oeeehaokemppjoedlccgggmhlmhcdeln`, pinned by the `key` in
+   `manifest.json` — see *Before a real install* below. Anything else knocking
+   is not this extension.)* No file to edit and **no restart**:
    `src/server/extension-pairing.ts` writes a row, and `resolveExtensionOrigin`
    reads it on the next request. A knock lasts five minutes — the heartbeat
    fires every thirty seconds, so anything that has stopped knocking is gone,
@@ -194,6 +197,37 @@ withdrawn rather than sitting there looking live.
 
 ## Before a real install
 
-`manifest.json` has no pinned `key`. Add one, or the extension id changes if the
+~~`manifest.json` has no pinned `key`. Add one, or the extension id changes if the
 repo moves and the `Origin` check on the loopback transport starts rejecting our
-own events.
+own events.~~ **Pinned 2026-09-03.** `manifest.json` carries the public key and
+the id is **`oeeehaokemppjoedlccgggmhlmhcdeln`** on every machine — Chrome's
+derivation is SHA-256 of the DER public key, first 128 bits, hex digits mapped
+`a`–`p`, and `tests/extension-permissions.test.ts` recomputes it so this
+sentence and the manifest cannot drift apart. The private half is ~~the owner's,
+outside the repository~~ **not in the repository, and that is the whole of what
+this repository can say about it — the test states the same limit. Struck
+2026-09-03, the day it was written: it was generated in an agent's session and
+left in that session's scratchpad, which is temporary; moving it somewhere kept
+is a row in [`docs/todo/05`](../docs/todo/05-chrome-web-store.md), and until
+somebody does that it is nobody's**; nothing in the product reads it and it is needed only
+to pack a `.crx`. **Regenerating it mints a new id and orphans every install**,
+including any `/first-run` pairing, which is why pinning it was the owner's
+call and not a quick fix.
+
+Pinning it once did exactly that to the development pairing that existed
+before — the paired row named the old, path-derived id. Re-pair once on
+`/first-run`; the knock now carries the pinned id.
+
+**Whether the Chrome Web Store keeps this id is not verified.** Chrome's
+[`key` reference](https://developer.chrome.com/docs/extensions/reference/manifest/key)
+says the field *"maintains the unique ID of an extension … when it is loaded
+during development"*, and the procedure it documents runs the other way — upload
+first, copy the store's public key from the dashboard's *Package* tab, paste it
+into the manifest. It says nothing about a key already present on the first
+upload, and neither does the
+[publish page](https://developer.chrome.com/docs/webstore/publish) *(both read
+2026-09-03)*. So: after the first upload, read the id the dashboard assigned. If
+it matches, this key is the store's and nothing changes. If it does not, the
+store's id is a second one — take the store's key into the manifest for the
+published build and treat this one as the unpacked id — and every sentence here
+that says *one id on every machine* needs striking.

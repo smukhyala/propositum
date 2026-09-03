@@ -8,6 +8,8 @@ build/
 .env
 .env.local
 .env.*.local
+# the private half of the extension's pinned key (extension/README.md, Before a real install)
+*.pem
 
 # Local database
 *.db

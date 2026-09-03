@@ -180,6 +180,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
+import { createHash } from 'node:crypto'
 import { readFileSync, readdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
@@ -596,5 +597,52 @@ describe('the manifest asks for exactly what it asks for', () => {
       'http://127.0.0.1/*',
       'https://*/*',
     ])
+  })
+})
+
+describe('the extension id is pinned', () => {
+  /**
+   * Until 2026-09-03 the manifest held no `key` and a comment saying to add one
+   * before any real install. So the id was whatever Chrome minted from the
+   * folder path, and moving the clone re-minted it. Pinning is a one-way door:
+   * the id is derived from the public key, and `PROPOSITUM_EXTENSION_ID`, the
+   * loopback `Origin` check and every existing pairing follow it — a
+   * regenerated key orphans all of them. That is why the id is written here as
+   * a literal rather than read back from the manifest: a change to the key
+   * goes red, and turning it green means somebody typed the new id into this
+   * file on purpose, where a reviewer can see it.
+   *
+   * The derivation is Chrome's: SHA-256 over the DER-encoded public key, the
+   * first 128 bits, each hex digit mapped to `a`–`p`. Recomputing it here is
+   * what keeps the id in `manifest.json`'s own comment and the id in
+   * `extension/README.md` from being two numbers maintained by hand.
+   *
+   * What this does not cover: whether the Chrome Web Store keeps this id on
+   * first upload. That is the store's behaviour, `extension/README.md` records
+   * what the documentation does and does not say about it, and no test here
+   * can reach it. Nor does it prove the private half exists anywhere — the
+   * `.pem` is the owner's, outside the repository, and only packing a `.crx`
+   * would notice it missing.
+   */
+  const PINNED_ID = 'oeeehaokemppjoedlccgggmhlmhcdeln'
+
+  const withKey = manifest as { key?: string; _comment_key?: string[] }
+
+  it('holds a key, so the id no longer depends on where the clone lives', () => {
+    expect(typeof withKey.key, 'manifest.json has no "key" — the id is unpinned again').toBe('string')
+  })
+
+  it('derives the recorded id from that key', () => {
+    const der = Buffer.from(withKey.key ?? '', 'base64')
+    const hex = createHash('sha256').update(der).digest('hex').slice(0, 32)
+    const derived = [...hex].map((h) => String.fromCharCode(97 + parseInt(h, 16))).join('')
+    expect(
+      derived,
+      'the key changed — that mints a new id and orphans every install; if that is intended, change the literal here in the same diff',
+    ).toBe(PINNED_ID)
+  })
+
+  it('says the same id in its own comment', () => {
+    expect((withKey._comment_key ?? []).join(' ')).toContain(PINNED_ID)
   })
 })
