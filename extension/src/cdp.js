@@ -467,6 +467,27 @@ export function flattenAXTree(nodes, options) {
 }
 
 /**
+ * Is Chrome reporting the TAB going somewhere, as opposed to something the
+ * page fetched while staying put?
+ *
+ * The one attribution `Fetch.requestPaused` can support. A pressed checkout
+ * button that submits a form makes the tab navigate, and Chrome says so with
+ * `Document` in the main frame; a beacon, an analytics `POST`, a preflight and
+ * an `XHR` all leave the tab where it is, whatever the page calls them.
+ *
+ * What it does NOT establish, and the landing branch says so at length: that
+ * the navigation was caused by the press rather than by the page's own timer.
+ * Chrome attests user activation on a navigation only through `Sec-Fetch-User`
+ * — see the docblock below for why that is not load-bearing yet. Unknown main
+ * frame is a no, because "some frame navigated" is not the tab navigating.
+ */
+function isTabNavigating(paused, mainFrameId) {
+  if (String(paused?.resourceType ?? '') !== 'Document') return false
+  if (typeof mainFrameId !== 'string' || mainFrameId === '') return false
+  return paused?.frameId === mainFrameId
+}
+
+/**
  * Is this paused request one the browser is about to send irreversibly?
  *
  * ── Attested by Chrome, not asserted by the page ─────────────────────────
@@ -514,7 +535,9 @@ export function flattenAXTree(nodes, options) {
  * The block is conditional now, on exactly what the ADR said and nothing else:
  * a one-shot landing permit armed per ratified `complete-purchase` command —
  * origin equal (never a pattern), amount parsed deterministically and at or
- * under the ceiling, currency matching, within the permit's own window. No
+ * under the ceiling, currency matching, within the permit's own window **and,
+ * since 2026-09-03 (#147), only where Chrome reports the tab itself
+ * navigating**. No
  * permit, or any mismatch, refuses as before; an unparseable or over-ceiling
  * amount refuses AND reports its own typed failure, because those are the two
  * refusals a person is later asked about. Still not a confirmation, still no
@@ -550,13 +573,53 @@ export function flattenAXTree(nodes, options) {
  *
  * ~~Two~~ Three honest costs of the narrowing, recorded rather than smoothed
  * over: a sign-in redirect to an identity provider outside the approved
- * sources is blocked, an off-origin `GET` beacon is allowed, and — added
+ * sources is blocked, an off-origin `GET` beacon is allowed, and ~~— added
  * 2026-09-02 — the landing permit below is bound to origin, currency, ceiling
  * and count, NOT to the request the pressed control initiated, so a
  * same-origin non-`GET` beacon whose body carries a parseable amount could
  * consume the one-shot ahead of the real checkout. Money fails closed (the
  * checkout then meets the plain block); the ledger's sentence about it does
- * not. ADR-0024 §2 carries the argument and todo/06 the measurement.
+ * not.~~ **Bound 2026-09-03 (#147), and the binding is narrower than the fix
+ * that was imagined — see the paragraph below.** ADR-0024 §2 carries the
+ * argument and todo/06 the measurement.
+ *
+ * ── What the permit is bound to, and what Chrome will not say ────────────
+ *
+ * The permit releases a non-`GET` only when Chrome reports the **tab itself
+ * navigating** — `resourceType` `Document`, in the known main frame. That is
+ * the same fact the off-origin check above already trusts, read for the
+ * opposite purpose, and it is the only attribution this file can have:
+ *
+ *   - `Fetch.requestPaused` carries **no initiator**. Method, url, headers,
+ *     resource type and frame are the whole of it.
+ *   - `Network.requestWillBeSent` does carry one — and `Network.enable` is the
+ *     door to `getResponseBody`, `getAllCookies` and `setCookie`, which
+ *     `tests/extension-cdp.test.ts` forbids by name. Buying attribution with
+ *     that domain is not a trade this file may make on its own; it is an ADR.
+ *
+ * So the `XHR`/`Fetch` half of the imagined fix — *the request whose initiator
+ * is the pressed element* — is **not available**, and the closed direction for
+ * something that cannot be correlated is to refuse it. Three consequences,
+ * stated rather than implied:
+ *
+ *   - **An `XHR`/`fetch` checkout can no longer land.** Most modern checkouts
+ *     are one. Such a press now ends with a reported `blocked-request` and a
+ *     halted run — visible, and no charge — where before it could land. That
+ *     is a large narrowing of a capability no live purchase has ever measured,
+ *     and it is deliberate.
+ *   - A same-origin telemetry `POST`, a `Ping` beacon, an image beacon and a
+ *     CORS preflight can no longer consume the one-shot. They meet the plain
+ *     block, the permit is untouched, and the ledger says a request was
+ *     refused rather than that a purchase happened.
+ *   - **This is "the tab navigated", not "the person's press caused it".** A
+ *     page that submits a same-origin form to itself on a timer, inside the
+ *     ~12s window, at the ratified origin, under the ratified ceiling, is
+ *     still indistinguishable from the press. `Sec-Fetch-User: ?1` would be
+ *     the further narrowing — Chrome sets it on gesture-driven navigations and
+ *     a page cannot forge it — but whether it is present at the `Request`
+ *     stage cannot be established from a fixture, and making it load-bearing
+ *     unverified would refuse every real checkout. todo/06's live session is
+ *     where that is checked, and the day it is, this is one more condition.
  */
 export function classifyPausedRequest(paused, approvedOrigins, patternCovers, mainFrameId, permit) {
   const method = String(paused?.request?.method ?? '').toUpperCase()
@@ -571,9 +634,16 @@ export function classifyPausedRequest(paused, approvedOrigins, patternCovers, ma
     /**
      * ADR-0024, built 2026-09-01. The five-argument form: with no `permit`
      * this is character-for-character the old unconditional refusal, which is
-     * what every existing caller and test still gets. With one, four checks,
-     * all against what Chrome is holding:
+     * what every existing caller and test still gets. With one, ~~four~~
+     * **five checks since 2026-09-03 (#147)**, all against what Chrome is
+     * holding:
      *
+     *  - the tab itself is navigating — `Document`, in the KNOWN main frame.
+     *    This is the binding to the press, and it is first because a request
+     *    Chrome does not attribute to the tab is not the press's request and
+     *    must not spend the permit deciding so. Unknown main frame refuses:
+     *    the off-origin check below takes the other branch on the same
+     *    unknown, and both are the closed direction for what they guard.
      *  - origin EQUALS the permit's — never `patternCovers`, never a prefix.
      *    "Somewhere like the merchant" is not a place a ceiling was ratified.
      *  - the amount parses deterministically (see `parseChargeAmount`), or
@@ -593,6 +663,7 @@ export function classifyPausedRequest(paused, approvedOrigins, patternCovers, ma
     if (permit === null || permit === undefined || typeof permit !== 'object') {
       return 'blocked-request'
     }
+    if (!isTabNavigating(paused, mainFrameId)) return 'blocked-request'
     if (originOf(url) !== permit.originPattern) return 'blocked-request'
 
     const headers = paused?.request?.headers ?? {}
@@ -1116,7 +1187,11 @@ export function registerControlListeners(handlers) {
  *
  * A beacon that happens to fire inside the window produces a spurious abort.
  * That is a real cost, it is the safe direction, and it is written down here
- * rather than discovered later.
+ * rather than discovered later. **Since 2026-09-03 (#147) it is also what a
+ * beacon fired during a `complete-purchase` produces**: the permit releases
+ * only a tab navigation, so a same-origin telemetry `POST` carrying an amount
+ * meets the plain block, spends nothing, and reports a refused request — where
+ * before it spent the one-shot and the run reported a purchase.
  */
 async function onRequestPaused(state, params, handlers) {
   /**

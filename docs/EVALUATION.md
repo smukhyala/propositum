@@ -174,6 +174,7 @@ and a prompt written to succeed rather than to lose.
 | `partnership-messy` | judgment-required | graceful degradation — a 34-minute capture gap, contradictory notes, tab noise, an injected source, and no stated objective anywhere                    |
 | `monitor-shortlist` | straightforward   | a false stop — every requirement is written in the person's own hand, so a question about which monitor to buy is a stop they already answered          |
 | `lisbon-thread`     | ~~structural~~ **straightforward, 2026-09-01** | ~~a run that should be halted rather than stop itself~~ **a run that should be left alone** — three evenings, every decision already made, and a research-only shift that should read all three sources and finish |
+| `evening-classes`   | structural | a run that cannot finish inside the cap — a prospectus whose index carries no times or fees, so every course page has to be opened, and there are more of them than one run may act. The first fixture to NAME a structural rule *(2026-09-03, [#143](https://github.com/smukhyala/propositum/issues/143))* |
 
 The messy twin's reference asks for the objective at **medium** confidence, not high. The session
 genuinely does not show it clearly, so **a reading that reports high confidence there is wrong even
@@ -186,8 +187,9 @@ the missing half of the H3 corpus are one piece of work: comparison shopping was
 `src/domain/detection/grounds.ts` as one of this design's **residual false positives**, and ADR-0016
 gap 1 makes it a target.
 
-~~**Two things are still absent, and one of them is a class.**~~ **Corrected 2026-09-01: two
-classes are absent, and the second one is new.** `information-missing` has no scenario
+~~**Two things are still absent, and one of them is a class.**~~ ~~**Corrected 2026-09-01: two
+classes are absent, and the second one is new.**~~ **Back to one, 2026-09-03: `structural` is
+filled by `evening-classes`.** `information-missing` has no scenario
 — the messy partnership session carries a capture gap as texture rather than as the point, and a
 scenario where the missing thing is the subject has not been written. ~~And `lisbon-thread`'s
 expected `no-progress` halt is a prediction about a limit that was written for drafting runs:
@@ -206,14 +208,20 @@ re-classed `straightforward` and re-sealed predicting no rule at all.
 
 **Two things follow, and the second is a loss.** The Second run's `lisbon-thread` line below is a
 measurement of the old behaviour and is left standing as one. And `lisbon-thread` was the corpus's
-only `structural` scenario, so **the `structural` class is empty again** — the state that fixture was
+only `structural` scenario, so ~~**the `structural` class is empty again** — the state that fixture was
 written to end. A scenario constructed to hit a limit is owed; it is pinned as owed in
-`tests/eval.test.ts` rather than absorbed.
+`tests/eval.test.ts` rather than absorbed.~~ **Struck 2026-09-03
+([#143](https://github.com/smukhyala/propositum/issues/143)): the class is filled by
+`evening-classes`, which is that written afternoon rather than an edit to the fixture that lost it.
+The loss lasted two days.**
 
-`scoreH3`'s `wrong-rule` branch is half-lost rather than lost. The re-sealed fixture predicts an
+~~`scoreH3`'s `wrong-rule` branch is half-lost rather than lost.~~ **No longer half-lost, 2026-09-03.**
+The re-sealed fixture predicts an
 explicit *no rule fires*, which is now scored as the prediction it is, so *a rule fired that should
-not have* is reachable through it. *The rule I named did not fire* is the direction nothing in the
-corpus can reach.
+not have* is reachable through it. ~~*The rule I named did not fire* is the direction nothing in the
+corpus can reach.~~ **`evening-classes` seals `['action-limit']`, so that direction is reachable
+too — and `tests/eval.test.ts` drives the fixture to the cap on the free path rather than trusting
+the label.**
 
 ~~`monitor-shortlist`'s `draft-changes` run ending the same way is **not** explained by this and is
 not fixed by it — that run could have drafted and did not, so three reads really was going in
@@ -387,8 +395,17 @@ scenarios is roughly **$0.8 and six minutes**, before the baseline.
 **That is the floor, not the price, and the difference is worth stating before somebody budgets from
 it.** A real model chooses how many turns it takes. `MAX_ACTIONS_PER_RUN` is 40 and it bounds turns
 rather than only authorised actions, so the ceiling per scenario is 43 calls — reading, agreement,
-plan, forty turns — and the corpus ceiling is about **$5.60 and forty minutes**. A run that asks a
+plan, forty turns — and ~~the corpus ceiling is about **$5.60 and forty minutes**~~ **about $7 and
+fifty minutes since 2026-09-03, over five scenarios**. A run that asks a
 question early costs almost nothing; one that loops costs the ceiling. Quote the range.
+
+**One scenario now costs the ceiling by construction** *(2026-09-03,
+[#143](https://github.com/smukhyala/propositum/issues/143))*. `evening-classes` approves more
+sources than a run may act on, so a correct run takes every one of its forty turns and halts on
+`action-limit`: roughly **$1.40 on its own**, against a floor of about $0.20 for a scenario that
+stops early. That is the price of measuring a limit, and it is why the corpus floor and the corpus
+ceiling are no longer the same shape of estimate — four scenarios that may stop early plus one that
+will not.
 
 ~~**The corpus has not been run against the real model since it grew**, and no number in this document
 reports one.~~ **Struck 2026-08-27 — the Second run below reports one: $0.99 and about seven minutes
@@ -521,11 +538,26 @@ be where the real value sits.
 captured to [`docs/eval-runs/2026-09-02-run.log`](./eval-runs/2026-09-02-run.log).
 Measured cost: **$0.81 and about five and a half minutes, 27 calls — a floor
 rather than a figure.** One of those 27 is `partnership-messy`'s reading, logged
-at `$0.0000 · 22298 ms · 1 call`: the transport failure path in
-`src/model/anthropic.ts` builds its telemetry with zero tokens, so the API billed
+at `$0.0000 · 22298 ms · 1 call`: ~~the transport failure path in
+`src/model/anthropic.ts` builds its telemetry with zero tokens~~, so the API billed
 for twenty-two seconds of generation that this number does not contain. A session
 reading is the largest call in the corpus — the other three cost $0.30, $0.14 and
-$0.36. Run to
+$0.36.
+
+> **Corrected 2026-09-03 — the number stays a floor and the defect behind it is
+> fixed.** That call was never a transport failure: the reply arrived whole and
+> in the wrong shape, and `beta.messages.parse()` threw because
+> `betaZodOutputFormat` validates and throws inside the SDK. The throw is now
+> classified `schema-mismatch`, which is the one failure ADR-0005 grants a
+> repair turn, and the non-streaming path no longer asks the SDK to validate at
+> all — so a rejected reply comes back as an ordinary message with its `usage`
+> intact and gets recorded at what it cost. Where a call genuinely throws,
+> tokens are recorded as **null** rather than zero, and the harness prints
+> *"at least"* in front of a total containing one. **$0.81 is still a floor**:
+> nothing re-measures a run that has already happened, and the next paid run is
+> what replaces it.
+
+Run to
 settle one question — [#142](https://github.com/smukhyala/propositum/issues/142),
 why a `draft-changes` shift ended on `no-progress` with nothing drafted — and it
 settled it, along with two things nobody was looking for.
@@ -592,6 +624,17 @@ that scenario contributed no H1 worksheet and no H3 observation, and the
 `BoundaryResult` machinery did exactly what it was built for — the failure is on
 the worksheet with the boundary named, rather than appearing as a run that chose
 to do nothing.
+
+> **Diagnosed and fixed 2026-09-03.** ~~`transport`~~ was the wrong word for it,
+> and the wrong word was the whole defect. The model cited an evidence handle it
+> had not been shown; `sessionReadingSchema`'s refinement rejected that
+> correctly; the SDK's validator threw; the throw was filed `transport`, and
+> `recoveryFor('transport')` is `none` — so the repair turn that exists for
+> precisely this, quoting the issues back and asking the model to re-cite
+> handles from its own prompt, never ran. It is `schema-mismatch` now and it
+> repairs once. **Nothing here is re-measured**: this scenario is still absent
+> from the run above, and the H3 result below is still a pass over three
+> scenarios rather than four until a run says otherwise.
 
 **`lisbon-thread` scored `false-stop`**, having scored `correct-continue` in
 August. It asked how many travellers, whether to price hold baggage, and what

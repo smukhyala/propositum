@@ -276,15 +276,46 @@ describe('the safety machinery is reachable from the product', () => {
      *
      * ── What this does NOT say ───────────────────────────────────────────
      *
-     * `machine_slept` is STILL unwritable, and the caller does not change that:
-     * elapsed silence cannot tell a slept machine from a dead service worker.
-     * One of the two reasons this pin used to cover is closed and the other is
-     * exactly as open as it was — which is why the title says *a* gap reason.
+     * ~~`machine_slept` is STILL unwritable, and the caller does not change
+     * that: elapsed silence cannot tell a slept machine from a dead service
+     * worker. One of the two reasons this pin used to cover is closed and the
+     * other is exactly as open as it was — which is why the title says *a* gap
+     * reason.~~
+     *
+     * **Corrected 2026-09-03 (ADR-0033).** Still true of elapsed silence, and
+     * no longer true of the gap watch, which sampled its own tick's lateness
+     * and got a second signal out of a clock it already had. The two pins below
+     * are what keep that signal connected; this one is unchanged and its title
+     * still says *a* gap reason, because silence is still one reason's evidence
+     * and not the other's.
      */
     expect(
       callersOf('sweepForGap(', 'src/server/gap-sweeper.ts'),
       'the gap sweeper lost its caller — silence stopped being recordable',
     ).not.toEqual([])
+  })
+
+  it('something samples the tick for lateness, or machine_slept is unwritable again', () => {
+    /**
+     * The detector is the whole of what separates a slept machine from a dead
+     * service worker. Uncalled, it is a correct and tested module while the
+     * timeline goes on telling everybody who closed their lid that our software
+     * fell over — which is the failure this file exists for, in the form that
+     * looks most like working software.
+     */
+    expect(
+      callersOf('createSuspensionDetector', 'src/server/suspension.ts'),
+      'nothing samples the sweep tick — a slept machine is recorded as a dead service worker',
+    ).toContain('src/server/gap-watch.ts')
+  })
+
+  it('and the sweeper is what is told, so the reason is decided before the write', () => {
+    // One caller is the correct number. A second would be a second author of
+    // the reason on a row nobody can UPDATE afterwards.
+    expect(
+      callersOf('noteSuspension', 'src/server/capture-session.ts'),
+      'nothing hands the suspension to the sweeper — the signal is taken and dropped',
+    ).toEqual(['src/server/gap-sweeper.ts'])
   })
 
   it('events reach the ledger writer rather than a repository', () => {
@@ -308,6 +339,71 @@ describe('the safety machinery is reachable from the product', () => {
     const callers = callersOf('documents.addVersion', 'src/persistence/repositories/index.ts')
 
     expect(callers, 'nothing calls addVersion — the version chain never grows').not.toEqual([])
+  })
+
+  it('a person can bring in a page, and exactly one thing decides whether it is fetched', () => {
+    /**
+     * ADR-0032, wired the day it was accepted.
+     *
+     * `importApprovedPage` is the door: it matches the address against the
+     * project's approved origins AND builds the `allowlisted()` wrapper around
+     * the reader. Both of those live in the same function on purpose, so the
+     * assertion that matters is not that something calls it — it is that
+     * **exactly one thing does**. A second caller would be a second place that
+     * decides what may be fetched, and the two would drift.
+     */
+    expect(
+      callersOf('importApprovedPage(', 'src/policy/page-import.ts'),
+      'the import door has no caller, or has grown a second one that decides for itself',
+    ).toEqual(['src/server/document-import.ts'])
+  })
+
+  it('the import reaches a screen, or the control is decoration', () => {
+    // The three links in the chain, each of which has been the broken one in
+    // some version of this repository: logic nothing calls, an action no screen
+    // imports, a screen that renders the form without the prop.
+    expect(
+      callersOf('bringInApprovedPage(', 'src/server/document-import.ts'),
+      'nothing calls the import — the server action is an endpoint to nowhere',
+    ).toEqual(['src/server/actions.ts'])
+
+    expect(
+      callersOf('bringInPage(', 'src/server/actions.ts'),
+      'no screen calls bringInPage — a page can be fetched and nobody can ask for one',
+    ).not.toEqual([])
+
+    const screen = stripImports(
+      stripComments(readFileSync(join(repo, 'src/app/projects/[projectId]/page.tsx'), 'utf8')),
+    )
+    expect(
+      screen,
+      'the document forms render without the import prop — the control is gone from the screen',
+    ).toContain('bringIn={bringIn}')
+  })
+
+  it('the app process reads pages with the fetcher that runs no code', () => {
+    /**
+     * ADR-0032 §5 is a refusal — the process holding the person's database and
+     * their API key does not execute a host's JavaScript — and a refusal is
+     * only worth anything if the thing it chose instead is the thing that runs.
+     * `httpFetcher` being written and uncalled would leave the refusal true and
+     * the feature dead; `createPlaywrightFetcher` appearing in the app would
+     * leave the feature alive and the refusal false.
+     */
+    expect(
+      callersOf('httpFetcher(', 'src/policy/http-fetcher.ts'),
+      'nothing constructs the app process reader — the import cannot fetch anything',
+    ).toEqual(['src/server/document-import.ts'])
+
+    expect(
+      callersOf('readableText(', 'src/domain/document/from-html.ts'),
+      'nothing turns markup into words — an HTML page arrives in the box as tags',
+    ).toEqual(['src/policy/http-fetcher.ts'])
+
+    expect(
+      callersOf('createPlaywrightFetcher(', 'src/policy/playwright-fetcher.ts'),
+      'a browser was launched outside the worker process — ADR-0032 §5 refuses one in the app',
+    ).toEqual(['scripts/worker.ts'])
   })
 
   it('URLs are cleaned by something on the write path, not just in a test', () => {

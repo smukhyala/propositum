@@ -295,7 +295,75 @@ async function runStatements(tx: RawExecutor, statements: ReadonlyArray<string>)
 }
 
 /**
- * Install the guards. Idempotent — every statement is DROP-then-CREATE.
+ * What this costs, measured on Linux 2026-09-03.
+ *
+ * ── Why anybody asked ────────────────────────────────────────────────────
+ *
+ * Three tests timed out on CI and passed on a re-run of the same commit. That
+ * had three candidate explanations, and only the first was ever measured: the
+ * `testTimeout` in `vitest.config.ts` cured it, and that comment says plainly
+ * it is a cure and not a diagnosis. The third candidate was this function — the
+ * suspicion that reinstalling the guards is disproportionately expensive on a
+ * runner as against a developer machine, and that the files which build a
+ * database of their own each pay for it. A pull request headed *"TEMPORARY:
+ * diagnose the append-only guard install on Linux"* was opened and closed on
+ * exactly that suspicion and the answer was never written down.
+ *
+ * The reason it was worth taking now rather than later is that the cure hides
+ * it: with thirty seconds of headroom, an install that has quietly become five
+ * times slower is invisible until it is thirty times slower.
+ *
+ * ── The number ───────────────────────────────────────────────────────────
+ *
+ * Taken by timing each part of the `beforeAll` in `tests/append-only.test.ts`
+ * on x86-64 Linux, four cores. Medians, not means:
+ *
+ *   idle, 9 samples            `npx prisma db push`   1168 ms   94.6%
+ *                              install and verify       29 ms    2.3%
+ *                              install alone, warm      22 ms
+ *                              verify alone              <1 ms
+ *                              the whole beforeAll    1235 ms
+ *
+ *   four of those at once,     `npx prisma db push`   1.7–1.9 s  94–96%
+ *   20 samples                 install and verify     38–62 ms   2.1–3.1%
+ *
+ * The second block is the one that answers the question, because contention
+ * between parallel workers is the mechanism the timeout exists for. Under it
+ * the install roughly doubles and remains a rounding error, while the
+ * subprocess in front of it absorbs everything.
+ *
+ * ── The verdict ──────────────────────────────────────────────────────────
+ *
+ * Proportionate. The install is two to three per cent of a database-backed test
+ * file's setup, and `testTimeout` stands as the whole answer. There is no
+ * performance ticket here and no argument for hoisting this out of a test
+ * file's `beforeAll`: doing so would save two per cent of something that runs
+ * once per file, and cost every file its own database. If CI time is ever worth
+ * attacking, `prisma db push` is where it went, and that is a different piece
+ * of work with a different risk attached to it.
+ *
+ * ── What this does NOT cover, which is half the comparison ───────────────
+ *
+ *   - **No Mac number was taken.** The measurement was made in a Linux
+ *     container and there was no Mac to hand. ~0.8 s per push warm on an
+ *     M-series machine is on record from the work that added the timeout; it is
+ *     cited here as somebody else's prior, not as a figure measured beside
+ *     these. So the Linux-against-Mac ratio for the install itself is still
+ *     unknown. What has changed is that it matters less, because the install is
+ *     small on the side that can be seen.
+ *   - **This is not `ubuntu-latest`.** It is Linux with four cores; the runner
+ *     the flakes happened on has two, and different disk. Absolute numbers
+ *     there will be worse. The claim being made is the share, and a share is
+ *     what survives the difference — fewer cores slow the push and the install
+ *     together.
+ *   - **Nothing asserts any of this.** It is the record of one run on one
+ *     machine, kept here for the reason the CI workflow keeps its own runner
+ *     timings in prose: there is nowhere cheaper for it to live. Re-measure
+ *     rather than believe it if the suite gets slow again.
+ *
+ * ── The install itself ───────────────────────────────────────────────────
+ *
+ * Idempotent — every statement is DROP-then-CREATE.
  *
  * On ONE connection, and atomically. The pairing is the reason: a `CREATE` that
  * runs on a different connection from its `DROP` fails under load, and a reader

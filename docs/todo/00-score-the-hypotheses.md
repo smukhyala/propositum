@@ -50,8 +50,11 @@ test above is still the right one to run; the answer it gives has changed.
   2026-08-27 — 33 calls, $0.99 — and `docs/EVALUATION.md`'s *Second run* section
   is the four-scenario record that replaced the two-scenario numbers.
 
-This file is done when all four scenarios have a complete entry and
-`npm run eval -- --report` will total them.
+~~This file is done when all four scenarios have a complete entry and
+`npm run eval -- --report` will total them.~~ **Still true of the four it was
+written about, and there are five since 2026-09-03**: `evening-classes` is
+sealed and has no entry, so the *done* above is a statement about the corpus as
+it stood on 2026-08-27 rather than about the corpus on disk.
 
 ---
 
@@ -116,9 +119,12 @@ commands that say they cost money do.
    Cost, from `docs/EVALUATION.md`: **six calls per scenario is the floor** —
    about $0.80 and six minutes across four scenarios. The ceiling is 43 calls per
    scenario (`MAX_ACTIONS_PER_RUN` is 40, and it bounds turns rather than
-   authorised actions), which is about **$5.60 and forty minutes**. A run that
+   authorised actions), which is ~~about **$5.60 and forty minutes**~~ **about $7
+   and fifty minutes over five scenarios since 2026-09-03**. A run that
    asks a question early costs almost nothing; one that loops costs the ceiling.
-   Quote the range, not the floor.
+   Quote the range, not the floor. **And one scenario now spends the ceiling
+   whatever happens** — `evening-classes` is built to reach `action-limit`, so
+   its forty turns are the measurement rather than a loop, at about $1.40.
 
 4. **Score H1 by hand.** `npm run eval -- --worksheet` writes the blank entries.
    Fill in each component 0/1/2 and set `scoredBy`. `null` means *not yet
@@ -177,33 +183,50 @@ commands that say they cost money do.
 - **`budget-exhausted` is unreachable.** The drive freezes the clock, so no
   scenario can expect it.
 - **ADR-0007's `information-missing` stop class still has no scenario at all.**
-- **And as of 2026-09-01 neither does `structural`, which is new and is a
-  regression in coverage rather than an omission.** `lisbon-thread` filled that
+- ~~**And as of 2026-09-01 neither does `structural`, which is new and is a
+  regression in coverage rather than an omission.**~~ **Closed 2026-09-03 by
+  `evening-classes`** ([#143](https://github.com/smukhyala/propositum/issues/143)).
+  The struck argument is kept below because it is what produced the fixture.
+  `lisbon-thread` filled that
   class by predicting the `no-progress` halt a research-only run hit on its
   third read. [Issue #101](https://github.com/smukhyala/propositum/issues/101)
   ruled that halt a false stop and removed it, so the fixture names no rule now
   and the class is empty again — the exact state that fixture was written to
   end.
 
-  **`scoreH3`'s `wrong-rule` branch is half-lost, not lost.** The re-sealed
+  ~~**`scoreH3`'s `wrong-rule` branch is half-lost, not lost.**~~ **Whole again,
+  2026-09-03.** The re-sealed
   fixture predicts an explicit *no rule fires*, and `scoreH3` scores that as the
   prediction it is, so *a rule fired that should not have* is reachable through
-  it. What no fixture can reach is *the rule I named did not fire*, because
-  none names one.
+  it. ~~What no fixture can reach is *the rule I named did not fire*, because
+  none names one.~~ **`evening-classes` names `action-limit`, so that direction
+  fires too.**
 
   It cannot be repaired by editing `lisbon-thread`. Nothing else is in reach for
   it: three approved sources against `MAX_ACTIONS_PER_RUN`, three reads against
   that scenario's own `timeLimitMinutes`. Sealing a rule it *might* hit is the
   guess the blind protocol exists to prevent.
 
-  What is owed is a scenario **constructed** to hit a limit — an afternoon with
+  ~~What is owed is a scenario **constructed** to hit a limit — an afternoon with
   more to read than the action cap allows, or one whose budget genuinely runs
-  out. That is a written fixture, not an edit, and it is the same size of job as
-  the `information-missing` one above. The gap is pinned in
+  out.~~ **Written 2026-09-03, and it is the first of those two shapes.**
+  `evening-classes` is an autumn prospectus whose index carries no times and no
+  fees, so every course page has to be opened, and it approves more of them than
+  `MAX_ACTIONS_PER_RUN` permits actions — the run halts with courses unread.
+  The second shape, a budget that genuinely runs out, is **still owed and still
+  blocked** by the frozen clock recorded two bullets above.
+  ~~The gap is pinned in
   `tests/eval.test.ts`, which asserts the class is empty and says in its own
   docblock to turn the assertion back the right way round when it is not, and
   it is ticketed as
-  [#143](https://github.com/smukhyala/propositum/issues/143).
+  [#143](https://github.com/smukhyala/propositum/issues/143).~~ **That test was
+  turned round in the same change, and it now drives the fixture to the cap on
+  the free path rather than asserting a label.**
+
+  **It is sealed and UNSCORED.** No entry exists for it in `eval-scores.json`,
+  no run has ever driven it against a real model, and it is the most expensive
+  scenario in the corpus by construction — about $1.40 on its own, because a
+  fixture measuring a limit has to reach one.
 - **Nobody ratifies the agreement in the harness.** It accepts what the handoff
   boundary drafted, unedited — so handoff correction rate stays unmeasured.
 - **Re-entry quality** — *can the person resume within about a minute* — is

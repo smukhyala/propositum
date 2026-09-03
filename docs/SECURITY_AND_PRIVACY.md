@@ -333,6 +333,60 @@ ADR-0029's opening section, not a footnote here.
   and no banner. The trade is deliberate: you find out by looking at the connection, not by being
   interrupted at the moment you were handing work over.
 
+### 5. Brought in — only when you press, only from a source you approved
+
+_(Added 2026-09-03 — [ADR-0032](./adr/0032-a-page-from-a-source-already-approved.md). If you never
+press the control, none of this happens.)_
+
+You can paste a web address into your document and have Propositum fetch it. That is the first time
+the app process itself asks a host for anything, and it is bounded before the request rather than
+after it.
+
+| Collected            | Detail                                                                        |
+| -------------------- | ------------------------------------------------------------------------------- |
+| The page's readable text | **at most 200,000 characters**, and a longer page is refused rather than cut |
+| The title it declares    | page-authored and unverified, shown as what the page called itself           |
+
+- **Only an origin you already approved for that project.** The address is matched against your
+  `ApprovedSource` list before anything is requested, so an unapproved host is never asked and never
+  learns you looked. The control cannot approve a source; there is no field on it that could.
+- **A redirect off that origin is refused before it is taken**, which is the part of the sentence
+  above that has to be earned rather than asserted. *(Added 2026-09-03, on the day the clause was
+  found to be false. What it said was true of the address you typed and false of anywhere that
+  address sent us: the reader followed redirects and compared origins afterwards, so an approved
+  host that was hostile — or that merely carried somebody's open redirect — could answer with
+  `https://anything.example/…` and that host would have your IP, the moment, and whatever the
+  address encoded, before the refusal ran. It never got a cookie, never learned the address you
+  typed, and its page was never read; it did learn you looked. Now every hop's destination is
+  checked against your approved origin **before** anything is requested from it, and an off-origin
+  hop is refused with nothing sent to it. A chain of more than five hops is refused too, rather than
+  followed for ever.)*
+- **A redirect inside that origin is followed**, including to a path outside the one you approved.
+  The origin check is per hop; the path check ran once, against the address you typed. Same host,
+  same bytes it was already willing to serve — but it is a gap between two checks and it is stated
+  rather than implied closed.
+- **200,000 characters is the third published product constant**, named `IMPORT_BUDGET_CHARS`, and
+  it is the same number a file import already refuses past. It bounds a document you are composing
+  rather than what Propositum retains about your browsing — the 2,000 above is that promise and is
+  unchanged.
+- **Nothing is stored until you save.** The text lands in the box on screen, unsaved, under whatever
+  is already there. No version, no observation event and no ledger row is written by the import.
+- **Five million bytes is what the app process will hold from a host**, and past it the read is
+  refused. *(Added 2026-09-03.)* This is a transport ceiling rather than a fourth published bound:
+  the 200,000 above is a promise about what a document may contain, and it was checked on the
+  extracted text — after the whole response had already been buffered. An approved host that chose to
+  answer with a gigabyte would have been held in full and then politely refused. That was a resource
+  cost rather than a privacy one and it was stated nowhere. It sits well above the 200,000, so a page
+  refused for its length still gets that sentence rather than this one.
+- **No credential goes with the request.** No cookies, no profile, no referrer. The host learns your
+  address and the moment you pressed, which is true of any fetch and is the cost stated in the ADR.
+- **Propositum runs none of the page's code.** The app process does not launch a browser, which is
+  why a page that builds itself in the browser arrives nearly empty. That is a refusal with a real
+  cost, not an oversight.
+- **The text is sanitised at the same door as every other page-authored string** — control
+  characters, zero-width characters and bidi overrides are removed, and if any were present you are
+  told before you save.
+
 ## Data explicitly not collected
 
 Not "not yet" — these are design commitments, and several are structurally impossible rather than
@@ -544,7 +598,7 @@ exists not to use.
 | **Your work stays local**                            | SQLite on your machine. No cloud, no sync, no server of ours, no telemetry, no analytics, no crash reports. ~~Nothing about what you read, wrote or handed over is stored anywhere but here.~~ ~~**This half is unchanged**~~ — **struck 2026-08-26, [ADR-0021](./adr/0021-a-thread-on-the-persons-phone.md). It was the unchanged half for eight days. See the row below** |
 | **A thread on your phone, optional, off unless you connect it** | If you pair one, Propositum sends you **derived prose about your own work** — a subject, why it is offering, why it stopped, what it needs decided. That is the point of the channel and it is also a sentence about your life on somebody else's server. The bot is **yours**: you create it, we never see it, and there is no shared bot and no operator. The messages are **not end-to-end encrypted** |
 | **One account, optional, off unless you connect it** | a Google calendar, for one question: how long you will be away. Nothing is created if you never connect one                                                                                                                                                                                            |
-| ~~**Two things leave the machine**~~ **Three, 2026-08-26** | **prompts to the Anthropic API**, which carry the observation events and document text a boundary needs — and, if you connected a calendar, **one request to Google** asking whether you are busy between two moments. That request carries no page, no title, no subject and nothing off your session — and, if you paired a phone thread, **messages to Telegram's Bot API**. Unlike the other two, that one carries the *subject* of your work in readable prose, which is why the row above is struck ([ADR-0021](./adr/0021-a-thread-on-the-persons-phone.md)) |
+| ~~**Two things leave the machine**~~ ~~**Three, 2026-08-26**~~ **Four, 2026-09-03 — a page you asked for, from an origin you approved ([ADR-0032](./adr/0032-a-page-from-a-source-already-approved.md)); it is the first request the app process makes to anybody's host, it carries no credential, and it happens only when you press** | **prompts to the Anthropic API**, which carry the observation events and document text a boundary needs — and, if you connected a calendar, **one request to Google** asking whether you are busy between two moments. That request carries no page, no title, no subject and nothing off your session — and, if you paired a phone thread, **messages to Telegram's Bot API**. Unlike the other two, that one carries the *subject* of your work in readable prose, which is why the row above is struck ([ADR-0021](./adr/0021-a-thread-on-the-persons-phone.md)) |
 
 This is still a privacy property today and a limitation tomorrow — it is also why a run stops when
 your Mac sleeps, and answering the question that limit implies is the whole reason the calendar read

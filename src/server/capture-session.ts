@@ -13,6 +13,15 @@
  * inferred hole. A hole indistinguishable from inactivity makes inference
  * confidently report a lull that never happened.
  *
+ * **Silence alone does not say WHY** *(2026-09-03,
+ * [ADR-0033](../../docs/adr/0033-a-late-tick-is-a-slept-machine.md))*. A slept
+ * machine produces exactly the same silence as a dead service worker, which is
+ * why `machine_slept` was a reason no row could carry for as long as this store
+ * had only the heartbeat to go on. `noteSuspension` is the second input: the
+ * app process noticing that its own clock stopped being serviced. Nothing here
+ * infers sleep from the heartbeat, and it never should — the two are
+ * indistinguishable from this side.
+ *
  * ── State lives in memory on purpose ─────────────────────────────────────
  *
  * The live token and last-heartbeat are per-process and short-lived. Persisting
@@ -35,6 +44,17 @@ export interface LiveSession {
   lastHeartbeatMs: number
   /** Set while a gap is open, so we record one gap rather than one per poll. */
   gapOpenedAtMs: number | null
+  /**
+   * How far along we have already told the person we were not watching.
+   *
+   * A sleep gap is recorded from the suspension itself rather than from
+   * silence, so without this the same minutes would be reported a second time
+   * as `service_worker_terminated` the moment the grace period passed. It is
+   * kept beside `lastHeartbeatMs` rather than folded into it because the two
+   * mean different things: one is when we last heard from the extension, the
+   * other is what we have already said about the quiet since.
+   */
+  accountedThroughMs: number
   /**
    * Memory of which pages this sitting has already seen, so a second visit is
    * `returnedTo` rather than another `visited`.
@@ -59,6 +79,16 @@ export interface CaptureSessionStore {
   detectGap(nowMs: number): { startedAtElapsedMs: number; endedAtElapsedMs: number } | null
   /** Called when a heartbeat arrives after silence — closes an open gap. */
   closeGap(): void
+  /**
+   * This process was not running between these two readings, so nothing was
+   * being watched. Returns the gap to record — clamped to the last heartbeat,
+   * so it never contradicts an event the ledger already holds — or `null` when
+   * there is no session, or when the window is one we have already reported.
+   */
+  noteSuspension(
+    startedMs: number,
+    endedMs: number,
+  ): { startedAtElapsedMs: number; endedAtElapsedMs: number } | null
 }
 
 export function createCaptureSessionStore(): CaptureSessionStore {
@@ -75,6 +105,7 @@ export function createCaptureSessionStore(): CaptureSessionStore {
         startedAtMs: nowMs,
         lastHeartbeatMs: nowMs,
         gapOpenedAtMs: null,
+        accountedThroughMs: nowMs,
         navigation: createNavigationClassifier(),
       }
       return live
@@ -94,18 +125,39 @@ export function createCaptureSessionStore(): CaptureSessionStore {
       if (!live) return null
       if (live.gapOpenedAtMs !== null) return null // already recorded
 
-      const silentFor = nowMs - live.lastHeartbeatMs
+      // The later of the two, because a window already reported as a sleep gap
+      // is not silence we owe the person a second sentence about.
+      const silentSince = Math.max(live.lastHeartbeatMs, live.accountedThroughMs)
+      const silentFor = nowMs - silentSince
       if (silentFor < HEARTBEAT_GRACE_MS) return null
 
-      live.gapOpenedAtMs = live.lastHeartbeatMs
+      live.gapOpenedAtMs = silentSince
       return {
-        startedAtElapsedMs: live.lastHeartbeatMs - live.startedAtMs,
+        startedAtElapsedMs: silentSince - live.startedAtMs,
         endedAtElapsedMs: nowMs - live.startedAtMs,
       }
     },
 
     closeGap() {
       if (live) live.gapOpenedAtMs = null
+    },
+
+    noteSuspension(startedMs, endedMs) {
+      if (!live) return null
+
+      const from = Math.max(startedMs, live.lastHeartbeatMs, live.accountedThroughMs)
+      if (endedMs <= from) return null
+
+      live.accountedThroughMs = endedMs
+      // Whatever silence was open ran into the sleep and has been reported as
+      // far as the wake. If the extension is still gone, that is a fresh
+      // silence and it earns its own grace period rather than inheriting one.
+      live.gapOpenedAtMs = null
+
+      return {
+        startedAtElapsedMs: from - live.startedAtMs,
+        endedAtElapsedMs: endedMs - live.startedAtMs,
+      }
     },
   }
 }

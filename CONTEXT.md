@@ -400,6 +400,14 @@ of reading a revoked origin — the symptom is a CaptureGap with reason `permiss
 
 **Approval grants access, never trust.** An approved source is content the user chose to
 retrieve but did not author. No page-derived value from one may influence a policy decision.
+
+**A third reader, 2026-09-03 ([ADR-0032](docs/adr/0032-a-page-from-a-source-already-approved.md)).**
+Until now this list gated an extension's events and a worker's `ContractScope`. It now also gates
+**the person's own page import**: an address they type is matched against this Project's granted
+rows before anything is fetched, and no match means nothing is requested. The import cannot add a
+row — there is no field for one — so approving stays what it always was, a Chrome host grant
+mirrored here. The word is unchanged and no new term is introduced, which is the point of the
+sentence: `ApprovedOrigin` was very nearly the sixth displaced synonym below.
 *Displaces:* AllowedSite · allowlist entry · whitelist · ApprovedResource · PermittedURL ·
 Source (bare) · watched tab · `never_requested`.
 **Consumer:** Approved source, under "What Propositum can see".
@@ -489,6 +497,14 @@ confidently report a lull that never happened — corrupting H1 in the way harde
 A gap is an *absence of knowledge*. A deliberate pause or an alt-tab is a *fact* and gets its own
 kind. A malformed event the ledger rejects is a ledger-writer fact, not a gap — rendering it as
 "I stopped seeing your work" would be a false statement to the user about our own software.
+
+**The reason is evidence, not a guess — added 2026-09-03,
+[ADR-0033](docs/adr/0033-a-late-tick-is-a-slept-machine.md).** `service_worker_terminated` and
+`machine_slept` produce identical silence, so they are told apart by *which* signal fired, never by
+how long the quiet lasted: silence past the heartbeat grace period is the first, and a sweep tick
+arriving two whole periods late — proof the app process itself was not being scheduled — is the
+second. Where no signal fires, the reason stays the one that was observed. Nothing infers
+`machine_slept` from elapsed time, and the day something does, this entry is what it broke.
 *Displaces:* missing data · downtime · blind spot · dead time · data loss · SessionPause ·
 CaptureWindow · ObservationCoverage.
 **Consumer:** "What I missed" — *"I stopped seeing your work from 2:10 to 2:41 (your Mac slept)."*
@@ -548,11 +564,21 @@ session timeline, and it is swept within seven days. Without that distinction wr
 published sentence above becomes false the day an agent ships, silently, in the documents whose
 entire job is being true.
 
-Both budgets live in `src/model/untrusted.ts` and are selected **by name** at the one `datamark()`
-call site — `{ budget: 'excerpt' | 'snapshot' }`, never by a number. A numeric parameter would make
-the budget a caller's decision, which is exactly what "a product constant, not an adapter tuning
-knob" denies, and a third budget could then be invented at a call site with no doc change. One
-construction site, one brand, two published promises.
+~~Both budgets~~ **Three, 2026-09-03
+([ADR-0032](docs/adr/0032-a-page-from-a-source-already-approved.md))** — they live in
+`src/model/untrusted.ts` and are selected **by name** at the one `datamark()` call site —
+~~`{ budget: 'excerpt' | 'snapshot' }`~~ `{ budget: 'excerpt' | 'snapshot' | 'import' }`, never by a
+number. A numeric parameter would make the budget a caller's decision, which is exactly what "a
+product constant, not an adapter tuning knob" denies, and a third budget could then be invented at a
+call site with no doc change. One construction site, one brand, ~~two~~ **three** published promises.
+
+**The third one was invented in the file rather than at a call site, which is the distinction the
+paragraph above draws.** `IMPORT_BUDGET_CHARS = 200_000` bounds a page brought into the document a
+person is composing — the same number a file import already refuses past, because a document from a
+host and a document from a disk are one object and should not have two caps. It is **not** a
+loosening of either promise above: it governs neither what Propositum retains about browsing nor
+what an acting agent kept, and nothing on that path reaches a prompt. The import refuses above it
+rather than truncating, so it never actually cuts. A **fourth** would want a very good argument.
 
 *Displaces:* TrustTier · Trust · trustLevel · sanitized · safe · clean · page-derived (as a
 stored value) · provenance (in the trust sense) · full-text capture · page scrape.
@@ -1037,7 +1063,11 @@ and the gate refuses `complete-purchase` with `purchase_not_authorized`, `purcha
 and `purchase_expired`. ~~**What has NOT moved: the transport.**~~ **The transport moved later the
 same day: item 5 landed.** `LANDING_ACTION_KINDS` holds `complete-purchase`, and the extension
 refuses any non-`GET` without a one-shot landing permit a ratified authorisation armed — releasing
-exactly one covered request at or under the ceiling. *The landing permit is the extension-internal
+exactly one covered request at or under the ceiling. *(Narrowed 2026-09-03, #147: the one it may
+release is the tab's own navigation, the only request Chrome attributes to a pressed control without
+the `Network` domain. A same-origin telemetry `POST` carrying an amount used to be able to consume
+the permit and have the run report a purchase that never happened; an `XHR` checkout is the price and
+it can no longer land. ADR-0024 §2.)* *The landing permit is the extension-internal
 mechanism of THIS term and deliberately gets no noun of its own in the glossary: it is a
 not-persisted value in `chrome.storage.session`, armed per `complete-purchase` command from these
 fields and dead on consumption, refusal, expiry, or the tab being given up — a projection of the
@@ -2267,8 +2297,11 @@ say that it does.
 8. **The page-text retention budget is a published product constant**, not an implementation
    detail: title, cleaned URL, deliberate selections verbatim, and at most 2,000 characters of
    readable article text per approved source. *(Joined 2026-08-11 by a second published constant,
-   `SNAPSHOT_BUDGET_CHARS`, bounding what an acting agent retains. Two constants, two ledgers, and
-   they stay disjoint.)*
+   `SNAPSHOT_BUDGET_CHARS`, bounding what an acting agent retains. ~~Two constants, two ledgers, and
+   they stay disjoint.~~ **Three constants, 2026-09-03
+   ([ADR-0032](docs/adr/0032-a-page-from-a-source-already-approved.md)): `IMPORT_BUDGET_CHARS`
+   bounds a page brought into a document. Still two ledgers, and the third constant touches
+   neither.**)*
 9. **A human never creates a Project.** The brief excludes *automatic project recognition*;
    ADR-0008 overrode that exclusion for detection and [ADR-0009](docs/adr/0009-composed-offers.md)
    reverses it outright. Projects are auto-created, auto-named, matched by deterministic term

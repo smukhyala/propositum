@@ -203,6 +203,11 @@ either — the mail it decides is verbs inside a ratified run, not a sensor: no 
 nothing persisted, and the unsubscribe sweep's header read carries the same never-persisted posture
 a `BusyInterval` has. Also unbuilt.)*
 
+*(2026-09-03: [ADR-0033](./adr/0033-a-late-tick-is-a-slept-machine.md) does not move it either.
+The gap watch now reads the lateness of its own tick, which makes `machine_slept` writable — but it
+observes nothing about the person or the machine and can only ever produce an absence of knowledge,
+so it is a second **signal** and not a second sensor. Built, and the cell has not moved.)*
+
 **The structural fact that makes this hard to change by accident.**
 `ObservationEvent.sessionId` is **required** in `prisma/schema.prisma`, its relation to `WorkSession`
 is non-nullable, and `createLedgerWriter` is the only thing in the repository that calls
@@ -363,7 +368,9 @@ same wait twice.
 build landed and the set holds `complete-purchase`.** The transport is permit-conditional now:
 `classifyPausedRequest` still fails every non-`GET` that arrives without a one-shot landing permit —
 a ratified `PurchaseAuthorization` arms one per `complete-purchase` command, and it releases exactly
-one covered request at or under the ceiling, in the ratified currency, at the exact origin. One
+one covered request at or under the ceiling, in the ratified currency, at the exact origin —
+**and, since 2026-09-03 (#147), only where Chrome reports the tab itself navigating, which is the
+whole of the attribution `Fetch.requestPaused` can support.** One
 `external-effect` outcome kind can occur, and only that one. What stays surprising and true: **a
 confirmed click whose page posts still fails** — the permit is not a confirmation and a confirmation
 is not a permit; the two mechanisms never traded jobs.

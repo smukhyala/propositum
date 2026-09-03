@@ -91,6 +91,43 @@ Order matters and is easy to get wrong. The SDK's parser throws on truncated JSO
 consulting `stop_reason`**, so a parse-first design reports "schema mismatch" for what is actually
 "ran out of tokens", then repairs the wrong problem and burns a turn to be told the same thing.
 
+> **Amended 2026-09-03 — this order was not ours to keep, and we were not keeping
+> it.** `betaZodOutputFormat` gives `beta.messages.parse()` a validator that
+> THROWS, and `parseBetaOutputFormat` rethrows it, so on the non-streaming path
+> the SDK parsed before this repository could classify anything. Two failures
+> came out of that as `transport`, which is the classification `recoveryFor`
+> grants nothing:
+>
+> - **A reply in the wrong shape.** Measured 2026-09-02: `partnership-messy`'s
+>   session reading cited an evidence handle it had not been shown, the
+>   refinement rejected it correctly, and the repair turn this table promises —
+>   for the one failure class the section below calls the one where *"re-asking
+>   is rational"* — never fired. That scenario produced no reading at all.
+> - **A reply truncated at `max_tokens`.** Truncated JSON is not JSON, so the
+>   same validator threw on it too, and every truncated non-streaming reply was
+>   filed as a network error rather than escalated. Exactly the mistake this
+>   section forbids, arriving from inside the SDK.
+>
+> The fix is to stop asking the SDK to validate. `structuredOutput` in
+> `src/model/anthropic.ts` keeps `betaZodOutputFormat`'s JSON schema — the wire
+> request is byte-identical, because `parse` is a function and never leaves the
+> process — and replaces its `parse` with a decode that never throws.
+> `stop_reason` is read first and Zod second, which is what this section asked
+> for in the first place. `classifyThrow` is the fallback for a throw that
+> arrives anyway, and it reads the whole `APIError` family as `transport`
+> structurally before testing any message.
+>
+> **The table below is unchanged**, including `transport → none`: the SDK backs
+> off already, and stacking our own retries multiplies the delay and hides the
+> real error. What changed is which failures are honestly called `transport`.
+>
+> **A throw now records null tokens rather than zero.** Zero was a claim that
+> the call was free, and it is what made 2026-09-02's `$0.81` a floor printed as
+> a figure. `ModelCallRecord.inputTokens` and `outputTokens` are nullable for
+> that reason, and anything summing them is summing a lower bound and should say
+> so. What it does **not** cover: `FakeModelClient` still reports zero, because a
+> scripted reply genuinely spent nothing.
+
 | Failure           | Recovery                                        | Why                                                                                                     |
 | ----------------- | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
 | `refusal`         | **none**                                        | Terminal. Retrying asks the same model the same thing.                                                  |

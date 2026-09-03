@@ -480,7 +480,10 @@ export interface H3Observation {
  * fixture sealed an empty list, and `lisbon-thread` now does — the fixture that
  * had been the corpus's only user of this branch. Widening it is what makes
  * `wrong-rule` reachable again, in the *"a rule fired that should not have"*
- * direction; the other direction still needs a fixture that names a rule.
+ * direction; ~~the other direction still needs a fixture that names a rule.~~
+ * **It has one since 2026-09-03** — `evening-classes` seals
+ * `['action-limit']`, so both directions of this branch can now fire on a real
+ * run ([#143](https://github.com/smukhyala/propositum/issues/143)).
  */
 export function scoreH3(scenario: Scenario, observed: H3Observation): H3Outcome {
   const expected = scenario.expectedStop

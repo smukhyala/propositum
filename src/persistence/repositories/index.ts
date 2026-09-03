@@ -1624,8 +1624,10 @@ export interface ModelCallRecordRepository {
     boundary: string
     model: string
     promptVersion: string
-    inputTokens: number
-    outputTokens: number
+    /** Nullable because a call that threw never learned what it billed, and a
+     *  zero there would read as a call that cost nothing. */
+    inputTokens: number | null
+    outputTokens: number | null
     latencyMs: number
     stopReason: string | null
     /** Null means the attempt succeeded. */

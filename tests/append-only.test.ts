@@ -13,6 +13,10 @@
  * the REAL schema is the whole point. If it ever flakes in CI, that is the
  * thing to look at first rather than the assertions.
  *
+ * Confirmed 2026-09-03 by timing this very `beforeAll` on Linux: the push is
+ * ~95% of it and installing the guards ~2–3%. The samples and the caveats are
+ * beside `installAppendOnlyGuards` rather than repeated here.
+ *
  * The third case is the one worth having. `INSERT OR REPLACE` walks straight
  * through a no-UPDATE + no-DELETE pair, because `PRAGMA recursive_triggers`
  * defaults OFF so the DELETE trigger never fires. A two-trigger design looks
