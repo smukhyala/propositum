@@ -1037,7 +1037,11 @@ and the gate refuses `complete-purchase` with `purchase_not_authorized`, `purcha
 and `purchase_expired`. ~~**What has NOT moved: the transport.**~~ **The transport moved later the
 same day: item 5 landed.** `LANDING_ACTION_KINDS` holds `complete-purchase`, and the extension
 refuses any non-`GET` without a one-shot landing permit a ratified authorisation armed — releasing
-exactly one covered request at or under the ceiling. *The landing permit is the extension-internal
+exactly one covered request at or under the ceiling. *(Narrowed 2026-09-03, #147: the one it may
+release is the tab's own navigation, the only request Chrome attributes to a pressed control without
+the `Network` domain. A same-origin telemetry `POST` carrying an amount used to be able to consume
+the permit and have the run report a purchase that never happened; an `XHR` checkout is the price and
+it can no longer land. ADR-0024 §2.)* *The landing permit is the extension-internal
 mechanism of THIS term and deliberately gets no noun of its own in the glossary: it is a
 not-persisted value in `chrome.storage.session`, armed per `complete-purchase` command from these
 fields and dead on consumption, refusal, expiry, or the tab being given up — a projection of the

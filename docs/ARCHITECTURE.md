@@ -363,7 +363,9 @@ same wait twice.
 build landed and the set holds `complete-purchase`.** The transport is permit-conditional now:
 `classifyPausedRequest` still fails every non-`GET` that arrives without a one-shot landing permit —
 a ratified `PurchaseAuthorization` arms one per `complete-purchase` command, and it releases exactly
-one covered request at or under the ceiling, in the ratified currency, at the exact origin. One
+one covered request at or under the ceiling, in the ratified currency, at the exact origin —
+**and, since 2026-09-03 (#147), only where Chrome reports the tab itself navigating, which is the
+whole of the attribution `Fetch.requestPaused` can support.** One
 `external-effect` outcome kind can occur, and only that one. What stays surprising and true: **a
 confirmed click whose page posts still fails** — the permit is not a confirmation and a confirmation
 is not a permit; the two mechanisms never traded jobs.

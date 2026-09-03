@@ -175,12 +175,20 @@ landings ≤ authorised intents by construction.
 - **A real purchase has been made and refunded, and the `ActionIntent` / `ActionOutcome` pair for it
   reads correctly on the re-entry screen.** ***Open — the one item only a person can close, and the
   reason this file is not done.*** The same session should calibrate `parseChargeAmount`'s key list
-  against real checkouts, which no fixture can do. *Added 2026-09-02:* the same session should also
+  against real checkouts, which no fixture can do. ~~*Added 2026-09-02:* the same session should also
   watch the network panel for same-origin non-`GET` requests fired **between the press and the
   checkout request** — the permit is not bound to the initiating request (ADR-0024 §2, the sixth
   fact), so a telemetry `POST` carrying an amount would consume it first. If that happens on a real
   basket once, binding the permit to the request Chrome attributes to the press stops being a
-  follow-up and becomes the next item here.
+  follow-up and becomes the next item here.~~ **Bound 2026-09-03 (#147), and the question the live
+  session has to answer changed with it.** The permit now releases only what Chrome attributes to the
+  tab going somewhere — `Document`, main frame — so a telemetry `POST` cannot consume it. What the
+  session must now watch for is the opposite failure: **whether the checkout request is a tab
+  navigation at all.** If the merchant's *Place order* fires an `XHR` or a `fetch`, the press ends in
+  a refused request and a halted run, and nothing can be bought there. Note, per merchant, which of
+  the two it was — that count is what decides whether browser purchasing is worth keeping. While the
+  panel is open, note also whether the checkout navigation carries `Sec-Fetch-User: ?1`: it is the
+  one further narrowing available, and no fixture can establish it.
 - ~~`CONTEXT.md`'s `PurchaseAuthorization` entry no longer carries its *specification rather than a
   description* fence.~~ *(met 2026-09-01)*
 

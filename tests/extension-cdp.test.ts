@@ -426,6 +426,16 @@ describe('one permit has one spender, decided synchronously', () => {
       'claimLandingPermitOnce(',
     )
   })
+
+  it('binds the landing to the tab navigating, in the code and not only in a comment', () => {
+    // #147. The unit tests below prove the semantics; this proves the check is
+    // in the classifier rather than in the paragraph describing it, which is
+    // the failure the comment stripper exists for.
+    const cdp = stripComments(readFileSync(join(repo, 'extension/src/cdp.js'), 'utf8'))
+    expect(cdp, 'the landing branch no longer asks whether the tab is navigating').toContain(
+      'isTabNavigating(paused, mainFrameId)',
+    )
+  })
 })
 
 describe('no Network domain, still', () => {
@@ -1166,6 +1176,14 @@ describe('what the browser attests about a request it is holding', () => {
       maxAmountMinor: 4_000,
       currency: 'USD',
     }
+    /**
+     * ~~`resourceType: 'XHR'`~~ **`Document`, in the main frame, since
+     * 2026-09-03 (#147)** — the request Chrome attributes to the tab going
+     * somewhere, which is what a pressed checkout control makes it do. The
+     * fixture changed rather than gaining a second one because the old value
+     * is no longer a shape that can land at all, and a happy path that still
+     * said `XHR` would be describing a release the classifier no longer makes.
+     */
     const checkout = (body: string, url = 'https://mail.example.com/checkout'): unknown => ({
       request: {
         method: 'POST',
@@ -1173,7 +1191,7 @@ describe('what the browser attests about a request it is holding', () => {
         postData: body,
         headers: { 'Content-Type': 'application/json' },
       },
-      resourceType: 'XHR',
+      resourceType: 'Document',
       frameId: MAIN,
     })
 
@@ -1241,6 +1259,74 @@ describe('what the browser attests about a request it is holding', () => {
           MAIN,
           permit,
         ),
+      ).toBe('blocked-request')
+    })
+
+    /**
+     * The defect this binding exists for (#147, ADR-0024 §2's sixth fact).
+     *
+     * A *"checkout started"* analytics `POST` on the merchant's own domain,
+     * carrying the same `amount_minor` and `currency` the real checkout will,
+     * used to be released as the purchase: first same-origin non-`GET` in the
+     * window, under the ceiling, in the currency. Money failed closed — the
+     * real checkout then met the plain block — but the run recorded a
+     * completed purchase against a request that bought nothing, and the
+     * ratified count was spent. A false sentence in an append-only record.
+     *
+     * The verdict asserted here is load-bearing beyond "refused":
+     * `onRequestPaused` spends the one-shot on `allow-landing` and on all
+     * three `amount-*` verdicts, and on nothing else. `blocked-request` is
+     * therefore the verdict that leaves the permit armed for the real request.
+     */
+    const spends = ['allow-landing', 'amount-over-ceiling', 'amount-unparseable', 'amount-wrong-currency']
+
+    it('refuses a same-origin decoy carrying a covered amount, and spends nothing on it', () => {
+      const decoy = (resourceType: string, frameId = MAIN): unknown => ({
+        request: {
+          method: 'POST',
+          url: 'https://mail.example.com/api/analytics/events',
+          postData: '{"event":"checkout_started","amount_minor":4000,"currency":"USD"}',
+          headers: { 'Content-Type': 'application/json' },
+        },
+        resourceType,
+        frameId,
+      })
+
+      // Every transport a "checkout started" beacon actually uses, and the
+      // sub-frame document besides: none of them is the tab navigating.
+      for (const resourceType of ['XHR', 'Fetch', 'Ping', 'Image', 'Other', 'Preflight', '']) {
+        const verdict = classifyPausedRequest(
+          decoy(resourceType),
+          approved,
+          patternCovers,
+          MAIN,
+          permit,
+        )
+        expect(verdict, `${resourceType || '(absent)'} was released or spent the permit`).toBe(
+          'blocked-request',
+        )
+        expect(spends).not.toContain(verdict)
+      }
+
+      expect(classifyPausedRequest(decoy('Document', 'frame-child'), approved, patternCovers, MAIN, permit)).toBe(
+        'blocked-request',
+      )
+    })
+
+    it('refuses the press itself when the main frame is unknown', () => {
+      /**
+       * The closed direction, and it is the opposite branch to the one the
+       * off-origin check takes on the same unknown — deliberately. There,
+       * not knowing the main frame means checking every `Document`; here it
+       * means "some frame navigated", which is not the tab navigating and so
+       * is not the press.
+       */
+      const body = '{"amount_minor":4000,"currency":"USD"}'
+      expect(
+        classifyPausedRequest(checkout(body), approved, patternCovers, null, permit),
+      ).toBe('blocked-request')
+      expect(
+        classifyPausedRequest(checkout(body), approved, patternCovers, undefined, permit),
       ).toBe('blocked-request')
     })
 
