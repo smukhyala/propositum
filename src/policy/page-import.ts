@@ -32,6 +32,14 @@
  * this line, because it is a construction site rather than a check somebody has
  * to remember to write.
  *
+ * **Since 2026-09-03 it is also where the reader learns the allowlist at all.**
+ * `httpFetcher()` returns a `FollowingFetcher`, which has no `fetch` until it
+ * is bound to a list of patterns, and `allowlisted()` is what binds it — so the
+ * patterns matched at the door, the patterns the wrapper checks, and the
+ * patterns every redirect hop is judged against are one list that was passed
+ * once. A reader that followed a hop off the approved path used to be possible
+ * here; it is now a call that does not typecheck.
+ *
  * ── What this does NOT do ────────────────────────────────────────────────
  *
  * **It stores nothing.** No `Document`, no `DocumentVersion`, no
@@ -50,7 +58,7 @@
 import { datamark, looksAdversarial, IMPORT_BUDGET_CHARS } from '../model/untrusted'
 import type { RemovedArtifact } from '../model/untrusted'
 import { SourceNotAllowedError, allowlisted, matchesPattern } from './fetcher'
-import type { SourceFetcher } from './fetcher'
+import type { FollowingFetcher, SourceFetcher } from './fetcher'
 
 /**
  * The part of an `ApprovedSource` this needs, and no more.
@@ -123,7 +131,7 @@ function refuse(refusal: ImportRefusal, detail?: string): PageImport {
 export async function importApprovedPage(
   address: string,
   approved: readonly ApprovedSource[],
-  reader: SourceFetcher,
+  reader: SourceFetcher | FollowingFetcher,
 ): Promise<PageImport> {
   const wanted = address.trim()
   if (wanted === '') return refuse('not_a_web_address')
@@ -146,7 +154,8 @@ export async function importApprovedPage(
   if (!source) return refuse('source_not_approved')
 
   // The one construction site. The patterns are the ones just matched against,
-  // so the check at the door and the check here cannot drift apart.
+  // so the check at the door, the check in the wrapper and the check on every
+  // redirect hop cannot drift apart — this is also what binds the reader.
   const fetcher = allowlisted(
     reader,
     approved.map((origin) => origin.originPattern),

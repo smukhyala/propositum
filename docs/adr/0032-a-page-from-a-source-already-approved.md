@@ -66,10 +66,28 @@ completed makes that false — the host gets the person's IP, their TLS fingerpr
 whatever we then do with its body. `src/policy/http-fetcher.ts` now requests with
 `redirect: 'manual'` and checks each hop's `Location` against the approved origin before requesting
 anything from it, with a bound of five hops. **The decision is unchanged; the implementation now
-matches what it claimed.** `src/policy/playwright-fetcher.ts` still follows and then checks: it runs
+matches what it claimed.** ~~`src/policy/playwright-fetcher.ts` still follows and then checks: it runs
 in the worker's own process rather than the one holding the database and the API key, per-hop veto
 there means a request interceptor, and it is out of this ADR's scope —
-[`docs/todo/03-document-loop.md`](../todo/03-document-loop.md) records it.
+[`docs/todo/03-document-loop.md`](../todo/03-document-loop.md) records it.~~ **Corrected 2026-09-03,
+the day after: it does not, any more.** The request interceptor was written — `context.route` with an
+abort on a vetoed navigation — and both readers now call one function, `judgeHop` in
+`src/policy/redirect.ts`, so this sentence cannot come back for one reader alone.
+
+**And the hop is judged against the whole pattern, not its origin half** *(same day)*. Both readers
+re-checked only the origin per hop, so a project that approved
+`https://northwind.example.com/partners/*` could be redirected to `/pricing` — the same host and the
+same bytes it was already serving, but a gap between the check at the door and the check on the way.
+`matchesPattern` is now what judges a hop, which is the matcher the door itself uses; there is
+deliberately no second one. The reader takes the allowlist as a construction argument to make that
+possible, and `FollowingFetcher` in `src/policy/fetcher.ts` has no `fetch` until it is given one, so
+a reader that could not re-check its patterns is a call that does not compile.
+
+**What this bought and what it did not.** No test in this repository launches a browser and none may
+start, so the Playwright wiring is pinned by a grep — `tests/redirect-hop.test.ts` — which proves the
+interceptor is wired to the shared decision and the old follow-then-check is gone, and proves nothing
+about whether Playwright calls a route handler for a redirected request. The post-hoc `page.url()`
+check is kept there as a stated backstop for exactly that reason.
 
 ### 2. It is not a tool, and it mints no `AuthorizedAction`
 
@@ -208,6 +226,11 @@ is a construction site rather than a check somebody has to remember to write.
   argument to answer, and the answer has to be about the API key and the database, not about page
   quality.
 - **The import is proposed for a Shift**, or for anything that runs while the person is away. §6.
+- **Somebody can run a browser in the test suite** *(added 2026-09-03)*. The Playwright reader's
+  per-hop veto is asserted by a grep, and a grep cannot prove that an interception fires for a
+  redirected request or that an abort stops one before it leaves the machine. Until that is executed
+  rather than searched for, the worker path rests on Playwright's documented behaviour and on a
+  backstop that runs after the fact.
 - **A second approved-source-shaped allowlist appears anywhere.** There is one, it is
   `ApprovedSource`, and the moment there are two the word stops meaning anything.
 - **`RetentionBudget` gains a fourth member.** Three was already one more than that file wanted.

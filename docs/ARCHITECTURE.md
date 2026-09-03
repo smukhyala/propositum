@@ -342,7 +342,8 @@ worker` → `scripts/worker.ts` → `src/runtime/worker-process.ts` — under a 
 never kills its children and orphans are the default rather than the edge
 ([ADR-0001](./adr/0001-worker-runtime.md)). `src/server/execute-run.ts` turns a `WorkerResult` into
 rows. One worker `AgentRun` and one reviewer `AgentRun` inside one `Shift`. Research is confined to
-`ApprovedSource`s by `allowlisted()` in `src/policy/fetcher.ts`.
+`ApprovedSource`s by `allowlisted()` in `src/policy/fetcher.ts` — which since 2026-09-03 also binds
+the reader to those patterns, so a redirect hop is judged against them before it is taken.
 
 **Built, and reachable since 2026-08-20.** The browser-acting path from
 [ADR-0010](./adr/0010-acting-in-the-browser.md) had both ends and no middle: the five `/api/act/*`

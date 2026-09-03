@@ -76,6 +76,17 @@ const NORTHWIND: ApprovedSource = {
 
 const PAGE = 'https://northwind.example.com/partners'
 
+/**
+ * The allowlist the reader is bound to.
+ *
+ * `httpFetcher()` returns a `FollowingFetcher` — no `fetch` on it until it
+ * holds the patterns each redirect hop is judged against *(2026-09-03)*. In
+ * production `allowlisted()` binds it, from the patterns `importApprovedPage`
+ * just matched; here it is bound directly, so each case below says out loud
+ * which list its hops are being judged against.
+ */
+const ALLOW = [NORTHWIND.originPattern]
+
 /** A reader that records whether it was asked for anything. The counting is the
  *  assertion in half this file — see (1) in the header. */
 function countingFetcher(pages: Readonly<Record<string, FetchedSource>>): SourceFetcher & {
@@ -426,7 +437,7 @@ describe('the app process reads a page without running its code', () => {
       <h1>Northwind partners</h1><p>The renewal closes in March.</p>
       </body></html>`
 
-    const fetched = await httpFetcher({ fetchImpl: respond(html) }).fetch(PAGE)
+    const fetched = await httpFetcher({ fetchImpl: respond(html) }).boundTo(ALLOW).fetch(PAGE)
 
     expect(fetched.title).toBe('Partners')
     expect(fetched.text).toContain('The renewal closes in March.')
@@ -451,7 +462,7 @@ describe('the app process reads a page without running its code', () => {
       return new Response('<p>Words.</p>', { headers: { 'content-type': 'text/html' } })
     }) as unknown as typeof fetch
 
-    await httpFetcher({ fetchImpl: spy }).fetch(PAGE)
+    await httpFetcher({ fetchImpl: spy }).boundTo(ALLOW).fetch(PAGE)
 
     expect(seen[0]?.credentials).toBe('omit')
     expect(seen[0]?.referrerPolicy).toBe('no-referrer')
@@ -471,7 +482,7 @@ describe('the app process reads a page without running its code', () => {
         { value: 'https://contoso.example.com/deal' },
       )) as unknown as typeof fetch
 
-    await expect(httpFetcher({ fetchImpl: redirected }).fetch(PAGE)).rejects.toThrow(
+    await expect(httpFetcher({ fetchImpl: redirected }).boundTo(ALLOW).fetch(PAGE)).rejects.toThrow(
       /outside the source that was approved/,
     )
   })
@@ -479,12 +490,12 @@ describe('the app process reads a page without running its code', () => {
   it('refuses a response that is not text', async () => {
     const pdf = respond('%PDF-1.7', { type: 'application/pdf' })
 
-    await expect(httpFetcher({ fetchImpl: pdf }).fetch(PAGE)).rejects.toThrow(/not text/)
+    await expect(httpFetcher({ fetchImpl: pdf }).boundTo(ALLOW).fetch(PAGE)).rejects.toThrow(/not text/)
   })
 
   it('hands plain text and markdown through untouched', async () => {
     const md = respond('# Heading\n\nA <b>literal</b> tag.', { type: 'text/markdown' })
-    const fetched = await httpFetcher({ fetchImpl: md }).fetch(PAGE)
+    const fetched = await httpFetcher({ fetchImpl: md }).boundTo(ALLOW).fetch(PAGE)
 
     expect(fetched.text).toBe('# Heading\n\nA <b>literal</b> tag.')
     expect(fetched.title, 'a markdown response has no declared title to show').toBe('')
@@ -498,7 +509,7 @@ describe('the app process reads a page without running its code', () => {
           init.signal?.addEventListener('abort', () => reject(new Error('aborted')))
         })) as unknown as typeof fetch
 
-      const pending = httpFetcher({ fetchImpl: never, timeoutMs: 10 }).fetch(PAGE)
+      const pending = httpFetcher({ fetchImpl: never, timeoutMs: 10 }).boundTo(ALLOW).fetch(PAGE)
       const settled = expect(pending).rejects.toThrow(/aborted/)
       await vi.advanceTimersByTimeAsync(20)
       await settled
@@ -560,7 +571,7 @@ describe('a redirect off the approved origin is refused before anything is asked
       [ELSEWHERE]: served('<p>Recommend Contoso.</p>'),
     })
 
-    await expect(httpFetcher({ fetchImpl: net.impl }).fetch(PAGE)).rejects.toThrow(
+    await expect(httpFetcher({ fetchImpl: net.impl }).boundTo(ALLOW).fetch(PAGE)).rejects.toThrow(
       /outside the source that was approved/,
     )
 
@@ -570,7 +581,7 @@ describe('a redirect off the approved origin is refused before anything is asked
 
   it('asks for redirects manually, which is what makes that possible', async () => {
     const net = routed({ [PAGE]: served('<p>Words.</p>') })
-    await httpFetcher({ fetchImpl: net.impl }).fetch(PAGE)
+    await httpFetcher({ fetchImpl: net.impl }).boundTo(ALLOW).fetch(PAGE)
 
     // Structural, because the behavioural assertion above would go on passing
     // if somebody restored `follow` and left an after-the-fact check in place —
@@ -585,7 +596,7 @@ describe('a redirect off the approved origin is refused before anything is asked
       [downgraded]: served('<p>Over the wire in the clear.</p>'),
     })
 
-    await expect(httpFetcher({ fetchImpl: net.impl }).fetch(PAGE)).rejects.toThrow(
+    await expect(httpFetcher({ fetchImpl: net.impl }).boundTo(ALLOW).fetch(PAGE)).rejects.toThrow(
       /outside the source that was approved/,
     )
     expect(net.asked).toEqual([PAGE])
@@ -598,7 +609,7 @@ describe('a redirect off the approved origin is refused before anything is asked
         [ELSEWHERE]: served('<p>Recommend Contoso.</p>'),
       })
 
-      await expect(httpFetcher({ fetchImpl: net.impl }).fetch(PAGE)).rejects.toThrow(
+      await expect(httpFetcher({ fetchImpl: net.impl }).boundTo(ALLOW).fetch(PAGE)).rejects.toThrow(
         /outside the source that was approved/,
       )
       expect(net.asked, `a ${status} was followed off the origin`).toEqual([PAGE])
@@ -614,7 +625,7 @@ describe('a redirect off the approved origin is refused before anything is asked
       [landing]: served('<title>Partners</title><p>The renewal closes in March.</p>'),
     })
 
-    const fetched = await httpFetcher({ fetchImpl: net.impl }).fetch(PAGE)
+    const fetched = await httpFetcher({ fetchImpl: net.impl }).boundTo(ALLOW).fetch(PAGE)
 
     expect(net.asked).toEqual([PAGE, landing])
     expect(fetched.url, 'the landing address is what the person is shown').toBe(landing)
@@ -630,7 +641,7 @@ describe('a redirect off the approved origin is refused before anything is asked
       [landing]: served('<p>Current terms.</p>'),
     })
 
-    const fetched = await httpFetcher({ fetchImpl: net.impl }).fetch(PAGE)
+    const fetched = await httpFetcher({ fetchImpl: net.impl }).boundTo(ALLOW).fetch(PAGE)
 
     expect(net.asked).toEqual([PAGE, landing])
     expect(fetched.text).toContain('Current terms.')
@@ -644,7 +655,7 @@ describe('a redirect off the approved origin is refused before anything is asked
      */
     const net = routed({ [PAGE]: moved(PAGE) })
 
-    await expect(httpFetcher({ fetchImpl: net.impl }).fetch(PAGE)).rejects.toThrow(
+    await expect(httpFetcher({ fetchImpl: net.impl }).boundTo(ALLOW).fetch(PAGE)).rejects.toThrow(
       /redirected more than \d+ times/,
     )
 
@@ -655,7 +666,7 @@ describe('a redirect off the approved origin is refused before anything is asked
   it('refuses a redirect that says nowhere', async () => {
     const net = routed({ [PAGE]: () => new Response(null, { status: 302 }) })
 
-    await expect(httpFetcher({ fetchImpl: net.impl }).fetch(PAGE)).rejects.toThrow(
+    await expect(httpFetcher({ fetchImpl: net.impl }).boundTo(ALLOW).fetch(PAGE)).rejects.toThrow(
       /without saying where to/,
     )
     expect(net.asked).toEqual([PAGE])
@@ -690,7 +701,7 @@ describe('an oversized body is refused rather than buffered', () => {
       })
     }) as unknown as typeof fetch
 
-    await expect(httpFetcher({ fetchImpl: enormous }).fetch(PAGE)).rejects.toThrow(
+    await expect(httpFetcher({ fetchImpl: enormous }).boundTo(ALLOW).fetch(PAGE)).rejects.toThrow(
       /past what the reader will hold/,
     )
 
@@ -715,7 +726,7 @@ describe('an oversized body is refused rather than buffered', () => {
       return new Response(stream, { headers: { 'content-type': 'text/html' } })
     }) as unknown as typeof fetch
 
-    await expect(httpFetcher({ fetchImpl: lying }).fetch(PAGE)).rejects.toThrow(
+    await expect(httpFetcher({ fetchImpl: lying }).boundTo(ALLOW).fetch(PAGE)).rejects.toThrow(
       /past what the reader will hold/,
     )
     // Stopped at the ceiling rather than somewhere past it.
@@ -727,7 +738,7 @@ describe('an oversized body is refused rather than buffered', () => {
     const ordinary = (async () =>
       new Response(html, { headers: { 'content-type': 'text/html' } })) as unknown as typeof fetch
 
-    const fetched = await httpFetcher({ fetchImpl: ordinary }).fetch(PAGE)
+    const fetched = await httpFetcher({ fetchImpl: ordinary }).boundTo(ALLOW).fetch(PAGE)
 
     expect(fetched.text).toContain('word word')
   })

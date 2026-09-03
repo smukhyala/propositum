@@ -43,24 +43,31 @@
  * looked"* false on exactly the path a person would not think to check.
  *
  * So redirects are `'manual'` now, and each hop's `Location` is resolved and
- * checked against the approved origin **before** anything is requested from it.
- * An off-origin hop is refused with nothing sent to it. The bound on hops is
- * `MAX_REDIRECTS`, and past it the reader gives up rather than looping.
+ * checked against the approved sources **before** anything is requested from
+ * it. A hop outside them is refused with nothing sent to it. The bound on hops
+ * is `MAX_REDIRECTS`, and past it the reader gives up rather than looping.
  *
- * **`src/policy/playwright-fetcher.ts` still follows and then checks**, so the
- * two fetchers now differ, deliberately and not by oversight. Playwright's
- * `page.goto` follows redirects inside the browser and offers no per-hop veto
- * short of a request interceptor, which is a larger change than this one; it
- * runs in the worker's own process rather than the one holding the database and
- * the API key, and it is out of ADR-0032's scope entirely.
- * `docs/todo/03-document-loop.md` records it.
+ * ~~**`src/policy/playwright-fetcher.ts` still follows and then checks**, so the
+ * two fetchers now differ, deliberately and not by oversight.~~ **Closed
+ * 2026-09-03, the day after.** Both readers now refuse a hop before taking it,
+ * and they refuse it with the same function: `judgeHop` in `redirect.ts`. The
+ * worker's browser reaches it through a Playwright request interceptor that
+ * aborts a vetoed navigation. The loop below is this reader's own, because a
+ * `fetch` loop and a browser's are not the same machinery — but the judgement
+ * in the middle of both is one piece of code, so neither can be fixed alone
+ * again. `tests/redirect-hop.test.ts` is the guard, and it is a grep, which it
+ * says about itself.
  *
  * ── What this does NOT do ────────────────────────────────────────────────
  *
- * **It does not check the allowlist.** `allowlisted()` in `fetcher.ts` is the
- * wrapper that does, and `importApprovedPage` is the only place that builds
- * one around this. A bare `httpFetcher()` will fetch whatever it is handed,
- * which is exactly why nothing but the import may construct it.
+ * **It does not check the address it is handed.** `allowlisted()` in
+ * `fetcher.ts` is the wrapper that does, and `importApprovedPage` is the only
+ * place that builds one around this. What it does check is every hop after
+ * that, against the same list — *(corrected 2026-09-03: this bullet used to say
+ * it did not check the allowlist at all, which stopped being true when the list
+ * became a construction argument)*. A reader bound to an empty list will
+ * therefore fetch the first address it is given and refuse every redirect,
+ * which is why nothing but the import may bind one.
  *
  * **It does not sanitise.** `datamark()` is the door, one layer up.
  *
@@ -69,18 +76,27 @@
  * host chose to publish, not anything of theirs, and naming it is the
  * difference between a refusal they can act on and *"something went wrong"*.
  *
- * **The hop check is origin equality, not the allowlist's path prefix.** A
+ * ~~**The hop check is origin equality, not the allowlist's path prefix.** A
  * redirect inside the approved origin but outside an approved path prefix is
- * followed here. `allowlisted()` ran against the address the person typed and
- * does not re-run per hop, so a project that approved
- * `https://northwind.example.com/partners/*` can still land on `/pricing` by
- * redirect. It is the same origin, the same host, and the same bytes it was
- * always willing to serve — but it is a gap between the two checks and it is
- * stated rather than implied closed.
+ * followed here.~~ **Closed 2026-09-03, the day after.** Every hop is now
+ * re-checked against the whole `ApprovedSource` pattern — origin and path
+ * prefix — through the same `matchesPattern` the door uses, so a project that
+ * approved `https://northwind.example.com/partners/*` no longer lands on
+ * `/pricing` by redirect. That is why this reader takes an allowlist rather
+ * than deriving an origin from the address it was handed: it cannot re-check a
+ * pattern it was never given, and `FollowingFetcher` is the type that makes
+ * *not giving it one* fail to compile.
+ *
+ * **It still says nothing about what a page embeds.** This reader runs no code
+ * and requests nothing but the document, so the question does not arise here;
+ * it does arise for the worker's browser, whose header states it.
  */
 
 import { declaredTitle, readableText } from '../domain/document/from-html'
-import type { FetchedSource, SourceFetcher } from './fetcher'
+import type { FetchedSource, FollowingFetcher, SourceFetcher } from './fetcher'
+import { isAllowed } from './fetcher'
+import { MAX_REDIRECTS, REDIRECT_STATUSES, judgeHop, refusalOf } from './redirect'
+import { RedirectedOffSourceError, TooManyRedirectsError } from './redirect'
 
 export interface HttpFetcherOptions {
   /** Per-page ceiling. A person waiting on a dead host should be told, not
@@ -101,20 +117,14 @@ export interface HttpFetcherOptions {
  */
 const READABLE_TYPES = ['text/html', 'text/plain', 'text/markdown', 'application/xhtml+xml']
 
-/** The statuses that carry a `Location` and mean *ask somewhere else*. */
-const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308])
-
 /**
- * How many same-origin hops the reader will take before giving up.
- *
- * Five, because a redirect chain longer than that on a page somebody wants to
- * read is a misconfiguration rather than a route, and because the bound has to
- * exist at all: `redirect: 'manual'` moves the loop into this file, and a loop
- * this file owns is a loop this file can be made to run for ever. Refusing past
- * the bound rather than returning the last response, so a chain that never
- * arrives is never reported as a page that did.
+ * The statuses, the bound and the two redirect errors live in `redirect.ts`
+ * beside the decision itself, so the worker's browser counts to the same number
+ * and says the same sentence. Re-exported because they were this file's before
+ * they were shared, and a reader who knows where they used to be should find
+ * them where they look.
  */
-const MAX_REDIRECTS = 5
+export { RedirectedOffSourceError, TooManyRedirectsError }
 
 /**
  * How many bytes the app process will hold from one host before refusing.
@@ -143,20 +153,6 @@ export class NotReadableError extends Error {
         : `That address answered with ${contentType}, which is not text.`,
     )
     this.name = 'NotReadableError'
-  }
-}
-
-export class RedirectedOffSourceError extends Error {
-  constructor(from: string, to: string) {
-    super(`${from} redirected to ${to}, which is outside the source that was approved`)
-    this.name = 'RedirectedOffSourceError'
-  }
-}
-
-export class TooManyRedirectsError extends Error {
-  constructor(url: string, hops: number) {
-    super(`${url} redirected more than ${hops} times without arriving anywhere`)
-    this.name = 'TooManyRedirectsError'
   }
 }
 
@@ -219,102 +215,114 @@ async function readBounded(url: string, response: Response, ceiling: number): Pr
   }
 }
 
-export function httpFetcher(options: HttpFetcherOptions = {}): SourceFetcher {
+export function httpFetcher(options: HttpFetcherOptions = {}): FollowingFetcher {
   const timeoutMs = options.timeoutMs ?? 15_000
   const call = options.fetchImpl ?? fetch
 
-  return {
-    async fetch(url: string): Promise<FetchedSource> {
-      const requestedOrigin = new URL(url).origin
-      const abort = new AbortController()
-      // One deadline for the whole read, redirects included. A chain of slow
-      // same-origin hops is still a person watching a control that never comes
-      // back.
-      const timer = setTimeout(() => abort.abort(), timeoutMs)
+  async function read(url: string, allowlist: readonly string[]): Promise<FetchedSource> {
+    const abort = new AbortController()
+    // One deadline for the whole read, redirects included. A chain of slow
+    // same-origin hops is still a person watching a control that never comes
+    // back.
+    const timer = setTimeout(() => abort.abort(), timeoutMs)
 
-      try {
-        let current = url
-        let response: Response | undefined
+    try {
+      let current = url
+      let response: Response | undefined
 
-        for (let hop = 0; hop <= MAX_REDIRECTS; hop += 1) {
-          response = await call(current, {
-            // Nothing of the person's travels with this. `omit` is the whole
-            // credential story: no cookies out, no cookies kept.
-            credentials: 'omit',
-            // The fix. Nothing is requested from the next host until its origin
-            // has been checked against the one that was approved.
-            redirect: 'manual',
-            referrerPolicy: 'no-referrer',
-            headers: { accept: READABLE_TYPES.join(', ') },
-            signal: abort.signal,
-          })
+      for (let hop = 0; hop <= MAX_REDIRECTS; hop += 1) {
+        response = await call(current, {
+          // Nothing of the person's travels with this. `omit` is the whole
+          // credential story: no cookies out, no cookies kept.
+          credentials: 'omit',
+          // The fix. Nothing is requested from the next hop until it has been
+          // checked against the sources that were approved.
+          redirect: 'manual',
+          referrerPolicy: 'no-referrer',
+          headers: { accept: READABLE_TYPES.join(', ') },
+          signal: abort.signal,
+        })
 
-          if (!REDIRECT_STATUSES.has(response.status)) break
+        if (!REDIRECT_STATUSES.has(response.status)) break
 
-          const location = response.headers.get('location')
-          await discard(response)
-          if (location === null || location.trim() === '') {
-            throw new Error(`${current} answered ${response.status} without saying where to`)
-          }
+        const location = response.headers.get('location')
+        const status = response.status
+        await discard(response)
 
-          let next: URL
-          try {
-            // Resolved against the hop that issued it, because `Location` is
-            // routinely relative and a relative one cannot leave the origin.
-            next = new URL(location, current)
-          } catch {
-            throw new Error(`${current} redirected to something that is not an address`)
-          }
-
-          if (next.origin !== requestedOrigin) {
-            // Refused with nothing sent to it. This is the whole point.
-            throw new RedirectedOffSourceError(current, next.origin)
-          }
-
-          current = next.href
-          response = undefined
+        // The whole judgement, and none of it is here: `judgeHop` resolves a
+        // relative `Location` against the hop that issued it and re-checks
+        // the result against the full allowlist pattern. The worker's browser
+        // calls the same function on the same argument, which is the only
+        // reason the two readers cannot drift again.
+        const verdict = judgeHop(current, location, allowlist)
+        if (!verdict.taken) {
+          // Refused with nothing sent to it. This is the whole point.
+          //
+          // The one refusal composed here rather than shared: `refusalOf`
+          // never sees a status code, and *"answered 302 without saying where
+          // to"* is a better sentence than *"answered a redirect"*.
+          throw verdict.refusal === 'unstated'
+            ? new Error(`${current} answered ${status} without saying where to`)
+            : refusalOf(current, verdict)
         }
 
-        if (response === undefined) throw new TooManyRedirectsError(url, MAX_REDIRECTS)
-
-        // A backstop, not the mechanism. The loop above is what keeps the
-        // promise; this catches a `fetchImpl` that followed redirects anyway —
-        // which the platform's own will not, given `manual`, but an injected
-        // one is not the platform's.
-        const landed = response.url === '' ? current : response.url
-        const landedOrigin = new URL(landed).origin
-        if (landedOrigin !== requestedOrigin) {
-          await discard(response)
-          throw new RedirectedOffSourceError(url, landedOrigin)
-        }
-
-        if (!response.ok) {
-          await discard(response)
-          throw new Error(`${url} answered ${response.status}`)
-        }
-
-        const contentType = (response.headers.get('content-type') ?? '').toLowerCase()
-        const mediaType = contentType.split(';')[0]?.trim() ?? ''
-        if (!READABLE_TYPES.includes(mediaType)) {
-          await discard(response)
-          throw new NotReadableError(mediaType)
-        }
-
-        const body = await readBounded(landed, response, RESPONSE_BYTE_CEILING)
-        const isHtml = mediaType === 'text/html' || mediaType === 'application/xhtml+xml'
-
-        return {
-          url: landed,
-          // Page-authored and unverified — ADR-0006 §3. It is shown as what the
-          // page called itself and names nothing.
-          title: isHtml ? declaredTitle(body) : '',
-          // RAW. Datamarked by the import, which is the door.
-          text: isHtml ? readableText(body) : body,
-        }
-      } finally {
-        clearTimeout(timer)
+        current = verdict.url
+        response = undefined
       }
-    },
+
+      if (response === undefined) throw new TooManyRedirectsError(url, MAX_REDIRECTS)
+
+      // A backstop, not the mechanism. The loop above is what keeps the
+      // promise; this catches a `fetchImpl` that followed redirects anyway —
+      // which the platform's own will not, given `manual`, but an injected
+      // one is not the platform's. Against the whole allowlist, not an
+      // origin, so a followed hop that stayed on the host and left the path
+      // is caught here too.
+      const landed = response.url === '' ? current : response.url
+      if (!isAllowed(landed, allowlist)) {
+        await discard(response)
+        throw new RedirectedOffSourceError(url, new URL(landed).origin)
+      }
+
+      if (!response.ok) {
+        await discard(response)
+        throw new Error(`${url} answered ${response.status}`)
+      }
+
+      const contentType = (response.headers.get('content-type') ?? '').toLowerCase()
+      const mediaType = contentType.split(';')[0]?.trim() ?? ''
+      if (!READABLE_TYPES.includes(mediaType)) {
+        await discard(response)
+        throw new NotReadableError(mediaType)
+      }
+
+      const body = await readBounded(landed, response, RESPONSE_BYTE_CEILING)
+      const isHtml = mediaType === 'text/html' || mediaType === 'application/xhtml+xml'
+
+      return {
+        url: landed,
+        // Page-authored and unverified — ADR-0006 §3. It is shown as what the
+        // page called itself and names nothing.
+        title: isHtml ? declaredTitle(body) : '',
+        // RAW. Datamarked by the import, which is the door.
+        text: isHtml ? readableText(body) : body,
+      }
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
+  /**
+   * No `fetch` on what comes back — see `FollowingFetcher`. A caller with no
+   * allowlist cannot read anything, which is the point of the shape.
+   */
+  return {
+    boundTo: (allowlist: readonly string[]): SourceFetcher => ({
+      fetch: (url: string) => read(url, allowlist),
+      async close() {
+        /* nothing to close — there is no browser and no pool */
+      },
+    }),
 
     async close() {
       /* nothing to close — there is no browser and no pool */
