@@ -23,6 +23,12 @@ export default defineConfig({
     // spawning `npx prisma db push` as a subprocess and then letting
     // `src/persistence/append-only.ts` reinstall and verify its triggers.
     //
+    // Those two halves are not equal, measured 2026-09-03 and recorded in the
+    // comment above `installAppendOnlyGuards`: the subprocess is ~95% of that
+    // setup and the trigger install ~2–3% of it, on Linux, under contention as
+    // well as idle. So this setting is a cure for the push, and the install is
+    // not the thing to go looking at when the suite gets slow.
+    //
     // None of that cost is charged to THIS setting, which is the thing that is
     // easy to get wrong: every one of those pushes sits in a
     // `beforeAll(…, 120_000)`, and vitest bounds a hook with `hookTimeout`.
