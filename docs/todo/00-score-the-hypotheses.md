@@ -117,14 +117,18 @@ commands that say they cost money do.
    unanswerable, and the worksheets, H3 and costs exist only on stdout — an
    uncaptured run is paid for again.
    Cost, from `docs/EVALUATION.md`: **six calls per scenario is the floor** —
-   about $0.80 and six minutes across four scenarios. The ceiling is 43 calls per
+   ~~about $0.80 and six minutes across four scenarios~~ **about $1.20 and nine
+   minutes across six, 2026-09-03**. The ceiling is 43 calls per
    scenario (`MAX_ACTIONS_PER_RUN` is 40, and it bounds turns rather than
-   authorised actions), which is ~~about **$5.60 and forty minutes**~~ **about $7
-   and fifty minutes over five scenarios since 2026-09-03**. A run that
+   authorised actions), which is ~~about **$5.60 and forty minutes**~~ ~~about $7
+   and fifty minutes over five scenarios since 2026-09-03~~ **about $8.40 and an
+   hour over six, the same day**. A run that
    asks a question early costs almost nothing; one that loops costs the ceiling.
    Quote the range, not the floor. **And one scenario now spends the ceiling
    whatever happens** — `evening-classes` is built to reach `action-limit`, so
    its forty turns are the measurement rather than a loop, at about $1.40.
+   `topsoil-order` is the other way round: a correct run there halts on its first
+   question at about $0.20, and only a run that FAILS to ask costs the ceiling.
 
 4. **Score H1 by hand.** `npm run eval -- --worksheet` writes the blank entries.
    Fill in each component 0/1/2 and set `scoredBy`. `null` means *not yet
@@ -182,7 +186,18 @@ commands that say they cost money do.
   [`01`](./01-menu-bar-app.md) and [`03`](./03-document-loop.md) are for.
 - **`budget-exhausted` is unreachable.** The drive freezes the clock, so no
   scenario can expect it.
-- **ADR-0007's `information-missing` stop class still has no scenario at all.**
+- ~~**ADR-0007's `information-missing` stop class still has no scenario at all.**~~
+  **Closed 2026-09-03 by `topsoil-order`**, and with it the last empty class:
+  all four are represented for the first time. The fixture is an afternoon
+  ordering topsoil where every term of the sum — supplier, price, depth,
+  coverage — is settled and written into the person's own document, and the one
+  missing term is the area of the border, paced out off-screen. No approved page
+  could carry it, so the remaining work is one division with a missing numerator
+  and the only correct move is to raise a `DecisionNeeded`. It seals
+  `shouldRaise: true` and names no structural rule, and `tests/eval.test.ts`
+  drives both directions — the question, and the worked example a run must not
+  mistake for the answer. Sealed and UNSCORED: no `eval-scores.json` entry, no
+  run.
 - ~~**And as of 2026-09-01 neither does `structural`, which is new and is a
   regression in coverage rather than an omission.**~~ **Closed 2026-09-03 by
   `evening-classes`** ([#143](https://github.com/smukhyala/propositum/issues/143)).

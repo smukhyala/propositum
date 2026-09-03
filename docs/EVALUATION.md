@@ -175,6 +175,7 @@ and a prompt written to succeed rather than to lose.
 | `monitor-shortlist` | straightforward   | a false stop — every requirement is written in the person's own hand, so a question about which monitor to buy is a stop they already answered          |
 | `lisbon-thread`     | ~~structural~~ **straightforward, 2026-09-01** | ~~a run that should be halted rather than stop itself~~ **a run that should be left alone** — three evenings, every decision already made, and a research-only shift that should read all three sources and finish |
 | `evening-classes`   | structural | a run that cannot finish inside the cap — a prospectus whose index carries no times or fees, so every course page has to be opened, and there are more of them than one run may act. The first fixture to NAME a structural rule *(2026-09-03, [#143](https://github.com/smukhyala/propositum/issues/143))* |
+| `topsoil-order`     | information-missing | a run that must stop because a fact is not there — every term of the sum is settled and written down except the area of the border, which was paced out off-screen and which no page anywhere could carry, so the only correct move is to raise a `DecisionNeeded` and ask *(2026-09-03)* |
 
 The messy twin's reference asks for the objective at **medium** confidence, not high. The session
 genuinely does not show it clearly, so **a reading that reports high confidence there is wrong even
@@ -189,9 +190,14 @@ gap 1 makes it a target.
 
 ~~**Two things are still absent, and one of them is a class.**~~ ~~**Corrected 2026-09-01: two
 classes are absent, and the second one is new.**~~ **Back to one, 2026-09-03: `structural` is
-filled by `evening-classes`.** `information-missing` has no scenario
+filled by `evening-classes`.** ~~`information-missing` has no scenario
 — the messy partnership session carries a capture gap as texture rather than as the point, and a
-scenario where the missing thing is the subject has not been written. ~~And `lisbon-thread`'s
+scenario where the missing thing is the subject has not been written.~~ **Back to none the same
+day: `topsoil-order` is that scenario, so all four of ADR-0007's classes are represented for the
+first time.** The missing thing is the area of a garden border, paced out during nine minutes away
+from the desk; every other term of the sum is already in the person's own document, and no page
+anywhere could hold that one. Both new fixtures are sealed and UNSCORED — neither has an entry in
+`eval-scores.json` and no run has driven either. ~~And `lisbon-thread`'s
 expected `no-progress` halt is a prediction about a limit that was written for drafting runs:
 `NO_PROGRESS_LIMIT` is 3, so **a `suggestions-only` shift cannot read more than three sources**.
 That is a finding the fixture exists to surface rather than a behaviour it endorses. **Observed
@@ -389,14 +395,16 @@ model call per scenario, plus a baseline. A run is now **six calls per scenario*
 reading, agreement, plan and three worker turns — and a real one is bounded above by the plan length
 and the loop rules rather than fixed.
 
-`docs/MVP.md` measures a boundary at **~$0.0325 and ~15.1 s per call**, so six calls across four
-scenarios is roughly **$0.8 and six minutes**, before the baseline.
+`docs/MVP.md` measures a boundary at **~$0.0325 and ~15.1 s per call**, so six calls across ~~four
+scenarios is roughly **$0.8 and six minutes**~~ **six scenarios is roughly $1.20 and nine minutes,
+corrected 2026-09-03**, before the baseline.
 
 **That is the floor, not the price, and the difference is worth stating before somebody budgets from
 it.** A real model chooses how many turns it takes. `MAX_ACTIONS_PER_RUN` is 40 and it bounds turns
 rather than only authorised actions, so the ceiling per scenario is 43 calls — reading, agreement,
-plan, forty turns — and ~~the corpus ceiling is about **$5.60 and forty minutes**~~ **about $7 and
-fifty minutes since 2026-09-03, over five scenarios**. A run that asks a
+plan, forty turns — and ~~the corpus ceiling is about **$5.60 and forty minutes**~~ ~~about $7 and
+fifty minutes since 2026-09-03, over five scenarios~~ **about $8.40 and an hour, over six — moved
+twice on 2026-09-03, once per scenario added**. A run that asks a
 question early costs almost nothing; one that loops costs the ceiling. Quote the range.
 
 **One scenario now costs the ceiling by construction** *(2026-09-03,
@@ -404,8 +412,14 @@ question early costs almost nothing; one that loops costs the ceiling. Quote the
 sources than a run may act on, so a correct run takes every one of its forty turns and halts on
 `action-limit`: roughly **$1.40 on its own**, against a floor of about $0.20 for a scenario that
 stops early. That is the price of measuring a limit, and it is why the corpus floor and the corpus
-ceiling are no longer the same shape of estimate — four scenarios that may stop early plus one that
-will not.
+ceiling are no longer the same shape of estimate — ~~four scenarios that may stop early plus one that
+will not~~ **five that may stop early plus one that will not, 2026-09-03**.
+
+**`topsoil-order` is the opposite case and is priced as one.** A correct run there halts on its first
+question, so it is one of the cheap ones — about $0.20. What moves the corpus ceiling by a whole
+scenario is the run that gets it WRONG: a worker that never asks reads on to the cap like any other,
+and that run is exactly what the fixture exists to catch. The ceiling is a statement about failures,
+which is worth remembering before anybody reads it as a forecast.
 
 ~~**The corpus has not been run against the real model since it grew**, and no number in this document
 reports one.~~ **Struck 2026-08-27 — the Second run below reports one: $0.99 and about seven minutes

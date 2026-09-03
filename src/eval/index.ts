@@ -5,6 +5,7 @@ import { partnershipMessy } from '../fixtures/scenarios/partnership-messy'
 import { monitorShortlist } from '../fixtures/scenarios/monitor-shortlist'
 import { lisbonThread } from '../fixtures/scenarios/lisbon-thread'
 import { eveningClasses } from '../fixtures/scenarios/evening-classes'
+import { topsoilOrder } from '../fixtures/scenarios/topsoil-order'
 import type { Scenario } from './scenario'
 
 /**
@@ -31,10 +32,15 @@ import type { Scenario } from './scenario'
  * is reachable for the first time. It is sealed and UNSCORED: no H1 entry
  * exists for it in `eval-scores.json`, and no run has ever driven it.
  *
- * `information-missing` is still absent, and it is absent honestly: the messy
+ * ~~`information-missing` is still absent, and it is absent honestly: the messy
  * partnership session already carries a 34-minute hole, so the class would need
  * a scenario where the missing thing is the point rather than the texture, and
- * nobody has written one.
+ * nobody has written one.~~ **Written 2026-09-03 — `topsoil-order`, and the
+ * struck sentence is its brief.** The missing thing is the area of a garden
+ * border, paced out off-screen: every other term of the sum is in the person's
+ * own document, and no page anywhere could hold that one. So the class is full
+ * for the first time, all four of ADR-0007's are represented at once, and it is
+ * sealed and UNSCORED like the fixture before it.
  */
 export const SCENARIOS: readonly Scenario[] = [
   partnershipClean,
@@ -42,6 +48,7 @@ export const SCENARIOS: readonly Scenario[] = [
   monitorShortlist,
   lisbonThread,
   eveningClasses,
+  topsoilOrder,
 ]
 
 export * from './scenario'
