@@ -283,9 +283,13 @@ resisting a fifth.
 - Quitting the app leaves no orphaned Node process.
 - Killing either child brings it back.
 - `spctl -a -vvv` and `xcrun stapler validate` both pass on the shipped `.dmg`.
-  *(2026-08-28: `scripts/release-tray.ts` runs both on every signed build and
-  fails it when either fails — so this bullet closes with the first tagged
-  release, and stays closed by machine rather than by memory.)*
+  *(2026-08-28: ~~`scripts/release-tray.ts` runs both on every signed build and
+  fails it when either fails~~ **Struck 2026-09-03 — half true: it ran
+  `stapler validate` on the `.dmg` and `spctl -a -t install` on the `.app`
+  alone, so the file a stranger downloads was never assessed. Both run on the
+  `.dmg` now, and `tests/reachability.test.ts` ("asks Gatekeeper about the disk
+  image") fails if either invocation goes** — so this bullet closes with the
+  first tagged release, and stays closed by machine rather than by memory.)*
 - **Then hand it to a stranger and time them to first offer.** That number is the
   product metric that does not exist today. *(Still open, 2026-08-28 — the code
   half of this file is done and this bullet is deliberately not struck: nothing

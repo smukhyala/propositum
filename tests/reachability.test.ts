@@ -2017,6 +2017,35 @@ describe('a document can be brought in and taken out', () => {
     expect(scripts.scripts['tray:build']).toContain('release-tray')
   })
 
+  /**
+   * Gatekeeper is asked about the disk image, not only the app inside it.
+   *
+   * Until 2026-09-03 the script stapled the `.dmg`, ran `stapler validate` on
+   * it, and then aimed `spctl -a -t install` at the `.app` alone — so the one
+   * artefact a stranger downloads was the one thing the pipeline never asked
+   * Gatekeeper about, while todo 01's Done-when said both checks passed on the
+   * shipped `.dmg`. Both invocations stay; this pins the one that was missing.
+   *
+   * The match is on the invocation's argument list, comments stripped, so a
+   * docblock mentioning the command cannot satisfy it. The variable names are
+   * the script's own (`app`, `dmg`) — renaming one fails this and says so.
+   *
+   * WHAT THIS DOES NOT COVER: what Gatekeeper answers. `spctl` needs a signed,
+   * notarised artefact and a Mac to run on, and a first launch on a clean
+   * machine is not simulated by anything in this repository.
+   */
+  it('the release script asks Gatekeeper about the disk image as well as the app', () => {
+    const release = stripComments(readFileSync(join(repo, 'scripts/release-tray.ts'), 'utf8'))
+    const assessed = (artefact: string) =>
+      new RegExp(String.raw`'spctl',\s*\[\s*'-a',\s*'-vvv',\s*'-t',\s*'install',\s*${artefact}\s*\]`)
+
+    expect(release, 'the .app is no longer assessed by Gatekeeper').toMatch(assessed('app'))
+    expect(
+      release,
+      'the .dmg is stapled and validated but never assessed by Gatekeeper — the artefact a stranger downloads is the one nothing asks about',
+    ).toMatch(assessed('dmg'))
+  })
+
   it('the project screen no longer carries an editor of its own', () => {
     // The half a caller check cannot see. Both components could be rendered
     // and a leftover `<textarea name="content">` in the page would still be
