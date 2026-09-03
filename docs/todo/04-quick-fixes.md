@@ -287,10 +287,14 @@ from the greps at the top rather than from the code.
 
 ## Done when
 
-- `npm test` and `npm run typecheck` are green. **They are: 77 files, and
-  `npm run build` too.**
-- The five commands under *Is this already done?* return what a finished repo
-  returns. **Four of five do; the fifth is item 7 and is the owner's.**
+- `npm test` and `npm run typecheck` are green. **They are: ~~77 files~~ *(struck 2026-09-03 — the
+  count had moved on and will again; `npm test`'s own summary line is the thing that knows it, and
+  both were green again today)*, and `npm run build` too.**
+- ~~The five commands~~ **The commands** *(the block has grown; struck 2026-09-03)* under *Is this
+  already done?* return what a finished repo returns. ~~**Four of five do; the fifth is item 7 and
+  is the owner's.**~~ **Struck 2026-09-03 — every command but the two that name items 7 and 11
+  does; those two still print (`0` for the key count, the file name from the `-L`), the first the
+  owner's and the second left unfixed on purpose.**
 - ~~Each fix has a test that would have failed before it. `tests/canonical-terms.test.ts`
   and `tests/handover-honesty.test.ts` are the right homes for items 3, 4 and 5.~~
   **`tests/canonical-terms.test.ts` was the wrong file** — it is about typo

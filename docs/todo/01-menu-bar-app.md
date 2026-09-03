@@ -45,8 +45,12 @@ running."*
 ### What ADR-0025 did to this file
 
 **ADR-0023's prohibition 1 — that the tray app requests no TCC permission — is
-amended, not deleted.** The binary this file describes is now the thing that
-holds **Accessibility, Screen Recording and Full Disk Access**. That is a very
+amended, not deleted.** The binary this file describes ~~is now the thing that
+holds~~ **is the thing ADR-0025 decided will hold — and holds none today,
+2026-09-03: `tests/tray-permissions.test.ts` bans all three literals, pins
+`src-tauri/entitlements.plist` to two hardened-runtime JIT carve-outs, and
+passes; [`07`](./07-off-the-browser.md) is where they get taken** —
+**Accessibility, Screen Recording and Full Disk Access**. That is a very
 different install from a status light, and ADR-0023 said so about itself: a tray
 app requesting none was *"the prohibition the other four exist to protect."*
 

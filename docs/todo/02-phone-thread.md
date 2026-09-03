@@ -58,8 +58,11 @@ Unchanged, and now written on the pairing screen rather than only here:
   already names this gap for offers; the channel inherits it. The offer rate
   counts how often Propositum spoke, not whether it should have.
 - **Telegram only.** A second provider is a second argument, not a second case
-  in a switch — and the one-transport test would go red, correctly, if somebody
-  tried.
+  in a switch — ~~and the one-transport test would go red, correctly, if somebody
+  tried.~~ **Struck 2026-09-03 — it would not:** `tests/reachability.test.ts`
+  (*keeps the provider behind one transport*) pins the string `api.telegram.org`
+  to `src/runtime/thread-channel.ts` and nothing else; a Signal transport holds
+  no such string, so a second file goes green.
 - **`docs/SECURITY_AND_PRIVACY.md` is now behind rather than ahead.** It
   disclosed the third egress before the code landed, which was the right order.
   Check the three-egress table reads as present tense.

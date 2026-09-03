@@ -43,8 +43,11 @@ grep -n 'approvedApplications' CONTEXT.md
 `CONTEXT.md` gained `PurchaseAuthorization` on the day ADR-0024 was accepted and gained nothing for
 this one, so [item 1](#the-work) below is not a formality.~~
 
-**Corrected 2026-08-27, the next morning, by running command 4 instead of assuming it.** (1), (2) and
-(3) return nothing — no `approvedApplications` in `src/`, no `tests/desktop-scope.test.ts`, no Rust.
+**Corrected 2026-08-27, the next morning, by running command 4 instead of assuming it.** (1), (2) ~~and
+(3)~~ return nothing — no `approvedApplications` in `src/`, no `tests/desktop-scope.test.ts`, ~~no Rust~~
+**struck 2026-09-03 — (3) returns `./src-tauri/Cargo.toml`, todo 01's menu-bar app, landed the
+afternoon of the day this line was written (`bacd6dc`); it is Rust that drives nothing off the
+browser, and (1) and (2) still return nothing**.
 **(4) returns three hits, and the glossary entry is already written.** `CONTEXT.md`'s `ContractScope`
 entry carries `approvedApplications[]` with the argument in full — bundle identifiers never window
 titles, checked against the frontmost application before every mutating action rather than once per
@@ -53,7 +56,11 @@ bound ADR-0010 had… and it is weaker, because that one was Chrome refusing and
 remembering."*
 
 It carries the **specification rather than a description** fence, and the fence quotes its own check:
-*"`grep -rn 'approvedApplications|purchaseAuthorization' src/ prisma/` returns nothing."*
+~~*"`grep -rn 'approvedApplications|purchaseAuthorization' src/ prisma/` returns nothing."*~~
+**Struck 2026-09-03 — `purchaseAuthorization` left the fence 2026-09-01 (`grep -rn
+'purchaseAuthorization' src/ prisma/` finds it, declared in `src/domain/handoff/policy.ts`), and the
+`ContractScope` entry's check now reads *"`grep -rn 'approvedApplications\|sendAuthorization' src/
+prisma/` returns nothing"* — which it does; `approvedApplications` is still fenced.**
 
 Two things follow, and they are why this correction is worth the space rather than a quiet edit.
 [Item 1](#the-work) is **smaller than it was written** — the entry exists, so what is left is taking

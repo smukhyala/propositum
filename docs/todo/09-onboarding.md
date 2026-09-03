@@ -3,8 +3,11 @@
 **Status:** ~~written down 2026-08-27, deliberately unshaped.~~ **Designed
 2026-08-29, in the sitting this file was waiting for** — the owner and the
 agent shaped it by interview, and the owner's own caveat is recorded with it:
-*"this may and probably will be changed later."* The shape is below; none of
-it is built. The original note stands as history: the owner asked for
+*"this may and probably will be changed later."* The shape is below; ~~none of
+it is built~~ **struck 2026-09-03 — all five items are built as of 2026-08-30
+([#127](https://github.com/smukhyala/propositum/issues/127)); *The work* below
+ticks each, and `ls src/app/first-run/page.tsx src/server/first-run.ts` finds
+both**. The original note stands as history: the owner asked for
 the file before the design: *"will flesh out how it looks later, but just make
 sure it's written down."*
 **Blocked by:** nothing, for the design pass itself. The *stranger's* path runs

@@ -15,8 +15,11 @@ For slice 0 that person is the author. This is an n=1 experiment and the documen
 everywhere the number appears. It is not a proxy for a market; it is the cheapest way to find out
 whether the central idea survives contact with real unfinished work.
 
-They are assumed to be comfortable installing an unpacked Chrome extension and running two npm
-scripts. Nothing about onboarding is being tested yet.
+They are assumed to be comfortable installing an unpacked Chrome extension and ~~running two npm
+scripts. Nothing about onboarding is being tested yet.~~ **Struck 2026-09-03 — one script since
+2026-08-26 (`npm run dev` spawns the worker beside the app, `scripts/dev.ts`), and onboarding has
+had a screen since 2026-08-30 (`src/app/first-run/`, todo 09, #127) — built, and still tried on
+nobody but the author.**
 
 ---
 
@@ -338,11 +341,14 @@ Recorded so they can be checked rather than absorbed.
    [`docs/research/intent-signals.md`](./research/intent-signals.md) §3 ranks `chrome.tabs` events
    and `query` **row 1 of 16** at a cost of *"nothing. No permission, no warning, no manifest
    change"*, and `webNavigation` row 4, also warning-free. On cost alone both are free, and the
-   reason for declining is not cost: **H1 has never been scored**, so taking them now would fire a
-   revisit clause before the evidence that triggers it exists — which is how a threshold fixed in
-   advance becomes one negotiated afterwards, the failure *Why the bar is set to be failed* exists
-   to prevent. Slice 1 produces the number. If H1 scores badly and ablation implicates navigation
-   intent, this clause fires on evidence.
+   reason for declining is not cost: ~~**H1 has never been scored**~~ **struck 2026-09-03 — scored
+   2026-08-27, one pass in four ([`EVALUATION.md`](./EVALUATION.md), Second run); the decline
+   stands on the other half of the condition at the end of this paragraph, because no ablation has
+   been run (`grep -in ablation docs/EVALUATION.md` finds nothing)** ~~, so taking them now would
+   fire a revisit clause before the evidence that triggers it exists~~ — which is how a threshold
+   fixed in advance becomes one negotiated afterwards, the failure *Why the bar is set to be
+   failed* exists to prevent. ~~Slice 1 produces the number.~~ If H1 scores badly and ablation
+   implicates navigation intent, this clause fires on evidence.
 
    `chrome.tabs` carries a second cost `webNavigation` does not, and it should not be bundled with
    it when the clause does fire: under the `https://*/*` grant it returns the URL and title of
