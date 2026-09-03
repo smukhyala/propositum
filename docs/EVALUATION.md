@@ -389,8 +389,14 @@ model call per scenario, plus a baseline. A run is now **six calls per scenario*
 reading, agreement, plan and three worker turns — and a real one is bounded above by the plan length
 and the loop rules rather than fixed.
 
-`docs/MVP.md` measures a boundary at **~$0.0325 and ~15.1 s per call**, so six calls across four
-scenarios is roughly **$0.8 and six minutes**, before the baseline.
+`docs/MVP.md` measures a boundary at **~$0.0325 and ~15.1 s per call**, so ~~six calls across four
+scenarios is roughly **$0.8 and six minutes**~~, before the baseline. **Corrected 2026-09-03, one
+merge late: the ceiling below was moved to five scenarios and this floor beside it was not, so the
+section spent a day contradicting itself — its own paragraph two below already said the floor no
+longer applies corpus-wide.** Four scenarios that may stop early at six calls plus `evening-classes`
+at forty-three is **67 calls, about $2.20 and seventeen minutes** — and the honest instruction is to
+multiply the per-call figure by what `src/eval/index.ts` holds rather than to trust a total written
+here, because both totals in this section have now gone stale within a fortnight.
 
 **That is the floor, not the price, and the difference is worth stating before somebody budgets from
 it.** A real model chooses how many turns it takes. `MAX_ACTIONS_PER_RUN` is 40 and it bounds turns

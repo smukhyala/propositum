@@ -94,13 +94,23 @@ never part of `npm test`. `npm run capture:afternoon` writes a profile of your o
 — read the docblock at the top of `src/fixtures/capture-afternoon.ts` first, and never commit one
 containing real browsing.
 
-Two setup facts that cost an afternoon:
+~~Two setup~~ **Setup** facts that cost an afternoon *(the count is struck 2026-09-03 rather than
+raised — the list is the thing that knows how long it is)*:
 
 - **`npx prisma db push` silently drops the append-only triggers** on any table it rebuilds. They are
   reinstalled and verified at the next app startup. Restart before trusting the database — a ledger
   without its triggers looks identical and is not append-only.
 - **The extension's host grant needs a user gesture**, so nothing can automate it. `extension/README.md`
   is the authoritative order.
+- **A pull that changed `prisma/schema.prisma` leaves your generated client stale, and the symptom
+  points somewhere else** *(added 2026-09-03)*. `npm run typecheck` fails inside
+  `src/persistence/repositories/index.ts` — a file you did not touch — with a Prisma input type that
+  does not match the field you are looking at. **It is not your change and the repository is not
+  broken:** CI never sees this, because `npm ci` runs Prisma's own postinstall and regenerates
+  (`.github/workflows/ci.yml` says so where the missing `prisma generate` step would be). Locally,
+  `git pull` runs no postinstall. Fix it with `npm run db:generate`, and check that before reading the
+  error as anything else — the other cause of *"typecheck fails in a path I have never opened"* is a
+  lost `tsconfig.json` exclusion, and the two look identical from the terminal.
 
 Port 3117 is pinned in the dev and start scripts, a hardcoded constant in the extension, the Google
 OAuth redirect URI, and the tray app's `src-tauri/src/origin.rs`. `tests/capture.test.ts` is the

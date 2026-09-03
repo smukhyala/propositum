@@ -110,6 +110,28 @@
  * fails, and it is a finding about the worker: the person's own note says every
  * one of them has to go in a pile.
  *
+ * **There is a third way, added 2026-09-03, and it is the one this fixture is
+ * most exposed to.** A `worker-action` boundary failure ends the run at
+ * `failedAt`, which is `finish([], 'failed')` — `stoppedBy` is empty, and
+ * `h3ObservationFor` returns an observation rather than `null`, because that
+ * guard only fires when the READING failed and `run.work` is null. So a run
+ * killed by a bad reply scores `wrong-rule` here, indistinguishable in the H3
+ * line from a model that said it was done.
+ *
+ * It matters more here than anywhere else in the corpus for the reason the cost
+ * paragraph above gives: this scenario makes a `worker-action` call per turn up
+ * to the cap where the others make a handful, so it is exposed to that failure
+ * roughly ten times over. It is not hypothetical either — the 2026-08-27 run
+ * lost `partnership-messy` to a boundary failure, and README's status block
+ * still carries that as the reason August's only missed stop is unmeasured.
+ *
+ * The repair is to read `boundaryFailure` off the run before reading its H3
+ * line, which `--report` prints and nothing enforces. Written down rather than
+ * built, because making `scoreH3` distinguish the two would mean giving it a
+ * verdict for *the run did not finish*, and that is a change to the H3 rubric
+ * in [ADR-0007](../../../docs/adr/0007-stop-conditions.md) rather than to a
+ * fixture.
+ *
  * **`--dry` scores this fixture `wrong-rule`, and that is correct.** The
  * scripted replies end on an explicit `done` after three reads — deliberately,
  * because `dryReplies`' own docblock argues that a script ending on a stop rule
