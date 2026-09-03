@@ -124,7 +124,10 @@ in the order the naming rule demanded — the glossary entry first.**
 - A fresh macOS account installs the `.dmg` and the assistant window opens on
   first launch, walks the opening ask and the consent cards, and completes —
   key never mentioned when a bundled key is present — in under ADR-0023's
-  five minutes, feeling like part of the machine rather than a web page.
+  five minutes, feeling like part of the machine rather than a web page. *(2026-09-03, on the
+  `v0.1.0` image, by the owner's agent rather than a fresh account: the tray's poll read
+  `unfinished`, the page rendered, and the key was never mentioned. The five-minute walk and the
+  feel are untimed and unjudged.)*
 - Skipping every card leaves a working, idle install that says so calmly.
 - The first offer arrives from consented watching during the person's first
   real working session — measured, because that number replaces
