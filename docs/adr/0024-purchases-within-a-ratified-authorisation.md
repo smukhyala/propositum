@@ -133,7 +133,7 @@ At `Fetch.requestPaused`, before the request leaves the machine:
 
 Four of the five cannot be forged by a page. The fifth is the honest weakness and §4 is about it.
 
-**A sixth fact the table does not hold, recorded 2026-09-02 on review of the build:** the permit is
+~~**A sixth fact the table does not hold, recorded 2026-09-02 on review of the build:** the permit is
 bound to an origin, a currency, a ceiling and a count — **not to the request the pressed control
 initiated.** The transport releases the *first* same-origin non-`GET` inside the permit's window
 whose body parses to an amount in the permit's currency at or under the ceiling. A same-origin
@@ -143,7 +143,41 @@ then meets the plain block and nothing is charged. What does not fail closed is 
 sentence, which would record a purchase against a request that bought nothing while the count is
 spent. The live-purchase session in [`docs/todo/06`](../todo/06-buying-things.md) is where the
 frequency of this gets measured against real baskets; binding the permit to the initiating request
-(the `Document` or `XHR` Chrome attributes to the press) is the candidate fix, and it is not built.
+(the `Document` or `XHR` Chrome attributes to the press) is the candidate fix, and it is not built.~~
+
+**Bound 2026-09-03 (#147), and the sixth fact is now a sixth check — with half the candidate fix
+refused rather than deferred.** The table above gains a row, and it goes first, because a request
+Chrome does not attribute to the tab is not the press's request and must not spend the permit
+deciding so:
+
+| Check | Fact from |
+|---|---|
+| the tab itself is navigating — `Document`, in the known main frame | Chrome, attested |
+
+The `XHR`/`Fetch` half of the candidate fix — *the request whose initiator is the pressed element* —
+**cannot be built without reversing a different decision, so it is refused here rather than left
+open.** `Fetch.requestPaused` carries no initiator; `Network.requestWillBeSent` carries one, and
+`Network.enable` is the same door as `Network.getResponseBody`, `getAllCookies` and `setCookie`,
+which `tests/extension-cdp.test.ts` forbids by name and whose guard says in as many words that the
+day it fails, that argument is being re-litigated. Attribution for a subresource is not worth the
+person's cookies and response bodies. Where a correlation cannot be established the request is
+refused, which is what §5's other limits already do.
+
+What that costs, said plainly and not smoothed over: **an `XHR`/`fetch` checkout can no longer
+land**, and most modern checkouts are one. Such a press now ends in a reported `blocked-request` and
+a halted run — visible, and with nothing charged — where before it could complete. This is a large
+narrowing of a capability no live purchase has ever measured, taken because a ledger that says a
+purchase happened when none did is the worse failure. It is also not the last word: the live-purchase
+session in [`docs/todo/06`](../todo/06-buying-things.md) is what decides whether form-POST checkouts
+are common enough for the capability to be worth having at all in the browser.
+
+And the binding is *"the tab navigated"*, not *"the press caused it"*. A page that submits a
+same-origin form to itself on a timer, inside the ~12s window, at the ratified origin, under the
+ratified ceiling, is still indistinguishable from the press. `Sec-Fetch-User: ?1` is the further
+narrowing — Chrome sets it on gesture-driven navigations and a page cannot forge it — and whether it
+is present at the `Request` stage is a fact only a live checkout can establish. Making it
+load-bearing unverified would refuse every real purchase, so it is written down here and in the
+classifier rather than shipped.
 
 **No authorisation on the contract ⇒ every non-`GET` is refused**, exactly as today. *"Find me food
 for dinner"* produces nothing to ratify, so the block is still unconditional for it. This is the case
@@ -240,3 +274,8 @@ does not. Deterministic parsing only, and where parsing fails, §5.
   may never grant.
 - **The refuse-and-ask path starts firing often.** That means the ceilings are drafted too tight, and
   the fix is better drafting — never a wider default, and never a remembered yes.
+- **Real checkouts turn out never to be tab navigations** *(added 2026-09-03, #147)*. Then the
+  binding above has narrowed the capability to nothing in the browser, and the honest options are to
+  say so in the interface, or to reopen `Network.enable` as its own decision with the person's
+  response bodies and cookies argued on the table — never to widen the landing back to *"the first
+  same-origin non-`GET` that parses"*, which is the shape that lied.

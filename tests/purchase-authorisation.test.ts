@@ -314,7 +314,10 @@ describe('the transport refuses everything the ratification did not cover', () =
       postData: '{"amount_minor":3999,"currency":"USD"}',
       headers: { 'Content-Type': 'application/json' },
     },
-    resourceType: 'XHR',
+    // ~~`XHR`~~ **`Document`, 2026-09-03 (#147)** — the tab going somewhere,
+    // which is the only thing Chrome attributes to a pressed control without
+    // the Network domain. See the decoy case below for what that buys.
+    resourceType: 'Document',
     frameId: 'frame-main',
   }
 
@@ -356,5 +359,49 @@ describe('the transport refuses everything the ratification did not cover', () =
         permit,
       ),
     ).toBe('amount-over-ceiling')
+  })
+
+  /**
+   * #147, and ADR-0024 §2's sixth fact, which this closes for one shape and
+   * leaves open for another.
+   *
+   * The dinner instruction is not the only way a purchase can be recorded that
+   * did not happen. A ratified *"buy 10 avocados"* permit, pressed on a real
+   * checkout page, used to be consumed by whichever same-origin non-`GET` came
+   * first — and on a real merchant that is routinely a *"checkout started"*
+   * analytics event carrying the same amount and currency the basket does.
+   * Nothing was charged, and the run said a purchase completed anyway.
+   *
+   * The permit now releases only what Chrome attributes to the tab going
+   * somewhere. The decoy meets the plain block and, because `blocked-request`
+   * is not one of the four verdicts `onRequestPaused` spends the one-shot on,
+   * the permit is still armed when the press's own request arrives.
+   */
+  it('refuses a same-origin telemetry POST that carries the same amount as the basket', () => {
+    const permit = {
+      intentId: 'intent-1',
+      originPattern: 'https://grocery.example',
+      maxAmountMinor: 4_000,
+      currency: 'USD',
+    }
+    const decoy = {
+      request: {
+        method: 'POST',
+        url: 'https://grocery.example/collect',
+        postData: '{"event":"checkout_started","amount_minor":3999,"currency":"USD"}',
+        headers: { 'Content-Type': 'application/json' },
+      },
+      resourceType: 'XHR',
+      frameId: 'frame-main',
+    }
+
+    expect(
+      classifyPausedRequest(decoy, ['https://grocery.example'], undefined, 'frame-main', permit),
+    ).toBe('blocked-request')
+
+    // And the request the press initiated still lands, on the same permit.
+    expect(
+      classifyPausedRequest(paused, ['https://grocery.example'], undefined, 'frame-main', permit),
+    ).toBe('allow-landing')
   })
 })
