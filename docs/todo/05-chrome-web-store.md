@@ -1,14 +1,17 @@
 # 05 — Get the extension out of Developer mode
 
 **Status:** not started
-**Blocked by:** ~~[`01`](./01-menu-bar-app.md) and~~ item 7 of
-[`04`](./04-quick-fixes.md). ~~Do not submit before the id is pinned and the
+**Blocked by:** ~~[`01`](./01-menu-bar-app.md) and~~ ~~item 7 of
+[`04`](./04-quick-fixes.md).~~ ~~Do not submit before the id is pinned and the
 desktop app can pair it.~~ **Corrected 2026-08-28, in two halves: `01` stage 2
 is done ([ADR-0027](../adr/0027-a-sealed-bundle-and-where-the-state-moves.md)),
 and the second condition was never real — the desktop app deliberately pairs
 nothing (`/welcome` pairs, restart-free; ADR-0023's own table row records why
 a tray-written id would be a regression). What still holds: do not submit
-before the id is pinned.**
+before the id is pinned.** **Pinned 2026-09-03 — `grep -n '"key"'
+extension/manifest.json` finds it, `tests/extension-permissions.test.ts` holds
+the id. Nothing in software blocks this file now; what is left is the section
+below.**
 **Blocks:** anybody installing this who is not you.
 
 This is the file with the longest wall-clock time and the least work in it. Most
@@ -24,10 +27,12 @@ grep -n 'update_url\|"key"' extension/manifest.json
 grep -n '"version"' extension/manifest.json
 ```
 
-**As of 2026-08-26:** no `update_url`, no `key`, `"version": "0.0.1"`. There is
+**As of 2026-08-26:** no `update_url`, ~~no `key`~~ **a `key` since 2026-09-03,
+so the id is `oeeehaokemppjoedlccgggmhlmhcdeln` wherever the folder lives**,
+`"version": "0.0.1"`. There is
 no store listing. The extension is loaded unpacked, in Developer mode, which
-means Chrome nags about it on every restart and the id changes if the folder
-moves.
+means Chrome nags about it on every restart ~~and the id changes if the folder
+moves~~.
 
 ---
 

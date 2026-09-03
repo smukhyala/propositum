@@ -180,14 +180,19 @@ from the greps at the top rather than from the code.
    exactly what the front door cannot serve. Deleting it would take the accept
    path off both surfaces.
 
-7. **Pin the extension `key`.** **Still open, deliberately, 2026-08-26 — this
-   one is the owner's.** It is a command rather than an application, but it
+7. ~~**Pin the extension `key`.**~~ ~~**Still open, deliberately, 2026-08-26 — this
+   one is the owner's.**~~ **Done 2026-09-03, on the owner's say-so, knowing it
+   orphans the development pairing.** The id is
+   `oeeehaokemppjoedlccgggmhlmhcdeln`; `tests/extension-permissions.test.ts`
+   derives it from the key in `manifest.json` and fails if either moves. The
+   private half is the owner's, outside the repository, and is needed only to
+   pack a `.crx`. Re-pair once on `/first-run`. It is a command rather than an application, but it
    permanently fixes the extension id and therefore invalidates any install that
    already exists, including the working development pairing on the machine this
    was written on. Doing that on somebody's behalf is not a quick fix, it is a
    decision with a blast radius, so it is left named rather than made.
-   `manifest.json`'s own comment still says *"REPLACE before any real install —
-   this is a placeholder."*
+   ~~`manifest.json`'s own comment still says *"REPLACE before any real install —
+   this is a placeholder."*~~ That sentence is struck in the manifest too.
 
 8. ~~**Fix the ADR-0023 misattribution.**~~ **Done 2026-08-26, and there were
    two.** `docs/adr/0001-worker-runtime.md` makes the same mistake, and it
