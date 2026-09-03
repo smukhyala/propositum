@@ -1,0 +1,48 @@
+# TEMPORARY. Delete this file once the number is in the comment beside the code.
+#
+# It exists to answer the one explanation #97 offered and PR #131 did not look
+# at: what `ensureAppendOnlyGuards` costs on `ubuntu-latest` as against a
+# developer machine. #82 did exactly this for the same question and was deleted
+# in the same week; this follows it on purpose, including the deletion.
+#
+# Same script, same iterations, both machines — so the two numbers are
+# comparable and neither is a guess. It runs the operations sequentially and
+# alone, which is NOT what CI does: #97 is about contention between parallel
+# vitest workers, and reproducing that would measure the runner's scheduler.
+# This measures the per-operation cost the issue actually asks about.
+#
+# `workflow_dispatch` as well as the push trigger, so the measurement can be
+# repeated on demand without another commit.
+name: measure-guard-install
+
+on:
+  push:
+    branches: [agent/measure-the-trigger-install]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  measure:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # 22 to match `ci.yml`, so this measures the runner the suite runs on
+      # rather than a different one.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+
+      - run: npm ci
+
+      - name: How long a test file's database costs, split in two
+        run: npx tsx scripts/measure-guard-install.ts
+
+      # Twice, because the first run of anything on a cold runner includes
+      # costs that are not the thing being measured — a warm second pass is
+      # what the developer-machine number is comparable to.
+      - name: Again, warm
+        run: npx tsx scripts/measure-guard-install.ts
