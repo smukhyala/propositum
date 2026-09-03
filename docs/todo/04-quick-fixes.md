@@ -254,22 +254,28 @@ from the greps at the top rather than from the code.
     went quiet — rather than with a guess about why, which is the correct fail
     direction and is worth keeping if this is ever built.
 
-11. **`classifyThrow` does not catch the SDK's own refusal of an oversized
-    non-streaming request.** *(Added 2026-09-03, found while fixing the
-    structured-output classification beside it.)*
+11. ~~**`classifyThrow` does not catch the SDK's own refusal of an oversized
+    non-streaming request.**~~ **Done 2026-09-03** — the check below returns
+    nothing, `classifyThrow` in `src/model/anthropic.ts` files the message as
+    `truncation`, and `answered` in `src/server/compose-offer.ts` says why it
+    settles it. *(Added 2026-09-03, found while fixing the structured-output
+    classification beside it.)*
 
     ```bash
     grep -L 'Streaming is required' tests/model-boundary.test.ts
     ```
 
-    The branch reads `/max_tokens/i.test(message)` and its comment says it is
-    there for *"a local throw for an oversized non-streaming request"*. The SDK
+    ~~The branch reads `/max_tokens/i.test(message)` and its comment says it is
+    there for *"a local throw for an oversized non-streaming request"*.~~
+    **Struck 2026-09-03 — that comment is gone; the docblock on `classifyThrow`
+    now names both arms and which SDK message each is for.** The SDK
     raises that as a bare `AnthropicError` reading **"Streaming is required for
     operations that may take longer than 10 minutes"** — which names no field at
-    all, so the test has never matched it. What the regex does match is an API
+    all, so the test had never matched it. What the regex does match is an API
     error body that happens to mention `max_tokens`, and since 2026-09-03 the
-    `APIError` check in front of it takes those first. So the branch is now
-    reachable by almost nothing.
+    `APIError` check in front of it takes those first. So that branch is
+    reachable by almost nothing, and is kept for a version that words the
+    refusal that way.
 
     ~~Fixing it is one clause and it is deliberately not taken here, because the
     consequence of taking it is a behaviour change nothing exercises: an

@@ -158,7 +158,18 @@ export interface CallTelemetry {
 export type FailureKind =
   /** The model declined. Terminal — retrying reproduces it. */
   | 'refusal'
-  /** Ran out of tokens mid-object. One doubled-budget escalation. */
+  /**
+   * Ran out of tokens mid-object. One doubled-budget escalation.
+   *
+   * Since 2026-09-03 also the opposite condition under the same name: a budget
+   * the SDK refused to send non-streaming (`classifyThrow` on *"Streaming is
+   * required"*), which reaches the ledger as `truncation` with `stopReason:
+   * null` and no `inputTokens`. It gets the same escalation, and doubling is
+   * the wrong direction for it — the retry is refused again, deterministically,
+   * and the run ends there. Kept under one word rather than a fifth kind
+   * because every consumer treats the two alike: `recoveryFor` buys one retry,
+   * and `answered` in `src/server/compose-offer.ts` settles both.
+   */
   | 'truncation'
   /** Well-formed JSON, wrong shape. Exactly one repair turn quoting the issues. */
   | 'schema-mismatch'

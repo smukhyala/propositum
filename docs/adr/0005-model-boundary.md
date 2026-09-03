@@ -121,9 +121,11 @@ consulting `stop_reason`**, so a parse-first design reports "schema mismatch" fo
 > naming no field — is `truncation` too, so it gets the one doubled retry below
 > rather than `transport`'s none. Every budget in `src/model/boundaries` doubled
 > stays under `NON_STREAMING_MAX_TOKENS`, so that retry runs on the same
-> transport; `tests/model-boundary.test.ts` holds both. What it does not cover:
-> a retry the SDK refuses again, which is filed `truncation` a second time and
-> ends there.)*
+> transport; `tests/model-boundary.test.ts` holds both. The one consumer that
+> reads the word, `answered` in `src/server/compose-offer.ts`, settles it as it
+> settles a real truncation — a second attempt is the same local throw. What it
+> does not cover: a retry the SDK refuses again, which is filed `truncation` a
+> second time and ends there.)*
 >
 > **The table below is unchanged**, including `transport → none`: the SDK backs
 > off already, and stacking our own retries multiplies the delay and hides the
