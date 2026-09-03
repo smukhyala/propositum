@@ -31,6 +31,10 @@ while you're gone. You come back to what changed, why, and what it couldn't deci
 > produced no observation at all. That is the scenario August's only missed stop came from, so
 > nothing here shows that failure fixed; it shows it was not measured. **H1 was not scored and the
 > baseline was not run**, so the finding above is neither confirmed nor cleared by it.
+> *(**The reason that boundary failed is fixed, 2026-09-03**: a reply in the wrong shape was being
+> filed as a network error, which is the one classification that gets no repair turn — see
+> [ADR-0005](./docs/adr/0005-model-boundary.md), amended. The scenario is still unmeasured; only a
+> paid run changes that.)*
 > This README says plainly where the gaps are rather than rounding them up.
 >
 > **The gap that shrank and the one that did not.** Setup is no longer the reason a second person

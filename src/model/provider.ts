@@ -109,8 +109,11 @@ export interface ModelCallRow {
   readonly boundary: BoundaryName
   readonly model: string
   readonly promptVersion: string
-  readonly inputTokens: number
-  readonly outputTokens: number
+  /** Null where the attempt threw and the usage never came back — which is
+   *  not the same fact as zero, and the column is nullable for that reason.
+   *  See `CallTelemetry.inputTokens`. */
+  readonly inputTokens: number | null
+  readonly outputTokens: number | null
   readonly latencyMs: number
   readonly stopReason: string | null
   /** Null means the attempt succeeded. `FailureKind` has no member for "it

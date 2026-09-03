@@ -1,8 +1,10 @@
 # 04 — The half-day of things that are just wrong
 
-**Status:** ~~not started~~ ~~done 2026-08-26, except item 7, which is the owner's.~~ **Two left,
-2026-08-27: item 7, which is the owner's, and item 10, which was added the same day and is not a
-quick fix at all — it is here so nobody rediscovers why it cannot be one.**
+**Status:** ~~not started~~ ~~done 2026-08-26, except item 7, which is the owner's.~~ ~~**Two left,
+2026-08-27:** item 7, which is the owner's, and item 10, which was added the same day and is not a
+quick fix at all — it is here so nobody rediscovers why it cannot be one.~~ **Three left,
+2026-09-03:** those two, and item 11, added the day the structured-output classification was fixed
+and left unfixed beside it on purpose.
 **Blocked by:** nothing at all.
 **Blocks:** nothing.
 
@@ -10,7 +12,7 @@ It took rather longer than half a day, and the reason is item 4: the file said
 *shift* leaked onto four screens and it had leaked onto **twelve**. Two other
 counts here were low as well. What the fixes cost is written beside each one.
 
-~~Ten~~ **eleven** small defects, one of which fixed itself while this file was being
+~~Ten~~ ~~**eleven**~~ **twelve, 2026-09-03** small defects, one of which fixed itself while this file was being
 written, and one of which — item 10, added 2026-08-27 — turned out not to be small. None is hard, none depends on anything, and each one is
 visible to the first person who uses the product. Do them when something else is
 waiting on Apple or on a model run.
@@ -48,6 +50,13 @@ grep -rn 'this shift has no document\|Read the claims below' --include='*.tsx' s
 
 # 5. the extension id is not pinned
 grep -c '"key"' extension/manifest.json
+
+# 6. the SDK's own refusal of an oversized non-streaming request is not caught
+#    (added 2026-09-03 — item 11). -L prints the file when the words are ABSENT,
+#    so output here means no test pins that classification and it is still to do.
+#    The guard is the test rather than the source, because `anthropic.ts` states
+#    the defect in a docblock and a grep over it would read as fixed.
+grep -L 'Streaming is required' tests/model-boundary.test.ts
 ```
 
 ~~As of 2026-08-26: (0) **returns `src/app/page.tsx` — done**; (1) returns
@@ -216,6 +225,35 @@ from the greps at the top rather than from the code.
     Until then the gap is recorded with the reason that is true — the extension
     went quiet — rather than with a guess about why, which is the correct fail
     direction and is worth keeping if this is ever built.
+
+11. **`classifyThrow` does not catch the SDK's own refusal of an oversized
+    non-streaming request.** *(Added 2026-09-03, found while fixing the
+    structured-output classification beside it.)*
+
+    ```bash
+    grep -L 'Streaming is required' tests/model-boundary.test.ts
+    ```
+
+    The branch reads `/max_tokens/i.test(message)` and its comment says it is
+    there for *"a local throw for an oversized non-streaming request"*. The SDK
+    raises that as a bare `AnthropicError` reading **"Streaming is required for
+    operations that may take longer than 10 minutes"** — which names no field at
+    all, so the test has never matched it. What the regex does match is an API
+    error body that happens to mention `max_tokens`, and since 2026-09-03 the
+    `APIError` check in front of it takes those first. So the branch is now
+    reachable by almost nothing.
+
+    Fixing it is one clause and it is deliberately not taken here, because the
+    consequence of taking it is a behaviour change nothing exercises: an
+    oversized request would be filed `truncation`, `recoveryFor` would double the
+    budget, and the doubled budget crosses `NON_STREAMING_MAX_TOKENS` and flips
+    the call onto the streaming path — which is almost certainly what the comment
+    intended and is a recovery no test has ever watched happen.
+
+    It is close to unreachable in practice: `NON_STREAMING_MAX_TOKENS` is what
+    keeps a boundary off that path, and the largest budget in `src/model/boundaries`
+    is nowhere near it. That is the argument for it being small, not for it being
+    right.
 
 ---
 

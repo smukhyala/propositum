@@ -120,8 +120,28 @@ export interface CallTelemetry {
   readonly boundary: BoundaryName
   readonly model: string
   readonly promptVersion: string
-  readonly inputTokens: number
-  readonly outputTokens: number
+  /**
+   * What the API said it billed, or NULL when we never learned.
+   *
+   * ── Why null and zero are different, added 2026-09-03 ────────────────
+   *
+   * Zero is a claim: *the call spent nothing*. Null is the absence of one:
+   * *the call happened and its usage never came back*. Until this field was
+   * nullable the failure path in `anthropic.ts` reported zero for both, and
+   * the 2026-09-02 eval run printed a session reading — the largest call in
+   * the corpus — as `$0.0000 · 22298 ms · 1 call`. Twenty-two seconds of
+   * generation the API billed for, recorded as free, and summed into a run
+   * total that read as a figure rather than a floor.
+   *
+   * A throw out of the SDK is the case that produces null: the usage block
+   * was on a message no caller ever holds. It does NOT cover a call that
+   * genuinely spent nothing — `FakeModelClient` still reports zero, because
+   * for a scripted reply zero is the true number rather than an unknown one.
+   *
+   * Anything summing these is summing a lower bound, and should say so.
+   */
+  readonly inputTokens: number | null
+  readonly outputTokens: number | null
   readonly latencyMs: number
   readonly stopReason: string | null
   readonly repairTurns: number

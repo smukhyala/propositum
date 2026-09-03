@@ -696,8 +696,11 @@ model ModelCallRecord {
   boundary      String
   model         String
   promptVersion String
-  inputTokens   Int
-  outputTokens  Int
+  /// NULL when the attempt threw before any usage came back. Distinct from 0,
+  /// which is a claim that the call was free — see `CallTelemetry` in
+  /// src/model/client.ts.
+  inputTokens   Int?
+  outputTokens  Int?
   latencyMs     Int
   /// end_turn | max_tokens | refusal | stop_sequence
   stopReason    String?

@@ -8,8 +8,11 @@
  * leaving the gap implicit.
  */
 
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, afterEach } from 'vitest'
+import { AnthropicError, APIConnectionError, APIError } from '@anthropic-ai/sdk'
 import { classifyStopReason, recoveryFor } from '../src/model/client'
+import type { CallTelemetry, FailureKind } from '../src/model/client'
+import { AnthropicModelClient, classifyThrow } from '../src/model/anthropic'
 import { FakeModelClient } from '../src/model/fake'
 import {
   handlesFor,
@@ -180,5 +183,243 @@ describe('the fake is held to the real contract', () => {
     const fake = new FakeModelClient([])
 
     await expect(fake.run(boundary, { events, notes: [] })).rejects.toThrow(/unscripted call/i)
+  })
+})
+
+/* ── the shape failure, end to end ──────────────────────────────────────── */
+
+/**
+ * What the client does with a reply that came back whole and wrong.
+ *
+ * ── Why these run against a stubbed `fetch` and not the fake ─────────────
+ *
+ * `FakeModelClient` never touches the SDK, and the SDK is where the defect
+ * was: `betaZodOutputFormat` hands `beta.messages.parse()` a validator that
+ * THROWS, so a reply in the wrong shape arrived as an exception rather than a
+ * message. `AnthropicModelClient` builds its own SDK, so `globalThis.fetch` is
+ * the only seam — the same one `tests/model-telemetry.test.ts` uses, and for
+ * the same reason.
+ *
+ * The scenario is the real one, from the 2026-09-02 eval run: a session
+ * reading citing an evidence handle it was never shown. The refinement in
+ * `boundaries/session-reading.ts` rejects it correctly; before this the throw
+ * was filed `transport`, `recoveryFor('transport')` is `none`, and the one
+ * repair turn that exists for exactly this never fired. `partnership-messy`
+ * produced no reading at all, and the failed attempt was recorded as free.
+ *
+ * These do NOT test the streaming path, which never reaches the SDK's parser
+ * and has decoded its own text since 2026-08-20, or a live call — that is
+ * `tests/model-boundary.live.test.ts`, which costs money and is excluded here.
+ */
+describe('a reply that is whole and the wrong shape', () => {
+  const realFetch = globalThis.fetch
+
+  afterEach(() => {
+    globalThis.fetch = realFetch
+  })
+
+  /** One assistant reply, as the API would put it on the wire. */
+  function reply(text: string, stopReason: string): unknown {
+    return {
+      id: 'msg_test',
+      type: 'message',
+      role: 'assistant',
+      model: 'claude-opus-5',
+      content: [{ type: 'text', text }],
+      stop_reason: stopReason,
+      stop_sequence: null,
+      usage: { input_tokens: 1235, output_tokens: 1053 },
+    }
+  }
+
+  const citing = (handle: string) =>
+    JSON.stringify({ claims: [{ ...validClaim, evidence: [{ ref: handle }] }] })
+
+  /** Replies handed out in order, with every request body kept. */
+  function scriptedFetch(replies: readonly unknown[]): {
+    fetch: typeof globalThis.fetch
+    requests: Array<Record<string, unknown>>
+  } {
+    const requests: Array<Record<string, unknown>> = []
+    let next = 0
+
+    const fetch = (async (_url: unknown, init: { body?: unknown }) => {
+      requests.push(JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>)
+      const body = replies[next] ?? replies[replies.length - 1]
+      next += 1
+      return new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    }) as unknown as typeof globalThis.fetch
+
+    return { fetch, requests }
+  }
+
+  function clientOver(replies: readonly unknown[]) {
+    const script = scriptedFetch(replies)
+    globalThis.fetch = script.fetch
+    const seen: Array<{ t: CallTelemetry; f?: FailureKind }> = []
+
+    const client = new AnthropicModelClient({
+      apiKey: 'not-a-real-key',
+      onCall: (t, f) => seen.push({ t, ...(f === undefined ? {} : { f }) }),
+    })
+
+    return { client, seen, requests: script.requests }
+  }
+
+  it('repairs a fabricated evidence handle exactly once, and succeeds', async () => {
+    // The failure that lost `partnership-messy`. Before this the SDK threw on
+    // the first reply, the throw was `transport`, and there was no second call.
+    const { client, seen, requests } = clientOver([
+      reply(citing('E99'), 'end_turn'),
+      reply(citing('E1'), 'end_turn'),
+    ])
+
+    const result = await client.run(boundary, { events, notes: [] })
+
+    expect(requests).toHaveLength(2)
+    expect(result.ok).toBe(true)
+
+    expect(seen).toHaveLength(2)
+    expect(seen[0]?.f).toBe('schema-mismatch')
+    expect(seen[0]?.t.repairTurns).toBe(0)
+    expect(seen[1]?.f).toBeUndefined()
+    expect(seen[1]?.t.repairTurns).toBe(1)
+  })
+
+  it('quotes the Zod issue back, which is the only reason re-asking is rational', async () => {
+    const { client, requests } = clientOver([
+      reply(citing('E99'), 'end_turn'),
+      reply(citing('E1'), 'end_turn'),
+    ])
+
+    await client.run(boundary, { events, notes: [] })
+
+    const second = JSON.stringify(requests[1])
+    expect(second).toMatch(/did not match the required shape/i)
+    expect(second).toMatch(/event handles shown in the prompt/i)
+  })
+
+  it('records what the failed attempt actually billed, not zero', async () => {
+    // The cost half. A reply that arrives and is rejected was generated and
+    // charged for; `$0.0000 · 22298 ms` is how a run total becomes a floor
+    // printed as a figure.
+    const { client, seen } = clientOver([reply(citing('E99'), 'end_turn')])
+
+    await client.run(boundary, { events, notes: [] })
+
+    expect(seen[0]?.t.inputTokens).toBe(1235)
+    expect(seen[0]?.t.outputTokens).toBe(1053)
+    expect(seen[0]?.t.stopReason).toBe('end_turn')
+  })
+
+  it('escalates the budget once when the reply ran out of tokens', async () => {
+    // Truncated JSON is not JSON, so the SDK's validator threw on this too and
+    // every truncated non-streaming reply was `transport` — parse before
+    // classify, forced on us from inside the SDK, which is the exact order
+    // ADR-0005 spends a section forbidding.
+    const { client, seen, requests } = clientOver([
+      reply('{"claims":[{"kind":"objec', 'max_tokens'),
+      reply(citing('E1'), 'end_turn'),
+    ])
+
+    const result = await client.run(boundary, { events, notes: [] })
+
+    expect(seen[0]?.f).toBe('truncation')
+    expect(requests[0]?.max_tokens).toBe(boundary.maxTokens)
+    expect(requests[1]?.max_tokens).toBe(boundary.maxTokens * 2)
+    expect(result.ok).toBe(true)
+  })
+
+  it('does not repair a transport failure, and reports no tokens rather than none spent', async () => {
+    globalThis.fetch = (async () =>
+      new Response(
+        JSON.stringify({
+          type: 'error',
+          error: { type: 'invalid_request_error', message: 'no transport in tests' },
+        }),
+        { status: 400, headers: { 'content-type': 'application/json' } },
+      )) as unknown as typeof globalThis.fetch
+
+    const seen: Array<{ t: CallTelemetry; f?: FailureKind }> = []
+    const client = new AnthropicModelClient({
+      apiKey: 'not-a-real-key',
+      onCall: (t, f) => seen.push({ t, ...(f === undefined ? {} : { f }) }),
+    })
+
+    const result = await client.run(boundary, { events, notes: [] })
+
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.failure).toBe('transport')
+    // One attempt. The SDK already backs off; stacking our own retries hides
+    // the real error behind a timeout.
+    expect(seen).toHaveLength(1)
+    // Null, not zero: the usage block was on a message nobody ever held.
+    expect(seen[0]?.t.inputTokens).toBeNull()
+    expect(seen[0]?.t.outputTokens).toBeNull()
+  })
+})
+
+/* ── the throw that reaches us anyway ───────────────────────────────────── */
+
+/**
+ * `classifyThrow`, on its own.
+ *
+ * `structuredOutput` stops the SDK throwing for a shape failure on the
+ * non-streaming path, which is the fix. This is the fallback for a throw that
+ * arrives regardless — from the streaming path, or from a future SDK — and it
+ * is unit-tested because the whole defect was one branch of a conditional
+ * nobody could reach without the network.
+ */
+describe('classifying a throw out of the SDK', () => {
+  it('reads the whole HTTP family as transport, structurally', () => {
+    // `APIConnectionError` extends `APIError`, so one instanceof covers a 4xx,
+    // a 5xx, a socket that never opened and an abort.
+    expect(classifyThrow(new APIConnectionError({ message: 'socket hung up' }))).toBe('transport')
+    expect(classifyThrow(new APIError(400, undefined, 'bad request', new Headers()))).toBe(
+      'transport',
+    )
+  })
+
+  it('does not mistake a 400 whose body mentions max_tokens for our own oversized request', () => {
+    // The HTTP test runs first for this reason: the API talking about a field
+    // is not us asking for a budget this call shape cannot carry.
+    const httpError = new APIError(
+      400,
+      { message: 'max_tokens: must be less than or equal to 8192' },
+      undefined,
+      new Headers(),
+    )
+
+    expect(classifyThrow(httpError)).toBe('transport')
+  })
+
+  it('reads a local budget refusal as truncation', () => {
+    expect(classifyThrow(new AnthropicError('max_tokens is too large for this call'))).toBe(
+      'truncation',
+    )
+  })
+
+  it('reads the SDK parser’s own throw as a shape failure, so the repair turn fires', () => {
+    // What `partnership-messy` produced, and what was filed as `transport`.
+    // The `cause:` in that log line is TEXT INSIDE THE MESSAGE — the SDK
+    // interpolates the Zod issues rather than attaching them — which is why
+    // this last test is a message test and not a structural one.
+    const thrown = new AnthropicError(
+      'Failed to parse structured output: Error: Failed to parse structured output: ' +
+        '[ { "code": "custom", "path": ["claims",0,"evidence",4,"ref"], ' +
+        '"message": "must be one of the event handles shown in the prompt" } ] ' +
+        'cause: [object Object]',
+    )
+
+    expect(classifyThrow(thrown)).toBe('schema-mismatch')
+    expect(recoveryFor(classifyThrow(thrown))).toBe('repair')
+  })
+
+  it('leaves anything else as transport, which grants no retry of ours', () => {
+    expect(classifyThrow(new Error('something else entirely'))).toBe('transport')
+    expect(classifyThrow('not an error at all')).toBe('transport')
   })
 })

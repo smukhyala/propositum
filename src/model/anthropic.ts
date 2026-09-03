@@ -63,6 +63,17 @@
  * prose. Zod enforces those client-side on parse, and the gap between the two
  * is exactly where the repair turn belongs.
  *
+ * ── Where that Zod check runs, corrected 2026-09-03 ──────────────────────
+ *
+ * Here, and only here. It used to run TWICE — once inside the SDK, because
+ * `betaZodOutputFormat` hands it a `parse` that throws, and once again in
+ * `attempt` — and the first one won every time. A reply in the wrong shape
+ * therefore arrived as an exception rather than a message, was classified
+ * `transport`, and lost both the repair turn ADR-0005 grants it and the usage
+ * numbers on the message it was thrown from. `structuredOutput` below takes
+ * the SDK out of that job; the classification is the same rules it always was,
+ * reached with the message still in hand.
+ *
  * ── No prompt caching ────────────────────────────────────────────────────
  *
  * Changing `output_format` invalidates the cache, so six schemas mean six
@@ -73,7 +84,7 @@
  * save. Deliberately omitted; see ADR-0005.
  */
 
-import Anthropic from '@anthropic-ai/sdk'
+import Anthropic, { AnthropicError, APIError } from '@anthropic-ai/sdk'
 import { betaZodOutputFormat } from '@anthropic-ai/sdk/helpers/beta/zod'
 import type { ZodType } from 'zod'
 import { NON_STREAMING_MAX_TOKENS, classifyStopReason, recoveryFor } from './client'
@@ -165,21 +176,28 @@ export class AnthropicModelClient implements ModelClient {
     const stream = boundary.stream ?? maxTokens > NON_STREAMING_MAX_TOKENS
 
     const started = this.now()
-    const blank = (): CallTelemetry => ({
+    /** Telemetry for an attempt that threw. Tokens are NULL rather than zero:
+     *  the usage block was on a message nothing here ever held, and zero would
+     *  be a claim that the call was free. See `CallTelemetry`. */
+    const unmeasured = (): CallTelemetry => ({
       boundary: boundary.name,
       model: this.model,
       promptVersion: boundary.promptVersion,
-      inputTokens: 0,
-      outputTokens: 0,
+      inputTokens: null,
+      outputTokens: null,
       latencyMs: Math.round(this.now() - started),
       stopReason: null,
       repairTurns,
     })
 
+    // Non-streaming only: the streaming path never reaches the SDK's parser and
+    // decodes its own text block below.
+    const output = stream ? undefined : structuredOutput(boundary.schema as ZodType)
+
     try {
       const message = stream
         ? await this.streamed(boundary, prompt, maxTokens)
-        : await this.parsed(boundary, prompt, maxTokens)
+        : await this.parsed(output?.format, prompt, maxTokens)
 
       const telemetry: CallTelemetry = {
         boundary: boundary.name,
@@ -196,10 +214,12 @@ export class AnthropicModelClient implements ModelClient {
         repairTurns,
       }
 
-      // Classify BEFORE looking at the parsed output. The SDK's parser throws on
-      // truncated JSON without checking stop_reason, so a parse-first design
-      // repairs the wrong problem. It is also what makes the JSON.parse below
-      // safe to read as a shape failure: truncation has already been ruled out.
+      // Classify BEFORE looking at the parsed output, on both paths. This is
+      // what makes every decode failure below safe to read as a shape failure:
+      // truncation has already been ruled out by the time anything looks at the
+      // text. It used to be unreachable on the non-streaming path, because the
+      // SDK's own validator threw on truncated JSON before this line ran — see
+      // `structuredOutput`, which is what took that decision back.
       const stopFailure = classifyStopReason(telemetry.stopReason)
       if (stopFailure)
         return this.fail(telemetry, stopFailure, `stop_reason=${telemetry.stopReason}`)
@@ -215,12 +235,20 @@ export class AnthropicModelClient implements ModelClient {
 
       const parsed = obtained.value
       if (parsed === undefined || parsed === null) {
-        return this.fail(telemetry, 'schema-mismatch', 'no parsed output returned')
+        // `structuredOutput` returns null rather than throwing when the text is
+        // not JSON, so the reason it saw is the specific one to report; the
+        // fallback is for a response that carried no text block at all.
+        return this.fail(
+          telemetry,
+          'schema-mismatch',
+          output?.undecodable ?? 'no parsed output returned',
+        )
       }
 
-      // Re-validate with Zod. The grammar guaranteed shape; everything else —
-      // bounds, patterns, enum membership, refinements — is only prose to the
-      // model and has to be checked here.
+      // Validate with Zod, once and here. The grammar guaranteed shape;
+      // everything else — bounds, patterns, enum membership, refinements — is
+      // only prose to the model and has to be checked client-side. This used to
+      // be the SECOND check rather than the only one, and the first one threw.
       const validated = boundary.schema.safeParse(parsed)
       if (!validated.success) {
         return this.fail(
@@ -236,11 +264,7 @@ export class AnthropicModelClient implements ModelClient {
       return { ok: true, value: validated.data, telemetry }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      const telemetry = blank()
-      // A local throw for an oversized non-streaming request is our bug, not the
-      // network's — say so rather than filing it under 'transport'.
-      const kind: FailureKind = /max_tokens/i.test(message) ? 'truncation' : 'transport'
-      return this.fail(telemetry, kind, message)
+      return this.fail(unmeasured(), classifyThrow(error), message)
     }
   }
 
@@ -251,17 +275,18 @@ export class AnthropicModelClient implements ModelClient {
    * SDK's parser consults, so this is the one shape where `parsed_output`
    * arrives populated. Moving it to `output_config.format` to match the
    * streaming path would null it here as well. See the file header.
+   *
+   * The format comes in rather than being built here, because whether the
+   * SDK's parser is allowed to THROW is the difference between a shape failure
+   * that gets its repair turn and one filed as a network error. See
+   * `structuredOutput`.
    */
-  private async parsed<TInput, TOutput>(
-    boundary: ModelBoundary<TInput, TOutput>,
-    prompt: PromptParts,
-    maxTokens: number,
-  ) {
+  private async parsed(format: unknown, prompt: PromptParts, maxTokens: number) {
     return await this.sdk.beta.messages.parse({
       model: this.model,
       max_tokens: maxTokens,
       stream: false,
-      output_format: betaZodOutputFormat(boundary.schema as ZodType),
+      output_format: format,
       ...(prompt.system === undefined ? {} : { system: prompt.system }),
       messages: [{ role: 'user', content: userContent(prompt) }],
     } as Parameters<typeof this.sdk.beta.messages.parse>[0])
@@ -360,6 +385,140 @@ export class AnthropicModelClient implements ModelClient {
       /* See above. The call's own result is the thing being protected. */
     }
   }
+}
+
+/** The `output_format` for one attempt, plus what our own decode made of the
+ *  reply. `undecodable` is set only when the text came back and was not JSON. */
+interface StructuredOutput {
+  readonly format: unknown
+  readonly undecodable: string | undefined
+}
+
+/**
+ * The output format, with the SDK's parser stopped from throwing.
+ *
+ * ── The defect this exists to remove, 2026-09-03 ─────────────────────────
+ *
+ * `betaZodOutputFormat` hands the SDK a `parse` that runs the boundary's Zod
+ * schema and THROWS an `AnthropicError` when it fails. `parseBetaOutputFormat`
+ * catches that and rethrows, so a well-formed reply in the wrong shape came out
+ * of `beta.messages.parse()` as an exception — and an exception is the one
+ * thing this client cannot classify well, because the message it was carrying
+ * (its `usage`, its `stop_reason`) is gone with it.
+ *
+ * Two things followed, and both were measured on the 2026-09-02 eval run.
+ * `partnership-messy`'s session reading cited an evidence handle it had not
+ * been shown; the refinement in `boundaries/session-reading.ts` rejected it
+ * correctly; the throw was filed as `transport`; `recoveryFor('transport')` is
+ * `none`, so the ONE repair turn that exists for exactly this — re-cite the
+ * handles you were shown — never fired, and that scenario produced no reading
+ * at all. The same throw reported `$0.0000` for twenty-two seconds of billed
+ * generation.
+ *
+ * So this stops asking the SDK to validate. The wire request is byte-identical
+ * — `parse` is a function and never leaves the process — and the JSON schema
+ * the grammar is built from is still `betaZodOutputFormat`'s. What changes is
+ * that a reply which is JSON comes back as an ordinary message: real `usage`,
+ * real `stop_reason`, `classifyStopReason` first, and then the Zod check this
+ * client was already doing, whose failure is already `schema-mismatch` with the
+ * issues quoted. One code path for shape failures instead of two.
+ *
+ * It also fixes a second misfiling nobody had noticed: a reply truncated at
+ * `max_tokens` is not JSON, so the SDK's parser threw on it too, and every
+ * truncated NON-STREAMING reply was `transport` rather than `truncation` —
+ * the parse-before-classify order ADR-0005 spends a section forbidding, forced
+ * on us from inside the SDK. `stop_reason` is now read before anything looks
+ * at the text.
+ *
+ * ── What it does NOT cover ───────────────────────────────────────────────
+ *
+ * Only the non-streaming path. The streaming path never reaches the SDK's
+ * parser at all (see the file header) and has done its own decoding, with its
+ * own reasoning about the same classification, since 2026-08-20.
+ *
+ * And it does not make the throw impossible — the SDK can still raise before
+ * ever calling this. `classifyThrow` is the half that covers that.
+ */
+function structuredOutput(schema: ZodType): StructuredOutput {
+  const built = betaZodOutputFormat(schema)
+  const state: { undecodable: string | undefined } = { undecodable: undefined }
+
+  const format = {
+    ...built,
+    // Returns null rather than throwing. Null lands on the caller's
+    // `parsed === null` branch, which is already a `schema-mismatch` with a
+    // repair turn — reached with the message, and therefore the usage, in hand.
+    parse: (content: string): unknown => {
+      try {
+        return JSON.parse(content)
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error)
+        state.undecodable = `structured output was not JSON: ${reason}`
+        return null
+      }
+    },
+  }
+
+  return {
+    format,
+    get undecodable() {
+      return state.undecodable
+    },
+  }
+}
+
+/**
+ * What a throw out of the SDK was, in the words `recoveryFor` knows.
+ *
+ * ── Structural first, and what is left over ──────────────────────────────
+ *
+ * `APIError` is every HTTP round trip that went wrong — 4xx, 5xx, a socket
+ * that never opened, an abort — because `APIConnectionError` and
+ * `APIConnectionTimeoutError` are subclasses of it. That is the whole
+ * `transport` family in one `instanceof`, and it is checked FIRST so a 400
+ * whose body happens to mention `max_tokens` is not mistaken for our own
+ * oversized request.
+ *
+ * Everything else the SDK raises is a bare `AnthropicError`, thrown locally.
+ * There is no subclass and no `cause` to read: `betaZodOutputFormat` builds
+ * its message as `…${issues.message} cause: ${issues}`, so the `cause:` seen
+ * in a log is TEXT INSIDE THE MESSAGE, not an `Error.cause` — the Zod issues
+ * are already stringified by the time anything can catch them. That is why the
+ * last test here is a message test and not a structural one, and it is the
+ * weakest line in this function: it will stop matching if the SDK rewords
+ * `Failed to parse structured output`, and it says nothing about which field
+ * failed beyond what the message carries.
+ *
+ * ── What it does not cover ───────────────────────────────────────────────
+ *
+ * `max_tokens` is a message test on a bare `AnthropicError`, kept as it was.
+ * It does NOT catch the SDK's own local refusal of an oversized non-streaming
+ * request, which reads *"Streaming is required for operations that may take
+ * longer than 10 minutes"* and mentions no field at all — so that one still
+ * falls through to `transport` and gets no escalation. Left as it was found,
+ * because widening it is a behaviour change on a path nothing exercises;
+ * `NON_STREAMING_MAX_TOKENS` is what keeps a boundary off it in the first
+ * place.
+ *
+ * Nothing here is a substitute for `structuredOutput`. This is the fallback
+ * for a throw that reaches us anyway; the fix is upstream, where the throw
+ * stops happening and the telemetry survives.
+ */
+export function classifyThrow(error: unknown): FailureKind {
+  if (error instanceof APIError) return 'transport'
+
+  const message = error instanceof Error ? error.message : String(error)
+
+  // A budget this call shape cannot carry is our bug, not the network's.
+  if (/max_tokens/i.test(message)) return 'truncation'
+
+  // Well-formed JSON in the wrong shape. ADR-0005 gives this exactly one
+  // repair turn, quoting the issues back; filing it as `transport` would be
+  // inventing a network failure AND switching the repair off.
+  if (error instanceof AnthropicError && /failed to parse structured output/i.test(message))
+    return 'schema-mismatch'
+
+  return 'transport'
 }
 
 /**
