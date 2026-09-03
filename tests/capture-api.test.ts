@@ -23,7 +23,13 @@ import { createLedgerWriter } from '../src/persistence/ledger-writer'
 import type { LedgerWriter } from '../src/persistence/ledger-writer'
 import { HEARTBEAT_GRACE_MS, createCaptureSessionStore } from '../src/server/capture-session'
 import { sweepForGap } from '../src/server/gap-sweeper'
-import { GAP_SWEEP_INTERVAL_MS, startGapWatch, stopGapWatch } from '../src/server/gap-watch'
+import {
+  GAP_SWEEP_INTERVAL_MS,
+  SUSPENSION_TOLERANCE_MS,
+  startGapWatch,
+  stopGapWatch,
+} from '../src/server/gap-watch'
+import { createSuspensionDetector } from '../src/server/suspension'
 import { existingAppContext } from '../src/server/db'
 
 let dir: string
@@ -148,6 +154,213 @@ describe('the sweeper writes the gap to the ledger', () => {
     store.heartbeat(1_000)
 
     expect(await sweepForGap({ store, ledger, now: () => 2_000 })).toBe(false)
+  })
+})
+
+/**
+ * Telling a slept machine from a dead service worker.
+ *
+ * `machine_slept` was a `CaptureGap` reason no row could carry, and the reason
+ * was not wiring: from the app's side the two causes produce identical silence.
+ * ADR-0033 uses the one clock the app owns rather than the extension's — a tick
+ * of the sweep interval that arrives long after its own period proves this
+ * process was not being scheduled, and a dead service worker cannot cause that.
+ *
+ * Every assertion below is about the SEPARATION rather than about the reason
+ * string, because a reason that can be produced by guessing is worse than one
+ * that cannot be produced at all.
+ */
+describe('a late tick, and only a late tick, says the machine slept', () => {
+  const detector = () =>
+    createSuspensionDetector({
+      intervalMs: GAP_SWEEP_INTERVAL_MS,
+      toleranceMs: SUSPENSION_TOLERANCE_MS,
+    })
+
+  it('claims nothing on the first sample, because there is nothing to compare', () => {
+    // A process that starts up inside a gap has no reading from before it. The
+    // correct answer is silence about the cause, not a guess from one point.
+    expect(detector().sample(1_000_000)).toBeNull()
+  })
+
+  it('claims nothing while ticks arrive on time', () => {
+    const d = detector()
+    d.sample(0)
+
+    expect(d.sample(GAP_SWEEP_INTERVAL_MS)).toBeNull()
+    expect(d.sample(GAP_SWEEP_INTERVAL_MS * 2 + 400)).toBeNull()
+  })
+
+  it('claims nothing for lateness inside the tolerance', () => {
+    // Scheduler jitter and a contended SQLite write live here. If this fired,
+    // an ordinary busy afternoon would be reported to the person as sleep.
+    const d = detector()
+    d.sample(0)
+
+    expect(d.sample(GAP_SWEEP_INTERVAL_MS + SUSPENSION_TOLERANCE_MS - 1)).toBeNull()
+  })
+
+  it('reports the window when a tick arrives past the tolerance', () => {
+    const d = detector()
+    d.sample(0)
+
+    const wake = GAP_SWEEP_INTERVAL_MS + SUSPENSION_TOLERANCE_MS + 1
+    expect(d.sample(wake)).toEqual({ startedAtMs: 0, endedAtMs: wake })
+  })
+
+  it('claims nothing when the wall clock goes backwards', () => {
+    // A clock corrected backwards is not negative time and is not sleep.
+    const d = detector()
+    d.sample(1_000_000)
+
+    expect(d.sample(500_000)).toBeNull()
+  })
+
+  it('dies with the timer rather than outliving it into the next session', () => {
+    /**
+     * The reading only means anything while the timer that took it is running.
+     * A detector kept across a disarm would compare the first tick of the next
+     * session against a moment before the app went idle, and report however
+     * long the person was away as sleep.
+     */
+    startGapWatch()
+    expect(globalThis.__propositumSuspensionDetector).toBeDefined()
+
+    stopGapWatch()
+    expect(globalThis.__propositumSuspensionDetector).toBeUndefined()
+  })
+})
+
+describe('the store turns a suspension into a gap the ledger can hold', () => {
+  it('clamps the start to the last heartbeat, so it contradicts no event', () => {
+    // We know we heard from the extension at 20s. Saying we stopped watching at
+    // 10s would call a row in the ledger a lie.
+    const store = createCaptureSessionStore()
+    store.start('s1', 0)
+    store.heartbeat(20_000)
+
+    expect(store.noteSuspension(10_000, 900_000)).toEqual({
+      startedAtElapsedMs: 20_000,
+      endedAtElapsedMs: 900_000,
+    })
+  })
+
+  it('reports nothing when there is no session to attribute it to', () => {
+    expect(createCaptureSessionStore().noteSuspension(0, 900_000)).toBeNull()
+  })
+
+  it('does not let the same minutes be reported again as silence', () => {
+    // The sleep ran through the grace period. Without this the person would be
+    // told twice about one absence, with two different causes.
+    const store = createCaptureSessionStore()
+    store.start('s1', 0)
+    store.noteSuspension(0, 900_000)
+
+    expect(store.detectGap(900_000 + HEARTBEAT_GRACE_MS - 1)).toBeNull()
+  })
+
+  it('but a silence that outlives the wake is a second, true gap', () => {
+    const store = createCaptureSessionStore()
+    store.start('s1', 0)
+    store.noteSuspension(0, 900_000)
+
+    const after = store.detectGap(900_000 + HEARTBEAT_GRACE_MS + 1)
+    expect(after?.startedAtElapsedMs).toBe(900_000)
+  })
+})
+
+describe('the sweeper attributes the gap it can prove', () => {
+  let sleptSessionId: string
+
+  beforeAll(async () => {
+    const project = await repos.projects.create('sleep')
+    sleptSessionId = (await repos.sessions.start(project.id)).id
+  })
+
+  const reasonsIn = async (id: string) =>
+    (await repos.events.bySession(id))
+      .filter((e) => e.kind === 'captureGap')
+      .map((e) => (e.attested as { reason: string }).reason)
+
+  it('records machine_slept when the tick that drove it was late', async () => {
+    const store = createCaptureSessionStore()
+    store.start(sleptSessionId, 0)
+
+    const recorded = await sweepForGap({
+      store,
+      ledger,
+      now: () => 900_000,
+      suspension: { startedAtMs: 0, endedAtMs: 900_000 },
+    })
+
+    expect(recorded).toBe(true)
+    expect(await reasonsIn(sleptSessionId)).toEqual(['machine_slept'])
+  })
+
+  it('records service_worker_terminated for silence with no suspension behind it', async () => {
+    /**
+     * The assertion that matters most in this file. Elapsed silence is exactly
+     * what a slept machine also produces, so if it could reach `machine_slept`
+     * on its own the reason would be a guess dressed as a finding.
+     */
+    const project = await repos.projects.create('silence only')
+    const id = (await repos.sessions.start(project.id)).id
+    const store = createCaptureSessionStore()
+    store.start(id, 0)
+
+    await sweepForGap({ store, ledger, now: () => HEARTBEAT_GRACE_MS * 10 })
+
+    expect(await reasonsIn(id)).toEqual(['service_worker_terminated'])
+  })
+
+  it('leaves the reason unattributed when the signal is unavailable', async () => {
+    /**
+     * A machine where nothing can supply the signal — or a process that
+     * restarted inside the gap, so its detector has no earlier reading — writes
+     * the reason that was actually observed and never the one about the
+     * hardware. Six sweeps of pure silence, and `machine_slept` appears in none
+     * of them.
+     */
+    const project = await repos.projects.create('no signal')
+    const id = (await repos.sessions.start(project.id)).id
+    const store = createCaptureSessionStore()
+    store.start(id, 0)
+
+    const d = createSuspensionDetector({
+      intervalMs: GAP_SWEEP_INTERVAL_MS,
+      toleranceMs: SUSPENSION_TOLERANCE_MS,
+    })
+
+    for (let tick = 1; tick <= 6; tick += 1) {
+      const at = tick * GAP_SWEEP_INTERVAL_MS
+      const suspension = d.sample(at)
+      expect(suspension).toBeNull()
+      store.closeGap()
+      await sweepForGap({ store, ledger, now: () => at })
+    }
+
+    const reasons = await reasonsIn(id)
+    expect(reasons).not.toContain('machine_slept')
+    expect(reasons.length).toBeGreaterThan(0)
+  })
+
+  it('records both when a slept machine wakes to a dead service worker', async () => {
+    // Two true gaps with two different causes, written as two rows. Neither is
+    // an amendment of the other, which is what an append-only ledger requires.
+    const project = await repos.projects.create('slept and stayed quiet')
+    const id = (await repos.sessions.start(project.id)).id
+    const store = createCaptureSessionStore()
+    store.start(id, 0)
+
+    await sweepForGap({
+      store,
+      ledger,
+      now: () => 900_000,
+      suspension: { startedAtMs: 0, endedAtMs: 900_000 },
+    })
+    await sweepForGap({ store, ledger, now: () => 900_000 + HEARTBEAT_GRACE_MS + 1 })
+
+    expect(await reasonsIn(id)).toEqual(['machine_slept', 'service_worker_terminated'])
   })
 })
 

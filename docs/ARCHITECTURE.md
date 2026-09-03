@@ -203,6 +203,11 @@ either — the mail it decides is verbs inside a ratified run, not a sensor: no 
 nothing persisted, and the unsubscribe sweep's header read carries the same never-persisted posture
 a `BusyInterval` has. Also unbuilt.)*
 
+*(2026-09-03: [ADR-0033](./adr/0033-a-late-tick-is-a-slept-machine.md) does not move it either.
+The gap watch now reads the lateness of its own tick, which makes `machine_slept` writable — but it
+observes nothing about the person or the machine and can only ever produce an absence of knowledge,
+so it is a second **signal** and not a second sensor. Built, and the cell has not moved.)*
+
 **The structural fact that makes this hard to change by accident.**
 `ObservationEvent.sessionId` is **required** in `prisma/schema.prisma`, its relation to `WorkSession`
 is non-nullable, and `createLedgerWriter` is the only thing in the repository that calls

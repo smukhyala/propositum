@@ -1,10 +1,13 @@
 # 04 — The half-day of things that are just wrong
 
-**Status:** ~~not started~~ ~~done 2026-08-26, except item 7, which is the owner's.~~ ~~**Two left,
-2026-08-27:** item 7, which is the owner's, and item 10, which was added the same day and is not a
-quick fix at all — it is here so nobody rediscovers why it cannot be one.~~ **Three left,
-2026-09-03:** those two, and item 11, added the day the structured-output classification was fixed
-and left unfixed beside it on purpose.
+**Status:** ~~not started~~ ~~done 2026-08-26, except item 7, which is the owner's.~~ ~~Two left,
+2026-08-27: item 7, which is the owner's, and item 10, which was added the same day and is not a
+quick fix at all — it is here so nobody rediscovers why it cannot be one.~~ **Two left, 2026-09-03,
+and they are not the same two:** item 7, which is the owner's, and item 11, added the day the
+structured-output classification was fixed and left unfixed beside it on purpose. Item 10 was built
+the same day [ADR-0033](../adr/0033-a-late-tick-is-a-slept-machine.md) was accepted — it was never a
+quick fix and it never became one; what changed is that the signal it said nothing supplied turned
+out to be in the sweeper's own timer.
 **Blocked by:** nothing at all.
 **Blocks:** nothing.
 
@@ -71,8 +74,8 @@ over…`, which is now the *correct* answer rather than a job, and no longer hit
 `Take over`; (4) returns nothing; (5) still returns `0`, and that one is
 deliberate.
 
-**~~Seven left, not nine.~~ ~~One left, and it is item 7.~~ Two left, 2026-08-27 — item 7 and item
-10.** Everything struck below
+**~~Seven left, not nine.~~ ~~One left, and it is item 7.~~ ~~Two left, 2026-08-27 — item 7 and item
+10.~~ One left again, 2026-09-03 — item 7.** Everything struck below
 is struck rather than deleted, because a checklist that silently loses its
 finished items reads as though they were never on it.
 
@@ -198,8 +201,31 @@ from the greps at the top rather than from the code.
    rulings from items 3 and 4, so the principles and `CONTEXT.md` now say the
    same thing about the same words.
 
-10. **`machine_slept` is still an unwritable `CaptureGap` reason.** *(Added
+10. ~~**`machine_slept` is still an unwritable `CaptureGap` reason.**~~ **Built 2026-09-03 —
+    [ADR-0033](../adr/0033-a-late-tick-is-a-slept-machine.md).** *(Added
     2026-08-27, found while wiring the gap sweeper.)*
+
+    **What this item got right, and it is most of it:** elapsed silence cannot
+    tell the two apart, a caller could not fix that, and the fix was not going
+    to be half a day. **What it got wrong is where it looked.** It sent the
+    reader to the menu-bar app or the extension for a signal, and the signal was
+    in the file the item was written beside: the gap watch runs a
+    `setInterval`, a suspended machine does not service one, and a dead service
+    worker does not stop the app process being scheduled. So a tick that arrives
+    two whole periods late is proof nobody was watching, and it is a different
+    signal from silence rather than a cleverer reading of the same one.
+
+    The menu-bar app's `NSWorkspace` wake notification is refused in that ADR
+    rather than deferred — it is the better signal and it costs a second ambient
+    sensor in that binary, an inbound endpoint for a caller that is not the
+    extension, and a macOS-only dependency, to buy about thirty seconds of
+    precision on an interval that is minutes long.
+
+    The grep below now returns `src/server/gap-sweeper.ts` and the two tests
+    beside it. **The last paragraph of this item still stands**: with no signal,
+    the gap is recorded with the reason that is true rather than with a guess,
+    and that is exactly what happens on the first tick after a restart, when
+    the detector has nothing to compare against.
 
     ```bash
     grep -rn "machine_slept" src/
@@ -326,3 +352,19 @@ disturbed is not a record of what happened.
    beside it, and the real behaviour is pinned. **Not fixed**, on purpose: the
    failure makes the unit smaller, which is the safe direction, and `linesOf`
    hands out offsets that live changesets already point at.
+
+3. **A gap shorter than the grace period plus one sweep is never recorded at
+   all.** *(Found 2026-09-03, doing item 10.)* The service worker dies at 0 and
+   revives at 80 seconds. `HEARTBEAT_GRACE_MS` is 75 seconds and the sweep ticks
+   every 30, so the tick at 90 seconds sees a heartbeat from 80 and reports
+   nothing — an outage longer than the grace period leaves no row. Nothing in
+   the product is wrong about it; the timeline simply reads as continuous over a
+   minute and a half nobody watched.
+
+   **Not fixed, and it is not a quick fix either.** Closing it means the
+   extension reporting on revival that it was gone, which is a message the
+   transport does not have and an extension change on a buildless file that has
+   to pass Web Store review ([`05`](./05-chrome-web-store.md)). ADR-0033's sleep path
+   does not have this defect — a suspension is recorded from the suspension
+   itself rather than from silence still being visible at the next tick, which
+   is the same bug in the shape it would have taken there.

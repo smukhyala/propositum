@@ -251,6 +251,14 @@ section**, which is the same enforcement Principle 13 has and admits to having.
 - **A second sensor is proposed for this process** — foreground app, idle time, window titles. That
   is `docs/ROADMAP.md` stage 2 and `docs/ARCHITECTURE.md`'s State Ingestion layer, and it is a
   schema change plus a second ledger writer before it is anything else.
+
+  **This trigger fired 2026-09-03 and the answer was no.**
+  [ADR-0033](0033-a-late-tick-is-a-slept-machine.md) needed to know when the machine slept, and
+  `NSWorkspace`'s sleep and wake notifications are the better signal — free of TCC, free of
+  entitlements, and available to this binary today. Refused there rather than taken: a sleep
+  subscription runs whenever the tray runs, so it is ambient, and every previous widening of this
+  binary was bought for a named caller inside a ratified run. The signal was found in the app
+  process's own timer instead. Nothing in this ADR changed.
 - **Windows or Linux is asked for.** Tauri ports; the product does not. `README.md` says macOS and
   the lid-close limitation is a macOS fact.
 - **Onboarding still takes more than five minutes from a fresh user account.** Then the act structure
