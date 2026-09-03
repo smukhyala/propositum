@@ -479,8 +479,14 @@ describe('blast radius', () => {
 
   it('stops a plan that reads forever without changing anything', async () => {
     // Found while writing the test above: twelve reads in a row IS going in
-    // circles, and the no-progress rule catches it at three. The plan cap is
-    // not the only thing bounding a runaway run.
+    // circles, and the no-progress rule catches it. The plan cap is not the
+    // only thing bounding a runaway run.
+    //
+    // ~~at three~~ **at four, from 2026-09-02 (ADR-0031).** Every read is of
+    // the SAME document, so the first is a first look and the three after it
+    // are the circle. The rule fires on exactly the same evidence it always
+    // did — three consecutive actions that got nowhere — and the number moved
+    // because the first read stopped being counted as one of them.
     const atCap = Array.from({ length: MAX_PLAN_STEPS }, (_, i) => ({ intent: `read ${i}` }))
     const d = deps([
       { kind: 'ok', value: { steps: atCap } },
@@ -490,7 +496,62 @@ describe('blast radius', () => {
     const result = await runWorker(job(), d)
 
     expect(result.stoppedBy).toContain('no-progress')
-    expect(result.actionsTaken).toBe(3)
+    // Well short of the twelve the plan offered, which is the property.
+    expect(result.actionsTaken).toBe(4)
+  })
+
+  /**
+   * The failure ADR-0031 is about, and the run that produced it.
+   *
+   * `monitor-shortlist` was given a six-step plan whose first drafting step is
+   * step 5 — four reads before it — and `no-progress` halted it on step 3 with
+   * nothing drafted. Twice, on two paid runs, five days apart. It did not
+   * decline to draft and did not have nothing to draft: it never arrived.
+   *
+   * `NO_PROGRESS_LIMIT`'s own comment assumes that away — *"three, because two
+   * can be legitimate research before a draft"* — and both observed plans
+   * wanted more than two. This is that plan, in miniature: three distinct
+   * things read, then the draft.
+   */
+  it('lets a plan that reads several different things reach the step that writes', async () => {
+    const d = deps([
+      {
+        kind: 'ok',
+        value: {
+          steps: [
+            { intent: 'read the document' },
+            { intent: 'read the partners page' },
+            { intent: 'read the terms page' },
+            { intent: 'draft Commercials', targetSection: 'Commercials' },
+          ],
+        },
+      },
+      act({ kind: 'read-document' }),
+      act({ kind: 'read-approved-source', approvedSourceId: 'src-northwind' }),
+      act({ kind: 'read-approved-source', approvedSourceId: 'src-terms' }),
+      act({ kind: 'draft-section', targetSection: 'Commercials', prose: 'Fifteen per cent.' }),
+      { kind: 'ok', value: { done: { summary: 'Drafted it.' } } },
+    ])
+
+    const result = await runWorker(
+      job({
+        scope: {
+          approvedSourceIds: ['src-northwind', 'src-terms'],
+          allowedActionKinds: ['read-approved-source', 'read-document', 'draft-section'],
+          baseVersionId: 'ver-1',
+        },
+        sourceLabels: [
+          { id: 'src-northwind', label: 'Northwind Partners' },
+          { id: 'src-terms', label: 'Northwind Terms' },
+        ],
+      }),
+      d,
+    )
+
+    // Before ADR-0031 this halted on `no-progress` at three reads, one step
+    // short of the draft, and produced nothing.
+    expect(result.stoppedBy).not.toContain('no-progress')
+    expect(result.produced.filter((p) => p.kind === 'section-prose')).toHaveLength(1)
   })
 
   it('the gate still refuses an over-long plan arriving from any other path', async () => {
@@ -709,7 +770,9 @@ describe('a run that may not write is not bounded by the rule about writing', ()
 
   it('still stops a drafting run that reads forever, which is what the rule is for', async () => {
     // The same plan under `draft-changes`. Here the run COULD have drafted and
-    // did not, so three reads in a row really is going in circles.
+    // did not, so re-reading one document over and over really is going in
+    // circles — and ADR-0031 does not touch that, because every read below is
+    // of the same document. One first look, then three repeats, then the halt.
     const steps = Array.from({ length: 8 }, (_, i) => ({ intent: `read ${i}` }))
     const d = deps([
       { kind: 'ok', value: { steps } },
@@ -719,7 +782,7 @@ describe('a run that may not write is not bounded by the rule about writing', ()
     const result = await runWorker(job(), d)
 
     expect(result.stoppedBy).toContain('no-progress')
-    expect(result.actionsTaken).toBe(3)
+    expect(result.actionsTaken).toBe(4)
   })
 
   it('still stops a research-only run that asks a question every turn', async () => {

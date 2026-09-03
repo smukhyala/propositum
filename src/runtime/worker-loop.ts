@@ -539,6 +539,17 @@ export async function runWorker(job: WorkerJob, deps: WorkerDeps): Promise<Worke
   // the branch above, and `RunContext.chargesSpent`.
   let chargesSpent: number | undefined = rebuilt.chargesSpent
   let consecutiveNoProgress = 0
+  /**
+   * Everything this run has already read, so a re-read can be told from a first
+   * look — ADR-0031.
+   *
+   * Not persisted and not rebuilt from the ledger: it bounds ONE run's loop, and
+   * a continuation reading a source its predecessor read is doing the reasonable
+   * thing after a person answered a question. Rebuilding it would make the
+   * second leg of a paused shift stricter than the first for no reason anybody
+   * could explain from the screen.
+   */
+  const alreadyRead = new Set<string>()
   let consecutiveRefusals = 0
   let summary: string | undefined
 
@@ -1140,16 +1151,37 @@ export async function runWorker(job: WorkerJob, deps: WorkerDeps): Promise<Worke
     }
 
     if (performed !== null) {
+      /**
+       * A first look at something is progress. A second look at the same thing
+       * is the circle this rule catches — ADR-0031.
+       *
+       * `changedSomething`'s docblock has always drawn this line: *"opening a
+       * page gets somewhere, where re-reading the same document three times
+       * does not."* The code did not have it. Every read reported
+       * `changedSomething: false`, so a plan that reads four different things
+       * before it drafts halted at three, two steps short of the draft — which
+       * is what `monitor-shortlist` did on two paid runs, and what
+       * `NO_PROGRESS_LIMIT`'s own comment assumes away with *"two can be
+       * legitimate research before a draft."*
+       *
+       * `add` runs before the test so a repeat within the same run is caught,
+       * and the set is per-run for the reason its declaration gives.
+       */
+      const firstLook =
+        performed.readTarget !== undefined && !alreadyRead.has(performed.readTarget)
+      if (performed.readTarget !== undefined) alreadyRead.add(performed.readTarget)
+
       // The one increment `progressIsPossible` exempts, and the only one where
       // "it changed nothing" says nothing about the run: where no permitted kind
       // could have changed anything, an action that changed nothing is the run
       // doing exactly what it was allowed to do. See the const's docblock — a
       // question, a refusal and a failure are all still counted, above.
-      consecutiveNoProgress = performed.changedSomething
-        ? 0
-        : progressIsPossible
-          ? consecutiveNoProgress + 1
-          : consecutiveNoProgress
+      consecutiveNoProgress =
+        performed.changedSomething || firstLook
+          ? 0
+          : progressIsPossible
+            ? consecutiveNoProgress + 1
+            : consecutiveNoProgress
 
       if (performed.produced !== undefined) produced.push(performed.produced)
 
@@ -1353,6 +1385,23 @@ function runContext(
 interface Performed {
   readonly summary: string
   readonly changedSomething: boolean
+  /**
+   * What this action READ, when it read something — an opaque key, compared
+   * only for equality.
+   *
+   * Present on the two reading kinds and absent everywhere else. It exists so
+   * the loop can tell a first look from a re-read, which is the distinction
+   * `changedSomething`'s own docblock draws and the code did not have: *"opening
+   * a page gets somewhere, where re-reading the same document three times does
+   * not."* Every read reported `changedSomething: false`, so a plan that reads
+   * four different things before it drafts could not reach its drafting step.
+   *
+   * NOT a content hash. Two reads of one source that changed underneath are the
+   * same look at the same thing as far as this rule is concerned — the rule
+   * catches a run going in circles, and a page that changed is the page's doing
+   * rather than the run's.
+   */
+  readonly readTarget?: string | undefined
   readonly draftText?: string | undefined
   /**
    * What this action YIELDED, if it yielded anything.
@@ -1434,7 +1483,14 @@ async function perform(
       // Datamarked before it can reach another prompt. The worker never holds a
       // bare string of page text.
       gathered.push({ label: source.title, content: datamark(source.untrustedText) })
-      return { summary: `read ${source.title}`, changedSomething: false }
+      // Keyed on the SOURCE ID the contract approved, not the title or the URL:
+      // the id is what the person ratified, and it is the only one of the three
+      // a page cannot influence.
+      return {
+        summary: `read ${source.title}`,
+        changedSomething: false,
+        readTarget: `source:${(action as AuthorizedAction<'read-approved-source'>).params.approvedSourceId}`,
+      }
     }
 
     case 'read-document': {
@@ -1476,7 +1532,11 @@ async function perform(
        */
       gathered.push({ label: 'the document you are working in', content: datamark(doc.content) })
 
-      return { summary: `read the document (v${doc.versionId})`, changedSomething: false }
+      return {
+        summary: `read the document (v${doc.versionId})`,
+        changedSomething: false,
+        readTarget: `document:${doc.versionId}`,
+      }
     }
 
     case 'draft-section': {

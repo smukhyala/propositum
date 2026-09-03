@@ -578,6 +578,12 @@ reason is a second mechanism nobody has named."* The fix is a decision about the
 counter rather than a repair, it amends ADR-0007 either way, and it is
 [#160](https://github.com/smukhyala/propositum/issues/160).
 
+**Decided and built 2026-09-02, [ADR-0031](./adr/0031-a-first-look-is-progress.md).** A read of
+something the run has not read is progress; only a second look at the same thing counts toward
+`no-progress`. This scenario's plan reads four different things before its draft, so it now reaches
+it. The next paid run is what confirms that against a real model rather than a unit test, and until
+one happens this line is a prediction.
+
 ### Two things nobody was looking for
 
 **`partnership-messy` produced no reading at all.** The reading boundary failed:

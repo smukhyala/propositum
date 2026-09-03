@@ -63,6 +63,20 @@
  * in the counter rather than here, and it is deliberately narrow. See
  * `progressIsPossible` in `src/runtime/worker-loop.ts` for the argument and for
  * the three increments it leaves alone.
+ *
+ * ── ~~"two can be legitimate research before a draft"~~ ──────────────────
+ *
+ * **That assumption failed twice, on paid runs, and is amended 2026-09-02
+ * ([ADR-0031](../../../docs/adr/0031-a-first-look-is-progress.md)).**
+ * `monitor-shortlist` was given a six-step plan whose first drafting step is
+ * step 5 — four reads before it — and halted here on step 3 with nothing
+ * drafted. It had not decided against drafting; it never arrived.
+ *
+ * The number is still 3 and still not conditional. What changed is again in the
+ * counter: a read of something this run has not read resets it, and only a
+ * SECOND look at the same thing counts. That is the line `changedSomething`'s
+ * own docblock always drew — *"opening a page gets somewhere, where re-reading
+ * the same document three times does not"* — and had no code behind it.
  */
 export const NO_PROGRESS_LIMIT = 3
 
