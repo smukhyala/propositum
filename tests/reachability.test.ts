@@ -406,6 +406,25 @@ describe('the safety machinery is reachable from the product', () => {
     ).toEqual(['scripts/worker.ts'])
   })
 
+  it('both readers judge a redirect with the one shared decision', () => {
+    /**
+     * Written 2026-09-03. The app process's reader was fixed to refuse an
+     * off-origin hop before taking it and the worker's browser was not, so for
+     * a day there were two answers to one question and only one of them was
+     * right. `judgeHop` being written and called by one of them would leave
+     * that exactly where it was — which is the shape this file exists to catch.
+     */
+    expect(
+      callersOf('judgeHop(', 'src/policy/redirect.ts').sort(),
+      'a reader follows a hop without the shared decision — the two can drift again',
+    ).toEqual(['src/policy/http-fetcher.ts', 'src/policy/playwright-fetcher.ts'])
+
+    expect(
+      callersOf('boundTo', 'src/policy/fetcher.ts'),
+      'nothing binds a reader to an allowlist, so no hop can be judged against one',
+    ).toContain('src/policy/http-fetcher.ts')
+  })
+
   it('URLs are cleaned by something on the write path, not just in a test', () => {
     // `cleanUrl` was written, tested, and called by NOTHING for the whole build,
     // while `content.js` sent raw `location.href` and SECURITY_AND_PRIVACY.md

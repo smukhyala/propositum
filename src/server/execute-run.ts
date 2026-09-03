@@ -47,7 +47,7 @@ import { descriptorFor } from '../runtime/history'
 import type { ConfirmedAction, HistoryReader } from '../runtime/history'
 import { STOP_RULES } from '../domain/execution/stop-conditions'
 import { allowlisted } from '../policy/fetcher'
-import type { SourceFetcher } from '../policy/fetcher'
+import type { FollowingFetcher, SourceFetcher } from '../policy/fetcher'
 import { readableCause } from './problem'
 import {
   confirmationForIntent,
@@ -72,7 +72,7 @@ import type { ActionKind } from '../domain/handoff/policy'
 export interface ExecuteDeps {
   readonly ctx: AppContext
   readonly model: ModelClient
-  readonly fetcher: SourceFetcher
+  readonly fetcher: SourceFetcher | FollowingFetcher
   readonly now: () => number
   /**
    * The claim fence, from the process that claimed this run.

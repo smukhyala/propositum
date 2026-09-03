@@ -43,6 +43,40 @@ export interface SourceFetcher {
   close(): Promise<void>
 }
 
+/**
+ * A reader that follows redirects on its own, and therefore cannot read
+ * anything until it holds the allowlist each hop is judged against.
+ *
+ * ── The absence is the mechanism ─────────────────────────────────────────
+ *
+ * **There is no `fetch` on this interface.** That is the whole design: both
+ * real readers — `httpFetcher` and `createPlaywrightFetcher` — return one of
+ * these rather than a `SourceFetcher`, so *"follow a hop without re-checking
+ * the pattern"* is not a mistake somebody has to remember not to make, it is a
+ * call that does not typecheck. It is the same move
+ * `src/policy/page-import.ts` makes with `allowlisted()` one layer up, and for
+ * the same reason: a construction site beats a review note.
+ *
+ * `allowlisted()` below is the binder, so the allowlist a hop is judged against
+ * and the allowlist the first address is checked against are one list, passed
+ * once. A caller may bind directly, but only by naming a list.
+ *
+ * ── What it does NOT promise ─────────────────────────────────────────────
+ *
+ * **It says nothing about what the reader does with the list.** The type gets
+ * the patterns into the reader; `judgeHop` in `redirect.ts` is what decides
+ * with them, and `tests/redirect-hop.test.ts` is what says both readers call
+ * it. A `boundTo` that ignored its argument would still compile.
+ *
+ * **`fixtureFetcher` is not one of these**, deliberately. It follows nothing
+ * and has no hop to judge, so requiring a list of it would be ceremony. The
+ * union in `allowlisted()` is what lets both shapes through one door.
+ */
+export interface FollowingFetcher {
+  boundTo(allowlist: readonly string[]): SourceFetcher
+  close(): Promise<void>
+}
+
 export class SourceNotAllowedError extends Error {
   constructor(url: string) {
     super(
@@ -91,14 +125,27 @@ export function isAllowed(url: string, patterns: readonly string[]): boolean {
   return patterns.some((p) => matchesPattern(url, p))
 }
 
-/** Wraps any fetcher with the allowlist check, so no implementation can forget. */
-export function allowlisted(inner: SourceFetcher, patterns: readonly string[]): SourceFetcher {
+/**
+ * Wraps any fetcher with the allowlist check, so no implementation can forget.
+ *
+ * It is also where a `FollowingFetcher` becomes usable at all — *(added
+ * 2026-09-03)*. A reader that follows its own redirects has no `fetch` until it
+ * is told which addresses a hop may land on, and this is the one place in
+ * production that tells it. So the list the first address is checked against
+ * and the list every subsequent hop is judged against are the same list, by
+ * construction rather than by two call sites agreeing.
+ */
+export function allowlisted(
+  inner: SourceFetcher | FollowingFetcher,
+  patterns: readonly string[],
+): SourceFetcher {
+  const reader = 'boundTo' in inner ? inner.boundTo(patterns) : inner
   return {
     async fetch(url) {
       if (!isAllowed(url, patterns)) throw new SourceNotAllowedError(url)
-      return inner.fetch(url)
+      return reader.fetch(url)
     },
-    close: () => inner.close(),
+    close: () => reader.close(),
   }
 }
 

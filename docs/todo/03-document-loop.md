@@ -176,13 +176,30 @@ hop's `Location` checked against the approved origin before anything is asked of
 bound, and the transport ceiling on the body that the same review found missing. ADR-0032 §1 is
 struck and dated where it said *"refused after the fact"*.
 
-**`src/policy/playwright-fetcher.ts` was left alone, and now differs.** It has the same
+~~**`src/policy/playwright-fetcher.ts` was left alone, and now differs.** It has the same
 follow-then-check shape, pre-existing and outside ADR-0032. It matters less — it runs in the worker's
 own OS process rather than the one holding the SQLite file and the API key, and the origin it is
 reading was authorised through the gate rather than typed into a box — but *less* is not *not at
 all*, and a person's IP still reaches whatever an approved source points at. Closing it means a
 Playwright request interceptor with a per-hop veto, which is a bigger change than the one it would
-ride in on, and it wants its own ticket rather than a line here.
+ride in on, and it wants its own ticket rather than a line here.~~ **Done 2026-09-03, the day after.**
+The interceptor was written — `context.route` with an abort on a vetoed navigation — and the
+judgement was pulled out into `src/policy/redirect.ts` so both readers call one function rather than
+keeping two copies that could diverge again.
+
+**A third defect went with it: the path prefix was never re-checked per hop.** Both readers compared
+origins only, so a contract or a project that approved `https://northwind.example.com/partners/*`
+could be redirected to `/pricing`. The full pattern is now judged per hop, through the same
+`matchesPattern` the door uses. The readers take the allowlist as a construction argument to make
+that possible, and `FollowingFetcher` has no `fetch` until it is given one — so a reader that could
+not re-check its own patterns stopped being a thing anybody can write.
+
+**What it cost is a guard that is a grep.** No test here launches a browser and none may start, so
+`tests/redirect-hop.test.ts` unit-tests the decision exhaustively and then searches
+`playwright-fetcher.ts` for the wiring. It proves the interceptor is attached to the shared decision
+and that the old follow-then-check is gone. It does not prove that Playwright fires a route handler
+for a redirected request, that `route.abort` stops one before it leaves the machine, or that `goto`
+rejects when it does — which is why the post-hoc `page.url()` check stayed, stated as a backstop.
 
 ---
 

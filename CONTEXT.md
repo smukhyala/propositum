@@ -408,6 +408,11 @@ rows before anything is fetched, and no match means nothing is requested. The im
 row — there is no field for one — so approving stays what it always was, a Chrome host grant
 mirrored here. The word is unchanged and no new term is introduced, which is the point of the
 sentence: `ApprovedOrigin` was very nearly the sixth displaced synonym below.
+
+*(2026-09-03, the day after: **the pattern is re-checked on every redirect hop**, in both readers —
+the app process's and the worker's browser — and a hop outside it is refused before anything is
+requested from it. `originPattern` means the whole pattern there, origin and path prefix, not the
+origin half of it.)*
 *Displaces:* AllowedSite · allowlist entry · whitelist · ApprovedResource · PermittedURL ·
 Source (bare) · watched tab · `never_requested`.
 **Consumer:** Approved source, under "What Propositum can see".

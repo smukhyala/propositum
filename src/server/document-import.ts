@@ -33,7 +33,7 @@ import type { Repositories } from '../persistence/repositories/index'
 import { importApprovedPage } from '../policy/page-import'
 import type { PageImport } from '../policy/page-import'
 import { httpFetcher } from '../policy/http-fetcher'
-import type { SourceFetcher } from '../policy/fetcher'
+import type { FollowingFetcher, SourceFetcher } from '../policy/fetcher'
 
 export interface ImportContext {
   readonly repos: Repositories
@@ -50,7 +50,7 @@ export async function bringInApprovedPage(
   ctx: ImportContext,
   projectId: string,
   address: string,
-  reader: SourceFetcher = httpFetcher(),
+  reader: SourceFetcher | FollowingFetcher = httpFetcher(),
 ): Promise<PageImport> {
   const sources = await ctx.repos.projects.approvedSources(projectId)
   const granted = sources

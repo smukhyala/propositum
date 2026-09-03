@@ -210,6 +210,22 @@ sources the person approved. This is where page text begins.
 expensive to change: `ObservationEvent`s are append-only, so raising or lowering it invalidates every
 fixture already captured.
 
+**When Propositum reads one of those sources itself, a redirect off it is refused before it is
+taken** *(added 2026-09-03)*. Until this date the worker's own browser did the opposite: it followed
+the redirect, then compared where it landed against what you approved, and refused after the fact —
+so an approved host that was hostile, or that merely carried somebody's open redirect, could hand
+your IP and the moment to any host it named. It never got a cookie and its page was never read; it
+did learn you looked. A request interceptor now judges every hop against your approved sources
+before anything is requested from it, using the same code the page import uses (§5), and a hop
+outside them is stopped rather than answered. The path prefix is part of that check, not only the
+host.
+
+**A page's own embedded content is a different matter, and it is not covered.** The worker's browser
+loads what a page references — images, stylesheets, scripts, fonts, frames — so a third party an
+approved source embeds does learn that something fetched the page. That is what running a browser
+means, it predates the paragraph above, and closing it would mean refusing to load parts of pages
+you approved.
+
 ### 3. Acting — only under an agreement you ratified, only in a tab Propositum opened
 
 When you hand work over and Propositum acts in your browser, it has to see the page it is acting on.
@@ -361,10 +377,13 @@ after it.
   checked against your approved origin **before** anything is requested from it, and an off-origin
   hop is refused with nothing sent to it. A chain of more than five hops is refused too, rather than
   followed for ever.)*
-- **A redirect inside that origin is followed**, including to a path outside the one you approved.
+- ~~**A redirect inside that origin is followed**, including to a path outside the one you approved.
   The origin check is per hop; the path check ran once, against the address you typed. Same host,
   same bytes it was already willing to serve — but it is a gap between two checks and it is stated
-  rather than implied closed.
+  rather than implied closed.~~ **Closed 2026-09-03, the day after it was written.** Every hop is now
+  checked against the whole of what you approved — the host **and** the path prefix — with the same
+  matcher that checked the address you typed. A source approved as
+  `https://northwind.example.com/partners/*` no longer lands on `/pricing` by redirect.
 - **200,000 characters is the third published product constant**, named `IMPORT_BUDGET_CHARS`, and
   it is the same number a file import already refuses past. It bounds a document you are composing
   rather than what Propositum retains about your browsing — the 2,000 above is that promise and is
