@@ -155,6 +155,62 @@ describe('the sweeper writes the gap to the ledger', () => {
 
     expect(await sweepForGap({ store, ledger, now: () => 2_000 })).toBe(false)
   })
+
+  /**
+   * The thread is told AFTER the row, once per pass, and only when a row went.
+   *
+   * `sayCaptureGap` sat exported and uncalled from 2026-08-26 to 2026-09-03 —
+   * a message asserted as sent that nothing could send. The wire is this
+   * callback; what it says, and whether the session is away, is
+   * `tests/thread-channel.test.ts`'s to prove.
+   */
+  it('tells the caller which session a gap was recorded for, and only then', async () => {
+    const project = await repos.projects.create('a gap, said')
+    const fresh = (await repos.sessions.start(project.id)).id
+    const store = createCaptureSessionStore()
+    store.start(fresh, 0)
+    const said: string[] = []
+    const say = async (id: string) => {
+      // By the time this runs the row exists, so a phone is never told about a
+      // gap the ledger refused.
+      const events = await repos.events.bySession(fresh)
+      expect(events.some((e) => e.kind === 'captureGap')).toBe(true)
+      said.push(id)
+    }
+
+    expect(await sweepForGap({ store, ledger, now: () => HEARTBEAT_GRACE_MS + 1, say })).toBe(true)
+    expect(said).toEqual([fresh])
+
+    // The same silence on the next tick is not a second gap, and not a second
+    // sentence.
+    expect(await sweepForGap({ store, ledger, now: () => HEARTBEAT_GRACE_MS + 2_000, say })).toBe(
+      false,
+    )
+    expect(said).toEqual([fresh])
+  })
+
+  it('tells the caller once when a pass records two gaps', async () => {
+    const store = createCaptureSessionStore()
+    store.start(sessionId, 0)
+    store.heartbeat(0)
+    const said: string[] = []
+    const say = async (id: string) => {
+      said.push(id)
+    }
+    const wake = 600_000
+
+    // A slept machine and a service worker that never came back: two rows.
+    expect(
+      await sweepForGap({
+        store,
+        ledger,
+        now: () => wake + HEARTBEAT_GRACE_MS + 1,
+        suspension: { startedAtMs: 1_000, endedAtMs: wake },
+        say,
+      }),
+    ).toBe(true)
+    expect(said).toEqual([sessionId])
+  })
 })
 
 /**

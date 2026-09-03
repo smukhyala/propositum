@@ -2030,14 +2030,22 @@ describe('a document can be brought in and taken out', () => {
   })
 })
 
-describe('the channel can speak, from two feeds and no others', () => {
+describe('the channel can speak, from the feeds named here and no others', () => {
   /**
-   * Two feeds, because the facts live in two processes.
+   * ~~Two feeds, because the facts live in two processes.~~
    *
    * A composed offer is in an in-memory map in the Next app process and ADR-0008
    * refuses to give it a row, so the worker cannot see one. Everything else is
-   * durable and the worker can. A third caller is a third place that decides
-   * when Propositum speaks, which is the thing Principle 13 says erodes first.
+   * durable and the worker can. ~~A third caller is a third place that decides
+   * when Propositum speaks, which is the thing Principle 13 says erodes first.~~
+   *
+   * **Struck 2026-09-03.** A third feed exists and is pinned below: the gap
+   * watch, in the app process again, because a silence lives in
+   * `captureStore()` and the worker cannot see that either. The rule that
+   * survives is the one that was always doing the work — a feed sits where its
+   * fact lives, and every feed goes through `src/server/thread.ts`. The title
+   * stopped counting them for the reason AGENTS.md gives: the list below is
+   * the thing that knows how long it is.
    */
   it('is sent from the orchestrator and from nowhere else', () => {
     for (const message of [
@@ -2052,6 +2060,30 @@ describe('the channel can speak, from two feeds and no others', () => {
         `${message} has a second caller — every message goes through src/server/thread.ts`,
       ).toEqual([join('src', 'server', 'thread.ts')])
     }
+  })
+
+  /**
+   * The gap feed has one caller, and it is the sweep.
+   *
+   * The inversion this file's deferred block exists to prevent, found the
+   * other way round: from 2026-08-26 to 2026-09-03 `sayCaptureGap` was
+   * exported, `captureGapMessage(` was asserted above as sent from
+   * `thread.ts` only, and nothing called `sayCaptureGap` — so the assertion
+   * above was green over a sentence that could never go. ADR-0021's table
+   * lists *"a CaptureGap while away"* as one of the five things the thread
+   * says; for eight days it was four.
+   *
+   * The caller is the gap watch and not the sweeper, because the sweeper is
+   * handed its dependencies and the watch is where the `AppContext` is.
+   * Whether the session is away is decided inside `sayCaptureGap`, which is
+   * why this pins the caller and `tests/thread-channel.test.ts` pins the
+   * saying.
+   */
+  it('says a gap from the gap watch and from nowhere else', () => {
+    expect(
+      callersOf('sayCaptureGap(', 'src/server/thread.ts'),
+      'sayCaptureGap lost its caller, or gained a second — a gap while away is either unsaid or decided in two places',
+    ).toEqual([join('src', 'server', 'gap-watch.ts')])
   })
 
   /**

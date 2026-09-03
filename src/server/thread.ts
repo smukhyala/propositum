@@ -3,6 +3,11 @@
  *
  * ── Two feeds, and the reason there have to be two ────────────────────────
  *
+ * *(~~Two~~ **Three, 2026-09-03** — `sayCaptureGap` below is called from the
+ * gap watch's tick, in the app process again, because the silence it reports
+ * is in `captureStore()` and the worker cannot see that either. The argument
+ * is unchanged: a feed sits where its fact lives.)*
+ *
  * A composed `WorkOffer` lives in an in-memory map in the **Next app process**
  * (`src/server/ambient-store.ts`, hung off `globalThis`), and ADR-0008 refuses
  * to give it a durable row: *"a durable row saying 'Propositum thought you were
@@ -401,12 +406,67 @@ export async function sayWhatIsOutstanding(
   return said
 }
 
-/** A gap in capture, said once per shift. Kept separate because the caller that
- *  knows a gap happened is not the one that knows a run ended. */
-export async function sayCaptureGap(ctx: AppContext, contractId: string): Promise<void> {
-  const transport = await transportFor(ctx)
-  if (transport === null) return
-  await sayOnce(ctx, transport, captureGapMessage({ contractId, baseUrl: baseUrl() }))
+/* ── the app-process feed, again: a gap while away ─────────────────────── */
+
+/**
+ * Say that Propositum stopped seeing the person's work, if they are away.
+ *
+ * Called from the gap watch's tick, in the app process, because the fact —
+ * a silence in `captureStore()` — lives there and the worker cannot see it.
+ * The tick knows a SESSION; the message needs the contract whose *"While you
+ * were away"* screen the link opens. Deciding which rows are worth a sentence
+ * is this file's job, so the derivation is here and not in the sweeper: the
+ * session's phase is `away` from `markAway` at acceptance until a run ends
+ * (`execute-run.ts`, `confirmations.ts`), and `acceptedForSession` is the
+ * contract the shift runs under. Both are queries that already existed.
+ *
+ * ~~Kept separate because the caller that knows a gap happened is not the one
+ * that knows a run ended.~~ **Still true, and struck 2026-09-03 because it was
+ * the whole docblock on a function nothing called** — exported on 2026-08-26,
+ * asserted in `tests/reachability.test.ts` as sent from this file, and reached
+ * by nothing for eight days. Asserted as sent while unsendable is the exact
+ * inversion that file's deferred block exists to prevent.
+ *
+ * Once per shift is `sayOnce`'s job: the key is `gap:<contractId>`, so a second
+ * silence in the same shift is claimed and dropped. Swallows everything, the
+ * way `sayOffer` does and for the same reason — this runs on a timer, and a
+ * paired thread that cannot be reached must not turn housekeeping into an
+ * unhandled rejection. Returns whether a message went, so a test can tell.
+ *
+ * ── What this does NOT cover ──────────────────────────────────────────────
+ *
+ * A gap outside a shift says nothing. While the session is `observing` the
+ * person is at the machine and the timeline shows the gap; once a run has
+ * ended the session is `observing` again even if the person has not come back,
+ * and a gap then is on the re-entry screen rather than on the phone. A session
+ * that has `ended` says nothing either. And the message carries no reason —
+ * `machine_slept` and `service_worker_terminated` read the same on the phone,
+ * because the sentence with the reason in it is the one on the screen it links.
+ */
+export async function sayCaptureGap(
+  ctx: AppContext,
+  sessionId: string,
+  fetcher: typeof globalThis.fetch = globalThis.fetch,
+): Promise<boolean> {
+  try {
+    const session = await ctx.repos.sessions.byId(sessionId)
+    if (session === null || session.phase !== 'away') return false
+
+    const contract = await ctx.repos.contracts.acceptedForSession(sessionId)
+    if (contract === null) return false
+
+    const transport = await transportFor(ctx, fetcher)
+    if (transport === null) return false
+
+    return await sayOnce(
+      ctx,
+      transport,
+      captureGapMessage({ contractId: contract.id, baseUrl: baseUrl() }),
+    )
+  } catch {
+    // See `sayOffer`. Nothing useful to do, and nowhere useful to say it.
+    return false
+  }
 }
 
 /* ── inbound ───────────────────────────────────────────────────────────── */
