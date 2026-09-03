@@ -330,6 +330,33 @@ describe('one call per thread, including the failures', () => {
     expect(model.calls).toHaveLength(1)
   })
 
+  /**
+   * The other event `truncation` names since 2026-09-03: the SDK refusing to
+   * send the request at all. Pinned on purpose rather than by accident — the
+   * request was never sent, which is `transport`'s description, but the
+   * refusal is deterministic on a budget this file does not choose, so a
+   * second attempt is the same throw before any fetch. The fake stands in for
+   * that; `tests/model-boundary.test.ts` drives the real client through it.
+   * Not covered: a real `offerBoundary` reaching the refusal, which no budget
+   * in `src/model/boundaries` can.
+   */
+  it('remembers the SDK´s own refusal to send — a second attempt is the same throw', async () => {
+    const { store, detected, named, at } = loaded(strongThread())
+    const model = new FakeModelClient([
+      {
+        kind: 'fail',
+        failure: 'truncation',
+        detail: 'Streaming is required for operations that may take longer than 10 minutes',
+      },
+    ])
+
+    await composeOffer(store, model, detected, named, at)
+    await composeOffer(store, model, detected, named, at)
+
+    expect(model.calls).toHaveLength(1)
+    expect(store.attemptedOffer(named.signature)).toBe(true)
+  })
+
   it('remembers a schema mismatch the same way — the client already spent its repair turn', async () => {
     const { store, detected, named, at } = loaded(strongThread())
     const model = new FakeModelClient([

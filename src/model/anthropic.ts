@@ -489,16 +489,39 @@ function structuredOutput(schema: ZodType): StructuredOutput {
  * `Failed to parse structured output`, and it says nothing about which field
  * failed beyond what the message carries.
  *
- * ── What it does not cover ───────────────────────────────────────────────
+ * ── The two `truncation` arms, and which SDK message each is for ─────────
  *
- * `max_tokens` is a message test on a bare `AnthropicError`, kept as it was.
- * It does NOT catch the SDK's own local refusal of an oversized non-streaming
- * request, which reads *"Streaming is required for operations that may take
- * longer than 10 minutes"* and mentions no field at all — so that one still
- * falls through to `transport` and gets no escalation. Left as it was found,
- * because widening it is a behaviour change on a path nothing exercises;
- * `NON_STREAMING_MAX_TOKENS` is what keeps a boundary off it in the first
- * place.
+ * *"Streaming is required for operations that may take longer than 10
+ * minutes"* is the SDK's own local refusal of an oversized non-streaming
+ * request — `calculateNonstreamingTimeout` in `@anthropic-ai/sdk/src/client.ts`,
+ * thrown before any HTTP call, a bare `AnthropicError` that names no field.
+ * Until 2026-09-03 nothing here matched it and it fell through to `transport`,
+ * which is the one classification nobody investigates and the one that grants
+ * no retry. It is `truncation` because it is our bug and not the network's: a
+ * budget this call shape cannot carry. `recoveryFor` then buys exactly one
+ * retry at double the budget on the SAME transport — every budget in
+ * `src/model/boundaries` doubled stays under `NON_STREAMING_MAX_TOKENS`, which
+ * `tests/model-boundary.test.ts` asserts against the constants, so the retry
+ * never flips a boundary onto the streaming path. (The todo that deferred this
+ * said it would; the arithmetic was wrong.)
+ *
+ * `max_tokens` is the older arm, kept as it was. The installed SDK raises no
+ * local throw naming that field — `grep -rn max_tokens
+ * node_modules/@anthropic-ai/sdk/src/client.ts` is empty — so today it matches
+ * only a message that arrived by some route other than `APIError`, and it is
+ * there for the SDK version that words the refusal that way.
+ *
+ * ── What neither covers ──────────────────────────────────────────────────
+ *
+ * The retry does not make the refused request runnable when the SDK's
+ * threshold is the cause: the doubled attempt is refused by the same message
+ * and filed `truncation` again, and the run ends there. What the arm buys is
+ * the honest classification and the second attempt, not a third. Nor does
+ * either arm know the SDK's second threshold: `MODEL_NONSTREAMING_TOKENS` in
+ * `@anthropic-ai/sdk/src/internal/constants.ts` caps the opus-4 family at a
+ * budget well under `NON_STREAMING_MAX_TOKENS`, keyed by model id, so a
+ * `PROPOSITUM_MODEL` in that family can meet this message on a doubled budget
+ * the constant here calls safe. The default model is not in that map.
  *
  * Nothing here is a substitute for `structuredOutput`. This is the fallback
  * for a throw that reaches us anyway; the fix is upstream, where the throw
@@ -509,7 +532,10 @@ export function classifyThrow(error: unknown): FailureKind {
 
   const message = error instanceof Error ? error.message : String(error)
 
-  // A budget this call shape cannot carry is our bug, not the network's.
+  // A budget this call shape cannot carry is our bug, not the network's. The
+  // first test is the message the installed SDK actually raises; the second is
+  // the older arm, kept for a version that names the field. See the docblock.
+  if (/Streaming is required/i.test(message)) return 'truncation'
   if (/max_tokens/i.test(message)) return 'truncation'
 
   // Well-formed JSON in the wrong shape. ADR-0005 gives this exactly one
