@@ -3,10 +3,13 @@
 **Status:** ~~not started~~ ~~done 2026-08-26, except item 7, which is the owner's.~~ ~~Two left,
 2026-08-27: item 7, which is the owner's, and item 10, which was added the same day and is not a
 quick fix at all — it is here so nobody rediscovers why it cannot be one.~~ ~~**Two left, 2026-09-03,
-and they are not the same two:** item 7, which is the owner's, and~~ **One left, 2026-09-03, later
+and they are not the same two:** item 7, which is the owner's, and~~ ~~**One left, 2026-09-03, later
 still — item 7 was pinned the same day on the owner's say-so (`grep -L '"key"'
 extension/manifest.json` prints nothing; item 7 below). What is left is** item 11, added the day the
-structured-output classification was fixed and left unfixed beside it on purpose. Item 10 was built
+structured-output classification was fixed and left unfixed beside it on purpose.~~ **None left,
+2026-09-03, the same afternoon — item 11 went with the SDK refusal classified as truncation
+(`grep -L 'Streaming is required' tests/model-boundary.test.ts` prints nothing; item 11 below), and
+the two closed in the same change.** Item 10 was built
 the same day [ADR-0033](../adr/0033-a-late-tick-is-a-slept-machine.md) was accepted — it was never a
 quick fix and it never became one; what changed is that the signal it said nothing supplied turned
 out to be in the sweeper's own timer.
@@ -83,7 +86,8 @@ to `-L` so silence is still the finished answer.**
 
 **~~Seven left, not nine.~~ ~~One left, and it is item 7.~~ ~~Two left, 2026-08-27 — item 7 and item
 10.~~ ~~One left again, 2026-09-03 — item 7.~~ ~~Two left, 2026-09-03, later the same day — item 7 and
-item 11.~~ One left, 2026-09-03, later still — item 11; item 7 was pinned. Item 10 was built and
+item 11.~~ ~~One left, 2026-09-03, later still — item 11; item 7 was pinned.~~ None left, 2026-09-03,
+the same afternoon — item 11 went with the SDK refusal classified. Item 10 was built and
 item 11 arrived in the same afternoon, from different work, and the count was right for about an
 hour, and then item 7 moved before the day was out.** Everything struck below
 is struck rather than deleted, because a checklist that silently loses its
