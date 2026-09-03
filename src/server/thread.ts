@@ -25,8 +25,14 @@
  * ── Dedupe is a claim, not a check ────────────────────────────────────────
  *
  * `thread.claimSend` inserts against a UNIQUE index and reports whether it won.
- * Two feeds in two processes is exactly where a read-then-write leaves a gap,
- * and a message said twice on a lock screen is worse than one not said at all.
+ * ~~Two feeds in two processes~~ **Struck 2026-09-03 — three feeds, two of
+ * them in the app process (`sayOffer`, `sayCaptureGap`) and one in the worker;
+ * the feeds never contend, because each key prefix in
+ * `src/domain/conversation/messages.ts` belongs to one feed. What they can
+ * race is a second copy of the same feed — two app processes, a worker
+ * restarted beside a live one — which** is exactly where a read-then-write
+ * leaves a gap, and a message said twice on a lock screen is worse than one
+ * not said at all.
  *
  * ── What this file will not do ────────────────────────────────────────────
  *
@@ -409,7 +415,9 @@ export async function sayWhatIsOutstanding(
 /* ── the app-process feed, again: a gap while away ─────────────────────── */
 
 /**
- * Say that Propositum stopped seeing the person's work, if they are away.
+ * Say that Propositum stopped seeing the person's work, ~~if they are away~~
+ * **while the session is `away`, which is not the same thing (2026-09-03,
+ * limits below)**.
  *
  * Called from the gap watch's tick, in the app process, because the fact —
  * a silence in `captureStore()` — lives there and the worker cannot see it.
@@ -439,7 +447,16 @@ export async function sayWhatIsOutstanding(
  * person is at the machine and the timeline shows the gap; once a run has
  * ended the session is `observing` again even if the person has not come back,
  * and a gap then is on the re-entry screen rather than on the phone. A session
- * that has `ended` says nothing either. And the message carries no reason —
+ * that has `ended` says nothing either. **`away` is a claim about the phase,
+ * not about where the person is (added 2026-09-03):** a run paused
+ * `awaiting-confirmation` deliberately does not `markObserving`
+ * (`execute-run.ts`, *"No `markObserving`"*), so the person answering on the
+ * confirmation screen is at the desk while the phase still says `away`, and a
+ * gap swept in that window — a service worker dying, a late tick — sends
+ * *"I stopped seeing your work"* to the phone of somebody in front of the
+ * screen. Principle 11 calls that phase the smaller lie; this is the sentence
+ * it costs, and `SessionPhase` gaining an honest value is the only fix.
+ * And the message carries no reason —
  * `machine_slept` and `service_worker_terminated` read the same on the phone,
  * because the sentence with the reason in it is the one on the screen it links.
  */
