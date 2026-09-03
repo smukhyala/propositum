@@ -521,11 +521,26 @@ be where the real value sits.
 captured to [`docs/eval-runs/2026-09-02-run.log`](./eval-runs/2026-09-02-run.log).
 Measured cost: **$0.81 and about five and a half minutes, 27 calls — a floor
 rather than a figure.** One of those 27 is `partnership-messy`'s reading, logged
-at `$0.0000 · 22298 ms · 1 call`: the transport failure path in
-`src/model/anthropic.ts` builds its telemetry with zero tokens, so the API billed
+at `$0.0000 · 22298 ms · 1 call`: ~~the transport failure path in
+`src/model/anthropic.ts` builds its telemetry with zero tokens~~, so the API billed
 for twenty-two seconds of generation that this number does not contain. A session
 reading is the largest call in the corpus — the other three cost $0.30, $0.14 and
-$0.36. Run to
+$0.36.
+
+> **Corrected 2026-09-03 — the number stays a floor and the defect behind it is
+> fixed.** That call was never a transport failure: the reply arrived whole and
+> in the wrong shape, and `beta.messages.parse()` threw because
+> `betaZodOutputFormat` validates and throws inside the SDK. The throw is now
+> classified `schema-mismatch`, which is the one failure ADR-0005 grants a
+> repair turn, and the non-streaming path no longer asks the SDK to validate at
+> all — so a rejected reply comes back as an ordinary message with its `usage`
+> intact and gets recorded at what it cost. Where a call genuinely throws,
+> tokens are recorded as **null** rather than zero, and the harness prints
+> *"at least"* in front of a total containing one. **$0.81 is still a floor**:
+> nothing re-measures a run that has already happened, and the next paid run is
+> what replaces it.
+
+Run to
 settle one question — [#142](https://github.com/smukhyala/propositum/issues/142),
 why a `draft-changes` shift ended on `no-progress` with nothing drafted — and it
 settled it, along with two things nobody was looking for.
@@ -592,6 +607,17 @@ that scenario contributed no H1 worksheet and no H3 observation, and the
 `BoundaryResult` machinery did exactly what it was built for — the failure is on
 the worksheet with the boundary named, rather than appearing as a run that chose
 to do nothing.
+
+> **Diagnosed and fixed 2026-09-03.** ~~`transport`~~ was the wrong word for it,
+> and the wrong word was the whole defect. The model cited an evidence handle it
+> had not been shown; `sessionReadingSchema`'s refinement rejected that
+> correctly; the SDK's validator threw; the throw was filed `transport`, and
+> `recoveryFor('transport')` is `none` — so the repair turn that exists for
+> precisely this, quoting the issues back and asking the model to re-cite
+> handles from its own prompt, never ran. It is `schema-mismatch` now and it
+> repairs once. **Nothing here is re-measured**: this scenario is still absent
+> from the run above, and the H3 result below is still a pass over three
+> scenarios rather than four until a run says otherwise.
 
 **`lisbon-thread` scored `false-stop`**, having scored `correct-continue` in
 August. It asked how many travellers, whether to price hold baggage, and what

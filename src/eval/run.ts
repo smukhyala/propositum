@@ -950,9 +950,21 @@ export function renderWorksheet(run: ScenarioRun): string {
   out.push('  objective  completedWork  openThreads  constraints  nextActions  uncertainties')
   out.push('  Pass needs total ≥10/12 AND objective = 2.')
 
-  const cost = run.telemetry.reduce((s, t) => s + t.inputTokens * 5e-6 + t.outputTokens * 25e-6, 0)
+  // A call that threw carries null tokens rather than zero — the API billed
+  // for generation nobody ever saw the usage block for. Summing those as zero
+  // is what made 2026-09-02's `$0.81` a floor printed as a figure, so the sum
+  // says which it is instead of quietly deciding.
+  const unmeasured = run.telemetry.some((t) => t.inputTokens === null || t.outputTokens === null)
+  const cost = run.telemetry.reduce(
+    (s, t) => s + (t.inputTokens ?? 0) * 5e-6 + (t.outputTokens ?? 0) * 25e-6,
+    0,
+  )
   const ms = run.telemetry.reduce((s, t) => s + t.latencyMs, 0)
-  out.push('', `cost $${cost.toFixed(4)} · ${ms} ms · ${run.telemetry.length} call(s)`)
+  const spend = `${unmeasured ? 'at least ' : ''}$${cost.toFixed(4)}`
+  out.push('', `cost ${spend} · ${ms} ms · ${run.telemetry.length} call(s)`)
+  if (unmeasured) {
+    out.push('  (one or more calls threw and reported no usage — the figure above is a floor)')
+  }
   out.push(rule)
 
   return out.join('\n')
