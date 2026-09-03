@@ -131,8 +131,8 @@ each of these against the layer it belongs to.
 scenarios expect a stop — so the false-stop half of H3 has nothing to score against.~~
 **Struck 2026-08-20, by the harness that landed the same day.** Three claims in one sentence, and
 the corpus moved under all three. A run now goes reading → handoff → plan → the worker loop → a
-changeset, and `scripts/eval.ts` calls `scoreH3` on every driven run. The corpus is four scenarios,
-not two. `monitor-shortlist` and `lisbon-thread` seal `shouldRaise: false`, which is exactly the
+changeset, and `scripts/eval.ts` calls `scoreH3` on every driven run. ~~The corpus is four scenarios,
+not two.~~ **Five since 2026-09-03; `src/eval/index.ts` is what knows how many.** `monitor-shortlist` and `lisbon-thread` seal `shouldRaise: false`, which is exactly the
 input `scoreH3`'s `false-stop` arm needs, and `tests/eval.test.ts` asserts that outcome against the
 real fixture. [`docs/EVALUATION.md`](./docs/EVALUATION.md) was corrected by the same workstream and
 this line was not — one claim in two places, one of which nothing checks, which is the failure

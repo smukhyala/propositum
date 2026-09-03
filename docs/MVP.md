@@ -96,7 +96,11 @@ one~~ **— struck 2026-09-01
 ([#101](https://github.com/smukhyala/propositum/issues/101)). `lisbon-thread` filled `structural` by
 predicting a halt that has since been ruled a false stop and removed, so it is a second
 `straightforward` scenario now and that class is empty again. See `docs/EVALUATION.md` and
-`docs/todo/00-score-the-hypotheses.md`.** — which is why the domain widening and the missing half of
+`docs/todo/00-score-the-hypotheses.md`.** ~~that class is empty again~~ **Filled 2026-09-03
+([#143](https://github.com/smukhyala/propositum/issues/143)) by a third everyday shape,
+`evening-classes` — an autumn prospectus with more course pages than one run may act on, so a
+correct run halts on `action-limit` with courses unread. It is sealed and unscored; no run has
+driven it.** — which is why the domain widening and the missing half of
 the H3 corpus are one piece of work and not two. The sentence above about staying domain-neutral is unchanged and is now load-bearing: a
 `shopping` detector or a `trip` detector would be the first domain-specialised code in this pipeline,
 and ADR-0018 refuses both in favour of one ground describing a *behaviour*.
