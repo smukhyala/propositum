@@ -69,6 +69,7 @@ import { sweepForGap } from './gap-sweeper'
 import { captureStore } from './capture-store'
 import { createSuspensionDetector, type Suspension } from './suspension'
 import { existingAppContext } from './db'
+import { sayCaptureGap } from './thread'
 
 /**
  * Well inside `HEARTBEAT_GRACE_MS` (75s), so a gap is noticed within about half
@@ -136,6 +137,12 @@ async function sweepOnce(suspension: Suspension | null): Promise<void> {
       ledger: context.ledger,
       now: () => Date.now(),
       ...(suspension === null ? {} : { suspension }),
+      // ADR-0021's "a CaptureGap while away", and the thread's third feed. It
+      // decides for itself whether the session is away and whether anything is
+      // paired, and swallows its own failures — so a phone that cannot be
+      // reached costs the sweep nothing, and the row is written by the time it
+      // runs.
+      say: (sessionId) => sayCaptureGap(context, sessionId),
     })
   } catch (error) {
     console.error(

@@ -40,7 +40,13 @@ import type { Repositories } from '../src/persistence/repositories/index'
 import { createTelegramTransport } from '../src/runtime/thread-channel'
 import { TELEGRAM } from '../src/domain/conversation/channel'
 import { decisionMessage, confirmationMessage } from '../src/domain/conversation/messages'
-import { readReplies, sayOnce, transportFor, whatIsOutstanding } from '../src/server/thread'
+import {
+  readReplies,
+  sayCaptureGap,
+  sayOnce,
+  transportFor,
+  whatIsOutstanding,
+} from '../src/server/thread'
 
 /** Distinctive enough that finding it anywhere is unambiguous. */
 const TOKEN = '999666:UNIQUE-BOT-TOKEN-DO-NOT-LEAK'
@@ -654,5 +660,99 @@ describe('the transport is absent until something is paired', () => {
   it('hands back nothing when there is no connection', async () => {
     await repos.thread.forget(TELEGRAM)
     expect(await transportFor(ctx())).toBeNull()
+  })
+})
+
+/**
+ * A gap while away is said once per shift, and a gap elsewhere is not said.
+ *
+ * `sayCaptureGap` was exported on 2026-08-26 with `captureGapMessage` asserted
+ * as thread-only in `tests/reachability.test.ts`, and nothing called it until
+ * 2026-09-03 — asserted as sent while unsendable. These pin the half that file
+ * cannot see: given a session, does the right sentence go, and only once.
+ */
+describe('a gap while away reaches the phone once', () => {
+  /** A session with an accepted contract, in the phase the caller hands over. */
+  async function sessionIn(phase: 'observing' | 'away') {
+    const project = await repos.projects.create(`Gap ${phase}`)
+    const session = await repos.sessions.start(project.id)
+    const reading = await db.prisma.sessionReading.create({
+      data: { sessionId: session.id, throughSeq: 1 },
+      select: { id: true },
+    })
+    const contract = await repos.contracts.createDraft({
+      sessionId: session.id,
+      readingId: reading.id,
+      objective: 'Get somewhere',
+      definitionOfDone: 'Something to show',
+      guidance: [],
+      approvedSourceIds: [],
+      allowedActionKinds: ['read-approved-source'],
+      baseVersionId: null,
+      initiative: 'follow-closely',
+      progress: 'current-step-only',
+      output: 'answer',
+      interruption: 'stop-when-uncertain',
+      timeLimitMinutes: 30,
+    })
+    await repos.contracts.accept(contract.id, new Date())
+    if (phase === 'away') await repos.sessions.markAway(session.id)
+    return { sessionId: session.id, contractId: contract.id }
+  }
+
+  it('says it once for the shift, and a second gap in the same shift says nothing', async () => {
+    const { sessionId, contractId } = await sessionIn('away')
+    const { fetcher, seen } = recordingFetcher({
+      sendMessage: { ok: true, result: { message_id: 11 } },
+    })
+
+    expect(await sayCaptureGap(ctx(), sessionId, fetcher)).toBe(true)
+    expect(await sayCaptureGap(ctx(), sessionId, fetcher)).toBe(false)
+
+    const sends = seen.filter((url) => url.endsWith('/sendMessage'))
+    expect(sends).toHaveLength(1)
+
+    // The link is the shift's screen, and the key is what dedupes it.
+    const said = await db.prisma.threadMessageSent.findMany({ select: { key: true } })
+    expect(said.map((row) => row.key)).toEqual([`gap:${contractId}`])
+  })
+
+  it('says nothing for a session that is not away', async () => {
+    const { sessionId } = await sessionIn('observing')
+    const { fetcher, seen } = recordingFetcher({
+      sendMessage: { ok: true, result: { message_id: 12 } },
+    })
+
+    expect(await sayCaptureGap(ctx(), sessionId, fetcher)).toBe(false)
+    expect(seen).toEqual([])
+  })
+
+  it('says nothing for a session nothing knows', async () => {
+    const { fetcher, seen } = recordingFetcher({})
+    expect(await sayCaptureGap(ctx(), 'no-such-session', fetcher)).toBe(false)
+    expect(seen).toEqual([])
+  })
+
+  it('costs the caller nothing when something underneath throws', async () => {
+    // The sweeper is under a timer. A failure anywhere in here must come back
+    // as `false`, not as a rejection through the sweep — the transport already
+    // turns a dead network into a value, so the throw is planted in the
+    // repository, which is the seam that has none.
+    const { sessionId } = await sessionIn('away')
+    const broken = {
+      repos: {
+        ...repos,
+        sessions: {
+          ...repos.sessions,
+          byId: async () => {
+            throw new Error('database gone')
+          },
+        },
+      },
+    } as unknown as Parameters<typeof sayCaptureGap>[0]
+    const { fetcher, seen } = recordingFetcher({})
+
+    await expect(sayCaptureGap(broken, sessionId, fetcher)).resolves.toBe(false)
+    expect(seen).toEqual([])
   })
 })
