@@ -117,7 +117,9 @@ commands that say they cost money do.
    unanswerable, and the worksheets, H3 and costs exist only on stdout — an
    uncaptured run is paid for again.
    Cost, from `docs/EVALUATION.md`: **six calls per scenario is the floor** —
-   about $0.80 and six minutes across four scenarios. The ceiling is 43 calls per
+   ~~about $0.80 and six minutes across four scenarios~~ **about $2.20 and
+   seventeen minutes, corrected 2026-09-03: four scenarios at six calls plus
+   `evening-classes`, which cannot stop early, at forty-three.** The ceiling is 43 calls per
    scenario (`MAX_ACTIONS_PER_RUN` is 40, and it bounds turns rather than
    authorised actions), which is ~~about **$5.60 and forty minutes**~~ **about $7
    and fifty minutes over five scenarios since 2026-09-03**. A run that

@@ -17,13 +17,14 @@ import type { Scenario } from './scenario'
  * additions fill `straightforward` and `structural`~~ **— struck 2026-09-01
  * ([#101](https://github.com/smukhyala/propositum/issues/101)). They filled
  * both for eleven days. `lisbon-thread` was re-classed `straightforward` when
- * the halt it predicted was ruled a false stop and removed, so `structural` is
+ * the halt it predicted was ruled a false stop and removed, so ~~`structural` is
  * empty again; `docs/todo/00-score-the-hypotheses.md` carries the owed
- * scenario, and `tests/eval.test.ts` pins the gap.** They are comparison
+ * scenario, and `tests/eval.test.ts` pins the gap~~ **— all three false since
+ * 2026-09-03, struck here where they stand rather than only below.** They are comparison
  * shopping and trip planning because ADR-0018 makes those targets rather than
  * the residual false positives `grounds.ts` had them down as.
  *
- * ~~so `structural` is empty again~~ **Filled 2026-09-03
+ * **Filled 2026-09-03
  * ([#143](https://github.com/smukhyala/propositum/issues/143)) by
  * `evening-classes`, which is the written afternoon that gap was owed rather
  * than an edit to the fixture that lost it.** It is the first scenario to NAME
