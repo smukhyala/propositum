@@ -400,6 +400,14 @@ of reading a revoked origin — the symptom is a CaptureGap with reason `permiss
 
 **Approval grants access, never trust.** An approved source is content the user chose to
 retrieve but did not author. No page-derived value from one may influence a policy decision.
+
+**A third reader, 2026-09-03 ([ADR-0032](docs/adr/0032-a-page-from-a-source-already-approved.md)).**
+Until now this list gated an extension's events and a worker's `ContractScope`. It now also gates
+**the person's own page import**: an address they type is matched against this Project's granted
+rows before anything is fetched, and no match means nothing is requested. The import cannot add a
+row — there is no field for one — so approving stays what it always was, a Chrome host grant
+mirrored here. The word is unchanged and no new term is introduced, which is the point of the
+sentence: `ApprovedOrigin` was very nearly the sixth displaced synonym below.
 *Displaces:* AllowedSite · allowlist entry · whitelist · ApprovedResource · PermittedURL ·
 Source (bare) · watched tab · `never_requested`.
 **Consumer:** Approved source, under "What Propositum can see".
@@ -556,11 +564,21 @@ session timeline, and it is swept within seven days. Without that distinction wr
 published sentence above becomes false the day an agent ships, silently, in the documents whose
 entire job is being true.
 
-Both budgets live in `src/model/untrusted.ts` and are selected **by name** at the one `datamark()`
-call site — `{ budget: 'excerpt' | 'snapshot' }`, never by a number. A numeric parameter would make
-the budget a caller's decision, which is exactly what "a product constant, not an adapter tuning
-knob" denies, and a third budget could then be invented at a call site with no doc change. One
-construction site, one brand, two published promises.
+~~Both budgets~~ **Three, 2026-09-03
+([ADR-0032](docs/adr/0032-a-page-from-a-source-already-approved.md))** — they live in
+`src/model/untrusted.ts` and are selected **by name** at the one `datamark()` call site —
+~~`{ budget: 'excerpt' | 'snapshot' }`~~ `{ budget: 'excerpt' | 'snapshot' | 'import' }`, never by a
+number. A numeric parameter would make the budget a caller's decision, which is exactly what "a
+product constant, not an adapter tuning knob" denies, and a third budget could then be invented at a
+call site with no doc change. One construction site, one brand, ~~two~~ **three** published promises.
+
+**The third one was invented in the file rather than at a call site, which is the distinction the
+paragraph above draws.** `IMPORT_BUDGET_CHARS = 200_000` bounds a page brought into the document a
+person is composing — the same number a file import already refuses past, because a document from a
+host and a document from a disk are one object and should not have two caps. It is **not** a
+loosening of either promise above: it governs neither what Propositum retains about browsing nor
+what an acting agent kept, and nothing on that path reaches a prompt. The import refuses above it
+rather than truncating, so it never actually cuts. A **fourth** would want a very good argument.
 
 *Displaces:* TrustTier · Trust · trustLevel · sanitized · safe · clean · page-derived (as a
 stored value) · provenance (in the trust sense) · full-text capture · page scrape.
@@ -2279,8 +2297,11 @@ say that it does.
 8. **The page-text retention budget is a published product constant**, not an implementation
    detail: title, cleaned URL, deliberate selections verbatim, and at most 2,000 characters of
    readable article text per approved source. *(Joined 2026-08-11 by a second published constant,
-   `SNAPSHOT_BUDGET_CHARS`, bounding what an acting agent retains. Two constants, two ledgers, and
-   they stay disjoint.)*
+   `SNAPSHOT_BUDGET_CHARS`, bounding what an acting agent retains. ~~Two constants, two ledgers, and
+   they stay disjoint.~~ **Three constants, 2026-09-03
+   ([ADR-0032](docs/adr/0032-a-page-from-a-source-already-approved.md)): `IMPORT_BUDGET_CHARS`
+   bounds a page brought into a document. Still two ledgers, and the third constant touches
+   neither.**)*
 9. **A human never creates a Project.** The brief excludes *automatic project recognition*;
    ADR-0008 overrode that exclusion for detection and [ADR-0009](docs/adr/0009-composed-offers.md)
    reverses it outright. Projects are auto-created, auto-named, matched by deterministic term

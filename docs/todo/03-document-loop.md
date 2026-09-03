@@ -1,7 +1,10 @@
 # 03 — Close the document loop, and get H2 a numerator
 
-**Status:** ~~not started~~ **items 1, 3 and 4 done 2026-08-26. Items 2 and 5
-remain, and neither is small.**
+**Status:** ~~not started~~ ~~items 1, 3 and 4 done 2026-08-26. Items 2 and 5
+remain, and neither is small.~~ **Item 2 done 2026-09-03
+([ADR-0032](../adr/0032-a-page-from-a-source-already-approved.md)). Only item 5
+remains, and it is the one that needs a person doing real work rather than
+software.**
 **Blocked by:** [`01`](./01-menu-bar-app.md), for the H2 half only. ~~The import and
 export work is independent and can be done at any time.~~ **It was, and it is
 done.**
@@ -24,11 +27,16 @@ Notion, no export, no download and no copy button anywhere in the product.
 That textarea is the one screen that still looks like a developer tool, in an
 interface that is otherwise well above prototype.~~
 
-**Re-run later the same day:** the first returns `src/ui/document.tsx`, which
+~~**Re-run later the same day:** the first returns `src/ui/document.tsx`, which
 holds the clipboard write and the download. The second returns nothing — the
 project screen no longer has a textarea of its own, and
 `tests/reachability.test.ts` asserts it does not get one back. Still true, and
-still deliberately: **no URL import, no Google Docs, no Word, no Notion.**
+still deliberately: **no URL import, no Google Docs, no Word, no Notion.**~~
+
+**Corrected 2026-09-03:** the first two sentences still hold. The last is half
+false — `grep -rn 'importApprovedPage' src/` now returns three files, and item 2
+is built ([ADR-0032](../adr/0032-a-page-from-a-source-already-approved.md)).
+**Google Docs, Word and Notion are still absent and still deliberate.**
 
 ---
 
@@ -69,14 +77,38 @@ somebody actually asks.
    behaviours.
 
    Dropping is not built. Picking is.
-2. **Import from a URL.** Only from an approved source, and only through the
+2. ~~**Import from a URL.** Only from an approved source, and only through the
    existing gate. This is a capability, not a convenience: it must not become a
    way for page text to reach a prompt outside `Datamarked`. **Still not built,
    2026-08-26, and deliberately not done alongside item 1** — a file a person
    chose in their own operating system's dialog and read on screen before saving
    is not the same object as bytes fetched from a host, and treating them as one
    because they both end up in a textarea is the mistake. It needs an ADR before
-   it needs a control.
+   it needs a control.~~ **Done 2026-09-03 —
+   [ADR-0032](../adr/0032-a-page-from-a-source-already-approved.md).** The
+   premise above is what the decision is built on and it is unchanged.
+
+   **One clause could not be kept literally: *"only through the existing
+   gate."*** `authorize()` takes a policy compiled from a **ratified**
+   `HandoffContract`, and a person on the project screen has none — so routing
+   the import through the gate would have meant minting an `AuthorizedAction`
+   outside a ratified agreement, which is the one thing every safety property
+   here rests on being impossible. What it got instead is a narrower door:
+   `importApprovedPage` in `src/policy/page-import.ts` holds no `ActionKind`,
+   no `AuthorizedAction` and no browser channel, so it can only read. The ADR
+   argues the rejected option at length; §2 is the part to read.
+
+   The rest is as written. The address is matched against this project's own
+   `ApprovedSource` rows before anything is requested — an unapproved host is
+   never asked, which `tests/page-import.test.ts` pins by counting the calls
+   rather than by checking the refusal. The text crosses `datamark()`, the one
+   door, and lands in the box; nothing is stored until the person presses the
+   save that was already there.
+
+   **Two things were refused rather than built**, both in the ADR with their
+   costs: the app process does not launch a browser, so a client-rendered page
+   arrives nearly empty (§5); and the import writes no durable trace, so a
+   document holds the words and nothing records where they came from (§4).
 3. ~~**Export to Markdown, and a copy button.**~~ **Done 2026-08-26.** Both act
    on the box rather than the stored version, and the line above them says which
    of the two you are holding: *Version 3 · 48 words · saved*, or *· changes you

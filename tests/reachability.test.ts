@@ -341,6 +341,71 @@ describe('the safety machinery is reachable from the product', () => {
     expect(callers, 'nothing calls addVersion — the version chain never grows').not.toEqual([])
   })
 
+  it('a person can bring in a page, and exactly one thing decides whether it is fetched', () => {
+    /**
+     * ADR-0032, wired the day it was accepted.
+     *
+     * `importApprovedPage` is the door: it matches the address against the
+     * project's approved origins AND builds the `allowlisted()` wrapper around
+     * the reader. Both of those live in the same function on purpose, so the
+     * assertion that matters is not that something calls it — it is that
+     * **exactly one thing does**. A second caller would be a second place that
+     * decides what may be fetched, and the two would drift.
+     */
+    expect(
+      callersOf('importApprovedPage(', 'src/policy/page-import.ts'),
+      'the import door has no caller, or has grown a second one that decides for itself',
+    ).toEqual(['src/server/document-import.ts'])
+  })
+
+  it('the import reaches a screen, or the control is decoration', () => {
+    // The three links in the chain, each of which has been the broken one in
+    // some version of this repository: logic nothing calls, an action no screen
+    // imports, a screen that renders the form without the prop.
+    expect(
+      callersOf('bringInApprovedPage(', 'src/server/document-import.ts'),
+      'nothing calls the import — the server action is an endpoint to nowhere',
+    ).toEqual(['src/server/actions.ts'])
+
+    expect(
+      callersOf('bringInPage(', 'src/server/actions.ts'),
+      'no screen calls bringInPage — a page can be fetched and nobody can ask for one',
+    ).not.toEqual([])
+
+    const screen = stripImports(
+      stripComments(readFileSync(join(repo, 'src/app/projects/[projectId]/page.tsx'), 'utf8')),
+    )
+    expect(
+      screen,
+      'the document forms render without the import prop — the control is gone from the screen',
+    ).toContain('bringIn={bringIn}')
+  })
+
+  it('the app process reads pages with the fetcher that runs no code', () => {
+    /**
+     * ADR-0032 §5 is a refusal — the process holding the person's database and
+     * their API key does not execute a host's JavaScript — and a refusal is
+     * only worth anything if the thing it chose instead is the thing that runs.
+     * `httpFetcher` being written and uncalled would leave the refusal true and
+     * the feature dead; `createPlaywrightFetcher` appearing in the app would
+     * leave the feature alive and the refusal false.
+     */
+    expect(
+      callersOf('httpFetcher(', 'src/policy/http-fetcher.ts'),
+      'nothing constructs the app process reader — the import cannot fetch anything',
+    ).toEqual(['src/server/document-import.ts'])
+
+    expect(
+      callersOf('readableText(', 'src/domain/document/from-html.ts'),
+      'nothing turns markup into words — an HTML page arrives in the box as tags',
+    ).toEqual(['src/policy/http-fetcher.ts'])
+
+    expect(
+      callersOf('createPlaywrightFetcher(', 'src/policy/playwright-fetcher.ts'),
+      'a browser was launched outside the worker process — ADR-0032 §5 refuses one in the app',
+    ).toEqual(['scripts/worker.ts'])
+  })
+
   it('URLs are cleaned by something on the write path, not just in a test', () => {
     // `cleanUrl` was written, tested, and called by NOTHING for the whole build,
     // while `content.js` sent raw `location.href` and SECURITY_AND_PRIVACY.md

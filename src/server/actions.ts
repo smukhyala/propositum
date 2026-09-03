@@ -49,7 +49,9 @@ import type { CalendarTimeSuggestion } from './calendar'
 import { createModelClient } from '../model/provider'
 import type { ModelCallSink } from '../model/provider'
 import type { FailureKind, ModelClient } from '../model/client'
-import { datamark } from '../model/untrusted'
+import { datamark, IMPORT_BUDGET_CHARS } from '../model/untrusted'
+import { bringInApprovedPage } from './document-import'
+import type { BroughtInPage } from '../policy/page-import'
 import { handlesFor, sessionReadingBoundary } from '../model/boundaries/session-reading'
 import type { PromptEvent } from '../model/boundaries/session-reading'
 import { handoffBoundary, sourceHandlesFor } from '../model/boundaries/handoff'
@@ -875,6 +877,63 @@ export async function saveDocument(
 
     refresh()
     return ok({ versionId: version.id, ordinal: version.ordinal, recordedInSession })
+  })
+}
+
+/**
+ * Bring a page in from a source this project already approved — ADR-0032.
+ *
+ * ── What this returns, and what it does not do ───────────────────────────
+ *
+ * Text, to the screen. It stores nothing, mints no version, writes no
+ * ObservationEvent and no ActionIntent, and calls `refresh()` for the same
+ * reason it stores nothing: there is no server state to revalidate. The person
+ * reads what came back, in the box, and saves it with the button that was
+ * already there — `saveDocument` above, normalising as it always did.
+ *
+ * The deciding is not here. `importApprovedPage` matches the address against
+ * the project's approved origins and is also the only place the allowlist
+ * wrapper is built; this function turns its refusal into a sentence and nothing
+ * else. A refusal is a REFUSAL in the CONTEXT.md sense — the same word the gate
+ * uses when it declines a source — so none of these messages calls it an error.
+ */
+export async function bringInPage(
+  projectId: string,
+  address: string,
+): Promise<ActionResult<BroughtInPage>> {
+  return attempt(async () => {
+    const { repos } = await appContext()
+    const result = await bringInApprovedPage({ repos }, projectId, address)
+
+    if (result.ok) return ok(result.page)
+
+    switch (result.refusal) {
+      case 'not_a_web_address':
+        return no<BroughtInPage>(
+          'invalid-input',
+          'That is not a web address. Paste the whole thing, starting with https://.',
+        )
+      case 'source_not_approved':
+        return no<BroughtInPage>(
+          'blocked',
+          "That isn't one of your approved sources, so Propositum never opened it. Approve the site above first — approving grants access, not trust.",
+        )
+      case 'too_large_to_bring_in':
+        return no<BroughtInPage>(
+          'invalid-input',
+          `That page is longer than ${IMPORT_BUDGET_CHARS / 1000} thousand characters, so nothing was read. Copy in the part you are working on instead.`,
+        )
+      case 'nothing_readable':
+        return no<BroughtInPage>(
+          'nothing-to-read',
+          'There were no words on that page Propositum could read. It runs none of the page’s code, so a page that builds itself in the browser comes back empty — open it yourself and paste.',
+        )
+      case 'could_not_read_it':
+        return no<BroughtInPage>(
+          'blocked',
+          `Propositum could not read that page, and nothing was changed. (${result.detail ?? 'no reason given'})`,
+        )
+    }
   })
 }
 
