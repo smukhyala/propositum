@@ -117,10 +117,24 @@ const CASA_ALFAMA =
   'Double, city view: €148.\n' +
   'Double, river view: €176.\n' +
   // "payable at the hotel" rather than the word a hotel would actually use.
-  // `tests/reachability.test.ts` pins the ambient `arrival` signal at zero
+  // ~~`tests/reachability.test.ts` pins the ambient `arrival` signal at zero
   // consumers by counting the word across `src/`, and a fixture spending one of
   // its allowance slots on hotel prose would blunt a guard that has already
-  // caught one real consumer slipping through a spare slot.
+  // caught one real consumer slipping through a spare slot.~~
+  //
+  // **Struck 2026-09-03: there is no such guard, and there was none on the day
+  // this was written.** The exact-count budget and the `unallowedMentions`
+  // helper it ran through were deleted on 2026-08-20 when the three ambient
+  // signals were promoted to having named readers — `tests/reachability.test.ts`
+  // argues the trade in the docblock that replaced them, and calls the lost
+  // budget "a real loss". Nothing counts a word across `src/` now. The only
+  // surviving `arrival` negative names three server files and no fixture is
+  // among them.
+  //
+  // **The wording stays**, because it costs nothing and is what a rates table
+  // would say. What is struck is the RULE — a fixture author reading this for a
+  // constraint they must honour should know there is not one, which is the
+  // whole reason a citation to a deleted guard is worse than no citation.
   'Tourist tax of €2 per person per night is payable at the hotel.'
 
 const MIRADOURO =

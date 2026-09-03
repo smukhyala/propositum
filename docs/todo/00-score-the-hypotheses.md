@@ -155,10 +155,19 @@ commands that say they cost money do.
 
 ## Done when
 
-*All five closed 2026-08-27.*
+~~*All five closed 2026-08-27.*~~ **Three of the five; the first two re-opened 2026-09-03 when the
+corpus grew a fifth scenario under them.** Neither is a regression in the product — a scored corpus
+that gains a scenario has an unscored scenario in it, and that is what growing a corpus costs. It is
+recorded here rather than absorbed because this block is the thing somebody reads to decide whether
+to pay for a run.
 
-- ~~`eval-scores.json` has four complete entries, each with a non-empty `scoredBy`.~~ Done.
-- ~~`npm run eval -- --report` totals rather than refusing.~~ It totals.
+- ~~`eval-scores.json` has four complete entries, each with a non-empty `scoredBy`.~~ ~~Done.~~
+  **Re-opened 2026-09-03: four entries against five scenarios, `evening-classes` being the one
+  without. Read the corpus count off `src/eval/index.ts` rather than off this line, which has been
+  a stale number twice.**
+- ~~`npm run eval -- --report` totals rather than refusing.~~ ~~It totals.~~ **Re-opened
+  2026-09-03: it prints `evening-classes  not scored — run --worksheet` and exits non-zero. Checked,
+  not assumed.**
 - ~~H1 has a pass/fail against **≥10/12 with the objective scoring 2**.~~
   **One pass in four** — lisbon-thread 11/12; monitor-shortlist at 10/12 died
   on the objective gate; both partnerships 7/12.
