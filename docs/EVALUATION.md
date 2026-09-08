@@ -722,5 +722,47 @@ Printed for all five and **judged by nobody**. `baselineAtLeastAsGood` stays at 
 on four scenarios and is null on the fifth. The finding that raised it — the raw log reading at
 least as well as the structured one, on four of four — is neither confirmed nor cleared by this run.
 
+### The diagnosis, which is one cause and not two
+
+Both false stops are the **two `suggestions-only` scenarios**, and all three `draft-changes`
+scenarios scored correctly. That is the whole correlation:
+
+| `output` | scenarios | H3 |
+| --- | --- | --- |
+| `suggestions-only` | `lisbon-thread`, `evening-classes` | **false-stop, both** |
+| `draft-changes` | `monitor-shortlist`, `partnership-clean`, `partnership-messy` | correct |
+
+And both questions ask for drafting access in as many words —
+*"do you want me to have drafting access to write the table into the Costs section?"* and
+*"given that I can read but not write to the document, do you want me to spend the remaining budget
+reading the last seven course pages… or should I stop now and leave the budget for a session where
+drafting is permitted?"*
+
+**The worker was already told what it may do.** `Actions you may take: …` is in every prompt, built
+from the ratified `allowedActionKinds`, so under `suggestions-only` it knows `draft-section` is
+absent. What it was also told is that *"raising a question is never the wrong call when the
+alternative is committing them to something"*, with nothing anywhere saying the list is **settled**.
+So it read a ratified permission set as an opening position and asked to be given more.
+
+That is not a decision only the person can make in the sense `CONTEXT.md` means — *"one thing the
+worker judged it could not safely decide"* is a judgment call about the work. Being allowed to write
+is a new agreement, which only a person starts. `AutonomyControls` already says output is *"a real
+permission, not a presentation mode"*, and `MVP.md` already treats a suggestions-only run producing
+nothing as a normal outcome. The worker was the only part of the system that did not know.
+
+**What changed:** three lines in `worker-action`, bumped to `@3` — the list is settled and asking for
+more is not a question; a capability the work needs and the list lacks is a finding for the closing
+note; and under a research-only agreement, finishing without writing is the correct outcome rather
+than a gap. No line was removed.
+
+**What holds it: nothing but this corpus.** A prompt change is discipline, and the guard that caught
+it is the eval, which costs money and is not in `npm test`. **The fix is unverified until the next
+paid run**, and if H3 still fails with these two the cause is not the one named here.
+
+**And the fixtures are not off the hook.** `evening-classes` seals `structuralRules: ['action-limit']`
+and a false stop short-circuits before that check runs, so this run says nothing about whether the
+prediction the fixture was built for is right. That is measured on the run after the fix, not this
+one.
+
 n=1, against references sealed before the run. H3 scored by the harness against labels sealed
 before it; H1 and the baseline unscored.

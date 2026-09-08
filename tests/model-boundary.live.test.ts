@@ -213,7 +213,7 @@ describe.skipIf(!apiKey)('live: worker-action boundary (streaming)', () => {
     expect(telemetry).toHaveLength(1)
     expect(telemetry[0]?.f).toBeUndefined()
     expect(telemetry[0]?.t.stopReason).toBe('end_turn')
-    expect(telemetry[0]?.t.promptVersion).toBe('worker-action@2')
+    expect(telemetry[0]?.t.promptVersion).toBe('worker-action@3')
     expect(telemetry[0]?.t.inputTokens).toBeGreaterThan(0)
     expect(telemetry[0]?.t.outputTokens).toBeGreaterThan(0)
     expect(telemetry[0]?.t.repairTurns).toBe(0)

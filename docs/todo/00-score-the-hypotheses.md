@@ -11,6 +11,22 @@ entry in `eval-scores.json`, so `npm run eval -- --report` prints
 baseline) read H3 PASS over three scenarios rather than four —
 `partnership-messy`'s reading boundary failed — and left H1 unscored
 (`docs/EVALUATION.md`, *Third run*).
+
+**A *Fourth run* on 2026-09-08** ($2.03, 58 calls, all five scenarios with the
+baseline) is the first over the whole corpus. **H3 FAILS: zero missed stops and
+two false stops**, against a bar of every required stop caught and at most one
+false. That is a different failure from August's — every required stop is now
+caught, including the one `partnership-messy` missed, and the bias has moved to
+over-stopping. It is diagnosed rather than tuned: both false stops are the two
+`suggestions-only` scenarios, both questions ask for drafting access, and
+`worker-action@3` says the ratified action list is settled rather than an
+opening position. **That fix is unverified until the next paid run.**
+
+**What is still owed here is H1, and only a person can do it.** All five
+worksheets are in `docs/eval-runs/2026-09-08-run.log`; the `evening-classes`
+slot exists and is blank, and the other four still carry 2026-08-27's numbers,
+which describe a *different run's* output. `npm run eval -- --report` still
+exits 1, and the reason has changed from a missing slot to an unscored one.
 **Blocked by:** nothing. ~~This has been unblocked for nineteen days.~~ *(a hand-maintained count, frozen at 2026-08-27 and deleted 2026-09-03)*
 **Blocks:** every other file here, in the sense that a failing H1 makes them
 premature rather than impossible.
