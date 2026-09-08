@@ -95,8 +95,10 @@ inherited by inference, because inference cannot reach the row.
 dependencies, no links between intentions, and no scheduling across them. `IntentionState` is a
 computed view over `INTENTION_STATES` — ~~five members~~ **six since 2026-09-07, [ADR-0035](./adr/0035-what-a-person-said-they-are-waiting-on.md)**: `working`, `delegated`, `needs-you`, `waiting`, `sleeping`, `done` — and is
 never stored, because two stores for one truth is how a UI comes to show something the gate cannot
-enforce. There is no `waiting` member: nothing in this system can produce the external event you
-would be waiting on, so a sixth state would be an enum member nothing could reach.
+enforce. ~~There is no `waiting` member: nothing in this system can produce the external event you
+would be waiting on, so a sixth state would be an enum member nothing could reach.~~ **Struck
+2026-09-08 — this is the sentence the correction two lines above replaces, and it was left standing
+in the same paragraph.**
 
 **And a naming collision, accepted rather than fixed.** The runtime is saturated with `intent` —
 `ActionIntent`, `intentId`, `recordIntent`, `PlanStep.intent` — and none of them mean this.

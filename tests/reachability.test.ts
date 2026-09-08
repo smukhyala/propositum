@@ -2219,57 +2219,25 @@ describe('the front door orders more than one kind of thing', () => {
   })
 })
 
-describe('deferred, and asserted as deferred', () => {
-  /**
-   * The computer-use tables, landed ahead of everything that uses them.
-   *
-   * Schema and repositories are one unit and the paths that write them are
-   * several others, so for one commit these were tables with guards,
-   * repositories with tests, and no callers — the exact shape of every bug the
-   * section above exists to remember. Asserting the absence is what stops that
-   * shape from being indistinguishable from the accident: it turns this file
-   * RED the moment something calls it, which forces the claim up into the
-   * reachable section rather than leaving it ambiguous.
-   *
-   * **This block held four assertions, then one, and now holds NONE.**
-   * Boundary 6, the gap sweeper and the outcome-scoped finding were promoted
-   * on 2026-08-27. The last and most different — the emptiness of
-   * `LANDING_ACTION_KINDS`, held shut by the transport's unconditional
-   * non-`GET` refusal rather than by a missing wire — went red on 2026-09-01,
-   * on the commit that built ADR-0024, exactly as its own text instructed:
-   * *"If you are here because it went red: that is the system working, and
-   * ADR-0024 is the argument you are looking for. Move it."* It was moved.
-   * Its positive replacement is `describe('the landing kind is reachable…')`
-   * in the section above, and the empty block stays so the next deferred
-   * capability has somewhere to land.
-   */
-
-  // (The emptiness pin lived here from 2026-08-26 to 2026-09-01. See the
-  // block header for where it went and why.)
-
-  /**
-   * The second ledger has a writer, and `npm run replay` is it. ADR-0034.
-   *
-   * **This assertion was in the deferred block for two commits and moved here
-   * rather than being deleted**, which is the rule: `createExternalWriter` had
-   * no caller when the table landed, and `scripts/replay.ts` is the first. It is
-   * the honest first caller too — `replay` is a member of
-   * `ExternalEventStatedBy`, so the script is not standing in for a source, it
-   * IS one.
-   *
-   * What is still absent, and is the next thing this block should gain: nothing
-   * in the PRODUCT writes one. A person can state a wait on the project screen
-   * and nothing they can press discharges it.
-   */
+/**
+ * What the between-sittings work made reachable. ADR-0034, ADR-0035, ADR-0036.
+ *
+ * **These three sat inside the deferred block for a commit and did not belong
+ * there**, which a review caught: two of them assert callers EXIST, which is the
+ * opposite of what that block is for, and the block's own header went on saying
+ * it held nothing. They are here now, above the line, which is where a reader
+ * looks to find out what is wired.
+ */
+describe('the between-sittings path is reachable from the product', () => {
   it('has a writer of the external ledger, and the product can reach it', () => {
     expect(
       [...callersOf('createExternalWriter', 'src/persistence/external-writer.ts')].sort(),
       'the external ledger lost a caller — the declared source is how a person discharges a wait',
     ).toEqual(['scripts/replay.ts', 'scripts/worker.ts', 'src/server/db.ts'])
 
-    // The half that matters: something a PERSON presses writes one. Without
-    // this the sixth lifecycle member is reachable and undischargeable, which
-    // is a screen that can only ever say Waiting.
+    // The half that matters: something a PERSON presses writes one. Without it
+    // the sixth lifecycle member is reachable and undischargeable, which is a
+    // screen that can only ever say Waiting.
     expect(
       callersOf('noteArrived', 'src/server/actions.ts'),
       'nothing lets a person say the thing arrived',
@@ -2277,28 +2245,20 @@ describe('deferred, and asserted as deferred', () => {
   })
 
   /**
-   * A person can state a wait — and a fixture may stand in for one. ADR-0035.
+   * A person writes a wait, and a fixture may stand in for one.
    *
    * Two callers, and the second needs its argument stated rather than waved
    * through. Principle 12 says an Intention is created and edited by a person
    * and by nothing else, and `scripts/replay.ts` is not a person. It is a
-   * FIXTURE driving the human path, which this repository already has a rule
-   * for, in `src/eval/scenario.ts` about the autonomy dials: *"A model may not
-   * propose these anywhere, and a fixture standing in for a person is still not
-   * a model."* The same reading holds here, and the distinction the principle
-   * protects is intact: no detector, no model boundary, no worker and no sweep
-   * is in this list, and a `replay` row is one of the two things
-   * `ExternalEventStatedBy` permits precisely because it is an assertion rather
-   * than an observation.
+   * FIXTURE driving the human path, which `src/eval/scenario.ts` already has the
+   * rule for about the autonomy dials: *"a fixture standing in for a person is
+   * still not a model."* No detector, no model boundary, no worker and no sweep
+   * is in this list.
    *
-   * What the assertion is really pinning is the list itself. A third caller
-   * fails this test, which is where the argument gets made again.
-   *
-   * This is a REACHED assertion sitting in the deferred block's neighbourhood
-   * on purpose — it is the counterpart of the one below. `waiting` became a
-   * declarable member because something can now reach it, and the thing that
-   * reaches it is a form on the project screen. If that caller disappears, the
-   * sixth member goes back to being a claim.
+   * **Principle 12's own honest limit now reads TWO** — it says the guarantee is
+   * "held up by there being exactly one writer, not by a type" — so the list is
+   * the whole of it, and a third caller failing this test is where the argument
+   * gets made again.
    */
   it('writes a StatedWait from a person on a screen, and from a fixture standing in for one', () => {
     const callers = callersOf('intentions.stateWait', 'src/persistence/repositories/index.ts')
@@ -2313,25 +2273,16 @@ describe('deferred, and asserted as deferred', () => {
   })
 
   /**
-   * The cross-kind ordering, landed ahead of the screen that would use it.
-   * ADR-0036.
-   *
-   * `front-door.ts` still orders strands alone, through `topics.ts`'s
-   * comparator. Widening it is step 6 of `docs/todo/12-between-sittings.md`, and
-   * it waits on there being a second kind to order — which needs something to
-   * write an `ExternalEvent`, which is the pin below.
-   */
-  /**
-   * The half that matters more than the caller count.
+   * The half that matters more than any caller count.
    *
    * `ObservationEvent.sessionId` being required is what makes "no event outside
-   * a sitting can be persisted" true of the FIRST ledger, and ADR-0034 spends
+   * a sitting can be persisted" true of the FIRST ledger, and ADR-0034 spent
    * only the half about the database as a whole. If a second caller of
    * `observationEvent.create` ever appears, that sentence stops being true of
    * the table too, and the guarantee this change was careful to leave standing
    * is gone without anybody deciding to spend it.
    */
-  it('keeps two writers, each the only writer of its own table', () => {
+  it('keeps two ledger writers, each the only writer of its own table', () => {
     expect(
       callersOf('observationEvent.create', 'src/persistence/ledger-writer.ts'),
       'a second writer of the observation ledger — the datamark door is no longer singular',
@@ -2341,6 +2292,29 @@ describe('deferred, and asserted as deferred', () => {
       'a second writer of the external ledger',
     ).toEqual([])
   })
+})
+
+describe('deferred, and asserted as deferred', () => {
+  /**
+   * Something built, tested, and called by nothing — asserted so that the
+   * absence is a claim the suite goes red on rather than an accident nobody can
+   * tell apart from a bug.
+   *
+   * ~~**This block held four assertions, then one, and now holds NONE.**~~
+   * **Re-marked 2026-09-08. It said NONE while holding four**, three of which
+   * were positive reachability claims filed here by mistake during the
+   * between-sittings work; they are in `describe('the between-sittings path is
+   * reachable from the product')` directly above. A review found it, and the
+   * finding was the sharpest of that pass: **this is the file the repository
+   * trusts to say what is wired, and four documents had quoted its "pinned at
+   * zero callers" after that had stopped being true.**
+   *
+   * The block is genuinely empty again, and it stays so the next deferred
+   * capability has somewhere to land. Boundary 6, the gap sweeper and the
+   * outcome-scoped finding were promoted on 2026-08-27; `LANDING_ACTION_KINDS`
+   * went red on 2026-09-01 exactly as its own text instructed, and its positive
+   * replacement is `describe('the landing kind is reachable…')` above.
+   */
 
   it('holds nothing, and the promotions it points at exist', () => {
     // An empty describe fails the runner, so the block's one occupant asserts
@@ -2350,9 +2324,11 @@ describe('deferred, and asserted as deferred', () => {
       self,
       'the landing-kind promotion is gone — a deferred capability was deleted rather than moved',
     ).toContain("describe('the landing kind is reachable")
+    expect(
+      self,
+      'the between-sittings promotions are gone — they were moved up, not deleted',
+    ).toContain("describe('the between-sittings path is reachable from the product'")
   })
-
-
 })
 
 /**

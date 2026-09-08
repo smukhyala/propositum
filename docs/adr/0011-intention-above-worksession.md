@@ -101,7 +101,7 @@ person. A `WorkSession` and a `HandoffContract` may point at one. Nothing else c
 | **How many** | **At most one per `Project`** for now — see below, this is a deferral, not a model |
 | **What points at one** | `WorkSession.intentionId` and `HandoffContract.intentionId`, both **nullable**, so every existing row, fixture and test keeps working with no backfill |
 | **What it does not touch** | `SessionClaim{kind:'objective'}` · document ownership · `ContractScope.baseVersionId` · the guarded-table set |
-| **What state it has** | `IntentionState` — a **computed view** with five members. Never a stored column |
+| **What state it has** | `IntentionState` — a **computed view** with ~~five members~~ **six since 2026-09-07 ([ADR-0035](0035-what-a-person-said-they-are-waiting-on.md)); `INTENTION_STATES` is what knows the number**. Never a stored column |
 
 ### 1. Human-ratified only is a shape, not a rule
 
@@ -128,7 +128,7 @@ thing the ban forbids is a free-text field that inference consumes. This is a fr
 inference cannot see, and the second half of that sentence is the half carrying the weight: even an
 Intention whose words a model first drafted is invisible to `matchProject`.
 
-### 2. `IntentionState` — five members, and the sixth is not declared
+### 2. `IntentionState` — ~~five members, and the sixth is not declared~~ **six, since 2026-09-07 — the heading is struck and the section kept, because the rule it argues is what admitted the sixth**
 
 `working · delegated · needs-you · sleeping · done`. A **computed view**, never a stored column,
 following `EnforcedPolicy`, `Shift` and `ActionStatus` and their shared argument: *two stores for one
@@ -143,9 +143,9 @@ there is a single ledger writer, so ~~**no event outside a sitting can be persis
 **— re-marked 2026-09-07: true of the observation ledger, no longer of the database
 ([ADR-0034](0034-somewhere-to-put-an-event-outside-a-sitting.md)), and nothing writes the second one
 yet** — and
-~~`ExternalEvent` is on Direction §8's do-not-build list.~~ **Struck 2026-09-07, and it was never true rather than newly false** ([ADR-0034](0034-somewhere-to-put-an-event-outside-a-sitting.md)): §8's *Do not build yet* list has ten entries and `ExternalEvent` is not among them — the nearest is *automatic Gmail/Slack/Calendar/GitHub/Notion ingestion*, which is a sensor and which ADR-0034 does not build. `ExternalEvent` appears in that direction document twice, and both times it is being **asked for**. The clause beside this one is unaffected and is still true, which is why the union still has five members.
+~~`ExternalEvent` is on Direction §8's do-not-build list.~~ **Struck 2026-09-07, and it was never true rather than newly false** ([ADR-0034](0034-somewhere-to-put-an-event-outside-a-sitting.md)): §8's *Do not build yet* list has ten entries and `ExternalEvent` is not among them — the nearest is *automatic Gmail/Slack/Calendar/GitHub/Notion ingestion*, which is a sensor and which ADR-0034 does not build. `ExternalEvent` appears in that direction document twice, and both times it is being **asked for**. The clause beside this one is unaffected and is still true, which is why the union had five members when this was written. **Six since 2026-09-07 — corrected 2026-09-08.**
 
-**And the other half of this paragraph is amended rather than struck, 2026-09-07 ([ADR-0035](0035-what-a-person-said-they-are-waiting-on.md)).** *It arrives when event ingestion does* named its own trigger, and ADR-0034 is that trigger firing. `waiting` is now **decided** as a sixth member reachable from a `StatedWait` a person typed. It is still not built, so §2's ruling — five members, and a member nothing can reach is a claim — is **true today and correct as written**; what has changed is that it is no longer permanent. An enum member nothing can reach is a
+**And the other half of this paragraph is amended rather than struck, 2026-09-07 ([ADR-0035](0035-what-a-person-said-they-are-waiting-on.md)).** *It arrives when event ingestion does* named its own trigger, and ADR-0034 is that trigger firing. `waiting` is now **decided** as a sixth member reachable from a `StatedWait` a person typed. ~~It is still not built, so §2's ruling — five members, and a member nothing can reach is a claim — is **true today and correct as written**~~ **Corrected 2026-09-08: built 2026-09-07, two commits after this sentence was written. §2's ruling was right when written and is now history rather than the present tense — and the RULE it states, *declare a member when something can reach it*, is what let the sixth in rather than what had to be overturned.** An enum member nothing can reach is a
 promise the interface would render and the data could never keep. It arrives when event ingestion
 does, and it is written down in `docs/ARCHITECTURE.md` as an unimplemented layer rather than
 declared in the union.

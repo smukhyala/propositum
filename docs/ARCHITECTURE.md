@@ -101,7 +101,7 @@ two are new: one has data and no reader, and one is not being built.
 | Intention Graph | **partial** — one flat table, no graph; ~~`intentionState()` computed and unrendered~~ *re-marked 2026-08-16:* the lifecycle word is on the front door; *re-marked 2026-08-20:* and what happened under an Intention is on two screens before the click | `Intention` in `prisma/schema.prisma`, `src/domain/intention/state.ts` ([ADR-0011](./adr/0011-intention-above-worksession.md)), `src/domain/intention/work-so-far.ts` ([ADR-0017](./adr/0017-continuing-an-intention.md)), `src/server/front-door.ts`, `src/server/work-so-far.ts`, `src/app/page.tsx` |
 | State Ingestion | **partial** — one sensor, browser only | `ledger-writer.ts`, the MV3 extension |
 | State Reconciler | **partial** — `matchProject` only | `src/domain/detection/match-project.ts` |
-| Progress Reasoner | **partial** — ~~offer grounds, no ranking~~ *re-marked 2026-09-07:* offer grounds, and an ordering across two kinds of candidate; still no cost, risk or uncertainty | `src/domain/detection/grounds.ts` |
+| Progress Reasoner | **partial** — ~~offer grounds, no ranking~~ *re-marked 2026-09-07:* offer grounds, and an ordering across two kinds of candidate; still no cost, risk or uncertainty | `src/domain/detection/grounds.ts`, `src/domain/detection/order-candidates.ts` ([ADR-0036](./adr/0036-ordering-candidates-without-a-score.md)) |
 | Delegation / Policy | **built** | `compilePolicy` + the gate, ADR-0004/0006 |
 | Worker Router | **unimplemented, and not being built** | — (§8 forbids; ADR-0005 agrees) |
 | Execution Runtime | **built** | `runWorker`, ADR-0001/0010 |
@@ -122,7 +122,7 @@ sentence asked for.** The one-command check now reads the other way, and here is
 `grep 'model Intention' prisma/schema.prisma` → `model Intention {`, and
 `grep -c intentionId prisma/schema.prisma` counts both foreign keys. So this layer is **a table, not
 a graph, and not a screen**: the row exists, `intentionState()` exists in
-`src/domain/intention/state.ts` and computes the five members from rows, and ~~**nothing renders
+`src/domain/intention/state.ts` and computes ~~the five members~~ **the members** *(numeral deleted 2026-09-08 rather than raised: `INTENTION_STATES` is what knows how many, and `tests/intention.test.ts` is what checks it)* from rows, and ~~**nothing renders
 either** — `tests/reachability.test.ts`'s *deferred, and asserted as deferred* block pins that last
 absence so it cannot be mistaken for wiring~~ **re-marked again 2026-08-16, in the wave that landed
 the caller: it is a table, not a graph, and now also a screen.** `src/app/page.tsx` renders the
@@ -231,9 +231,11 @@ nullable `sessionId` refused because it would hand every existing `ObservationEv
 was written before there were any — and the wave that accepted it built the table the same day.
 `model ExternalEvent`, its three append-only guards and `createExternalWriter` all exist.
 
-**Nothing calls that writer**, pinned at zero callers in `tests/reachability.test.ts`'s *deferred,
-and asserted as deferred* block, so no event outside a sitting has actually been persisted. **And
-this cell has not moved**, which is the distinction worth keeping: a second *ledger* is not a second
+~~**Nothing calls that writer**, pinned at zero callers…~~ **Deleted rather than corrected,
+2026-09-08: the paragraph above already says a person can write one, and this was the same claim in
+the opposite tense four lines away, in one section.** There are three callers —
+`src/server/db.ts`, `scripts/worker.ts` and `scripts/replay.ts` — and `tests/reachability.test.ts`
+asserts that list rather than an emptiness. **This cell has not moved**, which is the distinction worth keeping: a second *ledger* is not a second
 *sensor*, on the reading [ADR-0033](./adr/0033-a-late-tick-is-a-slept-machine.md) already took when
 it added a second signal. Observation is still one sensor, browser only.
 
@@ -261,7 +263,10 @@ documented flapping A→B→A across three polls while keying six things, includ
 
 ---
 
-### 4. Progress Reasoner — **partial: offer grounds, no ranking**
+### 4. Progress Reasoner — **partial: ~~offer grounds, no ranking~~ offer grounds, and an ordering across two kinds of candidate**
+
+*(Heading re-marked 2026-09-08 to match the Status cell, which moved 2026-09-07 and left this copy
+behind. Layers 1, 2, 3 and 9 match their cells; this was the only one that did not.)*
 
 *For:* deciding whether useful progress is possible, and generating candidate next actions.
 
@@ -288,13 +293,16 @@ directions and this is the copy that mattered.** *Nothing sorts* was never true:
 *"strongest first"*. *One candidate at a time* stopped being true on 2026-08-17, when the
 multi-strand change began showing up to `MAX_THREADS_SHOWN` strands each with its own offer. Both
 errors understate what is built, which is the rarer direction and the one Principle 11 names as
-still a false thing. **What is genuinely absent is an ordering that can see more than one KIND of
-candidate**, and the Status cell does not move for it.
+still a false thing. ~~**What is genuinely absent is an ordering that can see more than one KIND of candidate**, and the
+Status cell does not move for it.~~ **Corrected 2026-09-08: that ordering is built —
+`src/domain/detection/order-candidates.ts`, called from the front door — and the Status cell moved
+with it. What is genuinely absent is the rest of direction §3's list: cost, risk, uncertainty and
+dependency effects.**
 
-~~*What would have to exist first:* more than one candidate.~~ **Corrected 2026-09-07: that
-prerequisite was met on 2026-08-17 and nothing noticed. What has to exist first is a second KIND of
-candidate, which is decided in
-[ADR-0035](./adr/0035-what-a-person-said-they-are-waiting-on.md) and unbuilt.**
+~~*What would have to exist first:* more than one candidate.~~ **Corrected 2026-09-07: that prerequisite was met on 2026-08-17 and nothing noticed. What has to
+exist first is a second KIND of candidate** ~~which is decided in
+[ADR-0035](./adr/0035-what-a-person-said-they-are-waiting-on.md) and unbuilt~~ **— built the same
+day; corrected again 2026-09-08.**
 
 ---
 
@@ -663,7 +671,7 @@ and `INTENTION_STATES`, and `intentionState(facts, now)` computes a member from 
 true is the half that mattered: nothing calls it.** No screen renders a state, the consumer labels
 below are rendered by nothing, and `tests/reachability.test.ts` asserts that absence deliberately so
 a green suite cannot be read as a wired one.~~ **Amended 2026-08-16, in the wave that landed the
-caller: something calls it, and the five consumer labels below are on the front door.**
+caller: something calls it, and the consumer labels below are on the front door.**
 `src/server/front-door.ts` derives each row and `src/app/page.tsx` renders the label, with the
 re-entry link on `needs-you`; the reachability claim moved into the reachable section and now names
 `front-door.ts`. ~~**One of the three routes into `needs-you` is unreachable from production data:**
@@ -689,10 +697,14 @@ they are now. Fix them in the next change that touches those files.
 
 Computed, not stored, following unanimous precedent — `EnforcedPolicy`, `Shift` and `ActionStatus` are
 all computed views on the argument that **two stores for one truth is exactly how a UI comes to
-display something the gate cannot enforce.** Every fact these five derive from already exists as a
+display something the gate cannot enforce.** Every fact these derive from already exists as a
 durable row.
 
-**`waiting` is deliberately absent from the union.** Direction §1's lifecycle has six states and
+~~**`waiting` is deliberately absent from the union.**~~ **Struck 2026-09-08: it is the sixth
+member, built 2026-09-07 ([ADR-0035](./adr/0035-what-a-person-said-they-are-waiting-on.md)) and
+reachable from a `StatedWait` a person typed. Everything below is history — the paragraph was struck
+clause by clause on 2026-09-07 and its conclusion was left standing, which is the failure the
+strike-in-place convention exists to prevent, committed inside a correction.** As it stood: Direction §1's lifecycle has six states and
 `waiting` means *progress depends on an external event or dependency*. Nothing in this system can
 produce an external event: ~~`ExternalEvent` is on §8's do-not-build list~~ **Struck 2026-09-07, and it was never true rather than newly false** ([ADR-0034](./adr/0034-somewhere-to-put-an-event-outside-a-sitting.md)): §8's *Do not build yet* list has ten entries and `ExternalEvent` is not among them — the nearest is *automatic Gmail/Slack/Calendar/GitHub/Notion ingestion*, which is a sensor and which ADR-0034 does not build. `ExternalEvent` appears in that direction document twice, and both times it is being **asked for**. The clause beside this one is unaffected and is still true, which is why the union had five members when this was written. And — the structural half —
 `ObservationEvent.sessionId` is required with a single ledger writer, so no event outside a sitting

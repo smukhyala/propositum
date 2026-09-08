@@ -7,9 +7,11 @@
  * a question, and that an input nobody anticipated lands on the member that
  * claims least.
  *
- * There is deliberately no case for `waiting`. It is not declared, nothing can
+ * ~~There is deliberately no case for `waiting`. It is not declared, nothing can
  * produce it, and a test asserting its absence would be a test of the type
- * system — `docs/ARCHITECTURE.md` carries that claim instead.
+ * system — `docs/ARCHITECTURE.md` carries that claim instead.~~ **Struck 2026-09-08: `waiting` is declared and this file holds four cases
+ * for it. The document it deferred to carried the same stale claim, which is why
+ * neither caught the other.**
  */
 
 import { describe, it, expect } from 'vitest'

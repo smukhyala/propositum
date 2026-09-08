@@ -141,7 +141,7 @@ able to install it.
 | `tests/replay.test.ts` | The same stream replayed twice produces the same candidates in the same order — the clockless comparator and source-supplied time, asserted end to end |
 | `tests/replay.test.ts` | Every fixture's must-not list is non-empty. A fixture that only asserts presence is not a fixture |
 | `tests/grounds.test.ts` | The standing afternoon-of-ordinary-reading fixture still does not qualify. Unchanged, and it is the one that must never start passing |
-| `scripts/eval.ts` | Precision prints with its caution paragraph and does not touch the exit code |
+| ~~`scripts/eval.ts`~~ **`scripts/replay.ts`** | ~~Precision prints with its caution paragraph and does not touch the exit code~~ **Corrected 2026-09-08, and both halves were wrong.** The surfaced and silence lists print per fixture from `scripts/replay.ts`; `scripts/eval.ts` holds no precision code at all. And a mismatch on either list **does** exit 1 — `process.exit(failed ? 1 : 0)`. That is an exact match against a sealed list rather than a pass mark on a count, so §3's refusal of a threshold stands; *"does not touch the exit code"* was never true of what was built |
 
 **Where this could still go wrong.** The person scoring `longitudinalAtLeastAsGood` will have just
 read the longitudinal arm's extra context, which makes it more legible — and legibility is exactly

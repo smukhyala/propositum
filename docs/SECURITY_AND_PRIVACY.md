@@ -558,7 +558,9 @@ whole value of this section: it means the line cannot be crossed by accident.
   There is no row an external event could become and no writer that would accept it. A connector is
   therefore not an integration job. It is a schema change plus a second writer, ~~and the second
 writer~~ **— amended 2026-09-07
-([ADR-0034](./adr/0034-somewhere-to-put-an-event-outside-a-sitting.md), decided and unbuilt): that
+([ADR-0034](./adr/0034-somewhere-to-put-an-event-outside-a-sitting.md), ~~decided and unbuilt~~
+**decided and built the same day — corrected 2026-09-08; this parenthetical was copied from a wave
+that predated the build and sat eleven words from the word "built"**): that
 second writer is now **built** — `createExternalWriter` over its own `ExternalEvent` table, with
   its own three append-only guards. ~~**Nothing calls it**~~ **A person can: pressing *It arrived* on
   the project screen writes one, which is the `declared` source. What it records is that somebody

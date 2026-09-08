@@ -120,6 +120,45 @@ export function compareCandidates(a: Candidate, b: Candidate): number {
   return 0
 }
 
+/**
+ * How long an arrival is news.
+ *
+ * ── Why this exists at all, which is a defect this module shipped with ───
+ *
+ * ADR-0035 named the hole and ADR-0036 claimed to close it: a strand leaves the
+ * front door three ways — an origin snooze, a thread snooze, reticence — and a
+ * wait had none, so a stale one would hold one of `MAX_THREADS_SHOWN`'s slots
+ * for ever. Refusing OPEN waits closed half of it. **A discharged wait has the
+ * same property and the first build did not notice**: `statedWait` is cleared
+ * only by a person, the discharging `ExternalEvent` is on an append-only table
+ * with a no-DELETE guard and can never be removed, and rank 0 is unconditional.
+ * Three of them would have shown zero strands, for ever, and `reasonFor` would
+ * have read *"it arrived earlier"* about something from March.
+ *
+ * So an arrival is a candidate for a week and then stops being one. Seven days
+ * because the claim being made is *this is news* — a thing that arrived last
+ * month is not, whatever else it is — and because a person who wanted it acted
+ * on has had a week of Home saying so.
+ *
+ * **It is a decay, not a dismissal**, which is the shape `OfferReticence`
+ * already uses for the same problem: nothing is deleted, the wait keeps its
+ * words on the project screen where a person can still see and clear them, and
+ * only its claim on the front door expires.
+ */
+export const ARRIVAL_IS_NEWS_MS = 7 * 24 * 60 * 60 * 1000
+
+/**
+ * Whether this is still worth one of the person's three slots.
+ *
+ * `now` is a parameter, as everywhere in this module. A strand is always worth
+ * saying if it got here — the detector's own thirty-minute window is what bounds
+ * it, and re-bounding it here would be two places holding one limit.
+ */
+export function stillWorthSaying(candidate: Candidate, nowEpochMs: number): boolean {
+  if (candidate.kind === 'strand') return true
+  return nowEpochMs - candidate.arrivedAtEpochMs < ARRIVAL_IS_NEWS_MS
+}
+
 /** Ordered, without mutating the caller's array. */
 export function orderCandidates(candidates: readonly Candidate[]): Candidate[] {
   return [...candidates].sort(compareCandidates)

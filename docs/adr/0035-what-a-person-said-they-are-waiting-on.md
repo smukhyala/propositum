@@ -162,8 +162,8 @@ would not.
 
 | | |
 |---|---|
-| `tests/reachability.test.ts` | Exactly one writer of `statedWait`, and it is the ratification path. A second author is the defect this pin exists for |
-| `tests/intention-state.test.ts` | `waiting` is unreachable with no `statedWait`; reachable with one; gone once an `ExternalEvent` discharges it. Precedence against `done` and `needs-you` asserted directly |
+| `tests/reachability.test.ts` | ~~Exactly one writer of `statedWait`, and it is the ratification path.~~ **Corrected 2026-09-08: exactly TWO, asserted as a list — `src/server/actions.ts` (the project screen, not the agreement screen) and `scripts/replay.ts` (a fixture standing in for a person, argued in the test's own docblock). A THIRD author is the defect this pin exists for, and the list is what makes it an argument rather than a diff** |
+| ~~`tests/intention-state.test.ts`~~ **`tests/intention.test.ts` — corrected 2026-09-08; the file named here tests the machine-wide fold and holds no `waiting` case at all** | `waiting` is unreachable with no `statedWait`; reachable with one; gone once an `ExternalEvent` discharges it. Precedence against every activity word asserted directly |
 | `tests/boundaries.test.ts` | No model-facing schema has a field that could carry a wait, on the same terms the rest of the Intention already has |
 | `tests/canonical-terms.test.ts` | `StatedWait` is in `CONTEXT.md` before it is in the schema |
 | `tests/architecture.test.ts` | `intentionState` stays pure, total and clockless with the sixth member in it |

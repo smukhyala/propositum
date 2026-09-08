@@ -2,7 +2,7 @@
  * The status light's one read.
  *
  * The consumer is the menu-bar app (ADR-0023): it polls this and renders
- * exactly the word it gets back, so the five sentences `CONTEXT.md` fixes are
+ * exactly the word it gets back, so the sentences `CONTEXT.md` fixes are
  * served from `INTENTION_STATES` rather than re-typed in Rust — where
  * `tests/consumer-vocabulary.test.ts` cannot read them.
  *

@@ -244,20 +244,25 @@ nothing, is what lets the sensor ADR be about the sensor.
   This is `offer_tally`'s situation, and `offer_tally` survives it on an argument **this table cannot
   borrow**: *"four numbers and a date, no subject, nothing that says what any suggestion was about."*
   An `ExternalEvent` has a subject — it says a person was waiting on something and that it arrived,
-  against a named Intention. **The retention answer is owed with the build**, it is named in
+  against a named Intention. ~~**The retention answer is owed with the build**~~ **Answered 2026-09-07 and struck 2026-09-08: there is no delete path and there cannot be one without changing the guards — `SECURITY_AND_PRIVACY.md`'s retention section carries it.** It is named in
   `docs/todo/12-between-sittings.md`, and this ADR does not pretend the question is closed.
 - **Room invites occupancy.** Stated as a cost rather than managed away: the next person to want a
   sensor will find the expensive half built and the argument for the cheap half already written.
 
 ## What would hold the line
 
-**Present tense would be a lie here, and a guard table is the easiest place in this series to commit
-one.** Nothing below exists yet: this is a decided-and-unbuilt ADR,
-`tests/external-ledger.test.ts` has not been written, and the `tests/append-only.test.ts` row has to
-be added by hand — that suite's coverage check is a **literal list of tables rather than a read of
-the schema**, so a new guarded table missing from it is not caught by the test whose name says it
-would be. These are the guards the build owes, in the shape `CONTEXT.md`'s fence uses for the
-vocabulary.
+~~**Present tense would be a lie here.** Nothing below exists yet…~~ **Corrected 2026-09-08: all
+five exist, built the day this was accepted.** `tests/external-ledger.test.ts` is on disk, and
+`GUARDED_TABLES` was repaired from seven tables to fifteen in the same change —
+`tests/append-only.test.ts` now holds it against `REQUIRED_GUARDS` rather than against a hand-written
+third list, so the hazard this paragraph named is closed rather than survived.
+
+**One rename the build made and this ADR mostly did not follow.** Every `source` and
+`ExternalEventSource` below is `statedBy` and `ExternalEventStatedBy` in the code: `event.source`
+already means an `ApprovedSourceId`, and `CaptureAdapter` was renamed off `ObservationSource` to stop
+exactly that collision. One occurrence was corrected on the day and five were not — recorded here
+rather than silently patched, because a guard row naming a type nobody can find is worse than one
+naming the wrong count.
 
 | | |
 |---|---|

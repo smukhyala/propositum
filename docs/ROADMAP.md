@@ -68,7 +68,11 @@ that has more than one candidate to weigh.
 *What would have to exist first:* somewhere to put an event that did not happen inside a sitting.
 *(**Still true 2026-09-07, and now decided rather than open** —
 [ADR-0034](./adr/0034-somewhere-to-put-an-event-outside-a-sitting.md) specifies `ExternalEvent` as a
-second append-only table with two sources, `declared` and `replay`. Nothing is built, and the
+second append-only table with two ~~sources~~ **`ExternalEventStatedBy` members** *(renamed in the
+build; `event.source` already means an `ApprovedSourceId`)*, `declared` and `replay`. ~~Nothing is
+built~~ **Built the same day — corrected 2026-09-08 — and a person writes one through `noteArrived`
+while `npm run replay` writes the other. Neither is a sensor, which is why this stage still has not
+started.** And the
 do-not-build sentence below is untouched: neither source is an integration.)*
 ~~`ObservationEvent.sessionId` is required with a single ledger writer, so today there is no such
 place at all~~ **— re-marked 2026-09-07: there is a place now, and nothing puts anything in it

@@ -28,7 +28,7 @@
 
 import { z } from 'zod'
 import type { Candidate } from '../domain/detection/order-candidates'
-import { orderCandidates } from '../domain/detection/order-candidates'
+import { orderCandidates, stillWorthSaying } from '../domain/detection/order-candidates'
 
 /**
  * One line of a stream.
@@ -169,5 +169,12 @@ export function candidatesFrom(
     })
   }
 
-  return orderCandidates(candidates)
+  // An arrival stops being news after a week, exactly as it does on the front
+  // door. A stream that spans months must not report a candidate the product
+  // would have stopped showing.
+  const latest = Math.max(
+    originEpochMs,
+    ...candidates.map((c) => (c.kind === 'discharged-wait' ? c.arrivedAtEpochMs : originEpochMs)),
+  )
+  return orderCandidates(candidates.filter((c) => stillWorthSaying(c, latest)))
 }

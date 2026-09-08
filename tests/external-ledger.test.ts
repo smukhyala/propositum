@@ -112,14 +112,12 @@ describe('the writer', () => {
       occurredAt: new Date(0),
       elapsedMs: 0,
       intentionId,
-      attested: { statedBy: 'declared' },
     })
     const second = await writer.append({
       statedBy: 'replay',
       kind: 'arrived',
       occurredAt: new Date(1000),
       elapsedMs: 1000,
-      attested: { statedBy: 'replay' },
     })
 
     expect(first.ok && second.ok).toBe(true)
@@ -147,7 +145,6 @@ describe('the writer', () => {
       occurredAt: new Date(0),
       elapsedMs: 0,
       intentionId: 'no-such-intention',
-      attested: {},
     })
     expect(result.ok).toBe(false)
     if (result.ok) return
@@ -170,7 +167,6 @@ describe('append-only, and the first ledger untouched', () => {
       kind: 'arrived',
       occurredAt: new Date(0),
       elapsedMs: 0,
-      attested: {},
     })
     expect(written.ok).toBe(true)
     if (!written.ok) return
@@ -228,7 +224,6 @@ describe('a wait, and what discharges it', () => {
       occurredAt: new Date(),
       elapsedMs: 0,
       intentionId: intention.id,
-      attested: {},
     })
     expect(arrival.ok).toBe(true)
 
@@ -246,6 +241,51 @@ describe('a wait, and what discharges it', () => {
       facts?.waitDischarged,
       'a re-stated wait was discharged by the arrival that answered the previous one',
     ).toBe(false)
+  })
+
+  /**
+   * The boundary itself, which nothing hit until a review pointed at it.
+   *
+   * The predicate is `occurredAt >= statedWaitAt`, so an arrival recorded at the
+   * exact millisecond a wait is stated DOES discharge it. That is a real
+   * property and it is asserted rather than left to be discovered: the replay
+   * fixture whose whole job is the bound was passing because of a bookkeeping
+   * map rather than because of this, and the equal case is where the two
+   * answers differ.
+   *
+   * `scripts/replay.ts` advances its clock by a millisecond before a re-stated
+   * wait for exactly this reason — a person re-states after what they just saw.
+   */
+  it('is discharged by an arrival at the same instant, which is what >= means', async () => {
+    const repos = createRepositories(prisma)
+    const writer = createExternalWriter(prisma)
+
+    const project = await prisma.project.create({ data: { name: 'boundary' } })
+    const intention = await prisma.intention.create({
+      data: { projectId: project.id, objective: 'o', definitionOfDone: 'd' },
+    })
+
+    const instant = new Date()
+    await repos.intentions.stateWait(intention.id, 'something', instant)
+    await writer.append({
+      statedBy: 'declared',
+      kind: 'arrived',
+      occurredAt: instant,
+      elapsedMs: 0,
+      intentionId: intention.id,
+    })
+
+    const facts = await repos.intentions.factsForProject(project.id)
+    expect(facts?.waitDischarged).toBe(true)
+    expect(facts?.waitDischargedAt?.getTime()).toBe(instant.getTime())
+
+    // One millisecond earlier and it does not, which is the half the fixture
+    // depends on.
+    const later = new Date(instant.getTime() + 1)
+    await repos.intentions.stateWait(intention.id, 'something else', later)
+    const after = await repos.intentions.factsForProject(project.id)
+    expect(after?.waitDischarged).toBe(false)
+    expect(after?.waitDischargedAt).toBeNull()
   })
 
   /**

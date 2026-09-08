@@ -4,9 +4,10 @@
 **steps 1–8 done 2026-09-07; only 9 (the corpus sweep) is open.** There is a second ledger, a wait a person can state
 and take back, a sixth lifecycle word, a replay command, and a person who can say the thing
 arrived. **The loop closes in the product**: state a wait, press *It arrived*, and the Intention
-stops reading *Waiting*. What is still missing is the SCREEN — a discharged wait is not yet a
-candidate on the front door, which is step 6 — and the seal on a stream's expectations, which is
-step 8's own note.
+stops reading *Waiting*, and a discharged wait is ordered against browsing strands on the front door
+under one shared bound. ~~What is still missing is the SCREEN…~~ **Corrected 2026-09-08: step 6
+landed in the same wave and is struck below.** What is still open is **step 9**, and **the seal on a
+stream's expectations**, which step 8's own note carries.
 **Decided by:** [ADR-0034](../adr/0034-somewhere-to-put-an-event-outside-a-sitting.md),
 [ADR-0035](../adr/0035-what-a-person-said-they-are-waiting-on.md),
 [ADR-0036](../adr/0036-ordering-candidates-without-a-score.md) and
@@ -37,7 +38,9 @@ schema has `model ExternalEvent`, `Intention.statedWait` and `Intention.statedWa
 `externalEvent.create` has exactly one caller; `src/domain/intention/state.ts` holds `'waiting'`;
 `src/domain/detection/order-candidates.ts` exists; and `npm run replay` is a script.
 **All five return.** What does not exist is the front door reading any of it —
-`grep -n orderCandidates src/server/front-door.ts` returns nothing, which is step 6.
+~~`grep -n orderCandidates src/server/front-door.ts` returns nothing, which is step 6.~~
+**Corrected 2026-09-08: it returns two lines, and all six checks above now return.** What the greps
+cannot tell you is what is left — that is step 9 and the stream seal.
 
 ## Blocked by
 
@@ -69,8 +72,9 @@ them safe to land alone.
    global and gapless, `onDelete: Restrict` rather than Prisma's `SetNull` default (which on an
    append-only row is an UPDATE the guard aborts), and **no `untrusted` column** — the datamark door
    stays singular. Three triggers in `prisma/triggers.sql` and `REQUIRED_GUARDS`;
-   `createExternalWriter` in `src/persistence/external-writer.ts`, pinned at zero callers in the
-   deferred block. `GUARDED_TABLES` was repaired in the same change — it named seven tables while
+   `createExternalWriter` in `src/persistence/external-writer.ts`, ~~pinned at zero callers in the
+   deferred block~~ **— corrected 2026-09-08: three callers now, asserted as a list rather than an
+   emptiness, so a fourth is an argument rather than a diff**. `GUARDED_TABLES` was repaired in the same change — it named seven tables while
    fourteen were guarded, so on half of them a guard firing surfaced as Prisma's P2003 lie
    untranslated, and `tests/append-only.test.ts` now holds the two lists to each other rather than to
    a hand-written third. `tests/external-ledger.test.ts` is the rest. Original text: `model ExternalEvent` per
@@ -92,7 +96,10 @@ them safe to land alone.
    yet, and the project screen is where one already renders. Two columns rather than one:
    `statedWaitAt` bounds the discharge, so a re-stated wait is not answered by the arrival that
    closed the previous one. `repos.intentions.stateWait` is the only writer and
-   `tests/reachability.test.ts` pins it at exactly one caller. **Clearing shipped with it**, which
+   `tests/reachability.test.ts` pins it at ~~exactly one caller~~ **exactly two — corrected
+   2026-09-08: `src/server/actions.ts` and `scripts/replay.ts` (step 8), the second argued in the
+   test's own docblock. `intentions.create` also writes both columns at birth.** **Clearing shipped
+   with it**, which
    ADR-0035 calls the half that had to.
 4. ~~**The sixth lifecycle word.**~~ **Done 2026-09-07.** `waiting` sits below every activity word
    and above `sleeping` — a person at their desk is `working` even with a wait outstanding. The
@@ -110,7 +117,8 @@ them safe to land alone.
 5. ~~**The ordering across kinds**~~ **Done 2026-09-07** — `src/domain/detection/order-candidates.ts`,
    pure, total, clockless, with a property test for antisymmetry, transitivity and stability. **The
    union has two members, not three:** an OPEN wait is not a candidate, which narrows ADR-0035 and
-   ADR-0036 and is amended in both. **Nothing calls it yet** — that is step 6. Original text:
+   ADR-0036 and is amended in both. ~~**Nothing calls it yet** — that is step 6.~~ **Corrected
+   2026-09-08: step 6 is done, below, and the front door calls it.** Original text:
    per [ADR-0036](../adr/0036-ordering-candidates-without-a-score.md).
    Pure, total, clockless, lexicographic over named facts. `intent-lab.ts` at the repo root is the
    bench for this — it drives the real detection pipeline with no database and no model call.

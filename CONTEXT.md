@@ -167,8 +167,12 @@ persistent process · PersistentIntention · IntentionRecord · Objective (as a 
 
 ### StatedWait — *value object on Intention*
 What a person said they are waiting on, in their own words, so an Intention that is not moving can
-say why. One nullable field on `Intention`, typed and edited on the working-agreement screen beside
-the desired outcome and the definition of done. Decided 2026-09-07,
+say why. ~~One nullable field on `Intention`, typed and edited on the working-agreement screen
+beside the desired outcome and the definition of done.~~ **Corrected 2026-09-08: TWO nullable columns
+(`statedWait` and `statedWaitAt`), typed and edited on the PROJECT screen — an Intention is born when
+a person accepts an offer, so the agreement screen has none to hang a wait on. The paragraphs below
+already said both; this opening line was written from the specification and never re-read after the
+build, and it is the one sentence a reader of an entry actually sees.** Decided 2026-09-07,
 [ADR-0035](docs/adr/0035-what-a-person-said-they-are-waiting-on.md).
 
 ~~**A specification rather than a description.** `grep -rn 'statedWait' src/` returns nothing…~~
@@ -573,12 +577,15 @@ prisma/schema.prisma` returns nothing…~~ **The fence came off 2026-09-07, the 
 the table exists.** `prisma/schema.prisma` holds `model ExternalEvent`, `prisma/triggers.sql` holds
 its three append-only guards, and `src/persistence/external-writer.ts` holds `createExternalWriter`.
 
-**What has NOT moved, and it is the more useful half: nothing writes one.**
-`tests/reachability.test.ts` pins that writer at zero callers in its *deferred, and asserted as
-deferred* block — so *no event outside a sitting has been persisted* is still true, and it is now a
-fact about callers rather than about shapes. `IntentionState` has **six** members as of the same day
-— `StatedWait` landed with it, and `waiting` is reachable from a wait a person typed rather than from
-anything this table does on its own.
+~~**What has NOT moved, and it is the more useful half: nothing writes one.**
+`tests/reachability.test.ts` pins that writer at zero callers…~~ **Corrected 2026-09-08: it moved the
+same day.** `noteArrived` writes a `declared` row from the project screen, `npm run replay` writes
+`replay` rows, and `tests/reachability.test.ts` pins three callers as a **list** rather than an
+emptiness — so a fourth is an argument rather than a diff. Events outside a sitting are persisted
+now, and *no event outside a sitting can be persisted* is true only of the observation ledger, where
+`ObservationEvent.sessionId` is still required and `createLedgerWriter` is still its only caller.
+`IntentionState` has **six** members as of the same day — `StatedWait` landed with it, and `waiting`
+is reachable from a wait a person typed rather than from anything this table does on its own.
 
 **It is a second ledger, not a widening of the first.** `ObservationEvent.sessionId` stays required
 and `createLedgerWriter` stays its only writer; this table gets its own single writer and the two
@@ -656,9 +663,10 @@ One thing Propositum could put in front of a person, before anything has been co
 ~~**A specification rather than a description.** `ls src/domain/detection/order-candidates.ts`
 returns nothing…~~ **The fence came off the same day.** The module exists, with a total-order
 property test behind it, and `npm run replay` orders a recorded stream through it. ~~**Nothing calls
-it yet**~~ **— re-marked: the eval path calls it and the FRONT DOOR does not.** A person opening Home
-still sees strands ordered by `topics.ts` alone; a discharged wait reaches a replay and not a screen.
-`tests/reachability.test.ts` pins both halves rather than promising either.
+it yet** — re-marked: the eval path calls it and the FRONT DOOR does not.~~ **Corrected again
+2026-09-08 — that re-mark went stale one commit after it was written.** The front door calls it too:
+one comparator, one `MAX_THREADS_SHOWN`, applied after the ordering, so a discharged wait reaches
+Home and can displace a weaker strand. `tests/reachability.test.ts` asserts both callers.
 
 **An OPEN wait is deliberately not a member**, and both ADRs that described one are amended.
 [Principle 13](docs/PRODUCT_PRINCIPLES.md) forbids a notification with no decision attached, and
@@ -2290,7 +2298,10 @@ the same reason — collapsing edit into accept makes H2 unmeasurable.
 anything else. That refusal is not a UI concern that happens to be enforced twice; it is the one
 place where an interface bug could otherwise tell someone their sent message was rejected.
 *Checked against the banned words:* not `ReviewDecision`, not `approval`, not `outcome` as a column
-name — this is a table, and its foreign key is `outcomeProposalId`. Shares its noun with
+name — this is a table, and its foreign key is ~~`outcomeProposalId`~~ **`outcomeId`, against
+`ShiftOutcome`. Corrected 2026-09-08, and it was never right: `OutcomeProposal` has no table
+(`grep -c 'model OutcomeProposal' prisma/schema.prisma` returns 0), and this entry's opening line was
+re-marked to say exactly that on 2026-09-07 without the correction reaching three lines down.** Shares its noun with
 ChangeVerdict, ConfirmationVerdict and `ActionOutcome.scopeVerdict`; in every case the prefix names
 the level, which is the `ActionIntent`/`StatedIntent` pattern and not the `ReviewDecision` mistake.
 *Displaces:* ReviewDecision · approval · acceptance · keep/discard · vote.
@@ -2688,7 +2699,9 @@ Recorded so they are found deliberately rather than discovered.
   every other table does. `IntentionState` is a computed view over five other tables, so it names no
   field on any row and is the weaker of the two. It earns its place by **holding a refusal**: a
   lifecycle word the interface says out loud, with no entry here, is exactly how `waiting` gets
-  declared by someone who never learned it was refused. That is a thinner claim than the other 53
+  declared by someone who never learned it was refused. That is a thinner claim than ~~the other 53~~ **the others** *(numeral deleted 2026-09-08 rather
+than raised: `README.md` carries the count where `tests/counts.test.ts` can read it, and nothing ever
+checked this copy)*
   make, and it is stated as the thinner claim it is.
   **`AuthoredLabel`, added 2026-08-17, is held to that standard too, and it fails the first half of
   it.** It names one field on one row on a path that is not even persisted — precisely what the

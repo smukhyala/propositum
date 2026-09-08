@@ -11,9 +11,11 @@ import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
+  ARRIVAL_IS_NEWS_MS,
   compareCandidates,
   orderCandidates,
   reasonFor,
+  stillWorthSaying,
   type Candidate,
 } from '../src/domain/detection/order-candidates'
 
@@ -154,6 +156,38 @@ describe('every ordering renders as a sentence a person can check', () => {
     for (const candidate of CORPUS) {
       expect(reasonFor(candidate, NOW).length).toBeGreaterThan(0)
     }
+  })
+})
+
+describe('an arrival stops being news, or it holds a slot for ever', () => {
+  /**
+   * The defect this was written for. `statedWait` is cleared only by a person
+   * and the discharging event can never be deleted, so without a decay three
+   * discharged waits would show zero strands for the life of the database — the
+   * hole ADR-0035 named for open waits, arriving one step later.
+   */
+  it('drops a discharged wait once it is older than a week', () => {
+    const fresh = discharged({ arrivedAtEpochMs: NOW - ARRIVAL_IS_NEWS_MS + 1000 })
+    const stale = discharged({ arrivedAtEpochMs: NOW - ARRIVAL_IS_NEWS_MS - 1000 })
+
+    expect(stillWorthSaying(fresh, NOW)).toBe(true)
+    expect(stillWorthSaying(stale, NOW)).toBe(false)
+  })
+
+  /** A strand is bounded by the detector's own window. Re-bounding it here
+   *  would be two places holding one limit. */
+  it('never drops a strand, whatever the clock says', () => {
+    expect(stillWorthSaying(strand(), NOW)).toBe(true)
+    expect(stillWorthSaying(strand(), NOW + ARRIVAL_IS_NEWS_MS * 10)).toBe(true)
+  })
+
+  /** A decay, not a dismissal: nothing is deleted and the words stay on the
+   *  project screen. Only the claim on the front door expires. */
+  it('expires the claim and not the wait', () => {
+    const stale = discharged({ arrivedAtEpochMs: NOW - ARRIVAL_IS_NEWS_MS - 1 })
+    expect(stillWorthSaying(stale, NOW)).toBe(false)
+    // The candidate is still a well-formed value; nothing about it was removed.
+    expect(reasonFor(stale, NOW)).toContain('a reply from the venue')
   })
 })
 

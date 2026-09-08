@@ -194,9 +194,10 @@ part of the scope, not decoration:
   `SessionClaim{kind:'objective'}` is unchanged — per-sitting, model-inferred, cold every time.
 - ~~**`IntentionState` is a computed view with five members**~~ **six since 2026-09-07 ([ADR-0035](adr/0035-what-a-person-said-they-are-waiting-on.md)), and `INTENTION_STATES` is what knows the number** — `working`, `delegated`, `needs-you`, `waiting`,
   `sleeping`, `done` — derived from rows that already exist, not a stored column, on the same
-  argument already written down for `EnforcedPolicy` and `Shift`. Direction §1 lists a sixth,
-  `waiting`. Nothing in this system can produce an external event, so it is **not declared**; see
-  the `ExternalEvent` row below.
+  argument already written down for `EnforcedPolicy` and `Shift`. ~~Direction §1 lists a sixth, `waiting`. Nothing in this system can
+  produce an external event, so it is **not declared**; see the `ExternalEvent` row below.~~
+  **Struck 2026-09-08: it is declared. The row this points at was corrected in the same wave and this
+  sentence, which cites it, was not — so a reader following the pointer met a contradiction.**
 - **At most one `Intention` per `Project` for now**, two nullable foreign keys
   (`WorkSession.intentionId`, `HandoffContract.intentionId`) so no row needs backfilling, and
   **no change to document ownership or base-version pinning**.

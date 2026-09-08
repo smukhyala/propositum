@@ -83,7 +83,6 @@ try {
     const projectIds = new Map<string, string>()
     const intentionIds = new Map<string, string>()
     const waits = new Map<string, string>()
-    const arrivals = new Map<string, number>()
 
     for (const line of stream.lines) {
       if (line.type === 'project') {
@@ -111,13 +110,21 @@ try {
       if (line.type === 'wait') {
         const id = intentionIds.get(line.project)
         if (id === undefined) throw new Error(`no intention on ${line.project}`)
+        /**
+         * A person re-states a wait AFTER whatever they just saw, so the clock
+         * moves by a millisecond first.
+         *
+         * The predicate is `occurredAt >= statedWaitAt`, so without this a wait
+         * re-stated in the same tick as an arrival is discharged by it — and the
+         * fixture that exists to catch exactly that would pass for the wrong
+         * reason. It did: an earlier version of this script masked the result
+         * with a local bookkeeping map, and the docblock below claimed the
+         * database was deciding. Now it is.
+         */
+        clockMs += 1
         await repos.intentions.stateWait(id, line.statedWait ?? null, new Date(clockMs))
         if (line.statedWait === undefined) waits.delete(line.project)
         else waits.set(line.project, line.statedWait)
-        // A wait stated now is not answered by an arrival already recorded, and
-        // the database is what decides that. Dropping the local note keeps this
-        // script from reporting a discharge the bound refused.
-        arrivals.delete(line.project)
         continue
       }
 
@@ -129,14 +136,10 @@ try {
         occurredAt: new Date(ORIGIN_EPOCH_MS + line.elapsedMs),
         elapsedMs: line.elapsedMs,
         intentionId,
-        attested: { statedBy: 'replay', stream: stream.name },
       })
       if (!written.ok) throw new Error(`the ledger refused an arrival: ${written.reason}`)
-      // The stream's clock only ever moves forward, and only an arrival moves
-      // it: a person's acts happen at whatever moment the stream had reached.
+      // The stream's clock only ever moves forward.
       clockMs = Math.max(clockMs, ORIGIN_EPOCH_MS + line.elapsedMs)
-      // Last arrival wins, which is what "most recent" means downstream.
-      arrivals.set(line.project, line.elapsedMs)
     }
 
     // Read the discharge back off the database rather than trusting the loop —
@@ -148,8 +151,15 @@ try {
       replayed.push({
         project,
         statedWait: facts?.statedWait ?? null,
+        // Straight off the row the repository computed, with no local
+        // bookkeeping in between. An earlier version kept its own map of
+        // arrivals and consulted that, which meant the fixture's sharpest
+        // must-not case passed because of the map rather than because of the
+        // bound — the docblock above claimed the opposite and was wrong.
         arrivedAtElapsedMs:
-          facts?.waitDischarged === true ? (arrivals.get(project) ?? null) : null,
+          facts?.waitDischargedAt == null
+            ? null
+            : facts.waitDischargedAt.getTime() - ORIGIN_EPOCH_MS,
       })
     }
 

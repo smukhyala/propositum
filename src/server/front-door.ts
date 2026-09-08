@@ -43,7 +43,7 @@ import type { AmbientObservation, WorkDetected } from '../domain/detection/detec
 import { groundsFor } from '../domain/detection/grounds'
 import { hashSignature } from '../domain/detection/reticence'
 import { signatureOf } from './ambient-store'
-import { orderCandidates } from '../domain/detection/order-candidates'
+import { orderCandidates, stillWorthSaying } from '../domain/detection/order-candidates'
 import type { Candidate } from '../domain/detection/order-candidates'
 import type { AmbientStore } from './ambient-store'
 
@@ -163,9 +163,9 @@ export function frontDoorRow(input: {
 /**
  * The lifecycle word, in the person's own terms.
  *
- * `INTENTION_STATES` rather than a literal, so the five sentences CONTEXT.md
+ * `INTENTION_STATES` rather than a literal, so the sentences CONTEXT.md
  * fixes are rendered from the one place that holds them. A Project with no
- * Intention gets a sentence that is not one of the five and does not pretend to
+ * Intention gets a sentence that is not one of them and does not pretend to
  * be a sixth: nobody has said what this is for, and Home never asks them to.
  */
 export function statusWordFor(state: IntentionStateId | null): string {
@@ -434,7 +434,8 @@ export function noticedAfternoon(
   const byStrand = new Map(qualifying.map((strand) => [strand.signature, strand]))
   const byWait = new Map(waits.map((wait) => [wait.intentionId, wait]))
 
-  const ordered = orderCandidates([
+  const ordered = orderCandidates(
+    [
     ...waits.map(
       (wait): Candidate => ({
         kind: 'discharged-wait',
@@ -452,7 +453,8 @@ export function noticedAfternoon(
         engagedMs: strand.detected.engagedMs,
       }),
     ),
-  ])
+    ].filter((candidate) => stillWorthSaying(candidate, nowMs)),
+  )
 
   const shown: NoticedStrand[] = []
   const waitsShown: DischargedWait[] = []

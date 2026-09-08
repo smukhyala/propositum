@@ -77,10 +77,19 @@ export const incomingExternalEventSchema = z.object({
   elapsedMs: z.number().int().nonnegative(),
   /** Which Intention this bears on. Set by the hand that stated the event. */
   intentionId: z.string().optional(),
-  /** Only what Propositum itself recorded. NOT the browser-attested sense the
-   *  observation ledger uses — nothing attests either source here. */
-  attested: z.record(z.string(), z.unknown()),
 })
+
+/**
+ * Note what has no field: there is nowhere to put page text, and since
+ * 2026-09-08 nowhere to put anything free-form at all.
+ *
+ * An `attested` column shipped here for one commit and held nothing the typed
+ * fields do not. A review found one caller putting a fixture's title in it while
+ * `SECURITY_AND_PRIVACY.md` enumerated the row without it — an unshaped `Json`
+ * with no reader is where a subject arrives later. *"There is no field for it"
+ * beats "must not"*, which is this repository's own heuristic, so there is not
+ * one.
+ */
 
 export type IncomingExternalEvent = z.infer<typeof incomingExternalEventSchema>
 
@@ -158,7 +167,6 @@ export function createExternalWriter(prisma: PrismaClient): ExternalWriter {
               occurredAt: event.occurredAt,
               elapsedMs: event.elapsedMs,
               ...(event.intentionId === undefined ? {} : { intentionId: event.intentionId }),
-              attested: event.attested as object,
             },
             select: { id: true },
           })

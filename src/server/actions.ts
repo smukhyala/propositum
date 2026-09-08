@@ -489,9 +489,6 @@ export async function noteArrived(projectId: string): Promise<ActionResult<Proje
       occurredAt: new Date(),
       elapsedMs: 0,
       intentionId: intention.id,
-      // Only what Propositum itself recorded. The words the person is waiting
-      // on are on the Intention and are not copied here.
-      attested: { statedBy: 'declared' },
     })
     if (!written.ok) {
       return no<ProjectCreated>('invalid-input', 'That did not record. Nothing was changed.')
