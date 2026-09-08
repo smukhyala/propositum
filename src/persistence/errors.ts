@@ -23,14 +23,29 @@
 
 /** Tables whose writes are guarded by append-only or freeze triggers. A P2003
  *  on one of these is far more likely a guard firing than a real FK problem. */
-const GUARDED_TABLES = [
+/// Kept in step with `REQUIRED_GUARDS` in `./append-only.ts`, which is the
+/// specification. It named seven while fourteen tables were guarded, so a guard
+/// firing on one of the other seven surfaced as Prisma's P2003 "Foreign key
+/// constraint violated" lie with nothing to translate it — the exact failure
+/// this module exists to prevent, on half the tables it covers. Repaired
+/// 2026-09-07 with ADR-0034, which added the fifteenth and would have been the
+/// next to hit it.
+export const GUARDED_TABLES = [
   'observation_event',
+  'external_event',
   'action_intent',
   'action_outcome',
+  'action_evidence',
   'model_call_record',
   'change_verdict',
   'document_version',
   'handoff_contract',
+  'work_offer',
+  'shift_outcome',
+  'outcome_verdict',
+  'confirmation_request',
+  'confirmation_verdict',
+  'decision_verdict',
 ] as const
 
 export type GuardedTable = (typeof GUARDED_TABLES)[number]

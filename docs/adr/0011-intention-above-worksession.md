@@ -139,7 +139,10 @@ run's terminal status, an unanswered `ConfirmationRequest`, a `DecisionNeeded`.
 Direction §1's lifecycle has six. **`waiting` is deliberately absent**, and this is not an oversight
 to be tidied later. `waiting` means *progress depends on an external event or dependency*, and
 nothing in this system can produce an external event: `ObservationEvent.sessionId` is required and
-there is a single ledger writer, so **no event outside a sitting can be persisted at all**, and
+there is a single ledger writer, so ~~**no event outside a sitting can be persisted at all**~~
+**— re-marked 2026-09-07: true of the observation ledger, no longer of the database
+([ADR-0034](0034-somewhere-to-put-an-event-outside-a-sitting.md)), and nothing writes the second one
+yet** — and
 ~~`ExternalEvent` is on Direction §8's do-not-build list.~~ **Struck 2026-09-07, and it was never true rather than newly false** ([ADR-0034](0034-somewhere-to-put-an-event-outside-a-sitting.md)): §8's *Do not build yet* list has ten entries and `ExternalEvent` is not among them — the nearest is *automatic Gmail/Slack/Calendar/GitHub/Notion ingestion*, which is a sensor and which ADR-0034 does not build. `ExternalEvent` appears in that direction document twice, and both times it is being **asked for**. The clause beside this one is unaffected and is still true, which is why the union still has five members.
 
 **And the other half of this paragraph is amended rather than struck, 2026-09-07 ([ADR-0035](0035-what-a-person-said-they-are-waiting-on.md)).** *It arrives when event ingestion does* named its own trigger, and ADR-0034 is that trigger firing. `waiting` is now **decided** as a sixth member reachable from a `StatedWait` a person typed. It is still not built, so §2's ruling — five members, and a member nothing can reach is a claim — is **true today and correct as written**; what has changed is that it is no longer permanent. An enum member nothing can reach is a

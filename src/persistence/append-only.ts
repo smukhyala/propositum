@@ -75,6 +75,9 @@ export interface TransactionalExecutor extends RawExecutor {
  * committed before the dispatch exists.
  */
 export const REQUIRED_GUARDS: ReadonlyArray<readonly [string, string]> = [
+  ['external_event_no_update', 'external_event'],
+  ['external_event_no_delete', 'external_event'],
+  ['external_event_no_replace', 'external_event'],
   ['observation_event_no_update', 'observation_event'],
   ['observation_event_no_delete', 'observation_event'],
   ['observation_event_no_replace', 'observation_event'],

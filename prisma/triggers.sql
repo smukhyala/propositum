@@ -68,6 +68,34 @@ BEGIN
   SELECT RAISE(ABORT, 'observation_event is append-only: REPLACE forbidden');
 END;
 
+-- ═══════════════════════════════════════════════════════ external_event
+-- The second ledger (ADR-0034). Same three guards as the first, because it is
+-- append-only for the same reason: a row that can be corrected afterwards is a
+-- row whose provenance is an opinion.
+
+DROP TRIGGER IF EXISTS external_event_no_update;
+CREATE TRIGGER external_event_no_update
+BEFORE UPDATE ON external_event
+BEGIN
+  SELECT RAISE(ABORT, 'external_event is append-only: UPDATE forbidden');
+END;
+
+DROP TRIGGER IF EXISTS external_event_no_delete;
+CREATE TRIGGER external_event_no_delete
+BEFORE DELETE ON external_event
+BEGIN
+  SELECT RAISE(ABORT, 'external_event is append-only: DELETE forbidden');
+END;
+
+-- The one that catches INSERT OR REPLACE.
+DROP TRIGGER IF EXISTS external_event_no_replace;
+CREATE TRIGGER external_event_no_replace
+BEFORE INSERT ON external_event
+WHEN EXISTS (SELECT 1 FROM external_event WHERE id = NEW.id)
+BEGIN
+  SELECT RAISE(ABORT, 'external_event is append-only: REPLACE forbidden');
+END;
+
 -- ═══════════════════════════════════════════════════════ action_intent
 
 DROP TRIGGER IF EXISTS action_intent_no_update;

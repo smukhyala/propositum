@@ -550,10 +550,16 @@ gapless within), `statedBy`, `occurredAt`, `elapsedMs`, `kind`, `intentionId` (n
 `untrusted` column**, which is absence rather than a rule — see below. Decided 2026-09-07,
 [ADR-0034](docs/adr/0034-somewhere-to-put-an-event-outside-a-sitting.md).
 
-**A specification rather than a description.** `grep -n 'model ExternalEvent' prisma/schema.prisma`
-returns nothing, so **no event outside a sitting can be persisted today** — the sentence
-`docs/ARCHITECTURE.md` §2, `docs/ROADMAP.md` Stage 2 and `src/domain/intention/state.ts` all still
-carry, and the reason `IntentionState` has five members.
+~~**A specification rather than a description.** `grep -n 'model ExternalEvent'
+prisma/schema.prisma` returns nothing…~~ **The fence came off 2026-09-07, the same day it went on:
+the table exists.** `prisma/schema.prisma` holds `model ExternalEvent`, `prisma/triggers.sql` holds
+its three append-only guards, and `src/persistence/external-writer.ts` holds `createExternalWriter`.
+
+**What has NOT moved, and it is the more useful half: nothing writes one.**
+`tests/reachability.test.ts` pins that writer at zero callers in its *deferred, and asserted as
+deferred* block — so *no event outside a sitting has been persisted* is still true, and it is now a
+fact about callers rather than about shapes. `IntentionState` still has five members, because
+`StatedWait` is still fenced below and there is nothing to reach a sixth from.
 
 **It is a second ledger, not a widening of the first.** `ObservationEvent.sessionId` stays required
 and `createLedgerWriter` stays its only writer; this table gets its own single writer and the two

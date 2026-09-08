@@ -2215,6 +2215,48 @@ describe('deferred, and asserted as deferred', () => {
   // (The emptiness pin lived here from 2026-08-26 to 2026-09-01. See the
   // block header for where it went and why.)
 
+  /**
+   * The second ledger, landed ahead of everything that writes to it. ADR-0034.
+   *
+   * This is the shape the block header describes, arriving again: a table with
+   * guards, a writer with tests, and no caller. The schema, the triggers and
+   * the writer are one unit; the screen that lets a person state a wait and the
+   * replay command that drives a fixture are two others, and they are steps 3
+   * and 7 of `docs/todo/12-between-sittings.md`.
+   *
+   * **If you are here because this went red: that is the system working.**
+   * ADR-0034 is the argument, `docs/todo/12-between-sittings.md` is the work,
+   * and the assertion belongs in the reachable section above — moved, never
+   * deleted.
+   */
+  it('nothing writes an ExternalEvent yet, so the second ledger has no caller', () => {
+    expect(
+      callersOf('createExternalWriter', 'src/persistence/external-writer.ts'),
+      'the external ledger has a caller — move this assertion up, do not delete it',
+    ).toEqual([])
+  })
+
+  /**
+   * The half that matters more than the caller count.
+   *
+   * `ObservationEvent.sessionId` being required is what makes "no event outside
+   * a sitting can be persisted" true of the FIRST ledger, and ADR-0034 spends
+   * only the half about the database as a whole. If a second caller of
+   * `observationEvent.create` ever appears, that sentence stops being true of
+   * the table too, and the guarantee this change was careful to leave standing
+   * is gone without anybody deciding to spend it.
+   */
+  it('keeps two writers, each the only writer of its own table', () => {
+    expect(
+      callersOf('observationEvent.create', 'src/persistence/ledger-writer.ts'),
+      'a second writer of the observation ledger — the datamark door is no longer singular',
+    ).toEqual([])
+    expect(
+      callersOf('externalEvent.create', 'src/persistence/external-writer.ts'),
+      'a second writer of the external ledger',
+    ).toEqual([])
+  })
+
   it('holds nothing, and the promotions it points at exist', () => {
     // An empty describe fails the runner, so the block's one occupant asserts
     // its own claim: every once-deferred capability was moved UP, not deleted.

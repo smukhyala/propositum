@@ -37,6 +37,7 @@ import {
   installAppendOnlyGuards,
   REQUIRED_GUARDS,
 } from '../src/persistence/append-only'
+import { GUARDED_TABLES } from '../src/persistence/errors'
 
 let dir: string
 let prisma: PrismaClient
@@ -171,8 +172,36 @@ describe('guard installation', () => {
       'confirmation_request',
       'confirmation_verdict',
       'action_evidence',
+      // Added 2026-09-07 with ADR-0034. `decision_verdict` was in
+      // REQUIRED_GUARDS and absent here since ADR-0022, which is the drift this
+      // list cannot catch on its own — see the test below.
+      'decision_verdict',
+      'external_event',
     ]) {
       expect(tables).toContain(table)
+    }
+  })
+
+  /**
+   * The list above is hand-written, so it cannot catch a table that is missing
+   * from BOTH it and `REQUIRED_GUARDS`. This one is derivable and does.
+   *
+   * `GUARDED_TABLES` in `src/persistence/errors.ts` is what turns a guard firing
+   * into a readable error instead of Prisma's P2003 "Foreign key constraint
+   * violated" lie. It named seven tables while fourteen were guarded, so on half
+   * of them the translation silently did not happen — for `decision_verdict`,
+   * since ADR-0022. Nothing noticed, because nothing compared the two lists.
+   */
+  it('translates a guard failure on every table that has one', () => {
+    const guarded = new Set(REQUIRED_GUARDS.map(([, table]) => table))
+    for (const table of guarded) {
+      expect(
+        GUARDED_TABLES as readonly string[],
+        `${table} is guarded but errors.ts will report its abort as a foreign-key problem`,
+      ).toContain(table)
+    }
+    for (const table of GUARDED_TABLES) {
+      expect(guarded, `${table} is named in errors.ts and has no guard`).toContain(table)
     }
   })
 

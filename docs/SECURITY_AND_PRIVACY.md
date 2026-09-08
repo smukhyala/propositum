@@ -559,7 +559,12 @@ whole value of this section: it means the line cannot be crossed by accident.
   therefore not an integration job. It is a schema change plus a second writer, ~~and the second
 writer~~ **— amended 2026-09-07
 ([ADR-0034](./adr/0034-somewhere-to-put-an-event-outside-a-sitting.md), decided and unbuilt): that
-second writer is now decided, `createExternalWriter` over its own `ExternalEvent` table.
+second writer is now **built** — `createExternalWriter` over its own `ExternalEvent` table, with
+  its own three append-only guards. **Nothing calls it**, pinned rather than promised
+  (`tests/reachability.test.ts`), so nothing outside a sitting has been recorded.
+  **The retention question this opens is owed and open:** an `ExternalEvent` hangs off an `Intention`
+  rather than a `Project`, so *"deleting a `Project` deletes its events"* does not reach it, and
+  unlike `offer_tally` this table has a subject. `docs/todo/12-between-sittings.md` carries it.
 `ObservationEvent.sessionId` stays required and `createLedgerWriter` stays its only writer, so the
 guarantee above is intact where it always was. What this section forbade is NOT spent: the two
 permitted sources are a person typing and a fixture replaying, neither is a sensor, and a third is

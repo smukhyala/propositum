@@ -318,8 +318,13 @@ this clause ([ADR-0034](./adr/0034-somewhere-to-put-an-event-outside-a-sitting.m
 now unfinished rather than structural. The first half of the sentence is unchanged and still true,
 and neither of the two permitted sources is a sensor, so *"Observation is one sensor"* above is
 untouched.** As it stands: an `ObservationEvent` requires a
-`sessionId` and there is a single ledger writer, so **nothing that happens outside a sitting can be
-recorded at all.** That absence is why `IntentionState` ships with five members instead of six, and
+`sessionId` and there is a single ledger writer, so ~~**nothing that happens outside a sitting can be
+recorded at all.**~~ **Re-marked 2026-09-07 by the change that built it
+([ADR-0034](./adr/0034-somewhere-to-put-an-event-outside-a-sitting.md)): the sentence is now true of
+the observation ledger rather than of the machine. A second table exists with its own single writer,
+and nothing calls that writer yet — `tests/reachability.test.ts` pins it at zero callers, which is
+the version of this claim that goes red on its own.** That absence is why `IntentionState` ships
+with five members instead of six, and
 it is the whole content of the repository's **Stage 2 — Event-Driven Understanding**
 ([`ROADMAP.md`](./ROADMAP.md)).
 

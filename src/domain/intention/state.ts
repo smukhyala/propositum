@@ -18,7 +18,11 @@
  * is not an oversight to be tidied later. `waiting` means *progress depends on
  * an external event or dependency*, and nothing in this system can produce an
  * external event: `ObservationEvent.sessionId` is required with a single ledger
- * writer, so no event outside a sitting can be persisted at all, and
+ * writer, so ~~no event outside a sitting can be persisted at all~~ **— re-marked
+ * 2026-09-07: true of THIS ledger, no longer of the database. `model
+ * ExternalEvent` exists (ADR-0034) with its own writer, and nothing calls that
+ * writer yet, which `tests/reachability.test.ts` pins rather than promises** —
+ * and
  * ~~`ExternalEvent` is on the do-not-build list~~ **struck 2026-09-07, and it
  * was never true rather than newly false: §8's list has ten entries and
  * `ExternalEvent` is not among them — the nearest is automatic ingestion, which

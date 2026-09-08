@@ -1,6 +1,9 @@
 # 12 — Somewhere to put an event outside a sitting, and an ordering that can see it
 
-**Status:** not started — **decided, not built.**
+**Status:** ~~not started — decided, not built~~ **step 1 built 2026-09-07; steps 2–9 open.** The
+ledger, its guards and its writer exist and nothing calls the writer — `tests/reachability.test.ts`
+pins that in its *deferred, and asserted as deferred* block, which is where the next person should
+look first.
 **Decided by:** [ADR-0034](../adr/0034-somewhere-to-put-an-event-outside-a-sitting.md),
 [ADR-0035](../adr/0035-what-a-person-said-they-are-waiting-on.md),
 [ADR-0036](../adr/0036-ordering-candidates-without-a-score.md) and
@@ -25,9 +28,12 @@ ls src/domain/detection/order-candidates.ts 2>/dev/null
 grep -n '"replay"' package.json
 ```
 
-**As of 2026-09-07 every one of these returns nothing.** The only mentions anywhere are the four
-ADRs, this file, and the glossary's fenced entries. When grep 1 returns a model, this file is stale
-and the striking rules at the top of [`AGENTS.md`](../../AGENTS.md) apply.
+~~**As of 2026-09-07 every one of these returns nothing.**~~ **Re-marked the same day, by the change
+that built step 1: greps 1 and 2 now return.** `model ExternalEvent` is in the schema and
+`externalEvent.create` has exactly one caller, `createExternalWriter`. Greps 3, 4 and 5 still return
+nothing — there is no `statedWait`, no sixth lifecycle member, no cross-kind ordering and no replay
+command. **Nothing calls `createExternalWriter`**, which is the honest summary of what step 1 bought:
+a place to put something, and nothing putting anything in it.
 
 ## Blocked by
 
@@ -55,16 +61,27 @@ things that are built and tested.
 In this order. Steps 1 and 2 leave the product working and change no behaviour, which is what makes
 them safe to land alone.
 
-1. **The ledger, read by nothing.** `model ExternalEvent` per
+1. ~~**The ledger, read by nothing.**~~ **Done 2026-09-07.** `model ExternalEvent` with `seq`
+   global and gapless, `onDelete: Restrict` rather than Prisma's `SetNull` default (which on an
+   append-only row is an UPDATE the guard aborts), and **no `untrusted` column** — the datamark door
+   stays singular. Three triggers in `prisma/triggers.sql` and `REQUIRED_GUARDS`;
+   `createExternalWriter` in `src/persistence/external-writer.ts`, pinned at zero callers in the
+   deferred block. `GUARDED_TABLES` was repaired in the same change — it named seven tables while
+   fourteen were guarded, so on half of them a guard firing surfaced as Prisma's P2003 lie
+   untranslated, and `tests/append-only.test.ts` now holds the two lists to each other rather than to
+   a hand-written third. `tests/external-ledger.test.ts` is the rest. Original text: `model ExternalEvent` per
    [ADR-0034](../adr/0034-somewhere-to-put-an-event-outside-a-sitting.md), its three append-only
    triggers registered in `REQUIRED_GUARDS` **and** in `GUARDED_TABLES` — the second list already
    names fewer tables than the first, and this is the table that would have hit that bug next — plus
    `createExternalWriter` as its only writer. Add the writer to `tests/reachability.test.ts`'s
    *deferred, and asserted as deferred* block, which is **empty right now and kept that way
    deliberately, "so the next deferred capability has somewhere to land."** This is that capability.
-2. **`ExternalEventSource` and `ExternalEventKind` as closed sets**, two members and one member
-   respectively, with the test that asserts those counts. A third source is the sensor decision and
-   is not this file.
+2. ~~**`ExternalEventSource` and `ExternalEventKind` as closed sets**~~ **Done 2026-09-07, and the
+   type is `ExternalEventStatedBy`** — the field is `statedBy`, not `source`, because `event.source`
+   already means an `ApprovedSourceId` and `CaptureAdapter` was renamed off `ObservationSource` to
+   stop exactly that. Two members and one member, asserted by length in
+   `tests/external-ledger.test.ts` so a third goes red. A third source is the sensor decision and is
+   still not this file.
 3. **`Intention.statedWait`**, written on the working-agreement screen and by nothing else. Move the
    writer assertion out of the deferred block in the same commit — that is the reachability rule,
    and it is the step where it bites.

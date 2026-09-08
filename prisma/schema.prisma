@@ -102,8 +102,68 @@ model Intention {
   project   Project?          @relation(fields: [projectId], references: [id])
   sessions  WorkSession[]
   contracts HandoffContract[]
+  external  ExternalEvent[]
 
   @@map("intention")
+}
+
+/// One thing that happened OUTSIDE a sitting, stated by a structured source and
+/// never minted by a model. ADR-0034.
+///
+/// The second ledger, and deliberately a second TABLE rather than a nullable
+/// `ObservationEvent.sessionId`: a nullable column would hand every existing
+/// reader of that table rows it was written before there were any, and its
+/// `seq` is gapless PER SESSION, which a session-free row has nothing to be
+/// gapless within.
+///
+/// `ObservationEvent.sessionId` stays required and `createLedgerWriter` stays
+/// its only writer. This table has its own single writer, `createExternalWriter`,
+/// and the two never read each other's.
+model ExternalEvent {
+  id          String   @id @default(cuid())
+  /// Ledger-assigned and gapless, and GLOBAL rather than per-session, because
+  /// there is no session to be gapless within.
+  seq         Int      @unique
+  /// ExternalEventStatedBy: declared | replay. Neither is a sensor, and that is
+  /// the whole guard — there is no member for a thing that watches something and
+  /// writes rows on its own schedule. A third member is an ADR.
+  statedBy    String
+  occurredAt  DateTime
+  /// Source-supplied, never Date.now(), so a week-long fixture replays in a
+  /// second. Relative to the first event of the stream that wrote it; zero for
+  /// `declared`, where there is no stream.
+  elapsedMs   Int
+  /// ExternalEventKind: arrived. One member is the honest size of what two
+  /// non-sensor sources can state, not a placeholder.
+  kind        String
+  /// Which Intention this bears on, or null. Set by the person or the fixture
+  /// that stated the event. No detector and no model boundary may set it.
+  ///
+  /// `Restrict`, never `SetNull`. Prisma's default for an optional relation is
+  /// `SetNull`, which on this table is an UPDATE against a row the no-UPDATE
+  /// trigger aborts — returning through Prisma as the P2003 "Foreign key
+  /// constraint violated" lie. `HandoffContract` decided this identically and
+  /// carries the argument. THE HONEST LIMIT, inherited in a harder form because
+  /// every row here is frozen rather than only the accepted ones: an Intention
+  /// any ExternalEvent points at cannot be deleted at all.
+  intentionId String?
+  /// Only what Propositum itself recorded: which member stated the row, and when
+  /// it was written. NOT the browser-attested sense the observation ledger uses —
+  /// nothing attests either source here.
+  ///
+  /// There is deliberately NO `untrusted` column. UntrustedContent is anything a
+  /// page could have authored, and the door that datamarks it is
+  /// `createLedgerWriter`, pinned at one caller so there is no second path by
+  /// which raw text reaches SQLite. Neither permitted source can legitimately
+  /// fill one: a person typed the words and a fixture supplied them. A source
+  /// that genuinely carries page-authored text is a third `statedBy` member and
+  /// arrives with the door, not before it.
+  attested    Json
+
+  intention Intention? @relation(fields: [intentionId], references: [id], onDelete: Restrict)
+
+  @@index([intentionId])
+  @@map("external_event")
 }
 
 /// The single durable workspace. Owns every ApprovedSource, Document and

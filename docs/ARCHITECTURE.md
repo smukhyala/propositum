@@ -215,18 +215,27 @@ so it is a second **signal** and not a second sensor. Built, and the cell has no
 **The structural fact that makes this hard to change by accident.**
 `ObservationEvent.sessionId` is **required** in `prisma/schema.prisma`, its relation to `WorkSession`
 is non-nullable, and `createLedgerWriter` is the only thing in the repository that calls
-`observationEvent.create`. So **no event outside a sitting can be persisted at all.** `ExternalEvent`
-is not merely unbuilt — there is nowhere to put one. That is worth stating precisely because it means
+`observationEvent.create`. So ~~**no event outside a sitting can be persisted at all.**
+`ExternalEvent` is not merely unbuilt — there is nowhere to put one.~~ **Re-marked 2026-09-07, later the same day, by the change that built it.** `model ExternalEvent` is in `prisma/schema.prisma` with its own three append-only triggers and its own single writer, `createExternalWriter`. The claim is therefore now true of the **observation ledger** rather than of the database: `ObservationEvent.sessionId` is still required and `createLedgerWriter` is still its only caller, pinned by `tests/reachability.test.ts`. **Nothing writes an `ExternalEvent` yet** — the same file pins that writer at zero callers in its *deferred, and asserted as deferred* block, so it is a claim the suite goes red on rather than a sentence somebody has to keep true. **The Status
+cell has not moved and must not:** a second *ledger* is not a second *sensor*, which is the
+distinction [ADR-0033](./adr/0033-a-late-tick-is-a-slept-machine.md) drew when it added a second
+signal, and observation is still one sensor, browser only. That is worth stating precisely because it means
 event ingestion cannot arrive by accident, and it is also the reason `waiting` is absent from the
 lifecycle union (below).
 
-*What would have to exist first:* ~~either a second ledger writer or a nullable `sessionId`.~~
-**Corrected 2026-09-07 — the argument was attached and one branch was closed ([ADR-0034](./adr/0034-somewhere-to-put-an-event-outside-a-sitting.md)): a
-second ledger writer over a second table, with the nullable `sessionId` refused because it would
-hand every existing `ObservationEvent` reader rows it was written before there were any. Decided,
-not built — `grep -n 'model ExternalEvent' prisma/schema.prisma` returns nothing, the sentence above
-still holds of the database, and this cell has not moved.** ~~Both are
-schema changes that need an argument attached, not an afternoon of wiring.
+*What would have to exist first:* ~~either a second ledger writer or a nullable `sessionId`. Both are
+schema changes that need an argument attached, not an afternoon of wiring.~~ **Both halves were spent
+on 2026-09-07.** [ADR-0034](./adr/0034-somewhere-to-put-an-event-outside-a-sitting.md) attached the
+argument and closed one of the two branches — a second ledger writer over a second table, with the
+nullable `sessionId` refused because it would hand every existing `ObservationEvent` reader rows it
+was written before there were any — and the wave that accepted it built the table the same day.
+`model ExternalEvent`, its three append-only guards and `createExternalWriter` all exist.
+
+**Nothing calls that writer**, pinned at zero callers in `tests/reachability.test.ts`'s *deferred,
+and asserted as deferred* block, so no event outside a sitting has actually been persisted. **And
+this cell has not moved**, which is the distinction worth keeping: a second *ledger* is not a second
+*sensor*, on the reading [ADR-0033](./adr/0033-a-late-tick-is-a-slept-machine.md) already took when
+it added a second signal. Observation is still one sensor, browser only.
 
 ---
 
