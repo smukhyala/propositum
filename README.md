@@ -285,11 +285,13 @@ What has **not** changed: you still have to grant each source from the side pane
 grant needs a user gesture and nothing else can do it.
 [`extension/README.md`](./extension/README.md) is still the authoritative order for loading it.
 
-**To see any of this without waiting for an afternoon**, two development seeds:
+**To see any of this without waiting for an afternoon**, ~~two development seeds~~ **two development
+seeds and one measurement** *(2026-09-07)*:
 
 ```bash
 npm run seed:shift    # a finished shift with one open question — no model, no network
 npm run seed:offer    # replays an afternoon at the real ambient endpoint, so the real detector runs
+npm run replay -- src/fixtures/streams/partner-event.jsonl   # a recorded week, in a second
 ```
 
 `seed:shift` is the one worth having: it produces a `DecisionNeeded` nobody has answered, which is
@@ -312,7 +314,22 @@ waiting for an afternoon.**
 ```bash
 npm run seed:shift    # a finished shift with an open question, in under a second
 npm run seed:offer    # replays a real afternoon through the real detector
+npm run replay -- src/fixtures/streams/partner-event.jsonl   # a recorded week, in a second
 ```
+
+**`npm run replay` is the third and it is not a seed** *(added 2026-09-07,
+[ADR-0037](./docs/adr/0037-was-the-offer-any-good.md))*. The other two write to your database on
+purpose, because their job is to put something on your screen. This one builds a throwaway SQLite
+file, replays a recorded stream into it, prints what Propositum would have surfaced with the reason
+beside each, and deletes it — a measurement that left rows behind is one you could only run once. It
+costs nothing and calls no model.
+
+**Every stream names what it must NOT surface, and that is the half that matters.** The shipped
+fixture has four projects and speaks about one: a wait nothing answered stays quiet, an arrival
+nobody was waiting for stays quiet, and an arrival that answered a wait the person later replaced
+stays quiet — each with its own reason in the file, and `tests/replay.test.ts` refuses a stream whose
+silence list is empty. A fixture that only asserts what should appear measures enthusiasm rather than
+judgement.
 
 `seed:shift` writes the rows an afternoon would have produced — no model, no network. It
 deliberately fakes neither an offer nor capture: a composed offer has no row to write

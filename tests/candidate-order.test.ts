@@ -131,7 +131,16 @@ describe('every ordering renders as a sentence a person can check', () => {
    */
   it('names the fact that decided it, and quotes the person back to themselves', () => {
     expect(reasonFor(discharged(), NOW)).toBe(
-      'You said you were waiting on a reply from the venue, and it arrived 1 minutes ago.',
+      'You said you were waiting on a reply from the venue, and it arrived a minute ago.',
+    )
+    // Caught by rendering it in the real app rather than by a test: "1 minutes
+    // ago" on the front door, which is the one sentence on that screen a person
+    // is meant to trust.
+    expect(reasonFor(discharged({ arrivedAtEpochMs: NOW - 300_000 }), NOW)).toBe(
+      'You said you were waiting on a reply from the venue, and it arrived 5 minutes ago.',
+    )
+    expect(reasonFor(discharged({ arrivedAtEpochMs: NOW - 5_000 }), NOW)).toBe(
+      'You said you were waiting on a reply from the venue, and it arrived just now.',
     )
     expect(reasonFor(strand({ searches: 2, pages: 7 }), NOW)).toBe(
       'You searched for this, and read 7 pages about it.',

@@ -137,7 +137,14 @@ export function orderCandidates(candidates: readonly Candidate[]): Candidate[] {
 export function reasonFor(candidate: Candidate, nowEpochMs: number): string {
   if (candidate.kind === 'discharged-wait') {
     const minutes = Math.max(0, Math.round((nowEpochMs - candidate.arrivedAtEpochMs) / 60_000))
-    const when = minutes < 1 ? 'just now' : minutes < 60 ? `${minutes} minutes ago` : 'earlier'
+    const when =
+      minutes < 1
+        ? 'just now'
+        : minutes === 1
+          ? 'a minute ago'
+          : minutes < 60
+            ? `${minutes} minutes ago`
+            : 'earlier'
     return `You said you were waiting on ${candidate.statedWait}, and it arrived ${when}.`
   }
 
