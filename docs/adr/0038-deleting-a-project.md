@@ -1,6 +1,8 @@
 # ADR-0038 — Deleting a project, and the difference between immutability and retention
 
-**Status:** accepted · 2026-09-08 — **decided, not built**
+**Status:** accepted · 2026-09-08 — ~~decided, not built~~ **built the same day.**
+`src/persistence/repositories/index.ts` (`deleteWithEverything`), `src/server/actions.ts`
+(`deleteProject`), the project screen, and `tests/delete-project.test.ts`
 **Amends:** [`docs/SECURITY_AND_PRIVACY.md`](../SECURITY_AND_PRIVACY.md)'s *Retention and deletion*
 section, whose promise about deleting a `Project` was struck on 2026-09-07 for describing neither a
 capability nor a behaviour
@@ -33,10 +35,16 @@ relationship. Propositum's whole posture is that this data is theirs and stays o
 is *"delete everything you have ever done"* is not honouring that posture; it is relying on the
 person having nothing else worth keeping.
 
-The reason there is no delete is not that anybody decided against one. It is that **thirteen tables
-carry a no-`DELETE` trigger**, and a cascade through them aborts. Nobody chose that as a deletion
-policy; it is what an append-only ledger does when a delete arrives, and the policy question was
-never asked.
+The reason there is no delete is not that anybody decided against one. It is that ~~**thirteen
+tables** carry~~ **fourteen tables carried** a no-`DELETE` trigger, and a cascade through them
+aborts. Nobody chose that as a deletion policy; it is what an append-only ledger does when a delete
+arrives, and the policy question was never asked.
+
+*(**Thirteen was wrong when this was written, 2026-09-08.** `external_event` arrived from ADR-0034
+the same day and the count was taken without it. Corrected rather than quietly fixed because it is
+exactly the failure `AGENTS.md` names — *"never add a count you have to maintain by hand"* — and it
+went stale inside a single day. `REQUIRED_GUARDS` in `src/persistence/append-only.ts` is the thing
+that knows, and it carries no number.)*
 
 ## Decision
 
@@ -101,9 +109,32 @@ attaching it here would make deletion wait on it.
 
 ## What this costs
 
-- **Thirteen tables lose a guard**, and the count is the cost. Each was three-of-three and becomes
-  two-of-three. `tests/append-only.test.ts` will assert two rather than three for them, and a reader
-  scanning that file will see a weaker shape than the one that was there.
+- ~~**Thirteen tables lose a guard**~~ **Fourteen**, and the count is the cost. Each was
+  three-of-three and becomes two-of-three. `tests/append-only.test.ts` asserts two rather than three
+  for them, and a reader scanning that file will see a weaker shape than the one that was there.
+
+## What building it found, that this decision had wrong
+
+**Prisma resolves a mis-ordered delete by nullifying, not by refusing** *(added 2026-09-08, from
+`tests/delete-project.test.ts`)*. Property 3 above was written believing that a foreign key would
+abort a bad cascade, which is why *"one transaction, or none of it"* reads as a safety net. It is
+not one. `PRAGMA foreign_keys` is on, but for an **optional** relation Prisma's default is `SetNull`
+and Prisma performs the nullification itself: deleting the parent silently writes NULL into every
+child's foreign key. Measured — deleting an `Intention` a `WorkSession` still named left the session
+in place with `intentionId: null` and raised nothing at all.
+
+Three consequences, and none of them changes the decision:
+
+1. **The cascade order is load-bearing rather than tidy.** There are eleven optional relations in
+   this subtree, and a statement in the wrong place quietly edits a row it does not own.
+2. **On an append-only table the nullification is an `UPDATE`, and the guard that did NOT go aborts
+   it.** `ObservationEvent.approvedSourceId` is the case, and it is a pleasing one: the trigger this
+   ADR kept is what enforces the ordering of the deletes this ADR permitted.
+3. **One state is refused rather than resolved.** A sitting in another project naming this project's
+   `Intention` would be detached by nullification — one project's delete editing another's work. The
+   repository checks for it before the transaction opens and throws. Nothing produces that state
+   today; a loud refusal on it is cheap, and the alternative is found months later by somebody
+   wondering where a sitting's Intention went.
 - **The strongest thing this storage layer could say about itself gets a qualifier.** *"Append-only,
   and rows cannot be removed"* becomes *"append-only, and rows are removed only with the project
   they belong to, by a person."* The second is true and is a sentence rather than a shape.
@@ -118,10 +149,40 @@ attaching it here would make deletion wait on it.
   The next append-only table should ask which of the two it needs **before** it ships, and that is
   the durable finding here.
 
+## What survives the delete, and is not claimed to
+
+Named here rather than left for somebody to find, because the whole argument for this decision is
+that a person can remove *"a job search, a health question, a relationship"*.
+
+- **`thread_message_sent.key` keeps a plaintext subject, and this is the one worth acting on.**
+  `signatureOf` is `terms.slice(0, 4).join('+')`, and the phone thread's dedupe key is
+  `offer:<signature>` — so a deleted job search can leave `offer:visa+sponsorship+h1b+relocation` in
+  a table that belongs to no Project and is not reached by this cascade. `OfferReticence` already
+  refuses exactly this shape (*"sha256(salt + ':' + signature)… **never the terms themselves**"*),
+  so the repository knows a raw signature is subject-bearing. It is **not fixed here**: the salt
+  lives in `install_secret`, which `src/domain/conversation/messages.ts` cannot reach, so it is a
+  real change rather than a line. `docs/todo/04-quick-fixes.md` carries it.
+- **A `ModelCallRecord` with no run**, which belongs to no project. A boundary name, a model, a
+  duration, token counts — no page text and no objective. Tested.
+- **`offer_tally` and `google_credential`**, which belong to no project by design. Both were
+  justified on the grounds that guarding them would make them undeletable; **that argument is spent**
+  — guarding no longer implies undeletable — and what is now true instead is that they are the most
+  durable rows in the database, being reached by no delete path at all. Neither holds a subject.
+
+The screen's wording was corrected in the same commit for this reason: it said *"nothing is kept
+anywhere else"*, which is nearly true, and nearly true is the wrong register for the confirmation on
+an irreversible act.
+
 ## What would hold the line
 
-Nothing below exists — this is decided and not built, and
-[`docs/todo/13-deleting-a-project.md`](../todo/13-deleting-a-project.md) is the work.
+~~Nothing below exists — this is decided and not built, and
+[`docs/todo/13-deleting-a-project.md`](../todo/13-deleting-a-project.md) is the work.~~
+
+**Corrected 2026-09-08, hours later — all of it exists**, and todo 13 is struck in the same commit
+that struck this. Two rows below did not describe what shipped and are corrected in place rather
+than quietly reworded: the two surviving guards are asserted by **suffix** rather than by name, and
+*"a delete that fails partway leaves everything"* was never written as a test — what exists asserts
+a refusal **before** the transaction opens, which is a different claim.
 
 | | |
 |---|---|

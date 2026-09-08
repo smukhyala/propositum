@@ -131,7 +131,11 @@ export function compareCandidates(a: Candidate, b: Candidate): number {
  * for ever. Refusing OPEN waits closed half of it. **A discharged wait has the
  * same property and the first build did not notice**: `statedWait` is cleared
  * only by a person, the discharging `ExternalEvent` is on an append-only table
- * with a no-DELETE guard and can never be removed, and rank 0 is unconditional.
+ * ~~with a no-DELETE guard and can never be removed~~ **nothing removes on the
+ * passage of time** *(the guard went 2026-09-08,
+ * [ADR-0038](../../../docs/adr/0038-deleting-a-project.md) — the row now goes
+ * when the project does, which is a person deciding rather than a decay, so the
+ * argument below is unchanged)*, and rank 0 is unconditional.
  * Three of them would have shown zero strands, for ever, and `reasonFor` would
  * have read *"it arrived earlier"* about something from March.
  *

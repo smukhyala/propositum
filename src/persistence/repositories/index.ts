@@ -903,6 +903,96 @@ export interface ProjectRepository {
    * produce is the part worth fixing.
    */
   revokeSource(input: { projectId: string; originPattern: string }): Promise<number>
+  /**
+   * What deleting this project would take, for the sentence on the confirmation.
+   *
+   * [ADR-0038](../../../docs/adr/0038-deleting-a-project.md) property 2: *"the
+   * count is the only thing that makes the act reviewable"*. Three numbers
+   * rather than a row count, because *"1,483 rows"* tells a person nothing they
+   * can weigh and *"eleven sittings"* tells them whether this is the project
+   * they meant.
+   *
+   * **Not a preview of what the delete will do.** It is read outside the
+   * transaction, so a session that ends between this and the confirm is counted
+   * here and deleted there. That drift is acceptable at this scale — one person,
+   * one machine, one window — and pretending otherwise would mean holding a
+   * transaction open across a human decision, which is worse.
+   *
+   * Null when there is no such project.
+   */
+  deletionScope(
+    id: string,
+  ): Promise<{ sittings: number; documents: number; recordedActions: number } | null>
+  /**
+   * Delete a project and everything filed under it. All of it, or none.
+   *
+   * ── Why this is thirty-one statements and not one `onDelete: Cascade` ────
+   *
+   * The schema declares no cascade anywhere, so every required relation takes
+   * Prisma's default of `Restrict`. Adding `Cascade` to the schema would move
+   * this ordering into a place where it is invisible and where `prisma db push`
+   * rebuilds it — and the same rebuild is what silently drops the append-only
+   * triggers, which is the failure this repository is most careful about. An
+   * explicit order is longer and it is readable, testable, and cannot be
+   * rewritten by a migration nobody watched.
+   *
+   * **The order is leaves-in and it is load-bearing.** Every statement below
+   * deletes rows whose parents are still present. Reorder one and the delete
+   * aborts on a foreign key — which is safe, because of the next paragraph, but
+   * it is a bug rather than a design.
+   *
+   * ── One transaction, because a half-deleted project is worse ─────────────
+   *
+   * ADR-0038 property 3. A partial delete leaves an Intention with no Project,
+   * which is a state that already exists in the author's own database, renders
+   * on no screen, and cannot be removed. This path must not make more of them,
+   * so it is all-or-nothing and a failure leaves everything.
+   *
+   * ── The order is forced by Prisma nullifying, NOT by the foreign key ─────
+   *
+   * This was written believing a `Restrict` would abort a mis-ordered delete.
+   * **It does not, and the real behaviour is worse.** `PRAGMA foreign_keys` is
+   * on, but for an OPTIONAL relation Prisma's default is `SetNull` and Prisma
+   * performs the nullification itself: deleting a parent silently writes NULL
+   * into every child's foreign key. Measured, not assumed — deleting an
+   * `Intention` that a `WorkSession` still names left the session in place with
+   * `intentionId: null` and raised nothing.
+   *
+   * So a mis-ordered statement below does not fail loudly. It quietly edits a
+   * row it does not own, and there are eleven optional relations in this
+   * subtree for it to do that through. Two consequences:
+   *
+   *   - **On an append-only table the nullification is an UPDATE, and the
+   *     trigger aborts it.** `ObservationEvent.approvedSourceId` is the case:
+   *     delete an `ApprovedSource` while one event still cites it and the
+   *     no-UPDATE guard raises. That is the ordering constraint being enforced
+   *     by the one guard ADR-0038 did *not* remove, and it is why the events go
+   *     before the source below rather than by preference.
+   *   - **On a mutable table nothing catches it**, which is why the order is a
+   *     documented list rather than something to rearrange while tidying.
+   *
+   * ── What it deliberately does NOT reach ──────────────────────────────────
+   *
+   * A `ModelCallRecord` with no run. `runId` is optional and a record written
+   * outside a run belongs to no project, so the filter below scopes on the run
+   * and those rows stay. They hold no page text and no objective — a boundary
+   * name, a model, a token count, a duration.
+   *
+   * ── The one state it refuses rather than resolves ────────────────────────
+   *
+   * An Intention that a session in ANOTHER project names. `Intention.projectId`
+   * is `@unique`, so a project has at most one and whose it is is never
+   * ambiguous — but nothing stops a `WorkSession` in project A pointing at
+   * project B's Intention. Nothing produces that state today.
+   *
+   * If it ever exists, deleting B would detach A's session by nullification and
+   * say nothing, which is one project's delete silently editing another's work.
+   * So it is checked for first and throws before the transaction opens. A loud
+   * refusal on a state nothing creates is cheap; a silent cross-project write is
+   * the kind of thing found months later by somebody wondering where a sitting's
+   * Intention went.
+   */
+  deleteWithEverything(id: string): Promise<void>
 }
 
 function projectRepository(prisma: PrismaClient): ProjectRepository {
@@ -944,6 +1034,183 @@ function projectRepository(prisma: PrismaClient): ProjectRepository {
         data: { grantState: 'revoked' },
       })
       return count
+    },
+
+    deletionScope: async (id) => {
+      const project = await prisma.project.findUnique({ where: { id }, select: { id: true } })
+      if (project === null) return null
+
+      const [sittings, documents, recordedActions] = await Promise.all([
+        prisma.workSession.count({ where: { projectId: id } }),
+        prisma.document.count({ where: { projectId: id } }),
+        prisma.actionIntent.count({
+          where: { run: { contract: { session: { projectId: id } } } },
+        }),
+      ])
+
+      return { sittings, documents, recordedActions }
+    },
+
+    deleteWithEverything: async (id) => {
+      // Before anything opens: a sitting in another project naming this
+      // project's Intention. See the docblock — Prisma would resolve this by
+      // nullifying that sitting's `intentionId`, which is this delete editing
+      // work it does not own. Refused rather than resolved.
+      // Two tables carry `intentionId`, not one. The sitting nullifies silently
+      // (`SetNull`); the contract aborts at the last statement with Prisma's
+      // P2003 lie. Both are refused here so the person gets a sentence instead
+      // of either outcome.
+      const [sittingsElsewhere, contractsElsewhere] = await Promise.all([
+        prisma.workSession.count({
+          where: { intention: { projectId: id }, projectId: { not: id } },
+        }),
+        prisma.handoffContract.count({
+          where: { intention: { projectId: id }, session: { projectId: { not: id } } },
+        }),
+      ])
+      if (sittingsElsewhere + contractsElsewhere > 0) {
+        throw new Error(
+          `Refusing to delete project ${id}: work in another project names its Intention ` +
+            `(${sittingsElsewhere} sitting(s), ${contractsElsewhere} agreement(s)), and deleting ` +
+            'it would detach them.',
+        )
+      }
+
+      // Every filter below walks back to this one project. Written as relation
+      // filters rather than collected id lists so the scoping cannot drift from
+      // the schema — a renamed relation is a compile error here, where a stale
+      // `in: [...]` would be a silent under-delete.
+      const ofProject = { contract: { session: { projectId: id } } }
+      const ofRun = { run: ofProject }
+
+      await prisma.$transaction(async (tx) => {
+        /* ── the reading, and what hangs off it ───────────────────────── */
+        await tx.evidence.deleteMany({
+          where: { claim: { reading: { session: { projectId: id } } } },
+        })
+        await tx.sessionClaim.deleteMany({ where: { reading: { session: { projectId: id } } } })
+
+        /* ── verdicts, before the things they are verdicts on ─────────── */
+        await tx.changeVerdict.deleteMany({
+          where: { change: { changeset: ofProject } },
+        })
+        await tx.decisionVerdict.deleteMany({
+          where: { decision: { report: ofProject } },
+        })
+        await tx.confirmationVerdict.deleteMany({ where: { request: ofRun } })
+        await tx.outcomeVerdict.deleteMany({ where: { shiftOutcome: ofRun } })
+        await tx.actionOutcome.deleteMany({ where: { intent: ofRun } })
+
+        /* ── everything pointing at an ActionIntent, then the intent ──── */
+        await tx.actionDispatch.deleteMany({ where: ofRun })
+        await tx.reviewFinding.deleteMany({ where: ofRun })
+        await tx.proposedChange.deleteMany({ where: { changeset: ofProject } })
+        await tx.decisionNeeded.deleteMany({ where: { report: ofProject } })
+        // Before ActionEvidence: a ConfirmationRequest names the evidence row
+        // the person was looking at when they authorised an effect.
+        await tx.confirmationRequest.deleteMany({ where: ofRun })
+        await tx.actionEvidence.deleteMany({ where: ofRun })
+        await tx.actionIntent.deleteMany({ where: ofRun })
+        // After ActionIntent, which names the step it belongs to.
+        await tx.planStep.deleteMany({ where: ofRun })
+        await tx.modelCallRecord.deleteMany({ where: ofRun })
+
+        /* ── the run's own products, then the run ─────────────────────── */
+        // Before the changesets, which is the one place in this cascade where a
+        // silent nullification is harmless: `Changeset.shiftOutcome` is optional
+        // and `changeset` carries no UPDATE guard, so the SET NULL lands on rows
+        // the loop below is about to delete anyway.
+        await tx.shiftOutcome.deleteMany({ where: ofRun })
+        await tx.shiftReport.deleteMany({ where: ofProject })
+        await tx.agentRun.deleteMany({ where: ofProject })
+
+        /* ── the document cluster, which is a RING and not a chain ──────
+         *
+         * `HandoffContract`, `Changeset` and `DocumentVersion` reference each
+         * other in a cycle that no single ordering resolves:
+         *
+         *   - `Changeset.base -> DocumentVersion` is `Restrict`, so the
+         *     changeset must go first;
+         *   - `DocumentVersion.committedFrom -> Changeset` is `SetNull` — a
+         *     NAMED relation, `@relation("settled")`, which is how it stayed
+         *     invisible — so deleting the changeset UPDATEs the version, and
+         *     `document_version_no_update` aborts it. The version must go first;
+         *   - `HandoffContract.baseVersion -> DocumentVersion` is `SetNull` too,
+         *     and `handoff_contract_frozen_once_accepted` aborts that UPDATE on
+         *     an accepted contract, so the contract must go before the version;
+         *   - `Changeset.contract -> HandoffContract` is `Restrict`, so the
+         *     changeset must go before the contract.
+         *
+         * **This was shipped as a straight line and it was broken.** Any project
+         * whose document review ever FINISHED — `finishReview` is what writes
+         * `committedFromChangesetId` — aborted at the changeset statement and
+         * could never be deleted. It reached a green suite because the fixture
+         * built a changeset and a version and never settled one into the other.
+         *
+         * So: a fixpoint, deleting only what nothing points at, until nothing is
+         * left. Each pass strictly shrinks the cluster or the loop refuses to
+         * spin, and the ordinary case — one document, one settled review —
+         * finishes in two.
+         */
+        for (;;) {
+          const before =
+            (await tx.changeset.count({ where: ofProject })) +
+            (await tx.handoffContract.count({ where: { session: { projectId: id } } })) +
+            (await tx.documentVersion.count({ where: { document: { projectId: id } } }))
+          if (before === 0) break
+
+          // A changeset nothing settled from nullifies no version when it goes.
+          await tx.changeset.deleteMany({ where: { ...ofProject, settledAs: { is: null } } })
+          // A contract with no changeset left pointing at it.
+          await tx.handoffContract.deleteMany({
+            where: { session: { projectId: id }, changesets: { none: {} } },
+          })
+          // A version nothing bases on — neither a changeset nor a contract.
+          await tx.documentVersion.deleteMany({
+            where: {
+              document: { projectId: id },
+              changesets: { none: {} },
+              contracts: { none: {} },
+            },
+          })
+
+          const after =
+            (await tx.changeset.count({ where: ofProject })) +
+            (await tx.handoffContract.count({ where: { session: { projectId: id } } })) +
+            (await tx.documentVersion.count({ where: { document: { projectId: id } } }))
+
+          // Refuse to spin. A cluster that cannot shrink means a reference this
+          // loop does not know about, and looping forever inside a transaction
+          // is a worse way to find that out than a message naming the counts.
+          if (after >= before) {
+            throw new Error(
+              `Refusing to delete project ${id}: the document cluster stopped shrinking at ` +
+                `${after} row(s) across handoff_contract, changeset and document_version. ` +
+                'Something references one of them that this cascade does not account for.',
+            )
+          }
+        }
+
+        // After the contract, which names the reading it was drafted from.
+        await tx.sessionReading.deleteMany({ where: { session: { projectId: id } } })
+        await tx.workOffer.deleteMany({ where: { session: { projectId: id } } })
+        await tx.observationEvent.deleteMany({ where: { session: { projectId: id } } })
+        await tx.workSession.deleteMany({ where: { projectId: id } })
+        // After the events, which name the source they were observed on.
+        await tx.approvedSource.deleteMany({ where: { projectId: id } })
+
+        /* ── documents, after the loop above emptied their versions ────── */
+        await tx.document.deleteMany({ where: { projectId: id } })
+
+        /* ── the second ledger, then the Intention it hangs off ───────── */
+        // ADR-0034 could not answer this alone: an ExternalEvent belongs to no
+        // Project. `onDelete: Restrict` stops being a refusal here and becomes
+        // the reason this line comes before the next one.
+        await tx.externalEvent.deleteMany({ where: { intention: { projectId: id } } })
+        await tx.intention.deleteMany({ where: { projectId: id } })
+
+        await tx.project.delete({ where: { id } })
+      })
     },
   }
 }

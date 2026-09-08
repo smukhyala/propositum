@@ -143,8 +143,15 @@ refused action is evidence about H3.
 **Forbids:** an action with no recorded reason · a mutable ledger row · a `ShiftReport` section
 that is model-authored rather than rendered from durable rows.
 
-**Enforced:** three SQLite triggers per append-only table — no-`UPDATE`, no-`DELETE`, and a
-no-replace `BEFORE INSERT` guard, because `INSERT OR REPLACE` walks through the first two. Prisma's
+**Enforced:** ~~three~~ **two** SQLite triggers per append-only table — no-`UPDATE`, ~~no-`DELETE`,~~
+and a no-replace `BEFORE INSERT` guard, because `INSERT OR REPLACE` walks through ~~the first two~~
+**an `UPDATE` guard alone**. *(Struck 2026-09-08 —
+[ADR-0038](./adr/0038-deleting-a-project.md), so a person may delete a project and take its ledgers
+with it. **What this principle forbids is unchanged**: a mutable ledger row. Nothing can rewrite one
+and nothing can replace one. The no-`REPLACE` argument never rested on the delete guard either —
+`PRAGMA recursive_triggers` defaults off, so a DELETE trigger never fired on a REPLACE, which is why
+removing it left no hole. `REQUIRED_GUARDS` in `src/persistence/append-only.ts` is what knows the
+list, and it carries no number.)* Prisma's
 SQLite migrations silently drop triggers on any table rebuild, so they are reinstalled **and
 verified at every startup**. The guard is a runtime invariant, not a migration artifact.
 

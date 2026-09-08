@@ -1,6 +1,21 @@
-# 13 — Deleting a project, and letting thirteen ledgers lose a guard
+# 13 — Deleting a project, and letting ~~thirteen~~ fourteen ledgers lose a guard
 
-**Status:** not started — **decided, not built.**
+**Status:** ~~not started — decided, not built.~~ **Done 2026-09-08, the same day the ADR was
+accepted.** `deleteWithEverything` in `src/persistence/repositories/index.ts`, `deleteProject` in
+`src/server/actions.ts`, *Delete this project* on the project screen, and
+`tests/delete-project.test.ts`. Everything below is struck rather than deleted, per the rules at the
+top of [`AGENTS.md`](../../AGENTS.md).
+
+**Three things it found that this file did not predict**, and the second is the one worth reading:
+
+1. **The count was thirteen and it was fourteen.** `external_event` arrived from ADR-0034 the same
+   day and both this file and the ADR took the count without it.
+2. **A mis-ordered delete does not fail — Prisma nullifies the child.** `PRAGMA foreign_keys` is on,
+   but for an optional relation Prisma's default is `SetNull` and it performs that itself, so a bad
+   cascade quietly edits rows it does not own rather than aborting. The order below is load-bearing
+   for that reason and not for the one written here. ADR-0038 now carries the measurement.
+3. **The delete needed a refusal nobody asked for.** A sitting in another project naming this
+   project's Intention would be silently detached; it now throws before the transaction opens.
 **Decided by:** [ADR-0038](../adr/0038-deleting-a-project.md), accepted 2026-09-08
 **Blocked by:** nothing in code, and nothing in judgment. This is the one file in this folder that
 makes the product **safer** rather than less safe — [`06`](./06-buying-things.md),
@@ -20,9 +35,15 @@ grep -c "observation_event_no_delete\|action_intent_no_delete" src/persistence/a
 ls tests/delete-project.test.ts 2>/dev/null
 ```
 
-**As of 2026-09-08 grep 1 and check 3 return nothing, and grep 2 returns 2** — the guards are all
+~~**As of 2026-09-08 grep 1 and check 3 return nothing, and grep 2 returns 2** — the guards are all
 still there. When grep 1 returns code, this file is stale and the striking rules at the top of
-[`AGENTS.md`](../../AGENTS.md) apply.
+[`AGENTS.md`](../../AGENTS.md) apply.~~
+
+**Later the same day: grep 1 returns code, check 3 lists the file, and grep 2 returns 0.** Which is
+what done looks like here. Note that grep 2's expectation — *"expect three per table today, two
+after"* — was written against the wrong subject: it counts trigger NAMES in `append-only.ts`, and
+the delete guards are gone from that list entirely, so it prints `0` rather than the `2` this file
+predicted. The command was right and the sentence beside it was not.
 
 ## Blocked by
 

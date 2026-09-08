@@ -160,7 +160,21 @@ describe('the writer', () => {
 })
 
 describe('append-only, and the first ledger untouched', () => {
-  it('refuses an UPDATE and a DELETE on a written row', async () => {
+  /**
+   * ~~Refuses an UPDATE and a DELETE.~~ **An UPDATE only, 2026-09-08 —
+   * [ADR-0038](../docs/adr/0038-deleting-a-project.md).**
+   *
+   * The second ledger lost its delete guard with the first, and for the same
+   * reason: a person may delete the project an Intention belongs to, and these
+   * rows go with the Intention. What is preserved is the half that made this
+   * table worth guarding — a row that can be corrected afterwards is a row whose
+   * provenance is an opinion, and no row here can be corrected.
+   *
+   * The DELETE assertion is kept as its inverse rather than deleted, because
+   * *"append-only"* in this file's own describe still has to mean something
+   * exact: not *"nothing ever goes"*, but *"nothing is ever rewritten"*.
+   */
+  it('refuses an UPDATE, and permits a DELETE, on a written row', async () => {
     const writer = createExternalWriter(prisma)
     const written = await writer.append({
       statedBy: 'declared',
@@ -174,7 +188,9 @@ describe('append-only, and the first ledger untouched', () => {
     await expect(
       prisma.externalEvent.update({ where: { id: written.id }, data: { kind: 'arrived' } }),
     ).rejects.toThrow()
-    await expect(prisma.externalEvent.delete({ where: { id: written.id } })).rejects.toThrow()
+
+    await prisma.externalEvent.delete({ where: { id: written.id } })
+    expect(await prisma.externalEvent.findUnique({ where: { id: written.id } })).toBeNull()
   })
 
   /**

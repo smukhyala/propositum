@@ -73,70 +73,87 @@ export interface TransactionalExecutor extends RawExecutor {
  * targets, and a claim is by definition a mutation. The append-only record of
  * what a dispatch was for is its `action_intent`, which is guarded and is
  * committed before the dispatch exists.
+ *
+ * ── No table here has a delete guard any more, 2026-09-08 ────────────────
+ *
+ * ~~Three per table.~~ **Two** —
+ * [ADR-0038](../../docs/adr/0038-deleting-a-project.md), which lets a person
+ * delete a Project and take everything filed under it. `action_evidence` made
+ * this argument first, for itself, and the comment that was on it is now the
+ * comment on the whole list:
+ *
+ *   **Immutability is about rewriting history. Retention is about how long
+ *   history is kept. Only the second needs DELETE.**
+ *
+ * What is preserved is the half that was ever load-bearing. Nothing can rewrite
+ * a row and nothing can replace one, so an `ActionIntent` still cannot be edited
+ * after the fact and a `ChangeVerdict` still records what a person decided. What
+ * a person can now do is throw the whole receipt away — for one project, in one
+ * act, through `deleteProject`.
+ *
+ * **The count was wrong in the ADR and it is worth saying rather than
+ * quietly fixing.** ADR-0038 and `docs/todo/13-deleting-a-project.md` both say
+ * *thirteen tables*. It was **fourteen**: `external_event` arrived from
+ * ADR-0034 the same day and the count was written without it. Which is the
+ * failure `AGENTS.md` names — *"never add a count you have to maintain by
+ * hand"* — so there is deliberately no number in this docblock, and the list
+ * below is the thing that knows.
+ *
+ * **`prisma/triggers.sql` still DROPs every one of them at every startup**, and
+ * that asymmetry is load-bearing rather than tidy: without the DROP, a delete
+ * would succeed on a fresh database and abort on one created before today.
  */
 export const REQUIRED_GUARDS: ReadonlyArray<readonly [string, string]> = [
   ['external_event_no_update', 'external_event'],
-  ['external_event_no_delete', 'external_event'],
   ['external_event_no_replace', 'external_event'],
   ['observation_event_no_update', 'observation_event'],
-  ['observation_event_no_delete', 'observation_event'],
   ['observation_event_no_replace', 'observation_event'],
   ['action_intent_no_update', 'action_intent'],
-  ['action_intent_no_delete', 'action_intent'],
   ['action_intent_no_replace', 'action_intent'],
   ['action_outcome_no_update', 'action_outcome'],
-  ['action_outcome_no_delete', 'action_outcome'],
   ['action_outcome_no_replace', 'action_outcome'],
   ['model_call_record_no_update', 'model_call_record'],
-  ['model_call_record_no_delete', 'model_call_record'],
   ['model_call_record_no_replace', 'model_call_record'],
   ['change_verdict_no_update', 'change_verdict'],
-  ['change_verdict_no_delete', 'change_verdict'],
   ['change_verdict_no_replace', 'change_verdict'],
   ['document_version_no_update', 'document_version'],
-  ['document_version_no_delete', 'document_version'],
   ['document_version_no_replace', 'document_version'],
+  /**
+   * `handoff_contract` keeps its UPDATE guard and loses a CONDITIONAL delete
+   * guard — `handoff_contract_no_delete_accepted`, accepted contracts only.
+   *
+   * The condition was never the argument. An accepted contract is frozen
+   * because the deadline derives from its `acceptedAt` and a crash-restart loop
+   * must not silently reset the budget, and the guard below is what holds that.
+   * Deleting the project a contract belongs to ends the budget rather than
+   * resetting it, which is the case the old trigger could not tell apart.
+   */
   ['handoff_contract_frozen_once_accepted', 'handoff_contract'],
-  ['handoff_contract_no_delete_accepted', 'handoff_contract'],
   ['work_offer_no_update', 'work_offer'],
-  ['work_offer_no_delete', 'work_offer'],
   ['work_offer_no_replace', 'work_offer'],
   ['shift_outcome_no_update', 'shift_outcome'],
-  ['shift_outcome_no_delete', 'shift_outcome'],
   ['shift_outcome_no_replace', 'shift_outcome'],
   ['outcome_verdict_no_update', 'outcome_verdict'],
-  ['outcome_verdict_no_delete', 'outcome_verdict'],
   ['outcome_verdict_no_replace', 'outcome_verdict'],
   ['confirmation_request_no_update', 'confirmation_request'],
-  ['confirmation_request_no_delete', 'confirmation_request'],
   ['confirmation_request_no_replace', 'confirmation_request'],
   ['confirmation_verdict_no_update', 'confirmation_verdict'],
-  ['confirmation_verdict_no_delete', 'confirmation_verdict'],
   ['confirmation_verdict_no_replace', 'confirmation_verdict'],
   ['decision_verdict_no_update', 'decision_verdict'],
-  ['decision_verdict_no_delete', 'decision_verdict'],
   ['decision_verdict_no_replace', 'decision_verdict'],
   /**
-   * `action_evidence` has TWO guards, not three, and `action_evidence_no_delete`
-   * is absent on purpose.
-   *
-   * This is the only entry in this list that needs an argument, so here it is.
-   * ActionEvidence is the one durable table that is SWEPT: ADR-0010's retention
+   * `action_evidence` was the FIRST table here to lose its delete guard, and
+   * for a different reason from the rest: it is SWEPT. ADR-0010's retention
    * section states plainly that "a no-DELETE trigger and a sweep cannot both be
    * true", and CONTEXT.md's ActionEvidence entry says the same. The trigger
    * shipped anyway, which made a published retention promise unenforceable at
    * the storage layer while a green suite read as though it were enforced.
    *
-   * The two remaining guards carry the whole of what append-only was protecting
-   * here: a ConfirmationRequest points at one of these rows as the thing the
-   * person was looking at when they authorised an effect, and a row that can be
-   * rewritten is not a record of what they were shown. Immutability is about
-   * rewriting history. Retention is about how long history is kept. Only the
-   * second needs DELETE.
-   *
-   * `prisma/triggers.sql` still DROPs the old trigger every startup, so a
-   * database created before this change is corrected rather than left with a
-   * sweep that fails on one machine and works on another.
+   * It is left called out because the two paths are still different. Every
+   * other table here loses rows only when a person deletes their project;
+   * this one also loses them to `src/server/evidence-sweep.ts` after
+   * `ACTION_EVIDENCE_RETENTION_DAYS`, with no person involved. A second
+   * automatic deleter of anything else in this list would be a new decision.
    */
   ['action_evidence_no_update', 'action_evidence'],
   ['action_evidence_no_replace', 'action_evidence'],

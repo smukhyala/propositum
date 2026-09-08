@@ -390,6 +390,18 @@ reversed outright here, for ADR-0008's reason one step on: a person who must fir
 workspace has been asked to know in advance that what they are about to do is worth recording, and
 that is the bet that already lost.
 
+**A person may delete one, and it is the only act that removes anything here** *(added 2026-09-08 —
+[ADR-0038](docs/adr/0038-deleting-a-project.md))*. It takes everything filed under it: every
+ApprovedSource, Document, WorkSession and their descendants, the Intention whose `projectId` this is,
+and that Intention's ExternalEvents. **Whole projects only** — there is no per-row, per-sitting or
+per-event delete, because a ledger you can remove one line from is a ledger that can be rewritten by
+subtraction. So a person creates no project and may destroy one, which is the asymmetry the entry
+above earns: filing is a judgment Propositum makes on your behalf, and unfiling is not.
+
+The counterpart is that a Project is now the **unit of retention** as well as of filing. Nothing else
+in the schema is, and the fourteen tables that gave up `no_delete` gave it up for this and for
+nothing else.
+
 **Two corrections make that defensible, and are therefore part of the term rather than
 decoration:** the name is editable, and a sitting can be moved to another project or split out into
 its own. Rows are mutable for exactly this reason — a Project holds no inference and carries no

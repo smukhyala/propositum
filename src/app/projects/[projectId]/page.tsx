@@ -57,6 +57,7 @@ import {
   endSession,
   refileSession,
   noteArrived,
+  deleteProject,
   renameProject,
   stateWait,
   saveDocument,
@@ -131,6 +132,39 @@ function clock(at: Date): string {
 
 function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : {}
+}
+
+/**
+ * What a delete takes, as a sentence rather than three numbers.
+ *
+ * ADR-0038 property 2: the count is the only thing that makes the act
+ * reviewable. So it names the things a person recognises — sittings, documents,
+ * what Propositum did — and **drops the zeroes**, because *"0 documents"* reads
+ * as a warning about documents and this list should only mention what exists.
+ *
+ * When everything is zero it says so plainly instead of listing nothing. That is
+ * a real state: a project created and never used, which is exactly the one
+ * somebody deletes without hesitating and should not be made to hesitate over.
+ */
+function namesWhatGoes(
+  scope: { sittings: number; documents: number; recordedActions: number } | null,
+): string {
+  if (scope === null) return 'everything recorded under it'
+
+  const parts = [
+    [scope.sittings, 'sitting', 'sittings'],
+    [scope.documents, 'document', 'documents'],
+    [scope.recordedActions, 'recorded step', 'recorded steps'],
+  ] as const
+
+  const named = parts
+    .filter(([n]) => n > 0)
+    .map(([n, one, many]) => `${n} ${n === 1 ? one : many}`)
+
+  if (named.length === 0) return 'nothing has been recorded under it yet'
+  if (named.length === 1) return named[0] as string
+
+  return `${named.slice(0, -1).join(', ')} and ${named[named.length - 1]}`
 }
 
 export default async function ProjectPage({
@@ -275,6 +309,23 @@ export default async function ProjectPage({
     redirect(here)
   }
 
+  /**
+   * The one act on this page that cannot be undone.
+   *
+   * On success there is nowhere to go back to — the project this page is about
+   * does not exist — so it redirects to the front door rather than to `here`,
+   * which would render a 404 for a delete that worked.
+   */
+  async function remove(formData: FormData) {
+    'use server'
+
+    const result = await deleteProject(projectId, String(formData.get('confirmName') ?? ''))
+    if (!result.ok) {
+      redirect(`${here}?problem=${encodeURIComponent(result.problem.message)}`)
+    }
+    redirect('/')
+  }
+
   async function itArrived() {
     'use server'
 
@@ -365,6 +416,11 @@ export default async function ProjectPage({
    * a bug. It is not dressed up.
    */
   const intentionFacts = await repos.intentions.factsForProject(projectId)
+
+  // What a delete would take. Read here rather than behind the disclosure,
+  // because a count that arrives after the person has already decided to open
+  // the section is a count they have to go back and read.
+  const deletionScope = await repos.projects.deletionScope(projectId)
 
   const lifecycle = frontDoorRow({
     facts: intentionFacts,
@@ -700,6 +756,34 @@ export default async function ProjectPage({
               </button>
             </form>
           ) : null}
+        </Disclosure>
+
+        {/* Its own disclosure, not a row inside "Filed wrong?" — deleting is not
+            a filing correction, and putting it beside Rename would be putting an
+            irreversible act one line under a recoverable one. */}
+        <Disclosure summary="Delete this project">
+          <form className="pj-form" action={remove}>
+            <p className="pj-hint">
+              This removes <strong>{project.name}</strong> and everything Propositum recorded
+              under it — {namesWhatGoes(deletionScope)}. It cannot be undone and there is no bin.
+              Your other projects are untouched.
+            </p>
+            <label className="pj-field">
+              <span className="pj-label">Type its name to confirm</span>
+              <input
+                className="pj-input"
+                name="confirmName"
+                type="text"
+                required
+                maxLength={120}
+                autoComplete="off"
+                placeholder={project.name}
+              />
+            </label>
+            <button className="pj-submit" type="submit">
+              Delete it
+            </button>
+          </form>
         </Disclosure>
       </Section>
 

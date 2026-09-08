@@ -861,9 +861,38 @@ describe('the safety machinery is reachable from the product', () => {
    * The first version WAS weaker: it asserted the deleting FILE was the
    * repository, which any new `actionEvidence.deleteMany` anywhere in a
    * 1,500-line file would satisfy, and it could not see raw SQL at all.
+   *
+   * **And that is exactly what happened, 2026-09-08.** `deleteWithEverything`
+   * ([ADR-0038](../docs/adr/0038-deleting-a-project.md)) added a second
+   * `actionEvidence.deleteMany` to this same file, and both assertions stayed
+   * green — the file-level one because it is the same file, the caller one
+   * because the new path does not go through `evidence.sweep*`. The describe
+   * name was false for the length of that commit. So there is now a third
+   * assertion naming both deleters, and the name says *two things*, because a
+   * green tick whose sentence has quietly stopped being true is worse than no
+   * tick at all.
    */
-  describe('nothing but the sweep deletes action evidence', () => {
+  describe('only the sweep and the project delete remove action evidence', () => {
     const repos = 'src/persistence/repositories/index.ts'
+
+    it('names both deleters, so a third cannot arrive unnoticed', () => {
+      const source = stripImports(stripComments(readFileSync(join(repo, repos), 'utf8')))
+
+      // One per permitted path: the timed sweep, and the cascade a person
+      // reaches through the typed confirmation. A third occurrence in this file
+      // is a new deleter of a table the database no longer protects.
+      const occurrences = source.match(/actionEvidence\.delete(Many)?\(/g) ?? []
+
+      expect(
+        occurrences.length,
+        'a third ActionEvidence deleter appeared — the table has no DELETE guard, so this list is the guard',
+      ).toBe(2)
+
+      expect(
+        callersOf('projects.deleteWithEverything', repos),
+        'the cascade that deletes ActionEvidence is reachable from somewhere new',
+      ).toEqual(['src/server/actions.ts'])
+    })
 
     it('the ORM delete lives only in the repository', () => {
       const deleters = PRODUCTION.filter((f) =>
@@ -2228,6 +2257,47 @@ describe('the front door orders more than one kind of thing', () => {
  * it held nothing. They are here now, above the line, which is where a reader
  * looks to find out what is wired.
  */
+/**
+ * Deleting a project — ADR-0038, and the one capability here that removes
+ * rather than adds.
+ *
+ * The caller count matters more than usual and in the opposite direction from
+ * everywhere else in this file. Elsewhere a second caller is a design question;
+ * here it is the guarantee. ADR-0038 property 1: *"whole projects only… a
+ * ledger you can remove one line from is a ledger you can rewrite by
+ * subtraction."* That property is held up by there being exactly one path that
+ * deletes **a project**, reached only by a person.
+ *
+ * ~~and by nothing else in `src/` calling a `delete` on any table this cascade
+ * touches.~~ **Struck 2026-09-08, the day it was written, because it was false
+ * when written and neither assertion below checked it.** `evidence-sweep.ts`
+ * deletes `ActionEvidence` on a timer, and the repository deletes credentials,
+ * pairings and reticence rows on their own paths. The narrow claim is the true
+ * one; the sweeping clause was a sentence that sounded like a guarantee and was
+ * pinned by nothing.
+ */
+describe('a project can be deleted, by a person and by nothing else', () => {
+  it('has exactly one production caller, on a screen', () => {
+    const callers = callersOf('deleteProject', 'src/server/actions.ts')
+
+    expect(
+      callers,
+      'nothing deletes a project — the promise in SECURITY_AND_PRIVACY.md is unbacked again',
+    ).not.toEqual([])
+    expect(
+      [...callers].sort(),
+      'a second caller of deleteProject — no sweep, worker or model may reach this',
+    ).toEqual(['src/app/projects/[projectId]/page.tsx'])
+  })
+
+  it('keeps the cascade itself to one caller, which is that action', () => {
+    expect(
+      [...callersOf('projects.deleteWithEverything', 'src/persistence/repositories/index.ts')].sort(),
+      'the cascade grew a second caller — every delete must go through the typed confirmation',
+    ).toEqual(['src/server/actions.ts'])
+  })
+})
+
 describe('the between-sittings path is reachable from the product', () => {
   it('has a writer of the external ledger, and the product can reach it', () => {
     expect(

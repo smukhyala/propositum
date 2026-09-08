@@ -385,6 +385,84 @@ export async function renameProject(
   })
 }
 
+export interface ProjectDeleted {
+  readonly id: string
+  readonly name: string
+}
+
+/**
+ * The person removes a piece of work, and everything Propositum filed under it.
+ *
+ * [ADR-0038](../../docs/adr/0038-deleting-a-project.md). Until this existed the
+ * honest answer to *"remove this"* was *"delete the database file"*, which is
+ * not a privacy answer for anybody with a second project they want to keep. It
+ * is also the one act in this file that makes the product hold **less** rather
+ * than do more.
+ *
+ * ── Why the name has to be typed, and it is not ceremony ─────────────────
+ *
+ * Every other confirmation here is a button, because every other act is
+ * recoverable or is bounded by something the person already ratified. This one
+ * is neither: it is irreversible, there is no bin, and the thing it destroys is
+ * the only copy. Retyping the name is the cheapest available proof that the
+ * person is looking at the project they meant — and the failure this is against
+ * is not malice, it is a person with two similarly-named projects clicking the
+ * wrong row.
+ *
+ * ~~It could take a `ConfirmationRequest`.~~ It does not, deliberately: that
+ * shape exists for an effect that leaves Propositum and needs a verdict row
+ * naming what the person was shown. There is nowhere to keep such a row here.
+ * The delete takes the ledger it would be written in.
+ */
+export async function deleteProject(
+  projectId: string,
+  typedName: string,
+): Promise<ActionResult<ProjectDeleted>> {
+  return attempt(async () => {
+    const { repos } = await appContext()
+
+    const project = await repos.projects.byId(projectId)
+    if (!project) return no<ProjectDeleted>('not-found', "That project doesn't exist any more.")
+
+    // Compared after trimming and case-folded, because this is a check that the
+    // person is looking at the right thing, not a spelling test.
+    if (typedName.trim().toLowerCase() !== project.name.trim().toLowerCase()) {
+      return no<ProjectDeleted>(
+        'invalid-input',
+        `To delete this, type its name exactly: ${project.name}`,
+      )
+    }
+
+    // The repository's refusals name row counts and an id, which is the right
+    // register for a log and the wrong one for a person standing in front of a
+    // confirmation. `attempt` would surface them verbatim.
+    try {
+      await repos.projects.deleteWithEverything(projectId)
+    } catch {
+      return no<ProjectDeleted>(
+        'write-failed',
+        `Propositum could not delete ${project.name}, and nothing was removed. Work in another ` +
+          'project is filed against this one, so deleting it would change work you did not ask ' +
+          'about.',
+      )
+    }
+
+    refresh()
+    return ok({ id: projectId, name: project.name })
+  })
+}
+
+/*
+ * There is deliberately no `projectDeletionScope` server action.
+ *
+ * One was written and deleted before this landed. The project screen is a server
+ * component and reads `repos.projects.deletionScope` directly, so the action had
+ * no caller — and a `'use server'` export is not an unused helper, it is a POST
+ * endpoint Next compiles and publishes whose only argument is a project id.
+ * `tests/reachability.test.ts` exists for precisely this: something built,
+ * tested, and called by nothing.
+ */
+
 /**
  * Say what you are waiting on, change it, or take it back. ADR-0035.
  *

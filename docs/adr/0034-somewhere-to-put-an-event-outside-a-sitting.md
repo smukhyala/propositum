@@ -244,8 +244,16 @@ nothing, is what lets the sensor ADR be about the sensor.
   This is `offer_tally`'s situation, and `offer_tally` survives it on an argument **this table cannot
   borrow**: *"four numbers and a date, no subject, nothing that says what any suggestion was about."*
   An `ExternalEvent` has a subject — it says a person was waiting on something and that it arrived,
-  against a named Intention. ~~**The retention answer is owed with the build**~~ **Answered 2026-09-07 and struck 2026-09-08: there is no delete path and there cannot be one without changing the guards — `SECURITY_AND_PRIVACY.md`'s retention section carries it.** It is named in
-  `docs/todo/12-between-sittings.md`, and this ADR does not pretend the question is closed.
+  against a named Intention. ~~**The retention answer is owed with the build**~~ ~~**Answered 2026-09-07 and struck 2026-09-08: there is no delete path and there cannot be one without changing the guards — `SECURITY_AND_PRIVACY.md`'s retention section carries it.**~~
+
+  **Answered properly 2026-09-08, and the correction above went stale on the date it carries.** The
+  guards *were* changed that day: [ADR-0038](0038-deleting-a-project.md) took the no-`DELETE` guard
+  off every table, including this one, and a person deleting a project deletes its Intention's
+  `ExternalEvent`s with it — `intention: { projectId: id }`, immediately before the Intention's own
+  statement in the cascade, asserted by `tests/delete-project.test.ts`. So the bullet's opening
+  sentence is now half false: it is durable and it holds a subject, and something deletes it.
+  `SECURITY_AND_PRIVACY.md`'s *"deleting a `Project` deletes its events"* is true again rather than
+  false for a class of row.
 - **Room invites occupancy.** Stated as a cost rather than managed away: the next person to want a
   sensor will find the expensive half built and the argument for the cheap half already written.
 
