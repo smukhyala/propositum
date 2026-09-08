@@ -445,6 +445,63 @@ export async function stateWait(
   })
 }
 
+/**
+ * Say the thing you were waiting on has arrived. ADR-0034, ADR-0035.
+ *
+ * ── The `declared` source, and the only one the product has ──────────────
+ *
+ * `ExternalEventStatedBy` permits two members and neither is a sensor: a
+ * fixture replaying, and a person saying so. This is the second, and until
+ * something watches the world it is the only one a person can reach. That is
+ * the honest state of the loop and it is written into
+ * `docs/todo/12-between-sittings.md` rather than implied by a green suite.
+ *
+ * ── Why a person pressing a button is not "inference writes an Intention" ─
+ *
+ * It writes an `ExternalEvent`, never the `Intention`. The wait's words stay
+ * exactly where the person put them — discharge is computed from the two rows
+ * and stored nowhere, because clearing the field here would make something
+ * other than a person the author of that row, which Principle 12 forbids. So a
+ * discharged wait still shows what it was, and only a person takes it back.
+ *
+ * ── What it does not do ──────────────────────────────────────────────────
+ *
+ * It does not decide that anything arrived. Nothing in this system can tell;
+ * the person is the sensor, and the row records that they said so and when.
+ */
+export async function noteArrived(projectId: string): Promise<ActionResult<ProjectCreated>> {
+  return attempt(async () => {
+    const { repos, external } = await appContext()
+    const project = await repos.projects.byId(projectId)
+    if (!project) return no<ProjectCreated>('not-found', "That project doesn't exist any more.")
+
+    const intention = await repos.intentions.forProject(projectId)
+    if (!intention) {
+      return no<ProjectCreated>('not-found', 'There is nothing here to be waiting on.')
+    }
+    if (intention.statedWait === null) {
+      return no<ProjectCreated>('already-done', "You haven't said you were waiting on anything.")
+    }
+
+    const written = await external.append({
+      statedBy: 'declared',
+      kind: 'arrived',
+      occurredAt: new Date(),
+      elapsedMs: 0,
+      intentionId: intention.id,
+      // Only what Propositum itself recorded. The words the person is waiting
+      // on are on the Intention and are not copied here.
+      attested: { statedBy: 'declared' },
+    })
+    if (!written.ok) {
+      return no<ProjectCreated>('invalid-input', 'That did not record. Nothing was changed.')
+    }
+
+    refresh()
+    return ok({ id: projectId, name: project.name })
+  })
+}
+
 /* ── which project this work belongs to ─────────────────────────────────── */
 
 /**

@@ -2229,10 +2229,19 @@ describe('deferred, and asserted as deferred', () => {
    * in the PRODUCT writes one. A person can state a wait on the project screen
    * and nothing they can press discharges it.
    */
-  it('has a writer of the external ledger, and it is the replay source', () => {
+  it('has a writer of the external ledger, and the product can reach it', () => {
     expect(
-      callersOf('createExternalWriter', 'src/persistence/external-writer.ts'),
-    ).toEqual(['scripts/replay.ts'])
+      [...callersOf('createExternalWriter', 'src/persistence/external-writer.ts')].sort(),
+      'the external ledger lost a caller — the declared source is how a person discharges a wait',
+    ).toEqual(['scripts/replay.ts', 'scripts/worker.ts', 'src/server/db.ts'])
+
+    // The half that matters: something a PERSON presses writes one. Without
+    // this the sixth lifecycle member is reachable and undischargeable, which
+    // is a screen that can only ever say Waiting.
+    expect(
+      callersOf('noteArrived', 'src/server/actions.ts'),
+      'nothing lets a person say the thing arrived',
+    ).not.toEqual([])
   })
 
   /**

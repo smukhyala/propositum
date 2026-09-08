@@ -56,6 +56,7 @@ import {
   createDocument,
   endSession,
   refileSession,
+  noteArrived,
   renameProject,
   stateWait,
   saveDocument,
@@ -269,6 +270,16 @@ export default async function ProjectPage({
     // editing is the likeliest thing anyone does with it. Showing a red banner
     // for that would be Propositum complaining about a no-op it invited.
     if (!result.ok && result.problem.code !== 'already-done') {
+      redirect(`${here}?problem=${encodeURIComponent(result.problem.message)}`)
+    }
+    redirect(here)
+  }
+
+  async function itArrived() {
+    'use server'
+
+    const result = await noteArrived(projectId)
+    if (!result.ok) {
       redirect(`${here}?problem=${encodeURIComponent(result.problem.message)}`)
     }
     redirect(here)
@@ -566,6 +577,21 @@ export default async function ProjectPage({
               <strong>{intentionFacts.statedWait}</strong>
               {intentionFacts.waitDischarged ? ' — it arrived.' : '.'}
             </p>
+            {/*
+              The `declared` source, and the only one a person can reach.
+              Pressing it writes an ExternalEvent and does NOT touch the
+              Intention — the words stay where the person put them, and only
+              they take them back. Absent once something has arrived, because a
+              second arrival answers nothing.
+            */}
+            {!intentionFacts.waitDischarged && (
+              <form action={itArrived}>
+                <button className="pj-submit" type="submit">
+                  It arrived
+                </button>
+              </form>
+            )}
+
             <form className="pj-form" action={saveWait}>
               <label className="pj-field">
                 <span className="pj-label">Change it, or empty the box to drop it</span>

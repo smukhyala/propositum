@@ -145,6 +145,8 @@ export interface StoredIntention {
   readonly objective: string
   readonly definitionOfDone: string
   readonly completedAt: Date | null
+  /** What the person said they are waiting on, or null. ADR-0035. */
+  readonly statedWait: string | null
 }
 
 /**

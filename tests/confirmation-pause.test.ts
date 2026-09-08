@@ -68,6 +68,7 @@ import { startWorkerProcess } from '../src/runtime/worker-process'
 import type { FenceVerdict, RunFence } from '../src/runtime/worker-process'
 import { ConfirmationScreen, SettledConfirmation } from '../src/ui/confirm'
 import { createLedgerWriter } from '../src/persistence/ledger-writer'
+import { createExternalWriter } from '../src/persistence/external-writer'
 import { executeRun } from '../src/server/execute-run'
 import { stripComments } from './support/strip-comments'
 import { FakeModelClient } from '../src/model/fake'
@@ -1605,7 +1606,7 @@ describe('a run reaches the paused state on its own', () => {
       // a closable database. `ctx` above is the narrower shape on purpose — see
       // its docblock in `src/server/confirmations.ts` — so this reassembles the
       // wide one rather than widening the field every other test here uses.
-      ctx: { db, repos, ledger: createLedgerWriter(db.prisma) },
+      ctx: { db, repos, ledger: createLedgerWriter(db.prisma), external: createExternalWriter(db.prisma) },
       model: new FakeModelClient(REPLIES as never),
       fetcher: fixtureFetcher({}),
       fence: { check: async () => ({ proceed: true as const }) },
@@ -1779,7 +1780,7 @@ describe('a run reaches the paused state on its own', () => {
       const { fetch } = stubbedChannel(seenNow ?? OBSERVATION)
 
       await executeRun(continuationId ?? '', {
-        ctx: { db, repos, ledger: createLedgerWriter(db.prisma) },
+        ctx: { db, repos, ledger: createLedgerWriter(db.prisma), external: createExternalWriter(db.prisma) },
         model: new FakeModelClient(REPLIES as never),
         fetcher: fixtureFetcher({}),
         fence: { check: async () => ({ proceed: true as const }) },

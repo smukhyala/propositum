@@ -2,10 +2,11 @@
 
 **Status:** ~~not started — decided, not built~~ ~~step 1 built 2026-09-07; steps 2–9 open~~
 **steps 1–5 and 8 built 2026-09-07; 6, 7 and 9 open.** There is a second ledger, a wait a person can state
-and take back, and a sixth lifecycle word. **Nothing writes an `ExternalEvent`** —
-`tests/reachability.test.ts` pins that in its *deferred, and asserted as deferred* block, so a wait
-can be stated and nothing in the product can discharge one yet. That is step 7's job, and it is the
-honest summary of where this file is.
+and take back, a sixth lifecycle word, a replay command, and a person who can say the thing
+arrived. **The loop closes in the product**: state a wait, press *It arrived*, and the Intention
+stops reading *Waiting*. What is still missing is the SCREEN — a discharged wait is not yet a
+candidate on the front door, which is step 6 — and the seal on a stream's expectations, which is
+step 8's own note.
 **Decided by:** [ADR-0034](../adr/0034-somewhere-to-put-an-event-outside-a-sitting.md),
 [ADR-0035](../adr/0035-what-a-person-said-they-are-waiting-on.md),
 [ADR-0036](../adr/0036-ordering-candidates-without-a-score.md) and
@@ -33,10 +34,10 @@ grep -n '"replay"' package.json
 ~~**As of 2026-09-07 every one of these returns nothing.**~~ ~~Re-marked the same day: greps 1 and 2
 now return.~~ **Re-marked again the same day, after steps 3 and 4: greps 1, 2 and 3 return.** The
 schema has `model ExternalEvent`, `Intention.statedWait` and `Intention.statedWaitAt`;
-`externalEvent.create` has exactly one caller and so does `intentions.stateWait`; and
-`src/domain/intention/state.ts` holds `'waiting'`. **Greps 4 and 5 still return nothing** — there is
-no cross-kind ordering and no replay command. And **nothing calls `createExternalWriter`**, so a wait
-can be stated and nothing in the product can discharge one.
+`externalEvent.create` has exactly one caller; `src/domain/intention/state.ts` holds `'waiting'`;
+`src/domain/detection/order-candidates.ts` exists; and `npm run replay` is a script.
+**All five return.** What does not exist is the front door reading any of it —
+`grep -n orderCandidates src/server/front-door.ts` returns nothing, which is step 6.
 
 ## Blocked by
 

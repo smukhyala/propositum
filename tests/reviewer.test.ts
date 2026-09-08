@@ -23,6 +23,7 @@ import type { Database } from '../src/persistence/client'
 import { createRepositories } from '../src/persistence/repositories/index'
 import type { Repositories } from '../src/persistence/repositories/index'
 import { createLedgerWriter } from '../src/persistence/ledger-writer'
+import { createExternalWriter } from '../src/persistence/external-writer'
 import { executeRun } from '../src/server/execute-run'
 import { FakeModelClient } from '../src/model/fake'
 import { fixtureFetcher } from '../src/policy/fetcher'
@@ -54,7 +55,7 @@ beforeAll(async () => {
   })
   db = await createDatabase({ url })
   repos = createRepositories(db.prisma)
-  ctx = { db, repos, ledger: createLedgerWriter(db.prisma) }
+  ctx = { db, repos, ledger: createLedgerWriter(db.prisma), external: createExternalWriter(db.prisma) }
   projectId = (await repos.projects.create('northwind')).id
 }, 120_000)
 

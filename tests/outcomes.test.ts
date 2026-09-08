@@ -31,6 +31,7 @@ import type { Database } from '../src/persistence/client'
 import { createRepositories } from '../src/persistence/repositories/index'
 import type { Repositories } from '../src/persistence/repositories/index'
 import { createLedgerWriter } from '../src/persistence/ledger-writer'
+import { createExternalWriter } from '../src/persistence/external-writer'
 import { executeRun } from '../src/server/execute-run'
 import { recordOutcomes } from '../src/server/outcomes/index'
 import { loadWorkspace } from '../src/server/outcomes/workspace'
@@ -67,7 +68,7 @@ beforeAll(async () => {
   })
   db = await createDatabase({ url })
   repos = createRepositories(db.prisma)
-  ctx = { db, repos, ledger: createLedgerWriter(db.prisma) }
+  ctx = { db, repos, ledger: createLedgerWriter(db.prisma), external: createExternalWriter(db.prisma) }
   projectId = (await repos.projects.create('northwind')).id
 }, 120_000)
 

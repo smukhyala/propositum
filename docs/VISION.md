@@ -322,8 +322,11 @@ untouched.** As it stands: an `ObservationEvent` requires a
 recorded at all.**~~ **Re-marked 2026-09-07 by the change that built it
 ([ADR-0034](./adr/0034-somewhere-to-put-an-event-outside-a-sitting.md)): the sentence is now true of
 the observation ledger rather than of the machine. A second table exists with its own single writer,
-and nothing calls that writer yet — `tests/reachability.test.ts` pins it at zero callers, which is
-the version of this claim that goes red on its own.** That absence is why `IntentionState` ships
+~~and nothing calls that writer yet~~ **and a person can now reach it: `noteArrived` writes one from
+the project screen, which is the `declared` source. Nothing WATCHES anything — the person says the
+thing arrived, and the row records that they said so.** `tests/reachability.test.ts` pins both the
+writer's callers and the fact that a person can press one, which is the version of this claim that
+goes red on its own.** That absence is why `IntentionState` ships
 with ~~five members instead of six~~ **six as of 2026-09-07**, and
 it is the whole content of the repository's **Stage 2 — Event-Driven Understanding**
 ([`ROADMAP.md`](./ROADMAP.md)).

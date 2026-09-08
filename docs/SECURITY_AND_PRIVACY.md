@@ -560,8 +560,11 @@ whole value of this section: it means the line cannot be crossed by accident.
 writer~~ **— amended 2026-09-07
 ([ADR-0034](./adr/0034-somewhere-to-put-an-event-outside-a-sitting.md), decided and unbuilt): that
 second writer is now **built** — `createExternalWriter` over its own `ExternalEvent` table, with
-  its own three append-only guards. **Nothing calls it**, pinned rather than promised
-  (`tests/reachability.test.ts`), so nothing outside a sitting has been recorded.
+  its own three append-only guards. ~~**Nothing calls it**~~ **A person can: pressing *It arrived* on
+  the project screen writes one, which is the `declared` source. What it records is that somebody
+  said so and when — no subject, no message, no page text; the words being waited on stay on the
+  Intention and are not copied onto the event.** Nothing watches anything to produce one, and the
+  table has no column page-authored text could enter.
   **The retention question this opens is owed and open:** an `ExternalEvent` hangs off an `Intention`
   rather than a `Project`, so *"deleting a `Project` deletes its events"* does not reach it, and
   unlike `offer_tally` this table has a subject. `docs/todo/12-between-sittings.md` carries it.
