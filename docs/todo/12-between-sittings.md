@@ -1,7 +1,7 @@
 # 12 — Somewhere to put an event outside a sitting, and an ordering that can see it
 
 **Status:** ~~not started — decided, not built~~ ~~step 1 built 2026-09-07; steps 2–9 open~~
-**steps 1–6 and 8 built 2026-09-07; 7 and 9 open.** There is a second ledger, a wait a person can state
+**steps 1–8 done 2026-09-07; only 9 (the corpus sweep) is open.** There is a second ledger, a wait a person can state
 and take back, a sixth lifecycle word, a replay command, and a person who can say the thing
 arrived. **The loop closes in the product**: state a wait, press *It arrived*, and the Intention
 stops reading *Waiting*. What is still missing is the SCREEN — a discharged wait is not yet a
@@ -126,8 +126,18 @@ them safe to land alone.
    one thing. **And it does not reach the poll** — nothing badges, nothing notifies. A person sees it
    when they open Home. Making a discharged wait interrupt is a separate decision and would need
    Principle 13 argued again.
-7. **The retention answer, which [ADR-0034](../adr/0034-somewhere-to-put-an-event-outside-a-sitting.md)
-   leaves open on purpose.** `docs/SECURITY_AND_PRIVACY.md` promises that deleting a `Project`
+7. ~~**The retention answer**~~ **Answered 2026-09-07, and the answer is that there is no delete
+   path and there cannot be one without changing the guards.** Two things were checked rather than
+   assumed: nothing in the product deletes a `Project`, and the schema declares no cascade anywhere,
+   so a delete would be refused rather than cascading — which means
+   `SECURITY_AND_PRIVACY.md`'s *"deleting a Project deletes its events"* was describing neither a
+   capability nor a behaviour, and is struck. An `ExternalEvent` cannot be swept either: it carries
+   `external_event_no_delete`, and *"a no-DELETE trigger and a sweep cannot both be true"*.
+   `ActionEvidence` made the other trade on purpose; this table did not.
+
+   **What is left is a product question, not a schema one**: should a person be able to delete a
+   project, and what happens to the ledger if they can. That is its own ADR and is not this file.
+   Original text: `docs/SECURITY_AND_PRIVACY.md` promises that deleting a `Project`
    deletes its events, and an `ExternalEvent` hangs off an `Intention` whose `projectId` is nullable,
    so that promise is false for a class of row until something answers it. `offer_tally`'s escape —
    *"four numbers and a date, no subject"* — is not available: this table names what somebody was

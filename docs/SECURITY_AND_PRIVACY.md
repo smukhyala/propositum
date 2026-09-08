@@ -641,8 +641,34 @@ executor changes who performs the work, and must not change how much of your dat
 
 ## Retention and deletion
 
-Observation events and the action ledger are **append-only** and cannot be edited. Deleting a
-`Project` deletes its sessions, events, documents, and ledger.
+Observation events and the action ledger are **append-only** and cannot be edited. ~~Deleting a
+`Project` deletes its sessions, events, documents, and ledger.~~
+
+**Struck 2026-09-07, and it describes neither a capability nor a behaviour.** Two things were checked
+rather than assumed. **Nothing in the product deletes a `Project`** — `grep -rn 'projects.delete\|
+project.delete' src/ scripts/` returns nothing, so there is no button, no action and no route. And
+**the schema would refuse it if there were**: `grep -n onDelete prisma/schema.prisma` returns three
+lines and none is a `Cascade`, so a required relation takes Prisma's default of `Restrict` and the
+delete is refused rather than cascading. The sentence has been describing a tidy outcome for work
+nobody can start.
+
+**What that means for the person, said plainly:** everything Propositum has recorded about a project
+stays until you delete the database file. The two tables with their own expiry are below; nothing
+else has one.
+
+**`ExternalEvent` joins that, and it cannot be swept even in principle** *(added 2026-09-07 —
+[ADR-0034](./adr/0034-somewhere-to-put-an-event-outside-a-sitting.md))*. It carries three append-only
+guards including `external_event_no_delete`, and `append-only.ts` states the rule this runs into:
+*"a no-DELETE trigger and a sweep cannot both be true"*. `ActionEvidence` is the one table that made
+the other trade deliberately — two guards, so a seven-day sweep is enforceable — and this one did
+not. So a row saying somebody was waiting on something and that it arrived is durable until the file
+goes.
+
+**What bounds the exposure is what the row holds**, and it is less than it sounds: a source, a kind,
+two timestamps and the id of an Intention. **The words being waited on are not on it** — they stay on
+the `Intention`, where a person can change or clear them. That is weaker than `offer_tally`'s
+*"four integers and a date, no subject"* and stronger than the ledger it sits beside, and it is
+recorded here rather than left to be worked out from the schema.
 
 **One thing expires on its own: `ActionEvidence`.** _(Amended 2026-08-11 —
 [ADR-0010](./adr/0010-acting-in-the-browser.md). This section said "there is no automatic expiry.
