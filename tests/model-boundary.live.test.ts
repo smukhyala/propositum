@@ -86,7 +86,7 @@ describe.skipIf(!apiKey)('live: session-reading boundary', () => {
     // Telemetry is emitted for the ModelCallRecord write.
     expect(telemetry).toHaveLength(1)
     expect(telemetry[0]?.t.stopReason).toBe('end_turn')
-    expect(telemetry[0]?.t.promptVersion).toBe('session-reading@1')
+    expect(telemetry[0]?.t.promptVersion).toBe('session-reading@2')
 
     console.log(
       `\n  model      ${telemetry[0]?.t.model}` +

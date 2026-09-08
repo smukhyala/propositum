@@ -1029,9 +1029,37 @@ working memory.
 One atomic, evidence-bearing element of a reading:
 `{ id, sessionReadingId, kind, origin, ordinal, text, evidence[] }`.
 
-`kind: objective | completedWork | openThread | constraint | nextStep` — all five, because the
-evaluation requirements score exactly these. Exactly one `objective` claim per revision, and it
-alone carries an ObjectiveConfidence.
+~~`kind: objective | completedWork | openThread | constraint | nextStep` — all five, because the
+evaluation requirements score exactly these.~~ **Corrected 2026-09-08 — the code had outgrown this,
+and `src/ui/reading.tsx` had been saying so in a docblock while this line stood.** The set is
+`CLAIM_KINDS` in `src/model/boundaries/session-reading.ts`, which spells two of the above
+differently and adds `uncertainty`:
+`objective | completed | openThread | constraint | nextAction | uncertainty`. Since
+`session-reading@2` the prompt defines each of them to the model **by what it excludes**, so a
+claim filed under the wrong kind is a named failure rather than a matter of taste — `@1` named the
+kinds and defined none, and a stated constraint arriving as a next action was one of the four
+things that cost the 2026-08-27 scoring. The older spellings are still accepted where a stored
+claim is rendered, because a claim matching no heading would vanish from the screen and a claim
+that vanishes cannot be corrected. `src/eval/scenario.ts` holds **both** lists and they are not the
+same list: it imports `CLAIM_KINDS` for `referenceClaimSchema`, and separately declares
+`H1_COMPONENTS`, the rubric's dimensions — plural, and overlapping only partly (`completedWork` is
+the older spelling; `nextActions` and `uncertainties` are these names pluralised). A dimension is
+what a scorer fills in; a kind is what the model emits.
+
+*Checked against the banned words:* `nextAction` survives the ban on bare `action` the way
+`outcomeId` does — the compound says what it holds. It is a sentence about what a person could do
+next and is **not** an `ActionIntent` or an `ActionKind`, which are one lifecycle stage further on
+and go through the gate; two words a stage apart is the thing the banned table exists to stop, so
+the distinction is worth the clause. `completed` is a claim about a session's work and is **not**
+`IntentionState`'s `done`, which is an Intention a person marked finished.
+
+Exactly one `objective` claim per revision, and ~~it alone carries an ObjectiveConfidence~~
+**it alone carries one by the time it is stored, 2026-09-08**: the boundary schema admits a band on
+any claim, the model puts one on most of them, and `src/server/actions.ts` drops every band but the
+objective's on write. The prompt now says so in as many words. Closing the gap in the schema is
+`docs/todo/04-quick-fixes.md`, and it is deliberately not closed by refusing the reading — the field
+is decorative below the boundary, so refusing would cost a person their reading to enforce a rule
+nothing downstream reads.
 
 `origin: inferred | human | edited`, **per claim, never per reading.** Revision-level authorship
 would launder every unedited inferred claim into a human assertion the moment the human fixes one

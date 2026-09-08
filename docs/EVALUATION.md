@@ -534,6 +534,12 @@ at a fraction of the machinery. That is a falsifiable next experiment, and it
 is the honest response to a warning this harness has now printed four times in
 one report.
 
+**Still unrun, and the ordering was reversed once, on purpose — 2026-09-08.**
+`session-reading@2` tuned the prompt first, because `@1` had never defined its
+six kinds and a formatted baseline beating an unspecified structured prompt
+would have answered a different question. The argument is under the Fourth run;
+the experiment named here is unchanged and still owed.
+
 Re-entry speed itself — *can the person resume within about a minute* — is
 still unmeasured, and the scorer's sentence above is the first evidence it may
 be where the real value sits.
@@ -763,6 +769,90 @@ paid run**, and if H3 still fails with these two the cause is not the one named 
 and a false stop short-circuits before that check runs, so this run says nothing about whether the
 prediction the fixture was built for is right. That is measured on the run after the fix, not this
 one.
+
+### The reading, diagnosed from the scoring nobody had acted on
+
+**Separate from H3, and it did not need a new run to find.** `eval-scores.json` has carried four
+hand-written notes since **2026-08-27**, and they had never been read as a set. `lisbon-thread` and
+`partnership-messy` both say the reading gets *distracted*; `monitor-shortlist` says its certainty is
+inverted — *"Objective output is too certain… But next action is the opposite, not certain enough and
+too vague"*; `partnership-clean` says two kinds swapped places. The 2026-09-08 log
+reproduces every one of them against the same prompt version, so this is two independent
+observations of `session-reading@1` rather than one person's taste:
+
+| what the scoring said | what the log shows |
+| --- | --- |
+| *"got constraints and nextActions messed up"* — both 0 | `partnership-clean` **found** the stated correction (integration work is Q3, not Q1) and filed it under `nextAction`, then filled `constraint` with an inference about which tier they were pursuing. The reading was better than its score. |
+| *"too certain, human still seems to want the final decision"* — objective 1 | `monitor-shortlist` read the objective as *"Choosing a 27-inch 4K monitor"*, high confidence, over a note reading *"just get the table finished, i will sit with it tomorrow"*. |
+| *"next action… too vague"* — 1 | `monitor-shortlist` returned one next action, and it was that same note quoted back. The **baseline** returned six, naming prices, a footnote and wattages. |
+| *"distracted"* — `lisbon-thread`, `partnership-messy` | `lisbon-thread` filed *"Collected room rates from two candidates"* under **completed**, against a reference recording that nothing has a price against it — and then could not report the empty column it had just said it filled. |
+
+**The fourth note is not a prompt finding at all, and it is owed separately.**
+`partnership-messy`'s reads *"Constraints answer key was a bit off"* — a scorer saying a **sealed
+reference** is wrong. The rule for that is in this file, under *Sealing*: **"If a reference really
+was wrong, add a new scenario. The mistake is itself a finding about how the fixture was written."**
+No scenario was added here and none should have been folded into a prompt change; it is filed as
+owed rather than answered, and it now matters more than it did, because `@2` says a published limit
+on a page can be a constraint and that fixture's key holds none.
+
+**One cause behind the other three, and it is an omission rather than a wrong instruction.** `@1` listed the six kinds and
+defined none of them, so the model chose its own meanings; and its one instruction about breadth —
+*"Every claim you can support"* — asked for more claims rather than better-placed ones.
+
+**What changed:** `session-reading@2` defines each of the six kinds by what it excludes — reading a
+page is not completed work, the decision a sitting is groundwork for is not its objective, a limit
+you worked out yourself is not a constraint (though one stated on a page they read still is, which
+`CONTEXT.md` decided and a first draft of this prompt had quietly reversed), a note quoted back is
+not a next action — and replaces the
+maximising line. Five assertions in `tests/model-boundary.test.ts` pin the sentences so a later edit
+cannot drop them silently.
+
+**This is prompt tuning, which the Second run said to do last — and the ordering is worth arguing
+rather than quietly stepping over.** That run's conclusion was that the apparatus buys *"legibility,
+not information"*, and it set a next experiment: whether a **formatted baseline** — the same
+retelling under headings — scores the same at a fraction of the machinery. That question is still
+the right one. But running it against `@1` would have compared a formatted baseline against a
+structured prompt that had never been told what its own kinds mean, and a null result would then
+have been read as *the apparatus is worthless* when the available reading is *the apparatus was
+never specified*. The 2026-09-08 log makes the confound concrete: on `monitor-shortlist` the
+baseline returned six next actions naming prices, a footnote and wattages, and the reading returned
+one, which was the person's note quoted back. That is not a structure-versus-prose result. It is a
+prompt that did not say what a next action is, losing to prose that did not need telling.
+
+So the order here is **precondition, not queue-jumping**: define the kinds, then run the formatted
+baseline against a structured prompt worth comparing to. If `@2` scores no better, the Second run's
+reading gets stronger rather than weaker, and the formatted-baseline experiment becomes the obvious
+next spend.
+
+**The corpus caught two drafts of this before a run did, which is the best evidence for the change
+and the clearest statement of its limit.** Both were cut:
+
+- An `openThread` example reading *"the page returned to three times with nothing written down"* is
+  `lisbon-thread`'s **uncertainty** reference nearly verbatim, and would have blessed the exact
+  mis-filing the 2026-09-08 log made, on the scenario it came from.
+- *"Reading a page is not completed work"*, stated flatly, **contradicts `evening-classes`** — whose
+  sealed `completed` claim, *"Every course in the prospectus was opened and read over the
+  afternoon"*, cites two visits and an engagement and not one edit. There, getting through the list
+  was the work, and the 2026-09-08 log matched that seal. The clause is now a question — *would
+  anything still be owed if it had not happened?* — which keeps `evening-classes` and still excludes
+  `lisbon-thread` reading a room page and writing nothing down.
+
+**And there is no fifth scenario owed, because the fifth scenario is already here.** All five ran on
+2026-09-08; `evening-classes` is unscored rather than absent, and it is the one that disconfirmed
+the draft above. What no scenario in this corpus can do is separate a better prompt from one shaped
+around these five. One clause is corpus-derived and says so in the source — *a correction they made
+to their own work*, in the `constraint` definition, is there because `partnership-clean` is where it
+was missed — and a sixth session nobody wrote these definitions against is what would settle it.
+
+**What this does NOT do is fix a score.** A prompt holding the right sentence is not a prompt the
+model obeyed, and the same caveat as `worker-action@3` applies twice over: unverified until the next
+paid run. The five worksheets in `docs/eval-runs/2026-09-08-run.log` are the before-picture, and
+scoring them is worth more now than it was this morning, because they are the only measurement of
+the prompt this change replaces.
+
+**And the corpus is the honest limit.** Four hand-scored scenarios, one scorer, one run each. That
+is enough to name a failure and not enough to say it is gone, so the next run's H1 is a signal
+rather than a verdict.
 
 n=1, against references sealed before the run. H3 scored by the harness against labels sealed
 before it; H1 and the baseline unscored.

@@ -207,6 +207,16 @@ to pay for a run.
   repeated and the todo's own words made that the most important result in the
   project.
 
+- **A sixth scenario is owed, and it was owed before this file noticed** *(added 2026-09-08)*.
+  `partnership-messy`'s 2026-08-27 note reads *"Constraints answer key was a bit off"* — a scorer
+  saying a **sealed reference** is wrong, which `docs/EVALUATION.md` under *Sealing* has one answer
+  for: *"If a reference really was wrong, add a new scenario. The mistake is itself a finding about
+  how the fixture was written."* That was never done, and the note sat unread for six weeks while
+  three of its four siblings were read as prompt findings and acted on in `session-reading@2`. It is
+  now the sharper of the two reasons to write one: the other is that every definition in `@2` was
+  written against these five, so a better H1 on these five cannot tell a better prompt from a fitted
+  one. **Do not repair the key.** `references.lock.json` refuses a changed reference on purpose.
+
 ---
 
 ## What this does not cover
