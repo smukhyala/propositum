@@ -8,8 +8,9 @@
 //! change it knowingly.
 //!
 //! Launch order: single instance → tray (the light says *Starting…*) → on a
-//! worker thread: port preflight, `prisma db push`, build-if-missing → the
-//! children. The push always completes before either child starts, so
+//! worker thread: port preflight, ~~`prisma db push`~~ **copy-then-migrate
+//! (`scripts/prepare-database.ts`, ADR-0039)**, build-if-missing → the
+//! children. That step always completes before either child starts, so
 //! `createDatabase()` in each child reinstalls and verifies the append-only
 //! triggers after every push — upgrades included, because every launch is
 //! this launch.

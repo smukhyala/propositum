@@ -2,15 +2,24 @@
 //!
 //! Three checks, in the order they can fail:
 //!
-//!   1. **`prisma db push`, every launch.** `db push` silently drops the
-//!      append-only triggers on any table it rebuilds, and the reinstall-and-
-//!      verify runs once per process inside `createDatabase()` — so the push
-//!      must COMPLETE before either child starts, and then each child's own
-//!      startup re-verifies. Ordering is the whole mechanism: there is no
-//!      "restart after upgrade" step because every launch is one. In bundled
-//!      mode the push runs with the supervisor's explicit child environment,
-//!      because `DATABASE_URL` points into the state dir rather than at a
-//!      dotfile beside the code.
+//!   1. ~~**`prisma db push`, every launch.**~~ **`scripts/prepare-database.ts`,
+//!      every launch — copy, then migrate. Changed 2026-09-08, ADR-0039.**
+//!      `db push` is a development command: it reconciles the file to the
+//!      schema and asks nobody, so a narrowing change drops the column and the
+//!      data in it, on the one copy of a person's work. It now copies the file
+//!      first, baselines a database that predates migrations, and runs
+//!      `migrate deploy`.
+//!
+//!      What is unchanged is the ORDERING, which was always the mechanism:
+//!      both commands drop the append-only triggers on any table they rebuild,
+//!      the reinstall-and-verify runs once per process inside
+//!      `createDatabase()`, so this must COMPLETE before either child starts
+//!      and then each child's own startup re-verifies. There is no "restart
+//!      after upgrade" step because every launch is one. In bundled mode it
+//!      runs with the supervisor's explicit child environment, because
+//!      `DATABASE_URL` points into the state dir rather than at a dotfile
+//!      beside the code — and it runs through `tsx`, the same way the worker
+//!      does, because `scripts/` ships as TypeScript.
 //!   2. **A built app.** `next start` refuses without `.next`. A checkout
 //!      builds once on first launch after a clone or a `git pull`, logged,
 //!      with the *Rebuild and restart* menu item covering staleness. A bundle
@@ -56,27 +65,26 @@ pub fn run(logger: &Arc<Logger>, runtime: &Runtime) -> Outcome {
 
     logger.line(
         "tray",
-        "prisma db push, so the append-only guards re-verify",
+        "copying the database, then migrating it — scripts/prepare-database.ts",
     );
     if !one_shot(
         logger,
-        "prisma",
+        "database",
         &node,
         &[
             runtime
                 .root
-                .join("node_modules/prisma/build/index.js")
+                .join("node_modules/tsx/dist/cli.mjs")
                 .to_string_lossy()
                 .as_ref(),
-            "db",
-            "push",
-            "--skip-generate",
+            "scripts/prepare-database.ts",
         ],
         runtime,
         &child_env,
     ) {
         return Outcome::Parked(
-            "the database schema step failed — the log has prisma's words".into(),
+            "the database could not be prepared, and nothing was migrated — the log has the words"
+                .into(),
         );
     }
 

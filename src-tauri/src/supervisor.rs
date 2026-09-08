@@ -94,7 +94,7 @@ impl Supervisor {
     }
 
     /// A supervisor that has not started yet — the preflight's placeholder, so
-    /// the light says *Starting…* while `prisma db push` and a first build run.
+    /// the light says *Starting…* while the database step and a first build run.
     pub fn pending(logger: Arc<Logger>) -> Arc<Supervisor> {
         let supervisor = Arc::new(Supervisor {
             stopping: Arc::new(AtomicBool::new(false)),

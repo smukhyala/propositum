@@ -72,7 +72,7 @@ npm run dev:web    # the app alone, same port
 npm test           # the whole suite; no credentials, no database, no network
 npm run typecheck  # also where the *.type-test.ts compile-time proofs run
 npm run build
-npx prisma db push
+npm run db:prepare # copy the database, then migrate it (ADR-0039). NOT `db push`
 ```
 
 ~~`npm run dev` and `npm run worker` are both required.~~ **One command, 2026-08-26** —
@@ -97,7 +97,14 @@ containing real browsing.
 ~~Two setup~~ **Setup** facts that cost an afternoon *(the count is struck 2026-09-03 rather than
 raised — the list is the thing that knows how long it is)*:
 
-- **`npx prisma db push` silently drops the append-only triggers** on any table it rebuilds. They are
+- **A schema change now needs a migration beside it** *(added 2026-09-08 —
+  [ADR-0039](docs/adr/0039-a-migration-history-and-a-copy-before-it.md))*. `prisma migrate dev
+  --name <what-changed>` writes one. A schema change committed without a migration leaves every
+  existing database with nothing to bring it forward, and **nothing enforces this yet** —
+  [`docs/todo/14`](docs/todo/14-migrations-and-a-copy.md) item 1 is the guard that would.
+- **`npx prisma db push` silently drops the append-only triggers** on any table it rebuilds *(and so
+  does `migrate deploy`, which replaced it in the app 2026-09-08 — the hazard is a table rebuild,
+  not the command)*. They are
   reinstalled and verified at the next app startup. Restart before trusting the database — a ledger
   without its triggers looks identical and is not append-only.
 - **The extension's host grant needs a user gesture**, so nothing can automate it. `extension/README.md`

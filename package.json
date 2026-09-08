@@ -24,6 +24,7 @@
     "test:live": "vitest run --config vitest.live.config.ts",
     "db:generate": "prisma generate",
     "db:push": "prisma db push",
+    "db:prepare": "tsx scripts/prepare-database.ts",
     "db:studio": "prisma studio",
     "verify:model": "tsx scripts/verify-model.ts",
     "eval": "tsx scripts/eval.ts",
