@@ -101,7 +101,7 @@ two are new: one has data and no reader, and one is not being built.
 | Intention Graph | **partial** — one flat table, no graph; ~~`intentionState()` computed and unrendered~~ *re-marked 2026-08-16:* the lifecycle word is on the front door; *re-marked 2026-08-20:* and what happened under an Intention is on two screens before the click | `Intention` in `prisma/schema.prisma`, `src/domain/intention/state.ts` ([ADR-0011](./adr/0011-intention-above-worksession.md)), `src/domain/intention/work-so-far.ts` ([ADR-0017](./adr/0017-continuing-an-intention.md)), `src/server/front-door.ts`, `src/server/work-so-far.ts`, `src/app/page.tsx` |
 | State Ingestion | **partial** — one sensor, browser only | `ledger-writer.ts`, the MV3 extension |
 | State Reconciler | **partial** — `matchProject` only | `src/domain/detection/match-project.ts` |
-| Progress Reasoner | **partial** — offer grounds, no ranking | `src/domain/detection/grounds.ts` |
+| Progress Reasoner | **partial** — ~~offer grounds, no ranking~~ *re-marked 2026-09-07:* offer grounds, and an ordering across two kinds of candidate; still no cost, risk or uncertainty | `src/domain/detection/grounds.ts` |
 | Delegation / Policy | **built** | `compilePolicy` + the gate, ADR-0004/0006 |
 | Worker Router | **unimplemented, and not being built** | — (§8 forbids; ADR-0005 agrees) |
 | Execution Runtime | **built** | `runWorker`, ADR-0001/0010 |
@@ -276,7 +276,11 @@ is a normal outcome rather than an error.
 
 **Not built.** Ranking. There is no expected-progress estimate, no cost, no risk, no uncertainty, and
 no dependency effects — the five things direction §3 asks this layer to represent. There is one
-~~candidate action at a time, so nothing sorts.~~ **Struck as two claims, 2026-09-07
+~~candidate action at a time, so nothing sorts.~~ **And re-marked again 2026-09-07 by the build: the
+front door now orders a discharged wait against a strand through one comparator and one bound
+([ADR-0036](./adr/0036-ordering-candidates-without-a-score.md)), so *more than one candidate* is no
+longer the prerequisite — it is the state. What is still absent is the rest of the sentence below:
+no expected-progress estimate, no cost, no risk, no uncertainty, no dependency effects.** **Struck as two claims, 2026-09-07
 ([ADR-0036](./adr/0036-ordering-candidates-without-a-score.md)), because they went wrong in opposite
 directions and this is the copy that mattered.** *Nothing sorts* was never true:
 `src/domain/detection/topics.ts` has sorted threads by `(searches, pages.length, engagedMs)` since

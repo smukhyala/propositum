@@ -55,6 +55,7 @@ function quiet(over: Partial<IntentionStateFacts> = {}): IntentionStateFacts {
     undecidedHeldOutcomes: 0,
     statedWait: null,
     waitDischarged: false,
+    waitDischargedAt: null,
     waitingContractId: null,
     ...over,
   }
@@ -300,6 +301,60 @@ describe('the strands a screen finds and does not show', () => {
 
     expect(afternoon.shown).toHaveLength(MAX_THREADS_SHOWN)
     expect(afternoon.suppressed).toHaveLength(1)
+  })
+
+  /**
+   * The bound is shared, and this is the assertion that keeps it that way.
+   *
+   * Two lists each honouring `MAX_THREADS_SHOWN` separately would be a screen
+   * saying twice as much while both halves believed they were being quiet, and
+   * it is the kind of thing nobody notices because each half looks restrained.
+   */
+  it('spends the same three slots across both kinds', () => {
+    const store = createAmbientStore()
+    const wait = {
+      projectId: 'p1',
+      intentionId: 'i1',
+      statedWait: 'a reply from the venue',
+      arrivedAtEpochMs: AT - 60_000,
+    }
+
+    const afternoon = noticedAfternoon(store, AFTERNOON, AT, new Map(), '', [wait])
+
+    expect(afternoon.waitsShown).toHaveLength(1)
+    // One slot went to the wait, so two strands remain and the other two are cut.
+    expect(afternoon.shown).toHaveLength(MAX_THREADS_SHOWN - 1)
+    expect(afternoon.suppressed).toHaveLength(2)
+    expect(afternoon.waitsShown.length + afternoon.shown.length).toBe(MAX_THREADS_SHOWN)
+  })
+
+  /**
+   * The cross-kind precedence, through the real function rather than the
+   * comparator alone. A discharged wait is something a person said out loud and
+   * something says arrived; a strand is Propositum noticing.
+   */
+  it('spends the first slot on a discharged wait, however strong the strands', () => {
+    const store = createAmbientStore()
+    const wait = {
+      projectId: 'p1',
+      intentionId: 'i1',
+      statedWait: 'the dates',
+      arrivedAtEpochMs: AT - 3_600_000,
+    }
+
+    const withWait = noticedAfternoon(store, AFTERNOON, AT, new Map(), '', [wait])
+    const without = noticedAfternoon(store, AFTERNOON, AT)
+
+    expect(withWait.waitsShown).toHaveLength(1)
+    // The strand that lost its slot is the weakest of the three, not the first.
+    expect(withWait.shown.map((s) => s.signature)).toEqual(
+      without.shown.slice(0, MAX_THREADS_SHOWN - 1).map((s) => s.signature),
+    )
+  })
+
+  it('says nothing about waits when it was given none, which is every screen today', () => {
+    const store = createAmbientStore()
+    expect(noticedAfternoon(store, AFTERNOON, AT).waitsShown).toEqual([])
   })
 
   it('returns the same three from noticedStrands, in the same order', () => {

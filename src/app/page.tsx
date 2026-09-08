@@ -130,6 +130,8 @@ import type { NamedThread } from '@/server/ambient-store'
 import type { WorkDetected } from '@/domain/detection/detect'
 import { hashSignature } from '@/domain/detection/reticence'
 import { frontDoorRow, noticedAfternoon, strandBySignature } from '@/server/front-door'
+import type { DischargedWait } from '@/server/front-door'
+import { reasonFor } from '@/domain/detection/order-candidates'
 import { countQuietly } from '@/server/offer-tally'
 import type { FrontDoorRow } from '@/server/front-door'
 import type { IntentionStateFacts } from '@/persistence/repositories/index'
@@ -198,6 +200,11 @@ const CSS = `
 .hm-mark { display: block; color: var(--ink); margin: 0 0 1.75rem; }
 
 .hm-say { font-family: var(--serif); font-weight: 400; font-size: clamp(1.5rem, 5.2vw, 2.0625rem); line-height: 1.24; letter-spacing: -0.015em; color: var(--ink); margin: 0; text-wrap: pretty; }
+.hm-arrived { margin: 0 0 2rem; padding-bottom: 1.5rem; border-bottom: 1px solid var(--rule); }
+.hm-arrived-line { font-family: var(--serif); font-size: 1.0625rem; line-height: 1.5; margin: 0 0 0.6rem; text-wrap: pretty; }
+.hm-arrived-line:last-child { margin-bottom: 0; }
+.hm-arrived-link { color: var(--ink); text-decoration: none; border-bottom: 1px solid var(--rule); }
+.hm-arrived-link:hover { border-bottom-color: var(--ink); }
 .hm-then { font-family: var(--serif); font-size: 1.0625rem; line-height: 1.55; color: var(--muted); margin: 1.15rem 0 0; text-wrap: balance; }
 .hm-because { font-family: var(--mono); font-size: 0.75rem; line-height: 1.65; color: var(--muted); margin: 1.15rem 0 0; }
 
@@ -577,10 +584,37 @@ export default async function Home({
    * first pass. It widens for this render and writes nothing: the rows are
    * still there, and only accepting an offer deletes one.
    */
+  /**
+   * Waits a person stated that something said arrived. ADR-0035/0036.
+   *
+   * Read off `factsByProject`, which is already loaded — no extra query on the
+   * most-hit route in the product. An OPEN wait is deliberately absent: it
+   * carries no decision, and ADR-0036 argues it at length.
+   *
+   * Empty while a sitting is live, exactly as the strands are. The front door
+   * during a session is about the session; a wait discharged this morning is
+   * not what somebody at their desk needs interrupting for, and it will still
+   * be there afterwards.
+   */
+  const dischargedWaits: DischargedWait[] = live
+    ? []
+    : [...factsByProject.values()].flatMap((facts) =>
+        facts.statedWait !== null && facts.waitDischargedAt !== null
+          ? [
+              {
+                projectId: facts.projectId,
+                intentionId: facts.intentionId,
+                statedWait: facts.statedWait,
+                arrivedAtEpochMs: facts.waitDischargedAt.getTime(),
+              },
+            ]
+          : [],
+      )
+
   const showHeld = params['showHeld'] !== undefined
   const candidates = live
-    ? { shown: [], suppressed: [], heldBack: 0 }
-    : noticedAfternoon(ambient, observations, nowMs)
+    ? { shown: [], suppressed: [], heldBack: 0, waitsShown: [] }
+    : noticedAfternoon(ambient, observations, nowMs, new Map(), '', dischargedWaits)
 
   const salt = live || showHeld ? '' : await repos.reticence.salt()
   const declined =
@@ -593,7 +627,9 @@ export default async function Home({
         )
 
   const afternoon =
-    live || showHeld ? candidates : noticedAfternoon(ambient, observations, nowMs, declined, salt)
+    live || showHeld
+      ? candidates
+      : noticedAfternoon(ambient, observations, nowMs, declined, salt, dischargedWaits)
   const noticed = afternoon.shown
   const heldBack = afternoon.heldBack
 
@@ -625,6 +661,24 @@ export default async function Home({
    */
   for (const strand of afternoon.shown) {
     if (ambient.newlyShown(strand.signature)) countQuietly({ offersShown: 1 }, nowMs)
+  }
+  /**
+   * A wait shown is an offer shown, and ADR-0036 opens by calling this a cost
+   * the build owes rather than a detail.
+   *
+   * ADR-0021 §6 settled the same question for the phone channel and its
+   * sentence transfers: *"if it did not count, the one metric that would notice
+   * this channel getting louder would be measuring the quieter surface and
+   * reporting it as the whole."* A new kind of thing on this screen that the
+   * loudness number cannot see is that failure one surface over.
+   *
+   * Keyed on the intention id, which is the same shape as a signature: an
+   * opaque handle, marked in the buffer that dies with the process. Nothing
+   * about the subject crosses — `countQuietly` takes integers, and the words a
+   * person is waiting on never leave the Intention row.
+   */
+  for (const wait of afternoon.waitsShown) {
+    if (ambient.newlyShown(wait.intentionId)) countQuietly({ offersShown: 1 }, nowMs)
   }
   for (const strand of afternoon.suppressed) {
     if (ambient.newlySuppressed(strand.signature)) countQuietly({ strandsSuppressed: 1 }, nowMs)
@@ -693,6 +747,20 @@ export default async function Home({
    * is about and each proposal sits under it — one `h1` per document either
    * way, and never zero, which is what this screen had after `Masthead` went.
    */
+  /**
+   * Waits a person stated that something said arrived, in the order the
+   * comparator put them — above the strands, because ADR-0036 says a discharged
+   * wait outranks one and the whole list came back through one ordering.
+   *
+   * They carry no button here. The decision is on the project screen, where the
+   * words are and where they can be taken back; a control on this screen would
+   * be a second place to act on one thing. Principle 13's rule is that a
+   * notification needs a decision attached, and a line that links straight to
+   * the decision satisfies it — an interruption offering nothing does not.
+   */
+  const arrived = afternoon.waitsShown
+  const nothingToSay = strands.length === 0 && arrived.length === 0
+
   const Say: 'h1' | 'h2' = strands.length > 1 ? 'h2' : 'h1'
 
   return (
@@ -739,7 +807,27 @@ export default async function Home({
           {/* Nothing running, nothing noticed, and nothing waiting — the screen
               most days. An empty screen has to say what is true and what will
               happen, or it reads as something that failed to load. */}
-          {!running && strands.length === 0 && waiting.length === 0 ? (
+          {arrived.length > 0 ? (
+            <div className="hm-arrived">
+              {arrived.map((wait) => (
+                <p className="hm-arrived-line" key={wait.intentionId}>
+                  <a className="hm-arrived-link" href={`/projects/${wait.projectId}`}>
+                    {reasonFor(
+                      {
+                        kind: 'discharged-wait',
+                        intentionId: wait.intentionId,
+                        statedWait: wait.statedWait,
+                        arrivedAtEpochMs: wait.arrivedAtEpochMs,
+                      },
+                      nowMs,
+                    )}
+                  </a>
+                </p>
+              ))}
+            </div>
+          ) : null}
+
+          {!running && nothingToSay && waiting.length === 0 ? (
             <>
               <span className="hm-mark">
                 <Watching size={MARK_SIZE} pen={MARK_PEN} title="Watching" />
@@ -761,7 +849,7 @@ export default async function Home({
               person. Both halves were wrong at once: a false statement about
               our own state, and the wrong instruction at the exact moment
               Propositum is blocked on them rather than the other way round. */}
-          {!running && strands.length === 0 && waiting.length > 0 ? (
+          {!running && nothingToSay && waiting.length > 0 ? (
             <>
               <span className="hm-mark">
                 <Away size={MARK_SIZE} pen={MARK_PEN} title="While you were away" />

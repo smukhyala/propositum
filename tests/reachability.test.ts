@@ -2187,6 +2187,38 @@ describe('the channel can speak, from the feeds named here and no others', () =>
   })
 })
 
+/**
+ * The ordering across kinds is reachable from the product. ADR-0036.
+ *
+ * **Promoted out of the deferred block on 2026-09-07, in the change that wired
+ * it**, which is the rule: it was pinned at zero callers when the comparator
+ * landed, then at one when `npm run replay` used it, and it is on the screen
+ * now.
+ *
+ * The second assertion is the one worth keeping. A bound applied twice — once
+ * to strands and once to waits — would be a screen saying twice as much while
+ * both halves believed they were being quiet, so `MAX_THREADS_SHOWN` appears in
+ * `front-door.ts` exactly once and the cut happens after the ordering, never
+ * before it.
+ */
+describe('the front door orders more than one kind of thing', () => {
+  it('reaches the comparator, from the screen and from the eval path', () => {
+    expect(
+      [...callersOf('orderCandidates', 'src/domain/detection/order-candidates.ts')].sort(),
+    ).toEqual(['src/eval/replay.ts', 'src/server/front-door.ts'])
+  })
+
+  it('applies the display bound once, and after the ordering', () => {
+    const source = stripImports(stripComments(readFileSync(join(repo, 'src/server/front-door.ts'), 'utf8')))
+    const uses = source.split('MAX_THREADS_SHOWN').length - 1
+    expect(uses, 'the bound is spent in more than one place').toBe(1)
+    expect(
+      source.indexOf('orderCandidates'),
+      'the cut happens before the ordering, which discards a wait for a weaker strand',
+    ).toBeLessThan(source.indexOf('MAX_THREADS_SHOWN'))
+  })
+})
+
 describe('deferred, and asserted as deferred', () => {
   /**
    * The computer-use tables, landed ahead of everything that uses them.
@@ -2289,22 +2321,6 @@ describe('deferred, and asserted as deferred', () => {
    * it waits on there being a second kind to order — which needs something to
    * write an `ExternalEvent`, which is the pin below.
    */
-  it('orders across kinds on the eval path, and NOT yet on the front door', () => {
-    expect(
-      callersOf('orderCandidates', 'src/domain/detection/order-candidates.ts'),
-      'the comparator has no caller at all',
-    ).toEqual(['src/eval/replay.ts'])
-
-    // The half still deferred, and the more useful one. A person opening Home
-    // still sees strands ordered by `topics.ts` alone; a discharged wait reaches
-    // a replay and not a screen. That is step 6 of docs/todo/12.
-    const frontDoor = readFileSync(join(repo, 'src/server/front-door.ts'), 'utf8')
-    expect(
-      stripImports(stripComments(frontDoor)),
-      'the front door orders across kinds — move this claim into the reachable section',
-    ).not.toContain('orderCandidates')
-  })
-
   /**
    * The half that matters more than the caller count.
    *

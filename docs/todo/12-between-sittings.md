@@ -1,7 +1,7 @@
 # 12 — Somewhere to put an event outside a sitting, and an ordering that can see it
 
 **Status:** ~~not started — decided, not built~~ ~~step 1 built 2026-09-07; steps 2–9 open~~
-**steps 1–5 and 8 built 2026-09-07; 6, 7 and 9 open.** There is a second ledger, a wait a person can state
+**steps 1–6 and 8 built 2026-09-07; 7 and 9 open.** There is a second ledger, a wait a person can state
 and take back, a sixth lifecycle word, a replay command, and a person who can say the thing
 arrived. **The loop closes in the product**: state a wait, press *It arrived*, and the Intention
 stops reading *Waiting*. What is still missing is the SCREEN — a discharged wait is not yet a
@@ -114,9 +114,18 @@ them safe to land alone.
    per [ADR-0036](../adr/0036-ordering-candidates-without-a-score.md).
    Pure, total, clockless, lexicographic over named facts. `intent-lab.ts` at the repo root is the
    bench for this — it drives the real detection pipeline with no database and no model call.
-6. **The front door renders the order and the reason.** One sentence per candidate naming the key
-   that put it there. [ADR-0019](../adr/0019-disclosure-and-what-may-never-fold.md)'s *what may never
-   fold* list governs what can go behind a `Disclosure` here.
+6. ~~**The front door renders the order and the reason.**~~ **Done 2026-09-07.** A discharged wait
+   renders above the strands with the sentence the comparator's key produced, linking to the project
+   screen where the decision is. **The display bound is shared**, applied once and after the
+   ordering, so the two kinds cannot each be quiet while the screen is loud —
+   `tests/front-door.test.ts` and `tests/reachability.test.ts` both hold that. A wait shown counts as
+   an offer shown, which ADR-0036 called a cost the build owed.
+
+   **It carries no button, and that is deliberate.** The decision belongs on the project screen where
+   the words are and where they can be taken back; a control here would be a second place to act on
+   one thing. **And it does not reach the poll** — nothing badges, nothing notifies. A person sees it
+   when they open Home. Making a discharged wait interrupt is a separate decision and would need
+   Principle 13 argued again.
 7. **The retention answer, which [ADR-0034](../adr/0034-somewhere-to-put-an-event-outside-a-sitting.md)
    leaves open on purpose.** `docs/SECURITY_AND_PRIVACY.md` promises that deleting a `Project`
    deletes its events, and an `ExternalEvent` hangs off an `Intention` whose `projectId` is nullable,

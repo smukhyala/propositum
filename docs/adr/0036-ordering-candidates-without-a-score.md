@@ -22,10 +22,14 @@ reporting it as the whole."* `strandsSuppressed` has the matching hole — a wai
 neither shown-and-counted nor suppressed-and-counted, so it is found and discarded in silence, which
 is the exact thing ADR-0008 says the multi-strand change existed to end.
 
-**The build owes both counters, and this ADR does not get to treat that as a detail**:
-`offer_tally` gains nothing structurally — it is four integers and a date, and a wait shown is an
-offer shown — so the fix is arithmetic rather than schema, and its absence would be
-[Principle 13](../PRODUCT_PRINCIPLES.md)'s creep with no smoke alarm.
+~~**The build owes both counters**~~ **Paid, 2026-09-07, in the change that wired the screen.** A
+wait shown increments `offersShown`, keyed on the intention id — the same shape as a signature: an
+opaque handle marked in the buffer that dies with the process, with nothing about the subject
+crossing into `offer_tally`, which is four integers and a date. **`strandsSuppressed` deliberately
+does NOT count a cut wait**: that number means *strands found, good enough, and cut for room*, and a
+number meaning two things is worse than a missing one. What a cut wait costs is recorded here
+instead: it is not counted anywhere, and the honest reason is that nobody has argued what the right
+counter would be.
 
 ## The ordering that already exists, which one prior ADR mis-stated
 

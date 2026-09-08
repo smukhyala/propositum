@@ -200,6 +200,15 @@ export interface IntentionStateFacts {
    */
   readonly waitDischarged: boolean
   /**
+   * When the discharging arrival happened, or null.
+   *
+   * The most recent one, because *most recent first* is how discharged waits
+   * order among themselves and the newest arrival is the one a person is
+   * likeliest to still have in mind. Null whenever `waitDischarged` is false,
+   * so the two can never disagree.
+   */
+  readonly waitDischargedAt: Date | null
+  /**
    * WorkSessions on this Intention that no human has ended, with their phase.
    *
    * The PHASES are not summarised here, and that is the point of returning the
@@ -783,6 +792,21 @@ function intentionRepository(prisma: PrismaClient): IntentionRepository {
       // the same move for the same reason.
       if (row.projectId === null) continue
 
+      /**
+       * The newest arrival at or after the moment the wait was stated.
+       *
+       * Computed once here so `waitDischarged` and `waitDischargedAt` cannot
+       * disagree — two fields derived separately from one predicate is how a
+       * screen comes to order by a time it does not believe in.
+       */
+      const dischargedAt =
+        row.statedWaitAt === null
+          ? null
+          : (row.external
+              .filter((event) => event.occurredAt >= row.statedWaitAt!)
+              .sort((a, b) => b.occurredAt.getTime() - a.occurredAt.getTime())[0]?.occurredAt ??
+            null)
+
       let liveAcceptedContracts = 0
       let openDecisions = 0
       let undecidedHeldOutcomes = 0
@@ -826,9 +850,8 @@ function intentionRepository(prisma: PrismaClient): IntentionRepository {
         statedWait: row.statedWait,
         // The arithmetic the domain must not do, because doing it there would
         // mean `src/domain` learning that a second ledger exists.
-        waitDischarged:
-          row.statedWaitAt !== null &&
-          row.external.some((event) => event.occurredAt >= row.statedWaitAt!),
+        waitDischarged: dischargedAt !== null,
+        waitDischargedAt: dischargedAt,
         waitingContractId: waitingContractId ?? row.contracts[0]?.id ?? null,
       })
     }
