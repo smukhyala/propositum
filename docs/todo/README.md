@@ -61,6 +61,7 @@ or what would make the file **deletable** rather than done
 | 10 | [`10-the-mailbox.md`](./10-the-mailbox.md) | days, **decided not built** | no — until a build leaves the tester circle, then the CASA bill |
 | 11 | [`11-calendar-holds.md`](./11-calendar-holds.md) | ~a day, **decided not built**, and it opens with a stop-the-line check | no |
 | 12 | [`12-between-sittings.md`](./12-between-sittings.md) | ~~~a week, **decided not built**~~ **steps 1-8 done 2026-09-07 — a second ledger, a wait a person states and discharges, a sixth lifecycle word, an ordering across kinds on the front door, and `npm run replay`; only the corpus sweep is open**, and it is the only file here that unblocks a roadmap stage rather than a feature | via `00` |
+| 13 | [`13-deleting-a-project.md`](./13-deleting-a-project.md) | ~2 days, **decided not built**, and the only file here that makes the product **safer** rather than less safe | no |
 
 **6, 7 and 8 were written 2026-08-26**, hours after the decisions that made them necessary and in the
 same pass that noticed this folder did not have them. ~~All three are **decided, not built** — the

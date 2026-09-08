@@ -26,7 +26,11 @@
  * whose list is empty.
  */
 
+import { createHash } from 'node:crypto'
+import { fileURLToPath } from 'node:url'
+import { dirname, join } from 'node:path'
 import { z } from 'zod'
+import { readSeals, writeSeals, type SealFile } from './seal'
 import type { Candidate } from '../domain/detection/order-candidates'
 import { orderCandidates, stillWorthSaying } from '../domain/detection/order-candidates'
 
@@ -177,4 +181,86 @@ export function candidatesFrom(
     ...candidates.map((c) => (c.kind === 'discharged-wait' ? c.arrivedAtEpochMs : originEpochMs)),
   )
   return orderCandidates(candidates.filter((c) => stillWorthSaying(c, latest)))
+}
+
+/**
+ * Sealing a stream, which `seal.ts` does for a scenario and for the same reason.
+ *
+ * ── Why its own lock, and not a row in `references.lock.json` ────────────
+ *
+ * ADR-0037 said so and the reason is blast radius rather than tidiness:
+ * `references.lock.json` protects H1 and H3, and a schema change there to carry
+ * a different shape of key risks the one file the harness refuses to run
+ * without. Two locks, one rule.
+ *
+ * ── What is sealed, and what is deliberately not ─────────────────────────
+ *
+ * The **answer key** — `expectSurfaced` and `expectSilence`. Not the lines.
+ * `scenario.ts` draws the same line and states it: the events are the QUESTION,
+ * and a question can be corrected without breaking the seal, because changing it
+ * invalidates the fixture for a different reason and is caught by review rather
+ * than by a hash.
+ *
+ * The name is in the payload because it is what the entry is keyed by; renaming
+ * a stream is renaming the measurement.
+ *
+ * ── Why this was owed ────────────────────────────────────────────────────
+ *
+ * Until it existed, a stream's expectations lived in a file somebody could edit
+ * after a disappointing run — which is precisely what the scenario seal exists
+ * to prevent, and ADR-0037's own guard table said so in its own voice.
+ * *"Written before the run"* was an intention here rather than a mechanism.
+ */
+const STREAM_LOCK_PATH = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'streams.lock.json')
+
+/** The bytes that get hashed. The key only — never the events. */
+export function sealedStreamPayload(stream: ReplayStream): string {
+  return JSON.stringify(
+    {
+      name: stream.name,
+      expectSurfaced: stream.expectSurfaced,
+      expectSilence: stream.expectSilence,
+    },
+    null,
+    0,
+  )
+}
+
+export function hashStream(stream: ReplayStream): string {
+  return createHash('sha256').update(sealedStreamPayload(stream)).digest('hex')
+}
+
+export function readStreamSeals(path: string = STREAM_LOCK_PATH): SealFile {
+  return readSeals(path)
+}
+
+export function writeStreamSeals(seals: SealFile, path: string = STREAM_LOCK_PATH): void {
+  writeSeals(seals, path)
+}
+
+export type StreamSealStatus =
+  | { readonly state: 'sealed'; readonly sealedAt: string }
+  | { readonly state: 'unsealed' }
+  | { readonly state: 'broken'; readonly sealedAt: string }
+
+export function checkStreamSeal(stream: ReplayStream, seals: SealFile): StreamSealStatus {
+  const entry = seals[stream.name]
+  if (!entry) return { state: 'unsealed' }
+  if (hashStream(stream) === entry.hash) return { state: 'sealed', sealedAt: entry.sealedAt }
+  return { state: 'broken', sealedAt: entry.sealedAt }
+}
+
+export class BrokenStreamSealError extends Error {
+  constructor(name: string, sealedAt: string) {
+    super(
+      `Stream "${name}" has a broken seal.\n\n` +
+        `Its expectations were sealed at ${sealedAt} and have changed since.\n\n` +
+        `A stream measures whether Propositum surfaced what a person decided it should — ` +
+        `and stayed quiet about what they decided it should not — written BEFORE the run. ` +
+        `An edited list does not measure that, whatever the intention behind the edit.\n\n` +
+        `If the expectations were genuinely wrong, add a NEW stream. The mistake is a ` +
+        `finding about how the fixture was written.`,
+    )
+    this.name = 'BrokenStreamSealError'
+  }
 }

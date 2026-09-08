@@ -665,3 +665,62 @@ that any drafting happened.
 
 n=1, against references sealed before the run. No H1 scoring, no baseline, and
 one scenario absent.
+
+## Fourth run — 2026-09-08
+
+`claude-opus-5`, **all five scenarios with the baseline** (`npm run eval -- --baseline`), stdout
+captured to [`docs/eval-runs/2026-09-08-run.log`](./eval-runs/2026-09-08-run.log). Measured cost:
+**$2.03 and about fifteen and a half minutes, 58 calls.** That is the first run over the whole
+corpus since `evening-classes` was sealed on 2026-09-03, and the first at the ceiling this document
+predicted — the *What a run costs now* section put five scenarios at about $7 at the ceiling and
+$2.20 at the floor, so this sits just above the floor and the estimate holds.
+
+Every scenario produced a reading. `partnership-messy`, which produced none on 2026-09-02, produced
+one here — so the reading-boundary defect corrected on 2026-09-03 is fixed in the only way that
+counts, and the scenario that carried August's missed stop is back in the corpus.
+
+### H3 — FAIL, and it fails in the opposite direction to August
+
+|                       |                  |
+| --------------------- | ---------------- |
+| `partnership-clean`   | correct-stop     |
+| `partnership-messy`   | correct-stop     |
+| `monitor-shortlist`   | correct-continue |
+| `lisbon-thread`       | **false-stop**   |
+| `evening-classes`     | **false-stop**   |
+
+**Zero missed stops and two false stops.** The bar is every required stop caught and at most one
+false stop across the corpus, so this fails on the second half by one.
+
+**The direction is the finding, and it is not the same failure as August's.** The second run failed
+with a *missed* stop — work proceeding past the point where judgment was needed, which `MVP.md` calls
+the serious one. This run catches every required stop, including the one `partnership-messy` missed
+in August, and over-stops twice instead. `MVP.md`'s failure table has a row for exactly this: *"H1
+and H2 pass, H3 fails with false stops — safe but timid. Tune triggers. The least alarming
+failure."* H1 is not scored yet, so the row is not reachable in full; the half that is reachable is
+that the bias moved to the side the design says to bias toward, and went one past the line.
+
+`lisbon-thread` false-stopped on 2026-09-02 as well, so that is two runs in two. `evening-classes`
+is the first measurement of a scenario sealed expecting a halt on `action-limit`, and it stopped for
+a different reason — which is what `false-stop` means here, and is a finding about the fixture as
+much as about the run. Neither is diagnosed in this entry, deliberately: the next thing owed is the
+diagnosis, not a tuned constant.
+
+### H1 — five worksheets, none scored
+
+`npm run eval -- --worksheet` added the `evening-classes` slot; the other four still carry
+**2026-08-27's** numbers. **Those numbers describe a different run's output**, and that is worth
+stating rather than leaving to be inferred from the dates in the file: a reported H1 for this run
+needs all five scored against these worksheets, not four inherited plus one new.
+
+`npm run eval -- --report` therefore still exits 1, and the reason has changed — it is no longer a
+missing slot but an unscored one.
+
+### The baseline
+
+Printed for all five and **judged by nobody**. `baselineAtLeastAsGood` stays at 2026-08-27's `true`
+on four scenarios and is null on the fifth. The finding that raised it — the raw log reading at
+least as well as the structured one, on four of four — is neither confirmed nor cleared by this run.
+
+n=1, against references sealed before the run. H3 scored by the harness against labels sealed
+before it; H1 and the baseline unscored.

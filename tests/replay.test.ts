@@ -11,7 +11,15 @@ import { describe, it, expect } from 'vitest'
 import { readdirSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { candidatesFrom, parseStream, type ReplayedProject } from '../src/eval/replay'
+import {
+  candidatesFrom,
+  checkStreamSeal,
+  hashStream,
+  parseStream,
+  readStreamSeals,
+  sealedStreamPayload,
+  type ReplayedProject,
+} from '../src/eval/replay'
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), '..')
 const STREAMS = join(repo, 'src/fixtures/streams')
@@ -102,3 +110,55 @@ describe('a stream that does not read', () => {
 function name(candidate: { kind: string; signature?: string; intentionId?: string }): string {
   return candidate.kind === 'strand' ? (candidate.signature ?? '') : (candidate.intentionId ?? '')
 }
+
+describe('the seal, which makes "written before the run" a fact', () => {
+  const seals = readStreamSeals()
+
+  for (const file of files) {
+    const parsed = parseStream(readFileSync(join(STREAMS, file), 'utf8'))
+
+    /**
+     * The rule ADR-0037's guard table said was owed. Without it a stream's
+     * expectations live in a file somebody can edit after a disappointing run,
+     * which is exactly what `seal.ts` exists to prevent for a scenario.
+     */
+    it(`${file} is sealed, and its seal is intact`, () => {
+      if (!parsed.ok) return
+      const status = checkStreamSeal(parsed.stream, seals)
+      expect(
+        status.state,
+        status.state === 'unsealed'
+          ? `seal it: npm run replay -- src/fixtures/streams/${file} --seal`
+          : 'the expectations changed after sealing — add a NEW stream rather than editing this one',
+      ).toBe('sealed')
+    })
+  }
+
+  /**
+   * What is sealed is the ANSWER KEY and not the question.
+   *
+   * `scenario.ts` draws the same line: the events can be corrected without
+   * breaking the seal, because changing them invalidates the fixture for a
+   * different reason and is caught by review rather than by a hash. A payload
+   * that covered the lines would make every typo fix look like tampering, and a
+   * rule people route around is not a rule.
+   */
+  it('covers the expectations and not the events', () => {
+    const parsed = parseStream(readFileSync(join(STREAMS, files[0]!), 'utf8'))
+    expect(parsed.ok).toBe(true)
+    if (!parsed.ok) return
+
+    const payload = sealedStreamPayload(parsed.stream)
+    expect(payload).toContain('expectSurfaced')
+    expect(payload).toContain('expectSilence')
+    expect(payload, 'the events are the question, and a question may be corrected').not.toContain(
+      '"lines"',
+    )
+
+    // Editing an expectation moves the hash; editing the events does not.
+    const edited = { ...parsed.stream, expectSurfaced: [] }
+    expect(hashStream(edited)).not.toBe(hashStream(parsed.stream))
+    const requestioned = { ...parsed.stream, lines: parsed.stream.lines.slice(0, 1) }
+    expect(hashStream(requestioned)).toBe(hashStream(parsed.stream))
+  })
+})

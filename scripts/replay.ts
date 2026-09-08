@@ -39,7 +39,16 @@ import { ensureAppendOnlyGuards } from '../src/persistence/append-only'
 import { createExternalWriter } from '../src/persistence/external-writer'
 import { createRepositories } from '../src/persistence/repositories/index'
 import { reasonFor } from '../src/domain/detection/order-candidates'
-import { candidatesFrom, parseStream, type ReplayedProject } from '../src/eval/replay'
+import {
+  BrokenStreamSealError,
+  candidatesFrom,
+  checkStreamSeal,
+  hashStream,
+  parseStream,
+  readStreamSeals,
+  writeStreamSeals,
+  type ReplayedProject,
+} from '../src/eval/replay'
 
 /**
  * The stream's origin. Fixed, never `Date.now()`, so two runs of one stream are
@@ -47,9 +56,11 @@ import { candidatesFrom, parseStream, type ReplayedProject } from '../src/eval/r
  */
 const ORIGIN_EPOCH_MS = Date.UTC(2026, 0, 1, 9, 0, 0)
 
-const path = process.argv[2]
+const args = process.argv.slice(2)
+const seal = args.includes('--seal')
+const path = args.find((arg) => !arg.startsWith('--'))
 if (path === undefined) {
-  console.error('Usage: npm run replay -- <stream.jsonl>')
+  console.error('Usage: npm run replay -- <stream.jsonl> [--seal]')
   process.exit(1)
 }
 
@@ -59,6 +70,48 @@ if (!parsed.ok) {
   process.exit(1)
 }
 const stream = parsed.stream
+
+/**
+ * The seal, checked before anything runs and before anything is spent.
+ *
+ * A stream measures whether Propositum surfaced what a person decided it should
+ * — and stayed quiet about what they decided it should not — decided BEFORE the
+ * run. Without this the lists live in a file somebody can edit after a
+ * disappointing result, which is exactly what `src/eval/seal.ts` exists to
+ * prevent for a scenario's answer key, and what ADR-0037's own guard table said
+ * was still owed here.
+ */
+const seals = readStreamSeals()
+const status = checkStreamSeal(stream, seals)
+
+if (seal) {
+  if (status.state === 'broken') {
+    console.error(new BrokenStreamSealError(stream.name, status.sealedAt).message)
+    console.error('\n--seal will not re-seal a broken stream. That has to be a deliberate edit.')
+    process.exit(1)
+  }
+  if (status.state === 'sealed') {
+    console.log(`"${stream.name}" is already sealed (${status.sealedAt}).`)
+    process.exit(0)
+  }
+  const sealedAt = new Date().toISOString().slice(0, 10)
+  writeStreamSeals({ ...seals, [stream.name]: { hash: hashStream(stream), sealedAt } })
+  console.log(`Sealed "${stream.name}" at ${sealedAt}.`)
+  process.exit(0)
+}
+
+if (status.state === 'broken') {
+  console.error(new BrokenStreamSealError(stream.name, status.sealedAt).message)
+  process.exit(1)
+}
+if (status.state === 'unsealed') {
+  console.error(
+    `"${stream.name}" is not sealed, so its expectations are not an answer key yet.\n\n` +
+      `Seal it before the first run — that is the whole of what makes "written before the run"\n` +
+      `a fact rather than an intention:\n\n  npm run replay -- ${path} --seal\n`,
+  )
+  process.exit(1)
+}
 
 const dir = mkdtempSync(join(tmpdir(), 'propositum-replay-'))
 const url = `file:${join(dir, 'replay.db')}`
