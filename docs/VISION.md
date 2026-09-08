@@ -313,7 +313,11 @@ and it suggests a number a person then sets.)*
 calendar read above does not change it: free/busy produces no event, is not persisted, and cannot
 move an intention. It answers a question at a moment somebody is looking at a screen.)* An intention
 ought to move when the world moves — a reply arrives, a build goes red, a deadline passes. None of that can reach this
-system, and the reason is structural rather than unfinished: an `ObservationEvent` requires a
+system, ~~and the reason is structural rather than unfinished~~ **— corrected 2026-09-07, and only
+this clause ([ADR-0034](./adr/0034-somewhere-to-put-an-event-outside-a-sitting.md)): the reason is
+now unfinished rather than structural. The first half of the sentence is unchanged and still true,
+and neither of the two permitted sources is a sensor, so *"Observation is one sensor"* above is
+untouched.** As it stands: an `ObservationEvent` requires a
 `sessionId` and there is a single ledger writer, so **nothing that happens outside a sitting can be
 recorded at all.** That absence is why `IntentionState` ships with five members instead of six, and
 it is the whole content of the repository's **Stage 2 — Event-Driven Understanding**

@@ -19,7 +19,13 @@
  * an external event or dependency*, and nothing in this system can produce an
  * external event: `ObservationEvent.sessionId` is required with a single ledger
  * writer, so no event outside a sitting can be persisted at all, and
- * `ExternalEvent` is on the do-not-build list. A member nothing can reach is a
+ * ~~`ExternalEvent` is on the do-not-build list~~ **struck 2026-09-07, and it
+ * was never true rather than newly false: §8's list has ten entries and
+ * `ExternalEvent` is not among them — the nearest is automatic ingestion, which
+ * is a sensor. ADR-0034 decides the table with two sources, neither a sensor,
+ * and it is unbuilt: `grep -n 'model ExternalEvent' prisma/schema.prisma`
+ * returns nothing. The clause before this one is unchanged and still true,
+ * which is why the union below still has five members.** A member nothing can reach is a
  * promise the interface would render and the data could never keep. It arrives
  * with event ingestion; `docs/ARCHITECTURE.md` records it there rather than
  * here. See ADR-0011 §2.

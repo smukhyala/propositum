@@ -556,7 +556,15 @@ whole value of this section: it means the line cannot be crossed by accident.
   and `ledger-writer.ts` is the single door every event enters by — one writer, because `seq` has to
   be gapless per session and two writers assigning their own sequence corrupt the stream invisibly.
   There is no row an external event could become and no writer that would accept it. A connector is
-  therefore not an integration job. It is a schema change plus a second writer, and the second writer
+  therefore not an integration job. It is a schema change plus a second writer, ~~and the second
+writer~~ **— amended 2026-09-07
+([ADR-0034](./adr/0034-somewhere-to-put-an-event-outside-a-sitting.md), decided and unbuilt): that
+second writer is now decided, `createExternalWriter` over its own `ExternalEvent` table.
+`ObservationEvent.sessionId` stays required and `createLedgerWriter` stays its only writer, so the
+guarantee above is intact where it always was. What this section forbade is NOT spent: the two
+permitted sources are a person typing and a fixture replaying, neither is a sensor, and a third is
+ADR-0034's own first *Revisit when*. The bullet below — no model calls on a timer — is untouched.**
+The struck clause
   is the thing that argument exists to forbid.
 - **[`CONTEXT.md`](../CONTEXT.md) bans model calls on a timer**, and gives two reasons an external
   source would have to answer rather than inherit: periodic interpretation feeds hostile page text to

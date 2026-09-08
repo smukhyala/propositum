@@ -220,7 +220,12 @@ is not merely unbuilt — there is nowhere to put one. That is worth stating pre
 event ingestion cannot arrive by accident, and it is also the reason `waiting` is absent from the
 lifecycle union (below).
 
-*What would have to exist first:* either a second ledger writer or a nullable `sessionId`. Both are
+*What would have to exist first:* ~~either a second ledger writer or a nullable `sessionId`.~~
+**Corrected 2026-09-07 — the argument was attached and one branch was closed ([ADR-0034](./adr/0034-somewhere-to-put-an-event-outside-a-sitting.md)): a
+second ledger writer over a second table, with the nullable `sessionId` refused because it would
+hand every existing `ObservationEvent` reader rows it was written before there were any. Decided,
+not built — `grep -n 'model ExternalEvent' prisma/schema.prisma` returns nothing, the sentence above
+still holds of the database, and this cell has not moved.** ~~Both are
 schema changes that need an argument attached, not an afternoon of wiring.
 
 ---
@@ -262,9 +267,21 @@ is a normal outcome rather than an error.
 
 **Not built.** Ranking. There is no expected-progress estimate, no cost, no risk, no uncertainty, and
 no dependency effects — the five things direction §3 asks this layer to represent. There is one
-candidate action at a time, so nothing sorts.
+~~candidate action at a time, so nothing sorts.~~ **Struck as two claims, 2026-09-07
+([ADR-0036](./adr/0036-ordering-candidates-without-a-score.md)), because they went wrong in opposite
+directions and this is the copy that mattered.** *Nothing sorts* was never true:
+`src/domain/detection/topics.ts` has sorted threads by `(searches, pages.length, engagedMs)` since
+2026-08-11, five days before this sentence was written, and `detect.ts` documents the result as
+*"strongest first"*. *One candidate at a time* stopped being true on 2026-08-17, when the
+multi-strand change began showing up to `MAX_THREADS_SHOWN` strands each with its own offer. Both
+errors understate what is built, which is the rarer direction and the one Principle 11 names as
+still a false thing. **What is genuinely absent is an ordering that can see more than one KIND of
+candidate**, and the Status cell does not move for it.
 
-*What would have to exist first:* more than one candidate.
+~~*What would have to exist first:* more than one candidate.~~ **Corrected 2026-09-07: that
+prerequisite was met on 2026-08-17 and nothing noticed. What has to exist first is a second KIND of
+candidate, which is decided in
+[ADR-0035](./adr/0035-what-a-person-said-they-are-waiting-on.md) and unbuilt.**
 
 ---
 
@@ -664,7 +681,7 @@ durable row.
 
 **`waiting` is deliberately absent from the union.** Direction §1's lifecycle has six states and
 `waiting` means *progress depends on an external event or dependency*. Nothing in this system can
-produce an external event: `ExternalEvent` is on §8's do-not-build list, and — the structural half —
+produce an external event: ~~`ExternalEvent` is on §8's do-not-build list~~ **Struck 2026-09-07, and it was never true rather than newly false** ([ADR-0034](./adr/0034-somewhere-to-put-an-event-outside-a-sitting.md)): §8's *Do not build yet* list has ten entries and `ExternalEvent` is not among them — the nearest is *automatic Gmail/Slack/Calendar/GitHub/Notion ingestion*, which is a sensor and which ADR-0034 does not build. `ExternalEvent` appears in that direction document twice, and both times it is being **asked for**. The clause beside this one is unaffected and is still true, which is why the union still has five members. And — the structural half —
 `ObservationEvent.sessionId` is required with a single ledger writer, so no event outside a sitting
 can be persisted at all. `waiting` is the state that arrives with event ingestion. Until then it is a
 member nothing can reach, and **a member nothing can reach is a claim**; this repository writes claims

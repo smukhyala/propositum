@@ -140,7 +140,9 @@ Direction §1's lifecycle has six. **`waiting` is deliberately absent**, and thi
 to be tidied later. `waiting` means *progress depends on an external event or dependency*, and
 nothing in this system can produce an external event: `ObservationEvent.sessionId` is required and
 there is a single ledger writer, so **no event outside a sitting can be persisted at all**, and
-`ExternalEvent` is on Direction §8's do-not-build list. An enum member nothing can reach is a
+~~`ExternalEvent` is on Direction §8's do-not-build list.~~ **Struck 2026-09-07, and it was never true rather than newly false** ([ADR-0034](0034-somewhere-to-put-an-event-outside-a-sitting.md)): §8's *Do not build yet* list has ten entries and `ExternalEvent` is not among them — the nearest is *automatic Gmail/Slack/Calendar/GitHub/Notion ingestion*, which is a sensor and which ADR-0034 does not build. `ExternalEvent` appears in that direction document twice, and both times it is being **asked for**. The clause beside this one is unaffected and is still true, which is why the union still has five members.
+
+**And the other half of this paragraph is amended rather than struck, 2026-09-07 ([ADR-0035](0035-what-a-person-said-they-are-waiting-on.md)).** *It arrives when event ingestion does* named its own trigger, and ADR-0034 is that trigger firing. `waiting` is now **decided** as a sixth member reachable from a `StatedWait` a person typed. It is still not built, so §2's ruling — five members, and a member nothing can reach is a claim — is **true today and correct as written**; what has changed is that it is no longer permanent. An enum member nothing can reach is a
 promise the interface would render and the data could never keep. It arrives when event ingestion
 does, and it is written down in `docs/ARCHITECTURE.md` as an unimplemented layer rather than
 declared in the union.
@@ -246,7 +248,9 @@ The collision costs attention. The rename costs a guarantee.
 Named individually, because a list of what was not built is the thing a later reader most needs and
 is least likely to reconstruct.
 
-- **It does not add `ExternalEvent`.** Blocked structurally, not by policy:
+- **It does not add `ExternalEvent`.** ~~Blocked structurally, not by policy:~~ **Re-marked
+  2026-09-07 — [ADR-0034](0034-somewhere-to-put-an-event-outside-a-sitting.md) decides the table, so
+  it is now blocked by nobody having built it. True when written:**
   `ObservationEvent.sessionId` is required with a single ledger writer, so no event outside a
   sitting can be persisted at all.
 - **It does not add `ProgressEvent`.** Nothing in the system can produce one.
@@ -340,7 +344,10 @@ is least likely to reconstruct.
 - **Someone proposes that a detector or a boundary write or update an Intention** — even "only the
   state", even "only when it is obviously done". That is this ADR's single property being spent, and
   it needs its own ADR to spend it.
-- **`ExternalEvent` becomes real.** Then `waiting` is a genuine gap rather than an honest absence,
+- **`ExternalEvent` becomes real.** **This trigger fired 2026-09-07**
+  ([ADR-0034](0034-somewhere-to-put-an-event-outside-a-sitting.md) decides it,
+  [ADR-0035](0035-what-a-person-said-they-are-waiting-on.md) answers it), and the answer was the one
+  this bullet predicted: `waiting` becomes a genuine gap rather than an honest absence,
   and the five-member union is wrong rather than complete.
 - **A stale Intention pre-fills a contract that a person ratifies without reading.** That is the
   predicted failure. It is evidence about the restatement step, not about the person.

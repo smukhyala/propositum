@@ -66,6 +66,10 @@ events as well as watched work — with real state reconciliation behind it and 
 that has more than one candidate to weigh.
 
 *What would have to exist first:* somewhere to put an event that did not happen inside a sitting.
+*(**Still true 2026-09-07, and now decided rather than open** —
+[ADR-0034](./adr/0034-somewhere-to-put-an-event-outside-a-sitting.md) specifies `ExternalEvent` as a
+second append-only table with two sources, `declared` and `replay`. Nothing is built, and the
+do-not-build sentence below is untouched: neither source is an integration.)*
 `ObservationEvent.sessionId` is required with a single ledger writer, so today there is no such place
 at all — see [`ARCHITECTURE.md`](./ARCHITECTURE.md), State Ingestion. This is also the stage that
 makes `waiting` a reachable `IntentionState`; until then the union has five members and not six.
