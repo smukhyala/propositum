@@ -171,10 +171,17 @@ say why. One nullable field on `Intention`, typed and edited on the working-agre
 the desired outcome and the definition of done. Decided 2026-09-07,
 [ADR-0035](docs/adr/0035-what-a-person-said-they-are-waiting-on.md).
 
-**A specification rather than a description.** `grep -rn 'statedWait' src/` returns nothing and
-`prisma/schema.prisma` holds no such field, so **Propositum cannot represent a wait today** and
-`IntentionState` still has five members. [`docs/todo/12-between-sittings.md`](docs/todo/12-between-sittings.md)
-is the work between the decision and the capability.
+~~**A specification rather than a description.** `grep -rn 'statedWait' src/` returns nothing…~~
+**The fence came off 2026-09-07, the same day it went on.** `Intention.statedWait` and
+`Intention.statedWaitAt` are in `prisma/schema.prisma`, `repos.intentions.stateWait` is the only
+writer, and a person states, changes and clears one on the project screen.
+
+**Two columns, not one, and the second is the interesting half.** `statedWaitAt` holds when the
+person wrote the words currently in `statedWait`, and discharge is bounded at it — otherwise
+re-stating a wait would be discharged instantly by the arrival that answered the previous one, and
+the only symptom would be a screen quietly ceasing to say *Waiting*. `updatedAt` cannot do that job;
+it moves when the objective is edited too. ADR-0035 specified one field and the build needed two,
+which is recorded there rather than left to be noticed here.
 
 **Human-written, and by nothing else** — the rule `Intention` carries, inherited unchanged. No
 detector, no model boundary, no worker and no sweep may write one.
@@ -208,7 +215,10 @@ claiming it here would point one retired word at two different concepts.
 **Consumer:** what you're waiting on.
 
 ### IntentionState — *computed view*
-`working | delegated | needs-you | sleeping | done`. Derived, never stored — `EnforcedPolicy`,
+~~`working | delegated | needs-you | sleeping | done`~~ **`working | delegated | needs-you | waiting |
+sleeping | done` — 2026-09-07, [ADR-0035](docs/adr/0035-what-a-person-said-they-are-waiting-on.md).**
+`INTENTION_STATES` in `src/domain/intention/state.ts` is what knows how many there are; this line is a
+reading of it and `tests/intention.test.ts` holds the two together. Derived, never stored — `EnforcedPolicy`,
 `Shift` and `ActionStatus` set the precedent and the argument is theirs: **two stores for one truth
 is exactly how a UI comes to display something the gate cannot enforce.** Every fact it reads is
 already a durable row.
@@ -218,29 +228,35 @@ already a durable row.
 | `working` | a live WorkSession on this Intention, phase `observing` |
 | `delegated` | an accepted HandoffContract on it whose Shift has not ended |
 | `needs-you` | an unanswered ConfirmationRequest, ~~a DecisionNeeded,~~ **a DecisionNeeded with no DecisionVerdict — un-struck 2026-08-26,** or a held ShiftOutcome with undecided proposals |
+| `waiting` | a `StatedWait` a person typed, with no `ExternalEvent{kind:'arrived'}` at or after the moment they typed it — added 2026-09-07 |
 | `sleeping` | none of the above, and `completedAt` is null |
 | `done` | `completedAt` is set — by a person, and only by a person |
 
-**Five members. There is no `waiting`, and it is not an omission to tidy up later.** `waiting` means
+~~**Five members. There is no `waiting`, and it is not an omission to tidy up later.**~~ **Struck
+2026-09-07 on its own trigger — see below. Kept because the rule it states did not change; only the
+fact did.** `waiting` means
 *progress depends on an external event or dependency*, and nothing in this system can produce an
 external event: `ObservationEvent.sessionId` is required with a single ledger writer, so **no event
-outside a sitting can be persisted at all**, and ~~`ExternalEvent` is on the do-not-build list~~ **Struck 2026-09-07, and it was never true rather than newly false** ([ADR-0034](docs/adr/0034-somewhere-to-put-an-event-outside-a-sitting.md)): §8's *Do not build yet* list has ten entries and `ExternalEvent` is not among them — the nearest is *automatic Gmail/Slack/Calendar/GitHub/Notion ingestion*, which is a sensor and which ADR-0034 does not build. `ExternalEvent` appears in that direction document twice, and both times it is being **asked for**. The clause beside this one is unaffected and is still true, which is why the union still has five members. *(An earlier version of this correction, made the same day, said the entry had been on the list and was being struck off it. That was wrong in the same direction as the claim it corrected, and is replaced rather than tidied.)* A
+outside a sitting can be persisted at all**, and ~~`ExternalEvent` is on the do-not-build list~~ **Struck 2026-09-07, and it was never true rather than newly false** ([ADR-0034](docs/adr/0034-somewhere-to-put-an-event-outside-a-sitting.md)): §8's *Do not build yet* list has ten entries and `ExternalEvent` is not among them — the nearest is *automatic Gmail/Slack/Calendar/GitHub/Notion ingestion*, which is a sensor and which ADR-0034 does not build. `ExternalEvent` appears in that direction document twice, and both times it is being **asked for**. The clause beside this one is unaffected and is still true, which is why the union had five members when this was written. *(An earlier version of this correction, made the same day, said the entry had been on the list and was being struck off it. That was wrong in the same direction as the claim it corrected, and is replaced rather than tidied.)* A
 member nothing can reach is a promise the interface would render and the data could never keep. It
 arrives with event ingestion, and `docs/ARCHITECTURE.md` records it there rather than in the union.
 
-**Decided 2026-09-07, and still five** ([ADR-0035](docs/adr/0035-what-a-person-said-they-are-waiting-on.md)).
-The clause above names its own trigger — *it arrives with event ingestion* — and
-[ADR-0034](docs/adr/0034-somewhere-to-put-an-event-outside-a-sitting.md) is event ingestion, so the
-trigger has fired on the condition it was written with. **What has not happened is the code:**
-`grep -n "'waiting'" src/domain/intention/state.ts` returns nothing and there is no `statedWait` to
-reach it from, so the union has five members today and this entry is not corrected, only annotated.
-The sixth is reachable only from a `StatedWait` a person typed, undischarged by any `ExternalEvent`,
-and it sits after `done` and `needs-you` and before `sleeping`. Its consumer label is **Waiting**, ratified here rather than left to the two documents that had already started rendering it.
+**Built 2026-09-07** ([ADR-0035](docs/adr/0035-what-a-person-said-they-are-waiting-on.md)). The
+struck paragraph named its own trigger — *it arrives with event ingestion* — and
+[ADR-0034](docs/adr/0034-somewhere-to-put-an-event-outside-a-sitting.md) is event ingestion, so
+`waiting` arrives on the condition the rule was written with rather than because the rule became
+inconvenient. **The rule itself is unchanged and still enforced:** a member is declared when
+something can reach it, and `tests/intention.test.ts` now proves every one of the six is reachable
+rather than counting them.
 
-**The *Displaces:* line below retires `waiting (as a member)`, so this is a reversal rather than an
-addition, and the strike is lifted in the commit that builds it** — not here. Lifting it while the
-member is still unreachable would make this glossary legalise a word nothing can produce, which is
-the failure the *five members* paragraph exists to prevent, one layer up.
+`waiting` is reachable only from a `StatedWait` a person typed that no `ExternalEvent` has
+discharged, and it sits **below every activity word and above `sleeping`** — a person at their desk
+is `working` even with a wait outstanding, because the wait is not what they are doing. Its consumer
+label is **Waiting**.
+
+**The strike on `waiting (as a member)` in the *Displaces:* line below is lifted, and this is the
+commit that earned it.** It was a reversal rather than an addition, which is why it was argued in an
+ADR and not edited in quietly.
 
 **`sleeping` is the honest common case and will read like a bug.** With one sensor, no external
 events and one live session at a time, most Intentions compute to `sleeping` most of the time. That
@@ -298,8 +314,10 @@ see — a mutation that computed a state and discarded it kept the whole suite g
 *Checked against the banned words:* not `status` (displaced), not `SessionState` (that is
 `SessionReading`), not `phase` — `SessionPhase` is per sitting and is a different thing.
 *Displaces:* IntentionStatus · status · lifecycle state (as a column) · state machine · stalled ·
-blocked · waiting (as a member).
-**Consumer:** Working · Propositum is on it · Needs you · Sleeping · Done.
+blocked · ~~waiting (as a member)~~ **— lifted 2026-09-07 with the sixth member
+([ADR-0035](docs/adr/0035-what-a-person-said-they-are-waiting-on.md)); it is a member now, and the
+other six words on this line stand**.
+**Consumer:** Working · Propositum is on it · Needs you · **Waiting** · Sleeping · Done.
 
 ### FirstRun — *computed view, like IntentionState*
 The app's launch while setup is unfinished, and the surface that answers it: the page at
@@ -558,8 +576,9 @@ its three append-only guards, and `src/persistence/external-writer.ts` holds `cr
 **What has NOT moved, and it is the more useful half: nothing writes one.**
 `tests/reachability.test.ts` pins that writer at zero callers in its *deferred, and asserted as
 deferred* block — so *no event outside a sitting has been persisted* is still true, and it is now a
-fact about callers rather than about shapes. `IntentionState` still has five members, because
-`StatedWait` is still fenced below and there is nothing to reach a sixth from.
+fact about callers rather than about shapes. `IntentionState` has **six** members as of the same day
+— `StatedWait` landed with it, and `waiting` is reachable from a wait a person typed rather than from
+anything this table does on its own.
 
 **It is a second ledger, not a widening of the first.** `ObservationEvent.sessionId` stays required
 and `createLedgerWriter` stays its only writer; this table gets its own single writer and the two

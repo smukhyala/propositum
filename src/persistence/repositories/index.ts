@@ -181,6 +181,23 @@ export interface IntentionStateFacts {
   /** Set by a person, and only by a person. The whole of `done`. */
   readonly completedAt: Date | null
   /**
+   * What the person said they are waiting on, or null. ADR-0035.
+   *
+   * The words themselves, not a boolean, because the screen renders them — a
+   * count would tell a reader that something is outstanding and not what.
+   */
+  readonly statedWait: string | null
+  /**
+   * Whether an `ExternalEvent{kind:'arrived'}` at or after `statedWaitAt`
+   * points at this Intention.
+   *
+   * Computed here rather than stored, and that is the load-bearing half:
+   * clearing `statedWait` on discharge would be something other than a person
+   * editing the row, which Principle 12 forbids. So the field outlives its own
+   * answer and this boolean is what the screen reads.
+   */
+  readonly waitDischarged: boolean
+  /**
    * WorkSessions on this Intention that no human has ended, with their phase.
    *
    * The PHASES are not summarised here, and that is the point of returning the
@@ -392,6 +409,9 @@ export interface IntentionRepository {
     projectId: string | null
     objective: string
     definitionOfDone: string
+    /** What the person said they are waiting on. Optional, and empty means the
+     *  person said nothing rather than said "nothing". ADR-0035. */
+    statedWait?: string | undefined
   }): Promise<StoredIntention>
   /**
    * The Project's Intention, or null. Singular by ADR-0011: at most one per
@@ -478,6 +498,25 @@ export interface IntentionRepository {
    * sentence saying there is nothing.
    */
   workSoFarFacts(intentionId: string): Promise<WorkSoFarRows | null>
+  /**
+   * Write, change or clear what a person said they are waiting on. ADR-0035.
+   *
+   * **The only mutation this repository offers on an Intention, and it exists
+   * so a wait can be taken back.** ADR-0035's own cost section names a wait
+   * nobody can quiet as the sharpest hole in the decision: a strand can leave
+   * the front door three ways and a wait had none, so a stale one would hold a
+   * slot for ever. This is that control, and it is deliberately the same method
+   * in both directions — `null` clears.
+   *
+   * `statedWaitAt` moves with the words, never independently, because the
+   * discharge bound reads it: a wait re-stated after an arrival must not be
+   * discharged by the arrival that answered the previous one.
+   *
+   * **Human-only, and held by there being one caller rather than by a type** —
+   * the same weaker guarantee Principle 12's own honest limit names for the row
+   * as a whole. `tests/reachability.test.ts` pins the caller count.
+   */
+  stateWait(intentionId: string, statedWait: string | null): Promise<void>
 }
 
 function intentionRepository(prisma: PrismaClient): IntentionRepository {
@@ -487,16 +526,38 @@ function intentionRepository(prisma: PrismaClient): IntentionRepository {
     objective: true,
     definitionOfDone: true,
     completedAt: true,
+    statedWait: true,
   } as const
 
   return {
-    create: ({ projectId, objective, definitionOfDone }) =>
+    create: ({ projectId, objective, definitionOfDone, statedWait }) =>
       prisma.intention.create({
-        data: { projectId, objective, definitionOfDone },
+        data: {
+          projectId,
+          objective,
+          definitionOfDone,
+          // Written together, so a wait can never exist without the moment it
+          // was written — which is what the discharge bound reads.
+          ...(statedWait === undefined || statedWait === ''
+            ? {}
+            : { statedWait, statedWaitAt: new Date() }),
+        },
         select: SELECT,
       }),
     forProject: (projectId) =>
       prisma.intention.findUnique({ where: { projectId }, select: SELECT }),
+
+    stateWait: async (intentionId, statedWait) => {
+      await prisma.intention.update({
+        where: { id: intentionId },
+        // Both columns or neither. A wait with no moment behind it cannot be
+        // discharged, and a moment with no wait is a fact about nothing.
+        data:
+          statedWait === null
+            ? { statedWait: null, statedWaitAt: null }
+            : { statedWait, statedWaitAt: new Date() },
+      })
+    },
 
     factsForEveryProject: () => factsWhere({ projectId: { not: null } }),
 
@@ -654,6 +715,26 @@ function intentionRepository(prisma: PrismaClient): IntentionRepository {
         id: true,
         projectId: true,
         completedAt: true,
+        statedWait: true,
+        statedWaitAt: true,
+        /**
+         * Discharging arrivals only, and the `gte` is the whole of it.
+         *
+         * A wait is discharged by an `ExternalEvent{kind:'arrived'}` at or after
+         * the moment the person wrote the wait currently in `statedWait`.
+         * Without the bound, re-stating a wait would be discharged instantly by
+         * the arrival that answered the previous one — which is the failure
+         * `statedWaitAt` exists to prevent, and it is invisible on a screen that
+         * simply stops saying *Waiting*.
+         *
+         * Empty when `statedWaitAt` is null, because `gte: null` matches nothing
+         * in Prisma. That is the right answer either way: no wait, nothing to
+         * discharge.
+         */
+        external: {
+          where: { kind: 'arrived' },
+          select: { occurredAt: true },
+        },
         sessions: { where: { endedAt: null }, select: { id: true, phase: true } },
         contracts: {
           where: { status: 'accepted', acceptedAt: { not: null } },
@@ -728,6 +809,12 @@ function intentionRepository(prisma: PrismaClient): IntentionRepository {
         unansweredConfirmationsAskedAt,
         openDecisions,
         undecidedHeldOutcomes,
+        statedWait: row.statedWait,
+        // The arithmetic the domain must not do, because doing it there would
+        // mean `src/domain` learning that a second ledger exists.
+        waitDischarged:
+          row.statedWaitAt !== null &&
+          row.external.some((event) => event.occurredAt >= row.statedWaitAt!),
         waitingContractId: waitingContractId ?? row.contracts[0]?.id ?? null,
       })
     }

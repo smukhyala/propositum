@@ -57,6 +57,7 @@ import {
   endSession,
   refileSession,
   renameProject,
+  stateWait,
   saveDocument,
   splitIntoNewProject,
   startSession,
@@ -88,6 +89,9 @@ const CSS = `
 .pj-state[data-revoked="true"] { color: var(--attention); }
 .pj-revoked { margin: 0.35rem 0 0; font-size: 0.8125rem; color: var(--attention); }
 
+.pj-wait { margin-top: 2rem; padding-top: 1.5rem; border-top: 1px solid var(--rule); }
+.pj-wait-line { margin: 0; font-size: 0.9375rem; color: var(--ink); }
+.pj-wait .pj-form { margin-top: 1rem; padding-top: 1rem; }
 .pj-form { display: flex; gap: 0.75rem; flex-wrap: wrap; align-items: flex-end; margin-top: 1.75rem; padding-top: 1.5rem; border-top: 1px dashed var(--rule); }
 .pj-field { display: grid; gap: 0.35rem; flex: 1 1 15rem; }
 .pj-label { font-size: 0.6875rem; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
@@ -270,6 +274,16 @@ export default async function ProjectPage({
     redirect(here)
   }
 
+  async function saveWait(formData: FormData) {
+    'use server'
+
+    const result = await stateWait(projectId, String(formData.get('statedWait') ?? ''))
+    if (!result.ok) {
+      redirect(`${here}?problem=${encodeURIComponent(result.problem.message)}`)
+    }
+    redirect(here)
+  }
+
   /**
    * "No — this is new work."
    *
@@ -327,7 +341,7 @@ export default async function ProjectPage({
    * The same derivation Home uses, from the same function, because a second one
    * is how two screens come to disagree about a single Intention — the argument
    * `front-door.ts` opens with. Home filters its rows to `needs-you` and prints
-   * one word; this screen prints whichever of the five is true, which is why
+   * one word; this screen prints whichever of the ~~five~~ **six, since 2026-09-07** is true, which is why
    * `statusWordFor` had no caller between the bare-Home rewrite and now.
    *
    * `frontDoorRow` takes the live session id, and `phasesWeCanVouchFor` counts
@@ -339,8 +353,10 @@ export default async function ProjectPage({
    * `sleeping` will be the common answer, and CONTEXT.md says it will read like
    * a bug. It is not dressed up.
    */
+  const intentionFacts = await repos.intentions.factsForProject(projectId)
+
   const lifecycle = frontDoorRow({
-    facts: await repos.intentions.factsForProject(projectId),
+    facts: intentionFacts,
     sittings: sessions,
     liveSessionId: liveCapture?.sessionId ?? null,
     nowEpochMs: Date.now(),
@@ -530,6 +546,45 @@ export default async function ProjectPage({
           anything" — folding it would be the quietness the ADR exists to
           refuse. Only the corrections fold.
         */}
+        {/*
+          What a person said they are waiting on. ADR-0035.
+
+          Rendered OUTSIDE the disclosure when it is set, and that is Principle
+          12 rather than a layout preference: it forbids "a carried-forward
+          outcome that is not on screen where the person can read and change
+          it", and this is carried forward. When there is no wait there is
+          nothing carried and the ask folds with the other corrections.
+
+          It says what arrived, too. A discharged wait still holds its words —
+          nothing but a person may clear them — so a screen that only said
+          *Waiting* would keep saying it after the thing had happened.
+        */}
+        {intentionFacts?.statedWait != null && (
+          <section className="pj-wait">
+            <p className="pj-wait-line">
+              {intentionFacts.waitDischarged ? 'You were waiting on' : 'Waiting on'}{' '}
+              <strong>{intentionFacts.statedWait}</strong>
+              {intentionFacts.waitDischarged ? ' — it arrived.' : '.'}
+            </p>
+            <form className="pj-form" action={saveWait}>
+              <label className="pj-field">
+                <span className="pj-label">Change it, or empty the box to drop it</span>
+                <input
+                  className="pj-input"
+                  name="statedWait"
+                  type="text"
+                  maxLength={200}
+                  autoComplete="off"
+                  defaultValue={intentionFacts.statedWait}
+                />
+              </label>
+              <button className="pj-submit" type="submit">
+                Save
+              </button>
+            </form>
+          </section>
+        )}
+
         <Disclosure summary="Filed wrong? Rename it, or move this sitting">
           <form className="pj-form" action={rename}>
             <label className="pj-field">
@@ -548,6 +603,27 @@ export default async function ProjectPage({
               Save the name
             </button>
           </form>
+
+          {/* The ask, only when there is nothing to carry. Once a wait is set it
+              moves out of here and onto the page, above. */}
+          {intentionFacts !== null && intentionFacts.statedWait === null && (
+            <form className="pj-form" action={saveWait}>
+              <label className="pj-field">
+                <span className="pj-label">Waiting on something before this can move?</span>
+                <input
+                  className="pj-input"
+                  name="statedWait"
+                  type="text"
+                  maxLength={200}
+                  autoComplete="off"
+                  placeholder="a reply from the venue"
+                />
+              </label>
+              <button className="pj-submit" type="submit">
+                Save
+              </button>
+            </form>
+          )}
 
           {/* The way out of a filing decision nobody made deliberately. Shown
             only when there is something to leave: a project holding one sitting

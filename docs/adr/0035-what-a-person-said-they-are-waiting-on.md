@@ -59,6 +59,12 @@ mail.
 sixth member, `waiting`, reachable only when a `statedWait` is set and no `ExternalEvent` has
 discharged it.**
 
+- **Two columns, not one — recorded 2026-09-07 by the build, because this ADR specified one.**
+  `statedWaitAt` holds when the person wrote the words currently in `statedWait`, and discharge is
+  bounded at it. Without the bound, a wait re-stated after an arrival is discharged instantly by the
+  arrival that answered the previous one, and the only symptom is a screen that quietly stops saying
+  *Waiting*. `updatedAt` cannot do the job — it moves when the objective is edited. Both columns
+  move together or not at all, and clearing takes both.
 - **Human-written, and by nothing else.** It is typed on the working-agreement screen beside the two
   sentences already there, edited there, and cleared there. No detector, no model boundary, no
   worker and no recovery sweep may write it. `tests/reachability.test.ts` pins the writer set at

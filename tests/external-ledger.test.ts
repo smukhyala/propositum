@@ -15,6 +15,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { ensureAppendOnlyGuards } from '../src/persistence/append-only'
+import { createRepositories } from '../src/persistence/repositories/index'
 import {
   createExternalWriter,
   EXTERNAL_EVENT_KINDS,
@@ -191,5 +192,85 @@ describe('append-only, and the first ledger untouched', () => {
     const body = model.slice(0, model.indexOf('\n}'))
     expect(body).toMatch(/^\s*sessionId\s+String\s*$/m)
     expect(body).not.toMatch(/^\s*sessionId\s+String\?/m)
+  })
+})
+
+describe('a wait, and what discharges it', () => {
+  /**
+   * The property that is easy to get wrong and invisible when you do.
+   *
+   * Discharge is bounded at `statedWaitAt`, so an arrival that answered a
+   * PREVIOUS wait cannot discharge the one stated after it. Without the bound a
+   * person who states a second wait finds it already discharged, and the only
+   * symptom is a screen that quietly stops saying *Waiting*.
+   */
+  it('is not discharged by an arrival that answered the previous wait', async () => {
+    const repos = createRepositories(prisma)
+    const writer = createExternalWriter(prisma)
+
+    const project = await prisma.project.create({ data: { name: 'waits' } })
+    const intention = await prisma.intention.create({
+      data: {
+        projectId: project.id,
+        objective: 'book the venue',
+        definitionOfDone: 'it is booked',
+      },
+    })
+
+    await repos.intentions.stateWait(intention.id, 'a reply from the venue')
+    let facts = await repos.intentions.factsForProject(project.id)
+    expect(facts?.statedWait).toBe('a reply from the venue')
+    expect(facts?.waitDischarged).toBe(false)
+
+    const arrival = await writer.append({
+      statedBy: 'declared',
+      kind: 'arrived',
+      occurredAt: new Date(),
+      elapsedMs: 0,
+      intentionId: intention.id,
+      attested: {},
+    })
+    expect(arrival.ok).toBe(true)
+
+    facts = await repos.intentions.factsForProject(project.id)
+    expect(facts?.waitDischarged, 'an arrival after the wait discharges it').toBe(true)
+
+    // A second wait, stated after that arrival. The old arrival must not answer
+    // it — this is the assertion the bound exists for.
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    await repos.intentions.stateWait(intention.id, 'the deposit to clear')
+
+    facts = await repos.intentions.factsForProject(project.id)
+    expect(facts?.statedWait).toBe('the deposit to clear')
+    expect(
+      facts?.waitDischarged,
+      'a re-stated wait was discharged by the arrival that answered the previous one',
+    ).toBe(false)
+  })
+
+  /**
+   * The half ADR-0035 calls the sharpest hole if it is missing: a wait a person
+   * cannot take back would hold a slot on the front door for ever.
+   */
+  it('is cleared by a person, and clearing takes the moment with it', async () => {
+    const repos = createRepositories(prisma)
+
+    const project = await prisma.project.create({ data: { name: 'clearing' } })
+    const intention = await prisma.intention.create({
+      data: { projectId: project.id, objective: 'o', definitionOfDone: 'd' },
+    })
+
+    await repos.intentions.stateWait(intention.id, 'something')
+    await repos.intentions.stateWait(intention.id, null)
+
+    const facts = await repos.intentions.factsForProject(project.id)
+    expect(facts?.statedWait).toBeNull()
+    expect(facts?.waitDischarged).toBe(false)
+
+    const row = await prisma.intention.findUnique({
+      where: { id: intention.id },
+      select: { statedWaitAt: true },
+    })
+    expect(row?.statedWaitAt, 'a moment with no wait is a fact about nothing').toBeNull()
   })
 })

@@ -78,7 +78,7 @@ permitted sources are assertions.** As written:
 `ObservationEvent.sessionId` is required with a single ledger writer, so today there is no such
 place
 at all — see [`ARCHITECTURE.md`](./ARCHITECTURE.md), State Ingestion. This is also the stage that
-makes `waiting` a reachable `IntentionState`; until then the union has five members and not six.
+makes `waiting` a reachable `IntentionState`~~; until then the union has five members and not six~~ **— done 2026-09-07 ([ADR-0035](./adr/0035-what-a-person-said-they-are-waiting-on.md)): `waiting` is built and reachable from a `StatedWait` a person typed. It is the one thing this stage promised that has landed, and the stage has still not started — what it wants is a second SENSOR, and both permitted event sources are assertions.**
 
 Direction §8 puts automatic Gmail/Slack/Calendar/GitHub ingestion on the do-not-build list, and this
 stage does not start by ignoring that.

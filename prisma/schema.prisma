@@ -96,6 +96,22 @@ model Intention {
   /// two stores for one truth is exactly how a UI comes to display something
   /// the gate cannot enforce.
   completedAt DateTime?
+  /// What a person said they are waiting on, in their own words. ADR-0035.
+  ///
+  /// Human-written and by nothing else — no detector, no model boundary, no
+  /// worker, no sweep. It is the `Intention`'s rule, not `StatedIntent`'s: this
+  /// is written from empty by a person and never drafted for them.
+  statedWait   String?
+  /// When the person wrote the wait CURRENTLY in `statedWait`.
+  ///
+  /// A wait is discharged by an `ExternalEvent{kind:'arrived'}` at or after this
+  /// moment, and the column exists so re-stating a wait is not discharged by an
+  /// arrival that answered the previous one. `updatedAt` cannot do this job — it
+  /// moves when the objective is edited too.
+  ///
+  /// Discharge is COMPUTED and never stored, because clearing the field would be
+  /// something other than a person editing this row, which Principle 12 forbids.
+  statedWaitAt DateTime?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 

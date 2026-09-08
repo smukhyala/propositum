@@ -53,6 +53,8 @@ function quiet(over: Partial<IntentionStateFacts> = {}): IntentionStateFacts {
     unansweredConfirmationsAskedAt: [],
     openDecisions: 0,
     undecidedHeldOutcomes: 0,
+    statedWait: null,
+    waitDischarged: false,
     waitingContractId: null,
     ...over,
   }

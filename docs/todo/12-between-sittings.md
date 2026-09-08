@@ -1,9 +1,11 @@
 # 12 — Somewhere to put an event outside a sitting, and an ordering that can see it
 
-**Status:** ~~not started — decided, not built~~ **step 1 built 2026-09-07; steps 2–9 open.** The
-ledger, its guards and its writer exist and nothing calls the writer — `tests/reachability.test.ts`
-pins that in its *deferred, and asserted as deferred* block, which is where the next person should
-look first.
+**Status:** ~~not started — decided, not built~~ ~~step 1 built 2026-09-07; steps 2–9 open~~
+**steps 1–4 built 2026-09-07; steps 5–9 open.** There is a second ledger, a wait a person can state
+and take back, and a sixth lifecycle word. **Nothing writes an `ExternalEvent`** —
+`tests/reachability.test.ts` pins that in its *deferred, and asserted as deferred* block, so a wait
+can be stated and nothing in the product can discharge one yet. That is step 7's job, and it is the
+honest summary of where this file is.
 **Decided by:** [ADR-0034](../adr/0034-somewhere-to-put-an-event-outside-a-sitting.md),
 [ADR-0035](../adr/0035-what-a-person-said-they-are-waiting-on.md),
 [ADR-0036](../adr/0036-ordering-candidates-without-a-score.md) and
@@ -28,12 +30,13 @@ ls src/domain/detection/order-candidates.ts 2>/dev/null
 grep -n '"replay"' package.json
 ```
 
-~~**As of 2026-09-07 every one of these returns nothing.**~~ **Re-marked the same day, by the change
-that built step 1: greps 1 and 2 now return.** `model ExternalEvent` is in the schema and
-`externalEvent.create` has exactly one caller, `createExternalWriter`. Greps 3, 4 and 5 still return
-nothing — there is no `statedWait`, no sixth lifecycle member, no cross-kind ordering and no replay
-command. **Nothing calls `createExternalWriter`**, which is the honest summary of what step 1 bought:
-a place to put something, and nothing putting anything in it.
+~~**As of 2026-09-07 every one of these returns nothing.**~~ ~~Re-marked the same day: greps 1 and 2
+now return.~~ **Re-marked again the same day, after steps 3 and 4: greps 1, 2 and 3 return.** The
+schema has `model ExternalEvent`, `Intention.statedWait` and `Intention.statedWaitAt`;
+`externalEvent.create` has exactly one caller and so does `intentions.stateWait`; and
+`src/domain/intention/state.ts` holds `'waiting'`. **Greps 4 and 5 still return nothing** — there is
+no cross-kind ordering and no replay command. And **nothing calls `createExternalWriter`**, so a wait
+can be stated and nothing in the product can discharge one.
 
 ## Blocked by
 
@@ -82,14 +85,20 @@ them safe to land alone.
    stop exactly that. Two members and one member, asserted by length in
    `tests/external-ledger.test.ts` so a third goes red. A third source is the sensor decision and is
    still not this file.
-3. **`Intention.statedWait`**, written on the working-agreement screen and by nothing else. Move the
-   writer assertion out of the deferred block in the same commit — that is the reachability rule,
-   and it is the step where it bites.
-4. **The sixth lifecycle word.** `waiting` in `IntentionState`, reachable only from a set
-   `statedWait` with no discharging `ExternalEvent`. Precedence after `done` and `needs-you`, before
-   `sleeping`. **`CONTEXT.md`'s *Displaces:* line for `IntentionState` retires `waiting (as a
-   member)` and the strike is lifted here** — that is a vocabulary reversal, and
-   [ADR-0035](../adr/0035-what-a-person-said-they-are-waiting-on.md) is the argument for it.
+3. ~~**`Intention.statedWait`**, written on the working-agreement screen and by nothing else.~~
+   **Done 2026-09-07, and on the PROJECT screen rather than the agreement screen** — an Intention is
+   born when a person accepts an offer, so the agreement screen has no Intention to hang a wait on
+   yet, and the project screen is where one already renders. Two columns rather than one:
+   `statedWaitAt` bounds the discharge, so a re-stated wait is not answered by the arrival that
+   closed the previous one. `repos.intentions.stateWait` is the only writer and
+   `tests/reachability.test.ts` pins it at exactly one caller. **Clearing shipped with it**, which
+   ADR-0035 calls the half that had to.
+4. ~~**The sixth lifecycle word.**~~ **Done 2026-09-07.** `waiting` sits below every activity word
+   and above `sleeping` — a person at their desk is `working` even with a wait outstanding. The
+   *Displaces:* strike on `waiting (as a member)` is lifted, and `tests/intention.test.ts` now proves
+   each of the six is **reachable** rather than counting them, so a seventh cannot arrive on the
+   argument that a sixth did. The numeral was deleted rather than raised in the documents that
+   carried it, per the note below, which is why this file kept that note.
    **And do not correct "five members" to "six" in the nine places that state it.** It is a
    hand-maintained count in `ARCHITECTURE.md` (four times), `ROADMAP.md`, `MVP.md`, `VISION.md`,
    `CONTEXT.md` and `state.ts`, and nothing checks any of them —`tests/counts.test.ts` has rules for

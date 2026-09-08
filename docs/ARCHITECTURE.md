@@ -648,7 +648,7 @@ strictly weaker than an absence**.
 
 ## The lifecycle word
 
-`IntentionState` is a **computed view with five members**: `working`, `delegated`, `needs-you`,
+`IntentionState` is a ~~**computed view with five members**~~ **computed view over `INTENTION_STATES`**: **Re-marked 2026-09-07 ([ADR-0035](./adr/0035-what-a-person-said-they-are-waiting-on.md)): the sixth member, `waiting`, is built and reachable from a `StatedWait` a person typed. The numeral is deleted rather than raised — `INTENTION_STATES` in `src/domain/intention/state.ts` is what knows how many there are, `tests/intention.test.ts` proves each is reachable, and this count had been maintained by hand in nine places with nothing checking any of them.** The members are `working`, `delegated`, `needs-you`, `waiting`,
 `sleeping`, `done`.
 
 ~~**It is not a type you can import as this file lands.** `IntentionState` appears nowhere in `src/`,
@@ -674,7 +674,7 @@ carries a field to type it into, and `factsForEveryProject` now counts only ques
 unreachable for ten days, during which a person could enter that state and never leave it beside a
 button whose own copy said *"Propositum doesn't keep your answer."*
 
-The argument for five members below is unchanged, and it was written down before the union was rather
+The argument below is unchanged, and it was written down before the union was rather
 than after somebody had already typed six.
 
 **Two docblocks in `src/` still carry the struck claim** and are not corrected here because this is
@@ -690,7 +690,7 @@ durable row.
 
 **`waiting` is deliberately absent from the union.** Direction §1's lifecycle has six states and
 `waiting` means *progress depends on an external event or dependency*. Nothing in this system can
-produce an external event: ~~`ExternalEvent` is on §8's do-not-build list~~ **Struck 2026-09-07, and it was never true rather than newly false** ([ADR-0034](./adr/0034-somewhere-to-put-an-event-outside-a-sitting.md)): §8's *Do not build yet* list has ten entries and `ExternalEvent` is not among them — the nearest is *automatic Gmail/Slack/Calendar/GitHub/Notion ingestion*, which is a sensor and which ADR-0034 does not build. `ExternalEvent` appears in that direction document twice, and both times it is being **asked for**. The clause beside this one is unaffected and is still true, which is why the union still has five members. And — the structural half —
+produce an external event: ~~`ExternalEvent` is on §8's do-not-build list~~ **Struck 2026-09-07, and it was never true rather than newly false** ([ADR-0034](./adr/0034-somewhere-to-put-an-event-outside-a-sitting.md)): §8's *Do not build yet* list has ten entries and `ExternalEvent` is not among them — the nearest is *automatic Gmail/Slack/Calendar/GitHub/Notion ingestion*, which is a sensor and which ADR-0034 does not build. `ExternalEvent` appears in that direction document twice, and both times it is being **asked for**. The clause beside this one is unaffected and is still true, which is why the union had five members when this was written. And — the structural half —
 `ObservationEvent.sessionId` is required with a single ledger writer, so no event outside a sitting
 can be persisted at all. `waiting` is the state that arrives with event ingestion. Until then it is a
 member nothing can reach, and **a member nothing can reach is a claim**; this repository writes claims

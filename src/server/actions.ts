@@ -385,6 +385,66 @@ export async function renameProject(
   })
 }
 
+/**
+ * Say what you are waiting on, change it, or take it back. ADR-0035.
+ *
+ * ── Why this is a mutation on a row nothing else mutates ─────────────────
+ *
+ * `Intention` is human-ratified: created by a person on the accept screen and
+ * edited by nobody. This is the second thing a person may write on it, and it
+ * is a person writing it — no detector, no model boundary, no worker and no
+ * sweep reaches this function, which `tests/reachability.test.ts` pins by
+ * counting callers rather than by a type that could make a second impossible.
+ * That is Principle 12's own honest limit, inherited rather than improved on.
+ *
+ * ── Clearing is the half that had to ship ────────────────────────────────
+ *
+ * An empty field clears the wait, and that is not a convenience. ADR-0035's
+ * cost section calls a wait nobody can quiet the sharpest hole in the decision:
+ * a strand can leave the front door three ways — an origin snooze, a thread
+ * snooze, and reticence — and a wait had none, so a stale one would sit on a
+ * screen for ever saying something nobody could take back. Shipping the wait
+ * without this control would be shipping that.
+ *
+ * ── What it does NOT do ──────────────────────────────────────────────────
+ *
+ * It does not discharge a wait. Discharge is an `ExternalEvent` and is computed,
+ * never stored, because writing it here would make something other than a person
+ * the author of this row.
+ */
+export async function stateWait(
+  projectId: string,
+  statedWait: string,
+): Promise<ActionResult<ProjectCreated>> {
+  return attempt(async () => {
+    const clean = statedWait.trim()
+    if (clean.length > 200) {
+      return no<ProjectCreated>(
+        'invalid-input',
+        'Keep it under 200 characters — a sentence, not a note.',
+      )
+    }
+
+    const { repos } = await appContext()
+    const project = await repos.projects.byId(projectId)
+    if (!project) return no<ProjectCreated>('not-found', "That project doesn't exist any more.")
+
+    const intention = await repos.intentions.forProject(projectId)
+    if (!intention) {
+      // Nothing to hang it on. An Intention is born when a person accepts an
+      // offer, and a wait with no Intention has nothing it could be about.
+      return no<ProjectCreated>('not-found', 'There is nothing here to be waiting on yet.')
+    }
+
+    // Empty clears. `null` and `''` mean different things on the row — nobody
+    // said, versus somebody said nothing — and only the first is true here.
+    await repos.intentions.stateWait(intention.id, clean === '' ? null : clean)
+    refresh()
+
+    return ok({ id: projectId, name: project.name })
+  })
+}
+
 /* ── which project this work belongs to ─────────────────────────────────── */
 
 /**

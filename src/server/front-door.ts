@@ -142,6 +142,9 @@ export function frontDoorRow(input: {
             ),
             openDecisions: facts.openDecisions,
             undecidedHeldOutcomes: facts.undecidedHeldOutcomes,
+            // Both halves, because only this layer can see both: the words are
+            // on the Intention and the discharge is in the second ledger.
+            undischargedWait: facts.statedWait !== null && !facts.waitDischarged,
           },
           input.nowEpochMs,
         )

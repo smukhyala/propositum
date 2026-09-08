@@ -1,5 +1,5 @@
 /**
- * `intentionState()` — the five members, and the arguments behind them.
+ * `intentionState()` — the six members, and the arguments behind them.
  *
  * These test the ARGUMENT rather than the implementation. Each case names the
  * claim it defends: that a human act outranks a computed word, that a question
@@ -31,17 +31,19 @@ const QUIET: IntentionFacts = {
   unansweredConfirmationsAskedAtEpochMs: [],
   openDecisions: 0,
   undecidedHeldOutcomes: 0,
+  undischargedWait: false,
 }
 
 const facts = (over: Partial<IntentionFacts>): IntentionFacts => ({ ...QUIET, ...over })
 
-describe('the five members are reachable, and each has consumer words', () => {
+describe('the six members are reachable, and each has consumer words', () => {
   it('computes every member from facts that are already durable rows', () => {
     expect(intentionState(facts({ sessionPhases: ['observing'] }), NOW)).toBe('working')
     expect(intentionState(facts({ liveAcceptedContracts: 1 }), NOW)).toBe('delegated')
     expect(intentionState(facts({ openDecisions: 1 }), NOW)).toBe('needs-you')
     expect(intentionState(QUIET, NOW)).toBe('sleeping')
     expect(intentionState(facts({ completedAtEpochMs: NOW - HOUR }), NOW)).toBe('done')
+    expect(intentionState(facts({ undischargedWait: true }), NOW)).toBe('waiting')
   })
 
   it('renders in the person’s words, never in enum members', () => {
@@ -49,14 +51,48 @@ describe('the five members are reachable, and each has consumer words', () => {
       'Working',
       'Propositum is on it',
       'Needs you',
+      'Waiting',
       'Sleeping',
       'Done',
     ])
   })
 
-  it('has exactly five, so a member nothing can reach is not declared', () => {
-    expect(Object.keys(INTENTION_STATES)).toHaveLength(5)
-    expect(Object.keys(INTENTION_STATES)).not.toContain('waiting')
+  /**
+   * ~~Exactly five, so a member nothing can reach is not declared.~~ **Six since
+   * 2026-09-07 (ADR-0035), on the trigger the old rule named itself.**
+   *
+   * The rule has not changed and this test still enforces it: a member is
+   * declared when something can reach it. `waiting` became reachable when
+   * ADR-0034 gave an event outside a sitting somewhere to go, and the two
+   * assertions below are what stop a SEVENTH arriving on the argument that six
+   * already did.
+   */
+  it('has exactly six, and every one of them is reachable', () => {
+    expect(Object.keys(INTENTION_STATES)).toHaveLength(6)
+
+    const reached = new Set([
+      intentionState(facts({ completedAtEpochMs: NOW - HOUR }), NOW),
+      intentionState(facts({ openDecisions: 1 }), NOW),
+      intentionState(facts({ liveAcceptedContracts: 1 }), NOW),
+      intentionState(facts({ sessionPhases: ['observing'] }), NOW),
+      intentionState(facts({ undischargedWait: true }), NOW),
+      intentionState(QUIET, NOW),
+    ])
+    expect([...reached].sort()).toEqual(Object.keys(INTENTION_STATES).sort())
+  })
+
+  /**
+   * The precedence claim, asserted rather than described. A wait is the weakest
+   * thing any member says about where the work is, so everything active outranks
+   * it — a person at their desk is `working` even with a wait outstanding.
+   */
+  it('puts a wait below every activity word and above sleeping', () => {
+    const waiting = { undischargedWait: true } as const
+    expect(intentionState(facts({ ...waiting, sessionPhases: ['observing'] }), NOW)).toBe('working')
+    expect(intentionState(facts({ ...waiting, liveAcceptedContracts: 1 }), NOW)).toBe('delegated')
+    expect(intentionState(facts({ ...waiting, openDecisions: 1 }), NOW)).toBe('needs-you')
+    expect(intentionState(facts({ ...waiting, completedAtEpochMs: NOW - HOUR }), NOW)).toBe('done')
+    expect(intentionState(facts(waiting), NOW)).toBe('waiting')
   })
 })
 

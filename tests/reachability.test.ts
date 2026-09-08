@@ -2216,6 +2216,24 @@ describe('deferred, and asserted as deferred', () => {
   // block header for where it went and why.)
 
   /**
+   * A person can state a wait, and only a person. ADR-0035.
+   *
+   * This is a REACHED assertion sitting in the deferred block's neighbourhood
+   * on purpose — it is the counterpart of the one below. `waiting` became a
+   * declarable member because something can now reach it, and the thing that
+   * reaches it is a form on the project screen. If that caller disappears, the
+   * sixth member goes back to being a claim.
+   */
+  it('has one writer of a StatedWait, and it is a person on a screen', () => {
+    const callers = callersOf('intentions.stateWait', 'src/persistence/repositories/index.ts')
+    expect(callers, 'nothing writes a StatedWait — the sixth lifecycle member is unreachable').not.toEqual([])
+    expect(
+      callers,
+      'a second writer of the Intention row — Principle 12 rests on there being exactly one',
+    ).toEqual(['src/server/actions.ts'])
+  })
+
+  /**
    * The second ledger, landed ahead of everything that writes to it. ADR-0034.
    *
    * This is the shape the block header describes, arriving again: a table with

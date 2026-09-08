@@ -67,6 +67,7 @@ function wordFor(facts: IntentionStateFacts): string {
       unansweredConfirmationsAskedAtEpochMs: facts.unansweredConfirmationsAskedAt.map((at) =>
         at.getTime(),
       ),
+      undischargedWait: facts.statedWait !== null && !facts.waitDischarged,
       openDecisions: facts.openDecisions,
       undecidedHeldOutcomes: facts.undecidedHeldOutcomes,
     },

@@ -60,7 +60,7 @@ or what would make the file **deletable** rather than done
 | 9 | [`09-onboarding.md`](./09-onboarding.md) | ~~**unshaped** — written down 2026-08-27, the owner's design pass pending~~ **Struck 2026-09-03 — designed 2026-08-29, built 2026-08-30 ([#127](https://github.com/smukhyala/propositum/issues/127)); `ls src/app/first-run/page.tsx src/server/first-run.ts` returns both** | no |
 | 10 | [`10-the-mailbox.md`](./10-the-mailbox.md) | days, **decided not built** | no — until a build leaves the tester circle, then the CASA bill |
 | 11 | [`11-calendar-holds.md`](./11-calendar-holds.md) | ~a day, **decided not built**, and it opens with a stop-the-line check | no |
-| 12 | [`12-between-sittings.md`](./12-between-sittings.md) | ~~~a week, **decided not built**~~ **step 1 built 2026-09-07 — the ledger exists and nothing writes to it; steps 2-9 open**, and it is the only file here that unblocks a roadmap stage rather than a feature | via `00` |
+| 12 | [`12-between-sittings.md`](./12-between-sittings.md) | ~~~a week, **decided not built**~~ **steps 1-4 built 2026-09-07 — a second ledger nothing writes to, a wait a person can state and take back, and a sixth lifecycle word; steps 5-9 open**, and it is the only file here that unblocks a roadmap stage rather than a feature | via `00` |
 
 **6, 7 and 8 were written 2026-08-26**, hours after the decisions that made them necessary and in the
 same pass that noticed this folder did not have them. ~~All three are **decided, not built** — the
