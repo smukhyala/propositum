@@ -92,8 +92,12 @@ exists to fix.
   Reading prose for commitments is what [ADR-0006](0006-trust-boundary.md) §5 keeps out of the
   contract, and a commitment lifted from a page into a durable row is the same laundering one table
   over.
-- **No reminder, no schedule, no notification of its own.** A `waiting` Intention is a word on a
-  screen and a candidate in [ADR-0036](0036-ordering-candidates-without-a-score.md)'s ordering.
+- **No reminder, no schedule, no notification of its own.** A `waiting` Intention is a word on the
+  project screen ~~and a candidate in
+  [ADR-0036](0036-ordering-candidates-without-a-score.md)'s ordering~~ **— struck by the build,
+  2026-09-07: an OPEN wait is not a candidate and does not reach the front door.** Only a discharged
+  one competes. That is Principle 13 applied honestly, and it is also what closes the hole named
+  below: a wait that never takes a slot cannot hold one for ever. ADR-0036 carries the argument.
   [Principle 13](../PRODUCT_PRINCIPLES.md) forbids a notification with no decision attached, and
   *"you are still waiting"* is not a decision.
 - **Nothing quiets a stale wait, and that is the sharpest hole in this decision.** A strand can

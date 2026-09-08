@@ -1,7 +1,7 @@
 # 12 — Somewhere to put an event outside a sitting, and an ordering that can see it
 
 **Status:** ~~not started — decided, not built~~ ~~step 1 built 2026-09-07; steps 2–9 open~~
-**steps 1–4 built 2026-09-07; steps 5–9 open.** There is a second ledger, a wait a person can state
+**steps 1–5 built 2026-09-07; steps 6–9 open.** There is a second ledger, a wait a person can state
 and take back, and a sixth lifecycle word. **Nothing writes an `ExternalEvent`** —
 `tests/reachability.test.ts` pins that in its *deferred, and asserted as deferred* block, so a wait
 can be stated and nothing in the product can discharge one yet. That is step 7's job, and it is the
@@ -106,7 +106,11 @@ them safe to land alone.
    number like that: *"better, delete the number and point at the thing that knows it."* Point at
    `INTENTION_STATES`, which `tests/intention.test.ts` already pins. The count has survived only
    because it has not moved yet, and this step is what moves it.
-5. **The ordering across kinds**, per [ADR-0036](../adr/0036-ordering-candidates-without-a-score.md).
+5. ~~**The ordering across kinds**~~ **Done 2026-09-07** — `src/domain/detection/order-candidates.ts`,
+   pure, total, clockless, with a property test for antisymmetry, transitivity and stability. **The
+   union has two members, not three:** an OPEN wait is not a candidate, which narrows ADR-0035 and
+   ADR-0036 and is amended in both. **Nothing calls it yet** — that is step 6. Original text:
+   per [ADR-0036](../adr/0036-ordering-candidates-without-a-score.md).
    Pure, total, clockless, lexicographic over named facts. `intent-lab.ts` at the repo root is the
    bench for this — it drives the real detection pipeline with no database and no model call.
 6. **The front door renders the order and the reason.** One sentence per candidate naming the key

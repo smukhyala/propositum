@@ -647,15 +647,22 @@ not `other`.
 arrived"*.
 
 ### Candidate — *value object, not persisted*
-One thing Propositum could put in front of a person, before anything has been composed about it: a
-detected strand of browsing, an Intention whose `StatedWait` was discharged, or one whose wait is
-still open. A **closed, code-owned union**, ordered by one comparator and cut by
-`MAX_THREADS_SHOWN`. Decided 2026-09-07,
+One thing Propositum could put in front of a person, before anything has been composed about it. A
+**closed, code-owned union with two members**: a detected strand of browsing, and an Intention whose
+`StatedWait` an `ExternalEvent` has discharged. Ordered by one comparator and cut by
+`MAX_THREADS_SHOWN`. Decided and built 2026-09-07,
 [ADR-0036](docs/adr/0036-ordering-candidates-without-a-score.md).
 
-**A specification rather than a description.**
-`ls src/domain/detection/order-candidates.ts` returns nothing and there is one kind of candidate
-today, so nothing orders across kinds and the union does not exist.
+~~**A specification rather than a description.** `ls src/domain/detection/order-candidates.ts`
+returns nothing…~~ **The fence came off the same day.** The module exists, with a total-order
+property test behind it. **Nothing calls it yet** — the front door still orders strands alone —
+which `tests/reachability.test.ts` pins rather than promises.
+
+**An OPEN wait is deliberately not a member**, and both ADRs that described one are amended.
+[Principle 13](docs/PRODUCT_PRINCIPLES.md) forbids a notification with no decision attached, and
+*you are still waiting* is not a decision; and an open wait has no way to leave the list, so it would
+hold a slot indefinitely. It is a word on the project screen, where the person who wrote it can take
+it back.
 
 **It is not a `WorkOffer` and precedes one.** A `WorkOffer` is what Propositum would *do* about a
 subject, composed by a model only once `OfferGrounds` are sufficient. A Candidate is what is

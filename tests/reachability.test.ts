@@ -2234,6 +2234,22 @@ describe('deferred, and asserted as deferred', () => {
   })
 
   /**
+   * The cross-kind ordering, landed ahead of the screen that would use it.
+   * ADR-0036.
+   *
+   * `front-door.ts` still orders strands alone, through `topics.ts`'s
+   * comparator. Widening it is step 6 of `docs/todo/12-between-sittings.md`, and
+   * it waits on there being a second kind to order — which needs something to
+   * write an `ExternalEvent`, which is the pin below.
+   */
+  it('nothing orders across kinds yet, so the comparator has no caller', () => {
+    expect(
+      callersOf('orderCandidates', 'src/domain/detection/order-candidates.ts'),
+      'the front door orders across kinds — move this assertion up, do not delete it',
+    ).toEqual([])
+  })
+
+  /**
    * The second ledger, landed ahead of everything that writes to it. ADR-0034.
    *
    * This is the shape the block header describes, arriving again: a table with

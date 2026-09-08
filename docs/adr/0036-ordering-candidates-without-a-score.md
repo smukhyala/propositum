@@ -53,10 +53,22 @@ ordering. It was the absence of an ordering that could see more than one kind of
 
 ## Context
 
-[ADR-0035](0035-what-a-person-said-they-are-waiting-on.md) produces candidates that are not strands:
-an Intention whose stated wait was discharged, and one whose stated wait is still open. A comparator
-whose three keys are `searches`, `pages` and `engagedMs` has nothing to say about either — a
-discharged wait has no pages and no dwell, and would sort last on a tie of zeroes.
+[ADR-0035](0035-what-a-person-said-they-are-waiting-on.md) produces a candidate that is not a
+strand: an Intention whose stated wait an `ExternalEvent` has discharged. A comparator whose three
+keys are `searches`, `pages` and `engagedMs` has nothing to say about it — a discharged wait has no
+pages and no dwell, and would sort last on a tie of zeroes.
+
+**Narrowed by the build, 2026-09-07, and recorded rather than diverged from quietly.** This sentence
+said *"and one whose stated wait is still open"*. An **open** wait is not a candidate and does not
+reach the front door. Two reasons, and the second changed the design rather than tidying it:
+[Principle 13](../PRODUCT_PRINCIPLES.md) forbids *"a notification with no decision attached to it"*,
+and *you are still waiting* is not a decision; and an open wait has no way to leave the list — a
+strand leaves three ways, a wait has none — so it would hold one of `MAX_THREADS_SHOWN`'s slots
+indefinitely, which is the hole [ADR-0035](0035-what-a-person-said-they-are-waiting-on.md)'s cost
+section calls its sharpest. Keeping open waits off the list closes that by construction rather than
+by a fourth suppression mechanism nobody has argued for. An open wait is a word on the project
+screen, where the person who wrote it can change it or take it back — which is where it can be acted
+on. `tests/candidate-order.test.ts` holds the union to two members.
 
 That is layer 4's *what would have to exist first*, arriving:
 [`docs/ARCHITECTURE.md`](../ARCHITECTURE.md) marks *Progress Reasoner* **partial — offer grounds, no
