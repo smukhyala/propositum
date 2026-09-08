@@ -29,7 +29,8 @@
     "eval": "tsx scripts/eval.ts",
     "capture:afternoon": "tsx src/fixtures/capture-afternoon.ts",
     "seed:shift": "tsx scripts/seed-shift.ts",
-    "seed:offer": "tsx scripts/seed-offer.ts"
+    "seed:offer": "tsx scripts/seed-offer.ts",
+    "replay": "tsx scripts/replay.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.71.0",

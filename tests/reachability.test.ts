@@ -2216,7 +2216,42 @@ describe('deferred, and asserted as deferred', () => {
   // block header for where it went and why.)
 
   /**
-   * A person can state a wait, and only a person. ADR-0035.
+   * The second ledger has a writer, and `npm run replay` is it. ADR-0034.
+   *
+   * **This assertion was in the deferred block for two commits and moved here
+   * rather than being deleted**, which is the rule: `createExternalWriter` had
+   * no caller when the table landed, and `scripts/replay.ts` is the first. It is
+   * the honest first caller too — `replay` is a member of
+   * `ExternalEventStatedBy`, so the script is not standing in for a source, it
+   * IS one.
+   *
+   * What is still absent, and is the next thing this block should gain: nothing
+   * in the PRODUCT writes one. A person can state a wait on the project screen
+   * and nothing they can press discharges it.
+   */
+  it('has a writer of the external ledger, and it is the replay source', () => {
+    expect(
+      callersOf('createExternalWriter', 'src/persistence/external-writer.ts'),
+    ).toEqual(['scripts/replay.ts'])
+  })
+
+  /**
+   * A person can state a wait — and a fixture may stand in for one. ADR-0035.
+   *
+   * Two callers, and the second needs its argument stated rather than waved
+   * through. Principle 12 says an Intention is created and edited by a person
+   * and by nothing else, and `scripts/replay.ts` is not a person. It is a
+   * FIXTURE driving the human path, which this repository already has a rule
+   * for, in `src/eval/scenario.ts` about the autonomy dials: *"A model may not
+   * propose these anywhere, and a fixture standing in for a person is still not
+   * a model."* The same reading holds here, and the distinction the principle
+   * protects is intact: no detector, no model boundary, no worker and no sweep
+   * is in this list, and a `replay` row is one of the two things
+   * `ExternalEventStatedBy` permits precisely because it is an assertion rather
+   * than an observation.
+   *
+   * What the assertion is really pinning is the list itself. A third caller
+   * fails this test, which is where the argument gets made again.
    *
    * This is a REACHED assertion sitting in the deferred block's neighbourhood
    * on purpose — it is the counterpart of the one below. `waiting` became a
@@ -2224,13 +2259,16 @@ describe('deferred, and asserted as deferred', () => {
    * reaches it is a form on the project screen. If that caller disappears, the
    * sixth member goes back to being a claim.
    */
-  it('has one writer of a StatedWait, and it is a person on a screen', () => {
+  it('writes a StatedWait from a person on a screen, and from a fixture standing in for one', () => {
     const callers = callersOf('intentions.stateWait', 'src/persistence/repositories/index.ts')
-    expect(callers, 'nothing writes a StatedWait — the sixth lifecycle member is unreachable').not.toEqual([])
     expect(
       callers,
-      'a second writer of the Intention row — Principle 12 rests on there being exactly one',
-    ).toEqual(['src/server/actions.ts'])
+      'nothing writes a StatedWait — the sixth lifecycle member is unreachable',
+    ).not.toEqual([])
+    expect(
+      [...callers].sort(),
+      'a third writer of the Intention row — Principle 12 rests on the caller list being read',
+    ).toEqual(['scripts/replay.ts', 'src/server/actions.ts'])
   })
 
   /**
@@ -2242,32 +2280,20 @@ describe('deferred, and asserted as deferred', () => {
    * it waits on there being a second kind to order — which needs something to
    * write an `ExternalEvent`, which is the pin below.
    */
-  it('nothing orders across kinds yet, so the comparator has no caller', () => {
+  it('orders across kinds on the eval path, and NOT yet on the front door', () => {
     expect(
       callersOf('orderCandidates', 'src/domain/detection/order-candidates.ts'),
-      'the front door orders across kinds — move this assertion up, do not delete it',
-    ).toEqual([])
-  })
+      'the comparator has no caller at all',
+    ).toEqual(['src/eval/replay.ts'])
 
-  /**
-   * The second ledger, landed ahead of everything that writes to it. ADR-0034.
-   *
-   * This is the shape the block header describes, arriving again: a table with
-   * guards, a writer with tests, and no caller. The schema, the triggers and
-   * the writer are one unit; the screen that lets a person state a wait and the
-   * replay command that drives a fixture are two others, and they are steps 3
-   * and 7 of `docs/todo/12-between-sittings.md`.
-   *
-   * **If you are here because this went red: that is the system working.**
-   * ADR-0034 is the argument, `docs/todo/12-between-sittings.md` is the work,
-   * and the assertion belongs in the reachable section above — moved, never
-   * deleted.
-   */
-  it('nothing writes an ExternalEvent yet, so the second ledger has no caller', () => {
+    // The half still deferred, and the more useful one. A person opening Home
+    // still sees strands ordered by `topics.ts` alone; a discharged wait reaches
+    // a replay and not a screen. That is step 6 of docs/todo/12.
+    const frontDoor = readFileSync(join(repo, 'src/server/front-door.ts'), 'utf8')
     expect(
-      callersOf('createExternalWriter', 'src/persistence/external-writer.ts'),
-      'the external ledger has a caller — move this assertion up, do not delete it',
-    ).toEqual([])
+      stripImports(stripComments(frontDoor)),
+      'the front door orders across kinds — move this claim into the reachable section',
+    ).not.toContain('orderCandidates')
   })
 
   /**

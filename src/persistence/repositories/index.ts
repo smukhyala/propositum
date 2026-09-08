@@ -412,6 +412,9 @@ export interface IntentionRepository {
     /** What the person said they are waiting on. Optional, and empty means the
      *  person said nothing rather than said "nothing". ADR-0035. */
     statedWait?: string | undefined
+    /** When the wait was stated. Injected so a recorded stream replays; defaults
+     *  to now, which is what the product passes. */
+    statedWaitAt?: Date | undefined
   }): Promise<StoredIntention>
   /**
    * The Project's Intention, or null. Singular by ADR-0011: at most one per
@@ -516,7 +519,7 @@ export interface IntentionRepository {
    * the same weaker guarantee Principle 12's own honest limit names for the row
    * as a whole. `tests/reachability.test.ts` pins the caller count.
    */
-  stateWait(intentionId: string, statedWait: string | null): Promise<void>
+  stateWait(intentionId: string, statedWait: string | null, at?: Date): Promise<void>
 }
 
 function intentionRepository(prisma: PrismaClient): IntentionRepository {
@@ -530,7 +533,7 @@ function intentionRepository(prisma: PrismaClient): IntentionRepository {
   } as const
 
   return {
-    create: ({ projectId, objective, definitionOfDone, statedWait }) =>
+    create: ({ projectId, objective, definitionOfDone, statedWait, statedWaitAt }) =>
       prisma.intention.create({
         data: {
           projectId,
@@ -540,14 +543,23 @@ function intentionRepository(prisma: PrismaClient): IntentionRepository {
           // was written — which is what the discharge bound reads.
           ...(statedWait === undefined || statedWait === ''
             ? {}
-            : { statedWait, statedWaitAt: new Date() }),
+            : { statedWait, statedWaitAt: statedWaitAt ?? new Date() }),
         },
         select: SELECT,
       }),
     forProject: (projectId) =>
       prisma.intention.findUnique({ where: { projectId }, select: SELECT }),
 
-    stateWait: async (intentionId, statedWait) => {
+    /**
+     * `at` is injected rather than read, and it defaults to now.
+     *
+     * The default is what the product uses; the parameter is what makes a
+     * recorded stream replayable. A fixture whose events sit in the past cannot
+     * discharge a wait stamped with the wall clock — the bound would refuse
+     * every arrival, silently, and a replay would report restraint it had not
+     * earned. Same reason `ObservationEvent.elapsedMs` is source-supplied.
+     */
+    stateWait: async (intentionId, statedWait, at = new Date()) => {
       await prisma.intention.update({
         where: { id: intentionId },
         // Both columns or neither. A wait with no moment behind it cannot be
@@ -555,7 +567,7 @@ function intentionRepository(prisma: PrismaClient): IntentionRepository {
         data:
           statedWait === null
             ? { statedWait: null, statedWaitAt: null }
-            : { statedWait, statedWaitAt: new Date() },
+            : { statedWait, statedWaitAt: at },
       })
     },
 

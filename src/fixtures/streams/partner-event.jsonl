@@ -1,0 +1,13 @@
+{"name":"A week of partner work","rationale":"Four projects, one of which should be spoken about. The other three are the failure modes: a wait nothing answered, an arrival nobody was waiting for, and an arrival that answered a wait the person then replaced.","expectSurfaced":["Partner event"],"expectSilence":[{"project":"Venue hire","because":"the wait is still open, and an open wait carries no decision — Principle 13"},{"project":"Reading list","because":"something arrived but nobody said they were waiting on anything"},{"project":"Grant application","because":"the arrival came before the wait currently stated, so it cannot answer it"}]}
+{"type":"project","name":"Partner event"}
+{"type":"intention","project":"Partner event","objective":"Agree dates for the joint event","definitionOfDone":"Both sides have the same three dates in writing","statedWait":"the dates from Corgi"}
+{"type":"project","name":"Venue hire"}
+{"type":"intention","project":"Venue hire","objective":"Book a room for eighty","definitionOfDone":"A signed confirmation and a deposit paid","statedWait":"a quote from the hall"}
+{"type":"project","name":"Reading list"}
+{"type":"intention","project":"Reading list","objective":"Work out what to read next on evaluation","definitionOfDone":"Three papers chosen and skimmed"}
+{"type":"project","name":"Grant application"}
+{"type":"intention","project":"Grant application","objective":"Submit the spring application","definitionOfDone":"Submitted and acknowledged","statedWait":"last year's budget from finance"}
+{"type":"arrived","project":"Grant application","elapsedMs":3600000}
+{"type":"wait","project":"Grant application","statedWait":"a letter of support from the department"}
+{"type":"arrived","project":"Reading list","elapsedMs":7200000}
+{"type":"arrived","project":"Partner event","elapsedMs":86400000}

@@ -1,7 +1,7 @@
 # 12 — Somewhere to put an event outside a sitting, and an ordering that can see it
 
 **Status:** ~~not started — decided, not built~~ ~~step 1 built 2026-09-07; steps 2–9 open~~
-**steps 1–5 built 2026-09-07; steps 6–9 open.** There is a second ledger, a wait a person can state
+**steps 1–5 and 8 built 2026-09-07; 6, 7 and 9 open.** There is a second ledger, a wait a person can state
 and take back, and a sixth lifecycle word. **Nothing writes an `ExternalEvent`** —
 `tests/reachability.test.ts` pins that in its *deferred, and asserted as deferred* block, so a wait
 can be stated and nothing in the product can discharge one yet. That is step 7's job, and it is the
@@ -123,7 +123,19 @@ them safe to land alone.
    *"four numbers and a date, no subject"* — is not available: this table names what somebody was
    waiting on. Decide the delete path and add the row to that document's retention table in the same
    commit.
-8. **`npm run replay`**, through the real endpoints the way `scripts/seed-offer.ts` already does, and
+8. ~~**`npm run replay`**~~ **Done 2026-09-07**, into a throwaway database so a measurement can be
+   run twice — `scripts/replay.ts`, `src/eval/replay.ts`, and
+   `src/fixtures/streams/partner-event.jsonl`. It is the first caller of `createExternalWriter`, and
+   the honest one: `replay` is a member of `ExternalEventStatedBy`, so the script IS a source rather
+   than standing in for one. The clock is injected all the way down — `intentions.stateWait` and
+   `intentions.create` take an `at`, because a stream whose events sit in the past cannot discharge a
+   wait stamped with the wall clock, and the failure is silent.
+
+   **Still owed, and it is the seal.** A stream's `expectSurfaced` and `expectSilence` live in the
+   file and can be edited after a disappointing run. `src/eval/seal.ts` is `Scenario`-shaped and holds
+   no stream lock, so *written before the run* is an intention here rather than a mechanism. That is
+   the next thing this step needs, and ADR-0037's guard table says so in its own voice. Original
+   text: through the real endpoints the way `scripts/seed-offer.ts` already does, and
    the fixtures with their must-not lists, sealed into their own lock.
 9. **The docs, in this commit and not after it.** `ARCHITECTURE.md` layers 2, 3 and 4 — and **only
    when the code moves**, which for layer 4 is step 5 and not step 1. `ROADMAP.md` Stage 2's

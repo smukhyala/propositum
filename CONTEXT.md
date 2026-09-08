@@ -655,8 +655,10 @@ One thing Propositum could put in front of a person, before anything has been co
 
 ~~**A specification rather than a description.** `ls src/domain/detection/order-candidates.ts`
 returns nothing…~~ **The fence came off the same day.** The module exists, with a total-order
-property test behind it. **Nothing calls it yet** — the front door still orders strands alone —
-which `tests/reachability.test.ts` pins rather than promises.
+property test behind it, and `npm run replay` orders a recorded stream through it. ~~**Nothing calls
+it yet**~~ **— re-marked: the eval path calls it and the FRONT DOOR does not.** A person opening Home
+still sees strands ordered by `topics.ts` alone; a discharged wait reaches a replay and not a screen.
+`tests/reachability.test.ts` pins both halves rather than promising either.
 
 **An OPEN wait is deliberately not a member**, and both ADRs that described one are amended.
 [Principle 13](docs/PRODUCT_PRINCIPLES.md) forbids a notification with no decision attached, and

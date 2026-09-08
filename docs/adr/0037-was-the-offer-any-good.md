@@ -137,7 +137,7 @@ able to install it.
 
 | | |
 |---|---|
-| `src/eval/seal.ts` | A replay fixture whose expectations changed since sealing is refused, not scored. The rule that makes *written before the run* mechanical rather than intentional |
+| ~~`src/eval/seal.ts`~~ **NOT YET, and this is the honest gap** | A stream's `expectSurfaced` and `expectSilence` live in the file and can be edited after a disappointing run — which is exactly what the seal exists to prevent for scenarios. `seal.ts` is `Scenario`-shaped and holds no stream lock. **Owed, and named in `docs/todo/12-between-sittings.md`.** Until it exists, *written before the run* is an intention here rather than a mechanism |
 | `tests/replay.test.ts` | The same stream replayed twice produces the same candidates in the same order — the clockless comparator and source-supplied time, asserted end to end |
 | `tests/replay.test.ts` | Every fixture's must-not list is non-empty. A fixture that only asserts presence is not a fixture |
 | `tests/grounds.test.ts` | The standing afternoon-of-ordinary-reading fixture still does not qualify. Unchanged, and it is the one that must never start passing |
