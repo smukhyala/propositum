@@ -22,7 +22,10 @@ day's script ran `spctl` on the `.app` alone —
 `spctl` pass was a hand run or is unrecorded, and which policy it was asked
 under is not written down; the script assesses the image itself since
 2026-09-03)*, and the six CI secrets are
-set** — the first tagged release, and the *Done when*
+set** — ~~the first tagged release, and~~ **`v0.1.0` exists since 2026-09-03: a draft release,
+keyed, notarised, stapled, and Gatekeeper-accepted on the image and the app it holds (run
+33796297533, attempt 2 — attempt 1 failed on a p12 the runner could not import; the Credential row
+says why). Left a draft on the owner's call, per ADR-0028 §4.** What stays open is the *Done when*
 below, which stays open until a stranger has installed one. The update feed
 half of item 10 is **deferred, not built** — ADR-0027 §4 is the argument. ~~**Narrowed twice on 2026-08-26:**
 three of ADR-0023's four jobs now have answers that are not a native binary —
@@ -146,7 +149,7 @@ This section is the reason this file is three weeks and not two.
 |---|---|---|---|
 | **Account** | **Apple Developer Program membership.** Required for a *Developer ID Application* certificate. Without one, macOS Gatekeeper refuses the app on any machine but yours, and there is no way around it. | **$99/year** | **hours to days** — Apple verifies identity, and an individual enrolment sometimes asks for ID |
 | **Certificate** | A *Developer ID Application* certificate, created in the Apple Developer portal and downloaded into your login keychain. ~~and a *Developer ID Installer* certificate~~ **Corrected 2026-08-28: Installer signs `.pkg` installers only — a `.dmg` needs nothing but the Application certificate, which signs the dmg too.** | included | minutes, once enrolled |
-| **Credential** | An **App Store Connect API key** (`.p8`, issuer id, key id) for `notarytool`. An app-specific password works too and is worse — it expires and it is tied to your Apple ID. | free | minutes |
+| **Credential** | An **App Store Connect API key** (`.p8`, issuer id, key id) for `notarytool`. **2026-09-03: the p12 in `APPLE_CERTIFICATE`, set 2026-08-30, failed its first real import on the runner (*MAC verification failed during PKCS12 import*). What `security import` accepted was a p12 exported with `openssl pkcs12 -export -legacy` from the same key and certificate, rehearsed in a throwaway keychain with the workflow's own commands before being set.** An app-specific password works too and is worse — it expires and it is tied to your Apple ID. | free | minutes |
 | **Toolchain** | ~~**Rust is not installed on this machine.** `which cargo` returns nothing.~~ **Struck 2026-08-28 — falsified by the commit this row was written beside: stage 1 was built with `~/.cargo/bin/cargo` (installed 2026-08-27, the same day), which a non-login shell's `which` misses.** The `x86_64-apple-darwin` target for a universal binary is still uninstalled, and universal is deferred (ADR-0027). | free | done |
 | **Toolchain** | Xcode Command Line Tools — **already present** (`/Library/Developer/CommandLineTools`). | free | done |
 | **Decision** | A name for the signed bundle and a bundle identifier (`com.<something>.propositum`). Once shipped, changing it orphans everybody's install. | — | think about it once |
@@ -289,7 +292,10 @@ resisting a fifth.
 
 - A person who has never seen the repository can install a `.dmg`, paste an API
   key, click one button, and reach an offer — **without opening a terminal.**
-- Quitting the app leaves no orphaned Node process.
+- Quitting the app leaves no orphaned Node process. *(Verified 2026-09-03 on the `v0.1.0` build:
+  none left after a signal quit — but the `next start` child ignored SIGTERM and was killed by the
+  supervisor's fifteen-second fallback on every quit, so this holds by the fallback, not by the child
+  draining. See the last section.)*
 - Killing either child brings it back.
 - `spctl -a -vvv` and `xcrun stapler validate` both pass on the shipped `.dmg`.
   *(2026-08-28: ~~`scripts/release-tray.ts` runs both on every signed build and
@@ -298,11 +304,13 @@ resisting a fifth.
   alone, so the file a stranger downloads was never assessed by the script
   (the line above records a local pass on 2026-08-30 that the script did not
   produce). Both run on the `.dmg` now — `spctl` in the form Apple documents
-  for a disk image, `-t open --context context:primary-signature`, whose
-  verdict on an image of ours is unobserved — and `tests/reachability.test.ts`
+  for a disk image, `-t open --context context:primary-signature`, ~~whose
+  verdict on an image of ours is unobserved~~ *(observed 2026-09-03 on `v0.1.0`: accepted,
+  `source=Notarized Developer ID`)* — and `tests/reachability.test.ts`
   ("asks Gatekeeper about the disk image") fails if either invocation goes** —
   so this bullet closes with the
-  first tagged release, and stays closed by machine rather than by memory.)*
+  first tagged release, and stays closed by machine rather than by memory.)* **Closed 2026-09-03:
+  `v0.1.0`'s image and the app inside it both pass `stapler validate` and `spctl` on this machine.**
 - **Then hand it to a stranger and time them to first offer.** That number is the
   product metric that does not exist today. *(Still open, 2026-08-28 — the code
   half of this file is done and this bullet is deliberately not struck: nothing
@@ -371,3 +379,16 @@ now fixed or recorded, none of which any item above named:
   `sigwait` thread now turns a signal into the same drain the Quit item runs.
   A SIGKILL on the tray itself still orphans, which is what the worker's
   lease sweep exists to absorb.
+- **A quarantined bundle a shell copied into Applications translocated and parked, exactly as
+  designed** *(2026-09-03, the first launch of the `v0.1.0` image)*. `cp -R` from the mounted image
+  keeps the quarantine flag but is not a Finder move, so macOS ran it read-only and the tray said
+  *move Propositum into Applications*. Clearing the flag by hand then failed with *Operation not
+  permitted*, sandbox or no sandbox — macOS's App Management protection — so the shell's stand-in
+  for a drag is a copy without extended attributes (`cp -R -X`), after which the app ran from
+  `/Applications`, served in four seconds, reported `unfinished` to the tray's poll, rendered the
+  first-run page, and never mentioned a key. A Finder drag on a fresh account is still the only
+  faithful test, and the stranger bullet above is where that lives.
+- **`next start` does not exit on SIGTERM.** Both quits on 2026-09-03 ended with `pid … did not
+  drain in 15000 ms — killed`. Nothing is orphaned, so the Done-when holds, but it holds by the
+  supervisor's fallback and every quit costs fifteen seconds. Whether the sidecar should get SIGINT,
+  or Next's own shutdown hook, is a small change nobody has argued yet.
