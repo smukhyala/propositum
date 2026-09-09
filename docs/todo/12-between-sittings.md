@@ -78,7 +78,7 @@ them safe to land alone.
    fourteen were guarded, so on half of them a guard firing surfaced as Prisma's P2003 lie
    untranslated, and `tests/append-only.test.ts` now holds the two lists to each other rather than to
    a hand-written third. `tests/external-ledger.test.ts` is the rest. Original text: `model ExternalEvent` per
-   [ADR-0034](../adr/0034-somewhere-to-put-an-event-outside-a-sitting.md), its three append-only
+   [ADR-0034](../adr/0034-somewhere-to-put-an-event-outside-a-sitting.md), its ~~three~~ **two** append-only *(corrected 2026-09-09 — [ADR-0038](../adr/0038-deleting-a-project.md))*
    triggers registered in `REQUIRED_GUARDS` **and** in `GUARDED_TABLES` — the second list already
    names fewer tables than the first, and this is the table that would have hit that bug next — plus
    `createExternalWriter` as its only writer. Add the writer to `tests/reachability.test.ts`'s

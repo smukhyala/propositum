@@ -49,7 +49,7 @@ that knows, and it carries no number.)*
 ## Decision
 
 **A person may delete a `Project`, and it takes everything filed under it. The tables it owns move
-from three append-only guards to two — no-`UPDATE` and no-`REPLACE` stay, no-`DELETE` goes.**
+from three append-only guards to two — no-`UPDATE` and no-`REPLACE` stay, no-`DELETE` goes.** *(Corrected 2026-09-09: true of thirteen of them. `handoff_contract` is the exception — it went from **two to one**, having never carried a no-`REPLACE` guard, because it is not append-only: draft to accepted is a legitimate transition.)*
 
 The argument is already written down in `src/persistence/append-only.ts`, about `ActionEvidence`,
 and it generalises without a word changed:

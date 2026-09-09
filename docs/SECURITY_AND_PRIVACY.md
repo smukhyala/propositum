@@ -562,7 +562,7 @@ writer~~ **— amended 2026-09-07
 **decided and built the same day — corrected 2026-09-08; this parenthetical was copied from a wave
 that predated the build and sat eleven words from the word "built"**): that
 second writer is now **built** — `createExternalWriter` over its own `ExternalEvent` table, with
-  its own three append-only guards. ~~**Nothing calls it**~~ **A person can: pressing *It arrived* on
+  its own ~~three~~ **two** append-only guards *(corrected 2026-09-09 — [ADR-0038](./adr/0038-deleting-a-project.md))*. ~~**Nothing calls it**~~ **A person can: pressing *It arrived* on
   the project screen writes one, which is the `declared` source. What it records is that somebody
   said so and when — no subject, no message, no page text; the words being waited on stay on the
   Intention and are not copied onto the event.** Nothing watches anything to produce one, and the

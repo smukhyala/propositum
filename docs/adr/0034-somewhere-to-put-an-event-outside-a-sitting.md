@@ -114,7 +114,7 @@ model ExternalEvent {
    is the same one written in `CONTEXT.md`: *"a 40-minute fixture replays in 400 ms with no
    behaviour change — never call `Date.now()` internally."* A week of external events has to replay
    in a second or the harness in [ADR-0037](0037-was-the-offer-any-good.md) is unusable.
-5. **Append-only, by the same three triggers.** Registered in `REQUIRED_GUARDS`
+5. **Append-only, by the same ~~three~~ two triggers** *(corrected 2026-09-09 — [ADR-0038](0038-deleting-a-project.md) took the no-`DELETE` guard off this table with the rest)*. Registered in `REQUIRED_GUARDS`
    (`src/persistence/append-only.ts`) and in `GUARDED_TABLES` (`src/persistence/errors.ts`) — the
    second of which already names fewer tables than the first, so a trigger firing on this one would
    otherwise surface as Prisma's P2003 *"Foreign key constraint violated"* lie. That is repaired in

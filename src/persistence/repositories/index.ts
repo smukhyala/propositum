@@ -1958,7 +1958,7 @@ function agentRunRepository(prisma: PrismaClient): AgentRunRepository {
  *
  * ── What was here before ─────────────────────────────────────────────────
  *
- * `model_call_record` has had a table and all three append-only triggers since
+ * `model_call_record` has had a table and ~~all three~~ **two** append-only triggers *(the delete guard went 2026-09-08, ADR-0038)* since
  * ADR-0003 and NO WRITER. `AnthropicModelClient` computed every field of it on
  * every attempt, handed them to an `onCall` hook nothing passed, and dropped
  * them. This interface is the other end of that hook; `src/model/provider.ts`
