@@ -12,17 +12,27 @@
  * `ConfirmationRequest`, a `DecisionNeeded`, a held `ShiftOutcome`, and the
  * Intention's own `completedAt`.
  *
- * ── Five members, and the sixth is not declared ──────────────────────────
+ * ── Six members, since 2026-09-07, and the sixth was argued for twice ────
  *
- * Direction §1's lifecycle has six. `waiting` is DELIBERATELY ABSENT and this
- * is not an oversight to be tidied later. `waiting` means *progress depends on
- * an external event or dependency*, and nothing in this system can produce an
- * external event: `ObservationEvent.sessionId` is required with a single ledger
- * writer, so no event outside a sitting can be persisted at all, and
- * `ExternalEvent` is on the do-not-build list. A member nothing can reach is a
- * promise the interface would render and the data could never keep. It arrives
- * with event ingestion; `docs/ARCHITECTURE.md` records it there rather than
- * here. See ADR-0011 §2.
+ * ~~Five members. `waiting` is DELIBERATELY ABSENT and this is not an oversight
+ * to be tidied later. `waiting` means *progress depends on an external event*,
+ * and nothing in this system can produce one: `ObservationEvent.sessionId` is
+ * required with a single ledger writer, so no event outside a sitting can be
+ * persisted at all, and `ExternalEvent` is on the do-not-build list. A member
+ * nothing can reach is a promise the interface would render and the data could
+ * never keep. It arrives with event ingestion.~~
+ *
+ * **Struck 2026-09-07, on the trigger the struck text named itself.** ADR-0034
+ * is event ingestion, so `waiting` arrives exactly as promised rather than by
+ * somebody deciding the rule had got inconvenient. Two clauses above did not
+ * survive review and are worth separating: *no event outside a sitting can be
+ * persisted at all* is now true of the OBSERVATION ledger rather than of the
+ * database, and *`ExternalEvent` is on the do-not-build list* was **never
+ * true** — §8's list has ten entries and it is not among them.
+ *
+ * `waiting` is reachable only from a `StatedWait` a person typed that no
+ * `ExternalEvent` has discharged. Nothing infers it, and there is no path from
+ * a detector or a model boundary to the field it reads. ADR-0035.
  *
  * ── `sleeping` is the honest common case and will read like a bug ────────
  *
@@ -46,7 +56,13 @@
 
 import { confirmationHasExpired } from '../execution/continuation'
 
-export type IntentionStateId = 'working' | 'delegated' | 'needs-you' | 'sleeping' | 'done'
+export type IntentionStateId =
+  | 'working'
+  | 'delegated'
+  | 'needs-you'
+  | 'waiting'
+  | 'sleeping'
+  | 'done'
 
 export interface IntentionStateRule {
   readonly id: IntentionStateId
@@ -70,6 +86,7 @@ export const INTENTION_STATES: Readonly<Record<IntentionStateId, IntentionStateR
   working: { id: 'working', consumerLabel: 'Working' },
   delegated: { id: 'delegated', consumerLabel: 'Propositum is on it' },
   'needs-you': { id: 'needs-you', consumerLabel: 'Needs you' },
+  waiting: { id: 'waiting', consumerLabel: 'Waiting' },
   sleeping: { id: 'sleeping', consumerLabel: 'Sleeping' },
   done: { id: 'done', consumerLabel: 'Done' },
 } as const
@@ -163,6 +180,21 @@ export interface IntentionFacts {
    * the buttons do.
    */
   readonly undecidedHeldOutcomes: number
+
+  /**
+   * Whether a `StatedWait` a person typed is still outstanding.
+   *
+   * **The caller owns this arithmetic**, for `undecidedHeldOutcomes`' reason:
+   * only the caller can see both halves. A wait is outstanding when the field
+   * holds words and no `ExternalEvent{kind:'arrived'}` at or after
+   * `statedWaitAt` points at this Intention. Collapsing that to a boolean here
+   * keeps the domain from learning that a second ledger exists, which is the
+   * same trade every other field on this interface makes.
+   *
+   * **Nothing infers it.** The words are typed by a person and the discharge is
+   * a deterministic match, never a model deciding two things are the same.
+   */
+  readonly undischargedWait: boolean
 }
 
 /**
@@ -170,7 +202,7 @@ export interface IntentionFacts {
  *
  * ── Precedence, argued rather than ordered by taste ──────────────────────
  *
- * The five are not disjoint — a person can be at their desk with a question
+ * The six are not disjoint — a person can be at their desk with a question
  * from yesterday's shift still unanswered — so the order below is the whole of
  * the behaviour, and each step is a claim about who the screen is for.
  *
@@ -193,7 +225,20 @@ export interface IntentionFacts {
  *    is a mutable column the app writes, and a stale `observing` is the
  *    likelier of the two errors.
  *
- * 4. **`sleeping` last, and as the default.** Total means every input maps to a
+ * 4. **`waiting` after every activity word, and before `sleeping`.** It is the
+ *    weakest claim any member makes about where the work is: somebody said they
+ *    were waiting on something and nothing has arrived. So a live sitting, a
+ *    live shift or an unanswered question all outrank it — a person at their
+ *    desk is `working` even if a wait is outstanding, because the wait is not
+ *    what they are doing. Being wrong about it costs a reader one word on a
+ *    screen, which is why it sits this low.
+ *
+ *    What it beats is `sleeping`, and that is the whole of its value.
+ *    `sleeping` is documented above as the honest common case that reads like a
+ *    bug; `waiting` is the one case where the true answer is more specific and
+ *    a person put it there themselves.
+ *
+ * 5. **`sleeping` last, and as the default.** Total means every input maps to a
  *    state; deny-by-default means an unrecognised combination lands on the
  *    member that CLAIMS LEAST. `sleeping` asserts nothing about where the work
  *    is and asks nothing of anybody, so being wrong about it costs a reader
@@ -210,6 +255,8 @@ export function intentionState(facts: IntentionFacts, nowEpochMs: number): Inten
   // `some`, not `every`: one live sitting in `observing` is a person at the
   // desk, whatever any other sitting is doing.
   if (facts.sessionPhases.some((phase) => phase === 'observing')) return 'working'
+
+  if (facts.undischargedWait) return 'waiting'
 
   return 'sleeping'
 }

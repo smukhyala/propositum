@@ -44,6 +44,7 @@ import { hashSignature } from '@/domain/detection/reticence'
 import { createModelClient } from '@/model/provider'
 import type { ModelCallSink } from '@/model/provider'
 import { noticedAfternoon } from '@/server/front-door'
+import type { DischargedWait } from '@/server/front-door'
 import { detectPause } from '@/domain/detection/detect'
 import type { WorkDetected } from '@/domain/detection/detect'
 
@@ -120,6 +121,35 @@ const recordAmbientCall: ModelCallSink = async (row) => {
  * declined — so no reading of this function widens anything, which is the
  * asymmetry PRODUCT_PRINCIPLES §15 asks to be held.
  */
+/**
+ * The waits Home would spend slots on, read the way this route reads everything
+ * else: from a context somebody else opened, never one this poll opens.
+ *
+ * `existingAppContext()` rather than `appContext()`, for the reason
+ * `reticenceAgainst` gives directly below — a poll that opens a context on a
+ * machine nobody has used yet would be doing work on behalf of a screen that may
+ * never be opened. Empty is the honest answer and it is today's behaviour
+ * exactly.
+ */
+async function waitsAlreadyDischarged(): Promise<readonly DischargedWait[]> {
+  const context = existingAppContext()
+  if (context === undefined) return []
+
+  const { repos } = await context
+  return (await repos.intentions.factsForEveryProject()).flatMap((facts) =>
+    facts.statedWait !== null && facts.waitDischargedAt !== null
+      ? [
+          {
+            projectId: facts.projectId,
+            intentionId: facts.intentionId,
+            statedWait: facts.statedWait,
+            arrivedAtEpochMs: facts.waitDischargedAt.getTime(),
+          },
+        ]
+      : [],
+  )
+}
+
 async function reticenceAgainst(
   signatures: readonly string[],
 ): Promise<{ salt: string; declined: ReadonlyMap<string, number> }> {
@@ -301,11 +331,37 @@ export async function GET(request: Request) {
      * candidates are; the second is what they are worth knowing what this person
      * has already turned down. A walk of an in-memory buffer is the whole cost.
      */
-    const candidates = noticedAfternoon(ambient, observations, now)
+    /**
+     * The waits Home would spend slots on, so this pass spends the same ones.
+     *
+     * **Without this the poll and the screen disagree about which strands
+     * exist**, and the disagreement is the expensive direction: Home's bound is
+     * shared across both kinds, so three discharged waits leave it showing no
+     * strands at all — while this pass would still return `suggestion` for the
+     * leading strand, which the extension turns into a `requireInteraction`
+     * notification. That is a notification about something the front door
+     * decided not to show, which is the erosion Principle 13 records for
+     * 2026-08-17 in as many words: *"a strand that had never been advertised was
+     * arriving ready to interrupt."*
+     *
+     * The waits themselves are NOT returned here. Nothing badges and nothing
+     * notifies about one — a person meets a discharged wait by opening Home.
+     * What crosses is only the bound it spends.
+     */
+    const dischargedWaits = await waitsAlreadyDischarged()
+
+    const candidates = noticedAfternoon(ambient, observations, now, new Map(), '', dischargedWaits)
     const { salt, declined } = await reticenceAgainst(
       [...candidates.shown, ...candidates.suppressed].map((strand) => strand.signature),
     )
-    const detected = noticedAfternoon(ambient, observations, now, declined, salt).shown
+    const detected = noticedAfternoon(
+      ambient,
+      observations,
+      now,
+      declined,
+      salt,
+      dischargedWaits,
+    ).shown
 
     if (detected.length === 0) {
       return NextResponse.json({ ok: true, session: null, suggestion: null })

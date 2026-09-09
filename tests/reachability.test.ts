@@ -861,9 +861,38 @@ describe('the safety machinery is reachable from the product', () => {
    * The first version WAS weaker: it asserted the deleting FILE was the
    * repository, which any new `actionEvidence.deleteMany` anywhere in a
    * 1,500-line file would satisfy, and it could not see raw SQL at all.
+   *
+   * **And that is exactly what happened, 2026-09-08.** `deleteWithEverything`
+   * ([ADR-0038](../docs/adr/0038-deleting-a-project.md)) added a second
+   * `actionEvidence.deleteMany` to this same file, and both assertions stayed
+   * green — the file-level one because it is the same file, the caller one
+   * because the new path does not go through `evidence.sweep*`. The describe
+   * name was false for the length of that commit. So there is now a third
+   * assertion naming both deleters, and the name says *two things*, because a
+   * green tick whose sentence has quietly stopped being true is worse than no
+   * tick at all.
    */
-  describe('nothing but the sweep deletes action evidence', () => {
+  describe('only the sweep and the project delete remove action evidence', () => {
     const repos = 'src/persistence/repositories/index.ts'
+
+    it('names both deleters, so a third cannot arrive unnoticed', () => {
+      const source = stripImports(stripComments(readFileSync(join(repo, repos), 'utf8')))
+
+      // One per permitted path: the timed sweep, and the cascade a person
+      // reaches through the typed confirmation. A third occurrence in this file
+      // is a new deleter of a table the database no longer protects.
+      const occurrences = source.match(/actionEvidence\.delete(Many)?\(/g) ?? []
+
+      expect(
+        occurrences.length,
+        'a third ActionEvidence deleter appeared — the table has no DELETE guard, so this list is the guard',
+      ).toBe(2)
+
+      expect(
+        callersOf('projects.deleteWithEverything', repos),
+        'the cascade that deletes ActionEvidence is reachable from somewhere new',
+      ).toEqual(['src/server/actions.ts'])
+    })
 
     it('the ORM delete lives only in the repository', () => {
       const deleters = PRODUCTION.filter((f) =>
@@ -2187,33 +2216,175 @@ describe('the channel can speak, from the feeds named here and no others', () =>
   })
 })
 
+/**
+ * The ordering across kinds is reachable from the product. ADR-0036.
+ *
+ * **Promoted out of the deferred block on 2026-09-07, in the change that wired
+ * it**, which is the rule: it was pinned at zero callers when the comparator
+ * landed, then at one when `npm run replay` used it, and it is on the screen
+ * now.
+ *
+ * The second assertion is the one worth keeping. A bound applied twice — once
+ * to strands and once to waits — would be a screen saying twice as much while
+ * both halves believed they were being quiet, so `MAX_THREADS_SHOWN` appears in
+ * `front-door.ts` exactly once and the cut happens after the ordering, never
+ * before it.
+ */
+describe('the front door orders more than one kind of thing', () => {
+  it('reaches the comparator, from the screen and from the eval path', () => {
+    expect(
+      [...callersOf('orderCandidates', 'src/domain/detection/order-candidates.ts')].sort(),
+    ).toEqual(['src/eval/replay.ts', 'src/server/front-door.ts'])
+  })
+
+  it('applies the display bound once, and after the ordering', () => {
+    const source = stripImports(stripComments(readFileSync(join(repo, 'src/server/front-door.ts'), 'utf8')))
+    const uses = source.split('MAX_THREADS_SHOWN').length - 1
+    expect(uses, 'the bound is spent in more than one place').toBe(1)
+    expect(
+      source.indexOf('orderCandidates'),
+      'the cut happens before the ordering, which discards a wait for a weaker strand',
+    ).toBeLessThan(source.indexOf('MAX_THREADS_SHOWN'))
+  })
+})
+
+/**
+ * What the between-sittings work made reachable. ADR-0034, ADR-0035, ADR-0036.
+ *
+ * **These three sat inside the deferred block for a commit and did not belong
+ * there**, which a review caught: two of them assert callers EXIST, which is the
+ * opposite of what that block is for, and the block's own header went on saying
+ * it held nothing. They are here now, above the line, which is where a reader
+ * looks to find out what is wired.
+ */
+/**
+ * Deleting a project — ADR-0038, and the one capability here that removes
+ * rather than adds.
+ *
+ * The caller count matters more than usual and in the opposite direction from
+ * everywhere else in this file. Elsewhere a second caller is a design question;
+ * here it is the guarantee. ADR-0038 property 1: *"whole projects only… a
+ * ledger you can remove one line from is a ledger you can rewrite by
+ * subtraction."* That property is held up by there being exactly one path that
+ * deletes **a project**, reached only by a person.
+ *
+ * ~~and by nothing else in `src/` calling a `delete` on any table this cascade
+ * touches.~~ **Struck 2026-09-08, the day it was written, because it was false
+ * when written and neither assertion below checked it.** `evidence-sweep.ts`
+ * deletes `ActionEvidence` on a timer, and the repository deletes credentials,
+ * pairings and reticence rows on their own paths. The narrow claim is the true
+ * one; the sweeping clause was a sentence that sounded like a guarantee and was
+ * pinned by nothing.
+ */
+describe('a project can be deleted, by a person and by nothing else', () => {
+  it('has exactly one production caller, on a screen', () => {
+    const callers = callersOf('deleteProject', 'src/server/actions.ts')
+
+    expect(
+      callers,
+      'nothing deletes a project — the promise in SECURITY_AND_PRIVACY.md is unbacked again',
+    ).not.toEqual([])
+    expect(
+      [...callers].sort(),
+      'a second caller of deleteProject — no sweep, worker or model may reach this',
+    ).toEqual(['src/app/projects/[projectId]/page.tsx'])
+  })
+
+  it('keeps the cascade itself to one caller, which is that action', () => {
+    expect(
+      [...callersOf('projects.deleteWithEverything', 'src/persistence/repositories/index.ts')].sort(),
+      'the cascade grew a second caller — every delete must go through the typed confirmation',
+    ).toEqual(['src/server/actions.ts'])
+  })
+})
+
+describe('the between-sittings path is reachable from the product', () => {
+  it('has a writer of the external ledger, and the product can reach it', () => {
+    expect(
+      [...callersOf('createExternalWriter', 'src/persistence/external-writer.ts')].sort(),
+      'the external ledger lost a caller — the declared source is how a person discharges a wait',
+    ).toEqual(['scripts/replay.ts', 'scripts/worker.ts', 'src/server/db.ts'])
+
+    // The half that matters: something a PERSON presses writes one. Without it
+    // the sixth lifecycle member is reachable and undischargeable, which is a
+    // screen that can only ever say Waiting.
+    expect(
+      callersOf('noteArrived', 'src/server/actions.ts'),
+      'nothing lets a person say the thing arrived',
+    ).not.toEqual([])
+  })
+
+  /**
+   * A person writes a wait, and a fixture may stand in for one.
+   *
+   * Two callers, and the second needs its argument stated rather than waved
+   * through. Principle 12 says an Intention is created and edited by a person
+   * and by nothing else, and `scripts/replay.ts` is not a person. It is a
+   * FIXTURE driving the human path, which `src/eval/scenario.ts` already has the
+   * rule for about the autonomy dials: *"a fixture standing in for a person is
+   * still not a model."* No detector, no model boundary, no worker and no sweep
+   * is in this list.
+   *
+   * **Principle 12's own honest limit now reads TWO** — it says the guarantee is
+   * "held up by there being exactly one writer, not by a type" — so the list is
+   * the whole of it, and a third caller failing this test is where the argument
+   * gets made again.
+   */
+  it('writes a StatedWait from a person on a screen, and from a fixture standing in for one', () => {
+    const callers = callersOf('intentions.stateWait', 'src/persistence/repositories/index.ts')
+    expect(
+      callers,
+      'nothing writes a StatedWait — the sixth lifecycle member is unreachable',
+    ).not.toEqual([])
+    expect(
+      [...callers].sort(),
+      'a third writer of the Intention row — Principle 12 rests on the caller list being read',
+    ).toEqual(['scripts/replay.ts', 'src/server/actions.ts'])
+  })
+
+  /**
+   * The half that matters more than any caller count.
+   *
+   * `ObservationEvent.sessionId` being required is what makes "no event outside
+   * a sitting can be persisted" true of the FIRST ledger, and ADR-0034 spent
+   * only the half about the database as a whole. If a second caller of
+   * `observationEvent.create` ever appears, that sentence stops being true of
+   * the table too, and the guarantee this change was careful to leave standing
+   * is gone without anybody deciding to spend it.
+   */
+  it('keeps two ledger writers, each the only writer of its own table', () => {
+    expect(
+      callersOf('observationEvent.create', 'src/persistence/ledger-writer.ts'),
+      'a second writer of the observation ledger — the datamark door is no longer singular',
+    ).toEqual([])
+    expect(
+      callersOf('externalEvent.create', 'src/persistence/external-writer.ts'),
+      'a second writer of the external ledger',
+    ).toEqual([])
+  })
+})
+
 describe('deferred, and asserted as deferred', () => {
   /**
-   * The computer-use tables, landed ahead of everything that uses them.
+   * Something built, tested, and called by nothing — asserted so that the
+   * absence is a claim the suite goes red on rather than an accident nobody can
+   * tell apart from a bug.
    *
-   * Schema and repositories are one unit and the paths that write them are
-   * several others, so for one commit these were tables with guards,
-   * repositories with tests, and no callers — the exact shape of every bug the
-   * section above exists to remember. Asserting the absence is what stops that
-   * shape from being indistinguishable from the accident: it turns this file
-   * RED the moment something calls it, which forces the claim up into the
-   * reachable section rather than leaving it ambiguous.
+   * ~~**This block held four assertions, then one, and now holds NONE.**~~
+   * **Re-marked 2026-09-08. It said NONE while holding four**, three of which
+   * were positive reachability claims filed here by mistake during the
+   * between-sittings work; they are in `describe('the between-sittings path is
+   * reachable from the product')` directly above. A review found it, and the
+   * finding was the sharpest of that pass: **this is the file the repository
+   * trusts to say what is wired, and four documents had quoted its "pinned at
+   * zero callers" after that had stopped being true.**
    *
-   * **This block held four assertions, then one, and now holds NONE.**
-   * Boundary 6, the gap sweeper and the outcome-scoped finding were promoted
-   * on 2026-08-27. The last and most different — the emptiness of
-   * `LANDING_ACTION_KINDS`, held shut by the transport's unconditional
-   * non-`GET` refusal rather than by a missing wire — went red on 2026-09-01,
-   * on the commit that built ADR-0024, exactly as its own text instructed:
-   * *"If you are here because it went red: that is the system working, and
-   * ADR-0024 is the argument you are looking for. Move it."* It was moved.
-   * Its positive replacement is `describe('the landing kind is reachable…')`
-   * in the section above, and the empty block stays so the next deferred
-   * capability has somewhere to land.
+   * The block is genuinely empty again, and it stays so the next deferred
+   * capability has somewhere to land. Boundary 6, the gap sweeper and the
+   * outcome-scoped finding were promoted on 2026-08-27; `LANDING_ACTION_KINDS`
+   * went red on 2026-09-01 exactly as its own text instructed, and its positive
+   * replacement is `describe('the landing kind is reachable…')` above.
    */
-
-  // (The emptiness pin lived here from 2026-08-26 to 2026-09-01. See the
-  // block header for where it went and why.)
 
   it('holds nothing, and the promotions it points at exist', () => {
     // An empty describe fails the runner, so the block's one occupant asserts
@@ -2223,9 +2394,11 @@ describe('deferred, and asserted as deferred', () => {
       self,
       'the landing-kind promotion is gone — a deferred capability was deleted rather than moved',
     ).toContain("describe('the landing kind is reachable")
+    expect(
+      self,
+      'the between-sittings promotions are gone — they were moved up, not deleted',
+    ).toContain("describe('the between-sittings path is reachable from the product'")
   })
-
-
 })
 
 /**

@@ -30,9 +30,12 @@
  * A `ConfirmationRequest` holds a foreign key to the exact row the person was
  * looking at when they authorised an irreversible effect. `confirmation_request`
  * is append-only, so the sweep can neither delete the row it points at nor clear
- * the pointer — and it never will be able to. Those rows are kept **forever**,
- * not "as long as the question is". The two are the same thing here, because the
- * question is kept forever too.
+ * the pointer — and ~~it never will be able to. Those rows are kept **forever**~~
+ * **THE SWEEP never will be able to** *(corrected 2026-09-08,
+ * [ADR-0038](../../docs/adr/0038-deleting-a-project.md))*. Those rows are kept
+ * for as long as the project is, and go with it — request and evidence together,
+ * in that order, in `deleteWithEverything`. Nothing removes them on a timer,
+ * which is the only thing this module is about.
  *
  * Say the cost out loud: this is the row most likely to be a SCREENSHOT OF A
  * PAGE THE PERSON WAS SIGNED INTO, because a confirmation question is exactly

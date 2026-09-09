@@ -24,6 +24,8 @@ import type { Database } from '../persistence/client'
 import { createRepositories } from '../persistence/repositories/index'
 import type { Repositories } from '../persistence/repositories/index'
 import { createLedgerWriter } from '../persistence/ledger-writer'
+import { createExternalWriter } from '../persistence/external-writer'
+import type { ExternalWriter } from '../persistence/external-writer'
 import type { LedgerWriter } from '../persistence/ledger-writer'
 
 export interface AppContext {
@@ -32,6 +34,16 @@ export interface AppContext {
   /** The single door observation events enter by. Routes must use this and
    *  never a repository — `seq` gaplessness depends on it. */
   readonly ledger: LedgerWriter
+  /**
+   * The single door an ExternalEvent enters by, beside the one above and
+   * never joined to it (ADR-0034).
+   *
+   * Same rule as `ledger` and for the same reason — `seq` gaplessness depends
+   * on there being one writer — with one difference worth stating: this table
+   * has no `untrusted` column, so unlike `ledger` it is not the place raw text
+   * becomes stored text. There is no such place for it here at all.
+   */
+  readonly external: ExternalWriter
 }
 
 declare global {
@@ -48,6 +60,7 @@ async function build(): Promise<AppContext> {
     db,
     repos: createRepositories(db.prisma),
     ledger: createLedgerWriter(db.prisma),
+    external: createExternalWriter(db.prisma),
   }
 }
 

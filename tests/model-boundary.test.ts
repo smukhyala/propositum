@@ -20,11 +20,13 @@ import type { CallTelemetry, FailureKind, ModelBoundary } from '../src/model/cli
 import { AnthropicModelClient, classifyThrow } from '../src/model/anthropic'
 import { FakeModelClient } from '../src/model/fake'
 import {
+  CLAIM_KINDS,
   handlesFor,
   sessionReadingBoundary,
   sessionReadingSchema,
 } from '../src/model/boundaries/session-reading'
 import type { PromptEvent } from '../src/model/boundaries/session-reading'
+import { eveningClasses } from '../src/fixtures/scenarios/evening-classes'
 import { handoffBoundary } from '../src/model/boundaries/handoff'
 import { offerBoundary } from '../src/model/boundaries/offer'
 import { planBoundary } from '../src/model/boundaries/plan'
@@ -139,7 +141,101 @@ describe('the prompt', () => {
   })
 
   it('carries a version, because a telemetry row that cannot name its prompt is not traceability', () => {
-    expect(boundary.promptVersion).toBe('session-reading@1')
+    expect(boundary.promptVersion).toBe('session-reading@2')
+  })
+
+  /**
+   * The assertions below are `@2`, and each one names a scored failure of
+   * `@1` rather than a style preference. `@1` listed the six kinds and defined
+   * none of them, so the model chose its own meanings — and the 2026-08-27
+   * scoring and the 2026-09-08 run log agree on which ones it got wrong.
+   *
+   * **These check the prompt, which is the weakest kind of guard here.** A
+   * prompt holding the right sentence is not a prompt the model obeyed; only
+   * `npm run eval` can say that, and it costs money and is not in `npm test`.
+   * What this does catch is the sentence being dropped in a later edit, which
+   * is the failure that would otherwise be invisible until a paid run.
+   */
+  it('defines all six kinds, because naming them was what @1 did', () => {
+    const prompt = boundary.buildPrompt({ events, notes: [] })
+
+    for (const kind of CLAIM_KINDS) {
+      expect(prompt.system).toContain(`- "${kind}" —`)
+    }
+  })
+
+  it('makes completed work a question about what is owed, not a rule about page reads', () => {
+    // `lisbon-thread` filed "Collected room rates from two candidates" under
+    // completed, against a reference recording that nothing has a price against
+    // it — and then could not report the empty column it had said it filled.
+    //
+    // The flat form of this clause — "reading a page is not completed work" —
+    // was cut, because `evening-classes` seals a `completed` claim citing two
+    // visits and an engagement and not one edit: there, getting through the
+    // prospectus WAS the work. Both halves are asserted, because dropping
+    // either one reopens a scenario the other closes.
+    const prompt = boundary.buildPrompt({ events, notes: [] })
+
+    expect(prompt.system).toMatch(/reading one page is not completed work on its own/i)
+    expect(prompt.system).toMatch(/whether anything would still be owed/i)
+  })
+
+  it('separates what the session was for from the decision it leads to', () => {
+    // `monitor-shortlist` read the objective as choosing a monitor, at high
+    // confidence, over a note saying the choosing happens tomorrow.
+    const prompt = boundary.buildPrompt({ events, notes: [] })
+
+    expect(prompt.system).toMatch(/not the decision it is groundwork for/i)
+    expect(prompt.system).toMatch(/deciding is not the objective/i)
+  })
+
+  it('tells the model a quoted note is not a next action, and asks for a startable step', () => {
+    const prompt = boundary.buildPrompt({ events, notes: [] })
+
+    expect(prompt.system).toMatch(/is not a next action; it is their note/i)
+    expect(prompt.system).toMatch(/specific enough to start/i)
+  })
+
+  /**
+   * The one assertion here that is not about the prompt's own words.
+   *
+   * `@2`'s first draft said flatly *"reading a page is not completed work"*, and
+   * a sealed reference disagrees: `evening-classes` files *"Every course in the
+   * prospectus was opened and read over the afternoon"* under `completed`,
+   * citing visits and an engagement and not one edit — because there, getting
+   * through the list was the work. Nothing in the suite compared a prompt clause
+   * to a reference, so the contradiction was found by reading rather than by a
+   * red test, and the next person to flatten that clause would have had nothing
+   * stopping them.
+   *
+   * **This is the cheap half of that guard, not the whole one.** It pins the
+   * fixture shape the clause has to survive, so re-flattening meets a failure
+   * naming the scenario. It cannot check that the model obeys either wording —
+   * only `npm run eval` can, and it costs money.
+   */
+  it('keeps the completed clause survivable by the reference that disproved its first draft', () => {
+    const claim = eveningClasses.reference.find(
+      (c) => c.kind === 'completed' && c.text.includes('opened and read'),
+    )
+
+    expect(claim).toBeDefined()
+
+    const kinds = (claim?.supportingHandles ?? []).map(
+      (h) => eveningClasses.events.find((e) => e.handle === h)?.kind,
+    )
+
+    // If this ever holds an edit, the flat wording becomes safe again and the
+    // clause above can be simplified. Until then it may not be.
+    expect(kinds.length).toBeGreaterThan(0)
+    expect(kinds).not.toContain('documentEdited')
+  })
+
+  it('no longer asks for every claim it can support, which was the maximising line', () => {
+    // The instruction that produced the breadth three of four scored notes call
+    // "distracted". Its replacement asks for the right kind, not for more.
+    const prompt = boundary.buildPrompt({ events, notes: [] })
+
+    expect(prompt.system).not.toMatch(/every claim you can support/i)
   })
 
   it('includes typed notes separately from observed events', () => {
@@ -179,7 +275,7 @@ describe('the fake is held to the real contract', () => {
 
     expect(fake.calls).toHaveLength(1)
     expect(fake.calls[0]?.boundary).toBe('session-reading')
-    expect(fake.calls[0]?.promptVersion).toBe('session-reading@1')
+    expect(fake.calls[0]?.promptVersion).toBe('session-reading@2')
   })
 
   it('scripts failures so the unattended paths are testable without the network', async () => {

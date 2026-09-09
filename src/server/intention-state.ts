@@ -53,8 +53,17 @@ export interface OverallIntentionState {
   readonly label: string
 }
 
-/** Fold order, highest claim first. `done` is deliberately absent — see the
- *  header — and `sleeping` is what everything falls through to. */
+/**
+ * Fold order, highest claim first. `done` is deliberately absent — see the
+ * header — and `sleeping` is what everything falls through to.
+ *
+ * **`waiting` is also absent, and that is a decision rather than an omission**
+ * *(added 2026-09-08 with the sixth member)*. A machine-wide *Waiting* would
+ * claim the person is blocked because ONE project is, on a tray light whose
+ * whole job is one word for the whole machine. A project that is waiting says so
+ * on its own screen. Recorded here because this list enumerates the union and a
+ * reader would otherwise have to work out whether the gap was meant.
+ */
 const FOLD_ORDER = ['needs-you', 'delegated', 'working'] as const
 
 /**
@@ -73,7 +82,9 @@ export function foldIntentionStates(
   return 'sleeping'
 }
 
-/** The word plus its consumer label, from the one place that holds the five. */
+/** The word plus its consumer label, from the one place that holds them.
+ *  (Numeral deleted 2026-09-08 rather than raised to six: `INTENTION_STATES` is
+ *  what knows how many, and this docblock does not need to.) */
 function labelled(state: IntentionStateId): OverallIntentionState {
   return { state, label: INTENTION_STATES[state].consumerLabel }
 }

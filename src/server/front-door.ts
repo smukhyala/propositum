@@ -43,6 +43,8 @@ import type { AmbientObservation, WorkDetected } from '../domain/detection/detec
 import { groundsFor } from '../domain/detection/grounds'
 import { hashSignature } from '../domain/detection/reticence'
 import { signatureOf } from './ambient-store'
+import { orderCandidates, stillWorthSaying } from '../domain/detection/order-candidates'
+import type { Candidate } from '../domain/detection/order-candidates'
 import type { AmbientStore } from './ambient-store'
 
 /** One sitting, as `sessions.forProject` returns it. A sitting is over when its
@@ -142,6 +144,9 @@ export function frontDoorRow(input: {
             ),
             openDecisions: facts.openDecisions,
             undecidedHeldOutcomes: facts.undecidedHeldOutcomes,
+            // Both halves, because only this layer can see both: the words are
+            // on the Intention and the discharge is in the second ledger.
+            undischargedWait: facts.statedWait !== null && !facts.waitDischarged,
           },
           input.nowEpochMs,
         )
@@ -158,9 +163,9 @@ export function frontDoorRow(input: {
 /**
  * The lifecycle word, in the person's own terms.
  *
- * `INTENTION_STATES` rather than a literal, so the five sentences CONTEXT.md
+ * `INTENTION_STATES` rather than a literal, so the sentences CONTEXT.md
  * fixes are rendered from the one place that holds them. A Project with no
- * Intention gets a sentence that is not one of the five and does not pretend to
+ * Intention gets a sentence that is not one of them and does not pretend to
  * be a sixth: nobody has said what this is for, and Home never asks them to.
  */
 export function statusWordFor(state: IntentionStateId | null): string {
@@ -235,6 +240,20 @@ export function noticedStrands(
   return noticedAfternoon(store, observations, nowMs).shown
 }
 
+/**
+ * A wait a person stated, which something has said arrived. ADR-0035.
+ *
+ * Assembled by the caller from `factsForEveryProject`, because this file is
+ * synchronous and the front door is not — the same split `reticent` and `salt`
+ * already use, and for the same reason.
+ */
+export interface DischargedWait {
+  readonly projectId: string
+  readonly intentionId: string
+  readonly statedWait: string
+  readonly arrivedAtEpochMs: number
+}
+
 /** What the screen shows, and what it found and did not. */
 export interface NoticedAfternoon {
   /** In order, bounded by `MAX_THREADS_SHOWN`. What `noticedStrands` returns. */
@@ -262,6 +281,19 @@ export interface NoticedAfternoon {
    * `src/server/offer-tally.ts`.
    */
   readonly suppressed: NoticedStrand[]
+  /**
+   * Discharged waits that survived the same bound the strands did, in order.
+   *
+   * **Bounded together with the strands, not beside them**, which is the whole
+   * reason they go through this function rather than being assembled on the
+   * screen. `MAX_THREADS_SHOWN` is a limit on how much Propositum says at once;
+   * two lists each honouring it separately would be a screen saying twice as
+   * much while both halves believed they were being quiet.
+   *
+   * An OPEN wait is never in here. ADR-0036 argues it: it carries no decision,
+   * and it has no way to leave the list.
+   */
+  readonly waitsShown: DischargedWait[]
   /**
    * How many strands reticence held back — ADR-0020.
    *
@@ -307,8 +339,18 @@ export function noticedAfternoon(
    *  strand hashes to nothing anybody has declined without it, so `''` is the
    *  empty map by another route. */
   salt: string = '',
+  /**
+   * Waits a person stated that something has said arrived. ADR-0035/0036.
+   *
+   * They arrive here rather than being assembled on the screen so that ONE
+   * place applies the bound. This function's own docblock argues that two
+   * places holding one limit is how the screen and the poll come apart; two
+   * KINDS each honouring the limit separately is the same failure sideways —
+   * a screen saying twice as much while both halves believe they are quiet.
+   */
+  waits: readonly DischargedWait[] = [],
 ): NoticedAfternoon {
-  const shown: NoticedStrand[] = []
+  const qualifying: NoticedStrand[] = []
   const suppressed: NoticedStrand[] = []
   let heldBack = 0
   const seen = new Set<string>()
@@ -374,12 +416,71 @@ export function noticedAfternoon(
     }
 
     seen.add(signature)
-    // The bound, spent only on strands that survived everything above it.
-    if (shown.length >= MAX_THREADS_SHOWN) suppressed.push({ detected, signature })
-    else shown.push({ detected, signature })
+    // Everything that survived the filters. The bound is applied below, once,
+    // across both kinds.
+    qualifying.push({ detected, signature })
   }
 
-  return { shown, suppressed, heldBack }
+  /**
+   * One ordering, one bound, both kinds. ADR-0036.
+   *
+   * The strands' own three keys are unchanged and are still the detector's;
+   * what is new is that a discharged wait can outrank them, which the
+   * comparator argues rather than this function. Cutting after ordering is the
+   * 2026-08-17 amendment applied to a wider field: cutting first would discard
+   * a wait a person is owed an answer about in favour of a weaker strand,
+   * silently, which is exactly the failure that amendment ended for snoozes.
+   */
+  const byStrand = new Map(qualifying.map((strand) => [strand.signature, strand]))
+  const byWait = new Map(waits.map((wait) => [wait.intentionId, wait]))
+
+  const ordered = orderCandidates(
+    [
+    ...waits.map(
+      (wait): Candidate => ({
+        kind: 'discharged-wait',
+        intentionId: wait.intentionId,
+        statedWait: wait.statedWait,
+        arrivedAtEpochMs: wait.arrivedAtEpochMs,
+      }),
+    ),
+    ...qualifying.map(
+      (strand): Candidate => ({
+        kind: 'strand',
+        signature: strand.signature,
+        searches: strand.detected.searches,
+        pages: strand.detected.pages,
+        engagedMs: strand.detected.engagedMs,
+      }),
+    ),
+    ].filter((candidate) => stillWorthSaying(candidate, nowMs)),
+  )
+
+  const shown: NoticedStrand[] = []
+  const waitsShown: DischargedWait[] = []
+  const kept = new Set<string>()
+
+  for (const candidate of ordered.slice(0, MAX_THREADS_SHOWN)) {
+    if (candidate.kind === 'strand') {
+      const strand = byStrand.get(candidate.signature)
+      if (strand !== undefined) {
+        shown.push(strand)
+        kept.add(candidate.signature)
+      }
+      continue
+    }
+    const wait = byWait.get(candidate.intentionId)
+    if (wait !== undefined) waitsShown.push(wait)
+  }
+
+  // Counted as it always was: found, good enough, and cut for room. A wait cut
+  // by the bound is not counted here, because `strandsSuppressed` means strands
+  // and a number that meant two things would be worse than a missing one.
+  for (const strand of qualifying) {
+    if (!kept.has(strand.signature)) suppressed.push(strand)
+  }
+
+  return { shown, suppressed, heldBack, waitsShown }
 }
 
 /**

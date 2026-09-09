@@ -23,6 +23,7 @@ import { countQuietly, dayBucket } from '../src/server/offer-tally'
 import { MAX_ACTIONS_PER_RUN } from '../src/domain/handoff/policy'
 import { REQUIRED_GUARDS } from '../src/persistence/append-only'
 import { createLedgerWriter } from '../src/persistence/ledger-writer'
+import { createExternalWriter } from '../src/persistence/external-writer'
 import { POST as ambientRoute } from '../src/app/api/capture/ambient/route'
 import { CUSTOM_HEADER } from '../src/capture/transport'
 import { H1_COMPONENTS } from '../src/eval/scenario'
@@ -1979,7 +1980,7 @@ describe('the counts survive a round trip through SQLite', () => {
     globalThis.__propositum = Promise.resolve({
       db,
       repos,
-      ledger: createLedgerWriter(db.prisma),
+      ledger: createLedgerWriter(db.prisma), external: createExternalWriter(db.prisma),
     })
     globalThis.__propositumAmbient = undefined
 
@@ -2043,7 +2044,7 @@ describe('the counts survive a round trip through SQLite', () => {
     globalThis.__propositum = Promise.resolve({
       db,
       repos,
-      ledger: createLedgerWriter(db.prisma),
+      ledger: createLedgerWriter(db.prisma), external: createExternalWriter(db.prisma),
     })
     globalThis.__propositumAmbient = undefined
 

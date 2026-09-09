@@ -93,10 +93,12 @@ inherited by inference, because inference cannot reach the row.
 
 **Honest limit.** At most one `Intention` per `Project`, and no graph — no subgoals, no
 dependencies, no links between intentions, and no scheduling across them. `IntentionState` is a
-computed view with five members — `working`, `delegated`, `needs-you`, `sleeping`, `done` — and is
+computed view over `INTENTION_STATES` — ~~five members~~ **six since 2026-09-07, [ADR-0035](./adr/0035-what-a-person-said-they-are-waiting-on.md)**: `working`, `delegated`, `needs-you`, `waiting`, `sleeping`, `done` — and is
 never stored, because two stores for one truth is how a UI comes to show something the gate cannot
-enforce. There is no `waiting` member: nothing in this system can produce the external event you
-would be waiting on, so a sixth state would be an enum member nothing could reach.
+enforce. ~~There is no `waiting` member: nothing in this system can produce the external event you
+would be waiting on, so a sixth state would be an enum member nothing could reach.~~ **Struck
+2026-09-08 — this is the sentence the correction two lines above replaces, and it was left standing
+in the same paragraph.**
 
 **And a naming collision, accepted rather than fixed.** The runtime is saturated with `intent` —
 `ActionIntent`, `intentId`, `recordIntent`, `PlanStep.intent` — and none of them mean this.
@@ -313,9 +315,21 @@ and it suggests a number a person then sets.)*
 calendar read above does not change it: free/busy produces no event, is not persisted, and cannot
 move an intention. It answers a question at a moment somebody is looking at a screen.)* An intention
 ought to move when the world moves — a reply arrives, a build goes red, a deadline passes. None of that can reach this
-system, and the reason is structural rather than unfinished: an `ObservationEvent` requires a
-`sessionId` and there is a single ledger writer, so **nothing that happens outside a sitting can be
-recorded at all.** That absence is why `IntentionState` ships with five members instead of six, and
+system, ~~and the reason is structural rather than unfinished~~ **— corrected 2026-09-07, and only
+this clause ([ADR-0034](./adr/0034-somewhere-to-put-an-event-outside-a-sitting.md)): the reason is
+now unfinished rather than structural. The first half of the sentence is unchanged and still true,
+and neither of the two permitted sources is a sensor, so *"Observation is one sensor"* above is
+untouched.** As it stands: an `ObservationEvent` requires a
+`sessionId` and there is a single ledger writer, so ~~**nothing that happens outside a sitting can be
+recorded at all.**~~ **Re-marked 2026-09-07 by the change that built it
+([ADR-0034](./adr/0034-somewhere-to-put-an-event-outside-a-sitting.md)): the sentence is now true of
+the observation ledger rather than of the machine. A second table exists with its own single writer,
+~~and nothing calls that writer yet~~ **and a person can now reach it: `noteArrived` writes one from
+the project screen, which is the `declared` source. Nothing WATCHES anything — the person says the
+thing arrived, and the row records that they said so.** `tests/reachability.test.ts` pins both the
+writer's callers and the fact that a person can press one, which is the version of this claim that
+goes red on its own.** That absence is why `IntentionState` ships
+with ~~five members instead of six~~ **six as of 2026-09-07**, and
 it is the whole content of the repository's **Stage 2 — Event-Driven Understanding**
 ([`ROADMAP.md`](./ROADMAP.md)).
 

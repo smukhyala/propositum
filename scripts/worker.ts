@@ -18,6 +18,7 @@ import { SchemaBehindError } from '../src/persistence/append-only'
 import { EX_CONFIG } from '../src/runtime/exit-codes'
 import { createRepositories } from '../src/persistence/repositories/index'
 import { createLedgerWriter } from '../src/persistence/ledger-writer'
+import { createExternalWriter } from '../src/persistence/external-writer'
 import { createModelClient } from '../src/model/provider'
 import { startWorkerProcess, installSignalHandlers } from '../src/runtime/worker-process'
 import { executeRun } from '../src/server/execute-run'
@@ -102,6 +103,7 @@ const ctx = {
   db,
   repos: createRepositories(db.prisma),
   ledger: createLedgerWriter(db.prisma),
+  external: createExternalWriter(db.prisma),
 }
 
 /**

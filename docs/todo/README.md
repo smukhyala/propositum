@@ -60,6 +60,9 @@ or what would make the file **deletable** rather than done
 | 9 | [`09-onboarding.md`](./09-onboarding.md) | ~~**unshaped** — written down 2026-08-27, the owner's design pass pending~~ **Struck 2026-09-03 — designed 2026-08-29, built 2026-08-30 ([#127](https://github.com/smukhyala/propositum/issues/127)); `ls src/app/first-run/page.tsx src/server/first-run.ts` returns both** | no |
 | 10 | [`10-the-mailbox.md`](./10-the-mailbox.md) | days, **decided not built** | no — until a build leaves the tester circle, then the CASA bill |
 | 11 | [`11-calendar-holds.md`](./11-calendar-holds.md) | ~a day, **decided not built**, and it opens with a stop-the-line check | no |
+| 12 | [`12-between-sittings.md`](./12-between-sittings.md) | ~~~a week, **decided not built**~~ **steps 1-8 done 2026-09-07 — a second ledger, a wait a person states and discharges, a sixth lifecycle word, an ordering across kinds on the front door, and `npm run replay`; only the corpus sweep is open**, and it is the only file here that unblocks a roadmap stage rather than a feature | via `00` |
+| 13 | [`13-deleting-a-project.md`](./13-deleting-a-project.md) | ~~~2 days, **decided not built**~~ **done 2026-09-08, the same day ADR-0038 was accepted** — and one of two files here that make the product **safer** rather than less safe | no |
+| 14 | [`14-migrations-and-a-copy.md`](./14-migrations-and-a-copy.md) | **mostly done 2026-09-08** — the database gets a migration history and a copy before every launch touches it, replacing the `prisma db push` that ran against a stranger's only copy of their work. Two things open: nothing checks a schema change ships with a migration, and nothing here has a Rust compiler | no |
 
 **6, 7 and 8 were written 2026-08-26**, hours after the decisions that made them necessary and in the
 same pass that noticed this folder did not have them. ~~All three are **decided, not built** — the
@@ -106,6 +109,8 @@ and `not-found.tsx` landed with the rest.
 from a file, copied and downloaded, and the editor is prose rather than
 monospace. What is left of 3 is the URL import — a capability that needs an ADR —
 and the H2 numerator, which needs a person doing real work and therefore needs 1.
+
+**12 is not in that class, and it is the reason it can sit after them in the table and before them in the order** *(added 2026-09-07)*. It takes no permission, adds no sensor and makes the product no less safe — its two event sources are a person typing and a fixture replaying. What it does take is [`00`](./00-score-the-hypotheses.md), harder than anything else here does: [ADR-0037](../adr/0037-was-the-offer-any-good.md) exists to explain the `baselineAtLeastAsGood` result, and that explanation is unreadable beside an unscored corpus. Build it against a red harness and you get a slice nobody can grade.
 
 **6, 7 and 8 come last, and the reason is not size.** Each one makes the product
 measurably less safe, and each one is currently held shut by a mechanism rather

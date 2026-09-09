@@ -556,7 +556,28 @@ whole value of this section: it means the line cannot be crossed by accident.
   and `ledger-writer.ts` is the single door every event enters by — one writer, because `seq` has to
   be gapless per session and two writers assigning their own sequence corrupt the stream invisibly.
   There is no row an external event could become and no writer that would accept it. A connector is
-  therefore not an integration job. It is a schema change plus a second writer, and the second writer
+  therefore not an integration job. It is a schema change plus a second writer, ~~and the second
+writer~~ **— amended 2026-09-07
+([ADR-0034](./adr/0034-somewhere-to-put-an-event-outside-a-sitting.md), ~~decided and unbuilt~~
+**decided and built the same day — corrected 2026-09-08; this parenthetical was copied from a wave
+that predated the build and sat eleven words from the word "built"**): that
+second writer is now **built** — `createExternalWriter` over its own `ExternalEvent` table, with
+  its own ~~three~~ **two** append-only guards *(corrected 2026-09-09 — [ADR-0038](./adr/0038-deleting-a-project.md))*. ~~**Nothing calls it**~~ **A person can: pressing *It arrived* on
+  the project screen writes one, which is the `declared` source. What it records is that somebody
+  said so and when — no subject, no message, no page text; the words being waited on stay on the
+  Intention and are not copied onto the event.** Nothing watches anything to produce one, and the
+  table has no column page-authored text could enter.
+  ~~**The retention question this opens is owed and open:** an `ExternalEvent` hangs off an
+  `Intention` rather than a `Project`, so *"deleting a `Project` deletes its events"* does not reach
+  it, and unlike `offer_tally` this table has a subject. `docs/todo/12-between-sittings.md` carries
+  it.~~ **Answered 2026-09-08 — [ADR-0038](./adr/0038-deleting-a-project.md).** The delete reaches
+  it through the Intention, which is why that statement sits immediately before the Intention's own
+  in the cascade. It is still not swept: nothing removes one on a timer.
+`ObservationEvent.sessionId` stays required and `createLedgerWriter` stays its only writer, so the
+guarantee above is intact where it always was. What this section forbade is NOT spent: the two
+permitted sources are a person typing and a fixture replaying, neither is a sensor, and a third is
+ADR-0034's own first *Revisit when*. The bullet below — no model calls on a timer — is untouched.**
+The struck clause
   is the thing that argument exists to forbid.
 - **[`CONTEXT.md`](../CONTEXT.md) bans model calls on a timer**, and gives two reasons an external
   source would have to answer rather than inherit: periodic interpretation feeds hostile page text to
@@ -625,8 +646,62 @@ executor changes who performs the work, and must not change how much of your dat
 
 ## Retention and deletion
 
-Observation events and the action ledger are **append-only** and cannot be edited. Deleting a
-`Project` deletes its sessions, events, documents, and ledger.
+Observation events and the action ledger are **append-only** and cannot be edited. ~~Deleting a
+`Project` deletes its sessions, events, documents, and ledger.~~
+
+~~**Struck 2026-09-07, and it describes neither a capability nor a behaviour.** Two things were
+checked rather than assumed. **Nothing in the product deletes a `Project`** — `grep -rn
+'projects.delete\|project.delete' src/ scripts/` returns nothing, so there is no button, no action
+and no route. And **the schema would refuse it if there were**: `grep -n onDelete
+prisma/schema.prisma` returns three lines and none is a `Cascade`, so a required relation takes
+Prisma's default of `Restrict` and the delete is refused rather than cascading. The sentence has
+been describing a tidy outcome for work nobody can start.~~
+
+**Both halves corrected 2026-09-08, and the second was never right.** The first is simply overtaken:
+`deleteProject` in `src/server/actions.ts` is the action, and the *Delete this project* disclosure is
+the button. The second was wrong when written — the schema still declares no `Cascade`, but for an
+**optional** relation Prisma's default is `SetNull`, not `Restrict`, and Prisma performs that
+nullification itself. A mis-ordered delete does not get refused; it quietly writes NULL into rows it
+does not own. Measured while building the cascade, and it is why the delete order in
+`src/persistence/repositories/index.ts` is a documented argument rather than a preference.
+
+~~**What that means for the person, said plainly:** everything Propositum has recorded about a
+project stays until you delete the database file.~~
+
+**Built 2026-09-08 — [ADR-0038](./adr/0038-deleting-a-project.md), and this is the sentence that
+changed.** A person may delete a project, and it takes everything filed under it: its sittings,
+observations, readings, agreements, runs, documents, verdicts, its Intention and that Intention's
+`ExternalEvent`s. It is on the project's own screen, under *Delete this project*, and it names how
+many sittings, documents and recorded steps are about to go before it asks. The name has to be typed
+to confirm, because the act is irreversible and the failure it guards against is a person with two
+similarly-named projects clicking the wrong row.
+
+**So the honest sentence now reads: until you delete the project, or the file.** What that costs is
+recorded in the ADR rather than hidden here — **fourteen tables gave up their no-`DELETE` trigger**,
+so the strongest thing this storage layer could say about itself has a qualifier on it. What it did
+**not** cost is the half that was ever load-bearing: nothing can rewrite a row and nothing can
+replace one, so a `ChangeVerdict` still records what you decided and an `ActionIntent` still cannot
+be edited after the fact. You can throw the receipt away. You cannot alter it.
+
+**Whole projects only, and that is a guarantee rather than a limitation.** There is no per-row,
+per-sitting or per-event delete and there must not be — a ledger you can remove one line from is a
+ledger that can be rewritten by subtraction. `tests/reachability.test.ts` pins the delete at exactly
+one caller, reached from a screen, and `tests/delete-project.test.ts` counts every table in the
+database afterwards rather than the ones somebody remembered.
+
+**`ExternalEvent` goes with its Intention** *(added 2026-09-07 —
+[ADR-0034](./adr/0034-somewhere-to-put-an-event-outside-a-sitting.md), ~~and it cannot be swept even
+in principle~~ **amended 2026-09-08**)*. ~~It carries three append-only guards including
+`external_event_no_delete`~~ — it lost that one with the other thirteen, and `append-only.ts`'s rule
+that *"a no-DELETE trigger and a sweep cannot both be true"* is what ADR-0038 generalised. It is
+still not **swept**: nothing removes one on a timer, and it is durable until the project it belongs
+to is deleted or the file goes.
+
+**What bounds the exposure is what the row holds**, and it is less than it sounds: a source, a kind,
+two timestamps and the id of an Intention. **The words being waited on are not on it** — they stay on
+the `Intention`, where a person can change or clear them. That is weaker than `offer_tally`'s
+*"four integers and a date, no subject"* and stronger than the ledger it sits beside, and it is
+recorded here rather than left to be worked out from the schema.
 
 **One thing expires on its own: `ActionEvidence`.** _(Amended 2026-08-11 —
 [ADR-0010](./adr/0010-acting-in-the-browser.md). This section said "there is no automatic expiry.
@@ -636,7 +711,7 @@ document that still said it would be false in the place it can least afford to b
 
 |                                                      |                                                                                                                                                                 |
 | ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Everything else                                      | persists until you delete it                                                                                                                                    |
+| Everything else                                      | persists until you delete **the project it belongs to** *(2026-09-08 — that clause is new, and it is the whole of ADR-0038)*, or the file                        |
 | `ActionEvidence`                                     | deleted once you have decided what the Shift produced, and in any case after **seven days** — see _Acting_, above                                               |
 | `ActionEvidence` attached to a confirmation question | **kept indefinitely.** The one exception, argued in full above                                                                                                  |
 | `offer_tally`                                        | **persists, and nothing in the product deletes it** — see below                                                                                                 |
@@ -1060,15 +1135,20 @@ to, whereas silent resistance looks identical to not having been attacked.
 Every action is an `ActionIntent` (reason, before) and an `ActionOutcome` (result, after), both
 append-only. Refusals are recorded too.
 
-Append-only is enforced by **three SQLite triggers per table** — no `UPDATE`, no `DELETE`, and no
-`INSERT OR REPLACE`, which walks straight through the first two — reinstalled _and verified_ at every
+Append-only is enforced by ~~**three SQLite triggers per table** — no `UPDATE`, no `DELETE`, and no
+`INSERT OR REPLACE`, which walks straight through the first two~~ **two SQLite triggers per table —
+no `UPDATE` and no `INSERT OR REPLACE`, which walks straight through an `UPDATE` guard alone**
+*(corrected 2026-09-08 — [ADR-0038](./adr/0038-deleting-a-project.md); the delete guard went so a
+person can delete a project, and `REQUIRED_GUARDS` in `src/persistence/append-only.ts` is what knows
+the list)* — reinstalled _and verified_ at every
 startup, because Prisma's migrations drop triggers on any table rebuild, silently. Startup **fails**
 if a guard is missing: a database that accepts an `UPDATE` on the ledger is worse than an application
 that will not boot, because the first one is silent.
 
-**`ActionEvidence` has two of the three**, and that is the only exception in the schema. It is
-guarded against being rewritten and not against being removed, because it is the one table that is
-swept. See _Retention and deletion_.
+~~**`ActionEvidence` has two of the three**, and that is the only exception in the schema.~~
+**Corrected 2026-09-08: two is now every table's shape, so this stops being an exception by count.**
+It stays one by **reason** — it is the only table swept on a timer, with nobody involved. Everything
+else loses rows only when a person deletes the project they belong to. See _Retention and deletion_.
 
 Any sentence in a reviewed draft traces back through changeset → contract → reading → claim →
 evidence → the originating observation event. Every hop is a foreign key, and no step requires a

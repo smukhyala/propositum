@@ -9,7 +9,9 @@ extension/manifest.json` prints nothing; item 7 below). What is left is** item 1
 structured-output classification was fixed and left unfixed beside it on purpose.~~ **None left,
 2026-09-03, the same afternoon — item 11 went with the SDK refusal classified as truncation
 (`grep -L 'Streaming is required' tests/model-boundary.test.ts` prints nothing; item 11 below), and
-the two closed in the same change.** Item 10 was built
+the two closed in the same change.** ~~None left~~ **Two left, 2026-09-08 — items 12 and 13, found while
+diagnosing what the 2026-08-27 scoring said about the reading, and left open on purpose because the
+schema half is the part that could cost somebody a reading.** Item 10 was built
 the same day [ADR-0033](../adr/0033-a-late-tick-is-a-slept-machine.md) was accepted — it was never a
 quick fix and it never became one; what changed is that the signal it said nothing supplied turned
 out to be in the sweeper's own timer.
@@ -20,7 +22,7 @@ It took rather longer than half a day, and the reason is item 4: the file said
 *shift* leaked onto four screens and it had leaked onto **twelve**. Two other
 counts here were low as well. What the fixes cost is written beside each one.
 
-~~Ten~~ ~~**eleven**~~ **twelve, 2026-09-03** small defects, one of which fixed itself while this file was being
+~~Ten~~ ~~**eleven**~~ ~~**twelve, 2026-09-03**~~ ~~**thirteen, 2026-09-08**~~ **fourteen, 2026-09-08, later the same day** small defects, one of which fixed itself while this file was being
 written, and one of which — item 10, added 2026-08-27 — turned out not to be small. None is hard, none depends on anything, and each one is
 visible to the first person who uses the product. Do them when something else is
 waiting on Apple or on a model run.
@@ -69,6 +71,22 @@ grep -L '"key"' extension/manifest.json
 #    The guard is the test rather than the source, because `anthropic.ts` states
 #    the defect in a docblock and a grep over it would read as fixed.
 grep -L 'Streaming is required' tests/model-boundary.test.ts
+
+# 7. a confidence band still parses on a claim that is not the objective
+#    (added 2026-09-08 — item 12). The schema says "The objective claim only" in
+#    a `.describe()`, which this file's own header calls a prose hint, and the
+#    model puts a band on nearly every claim. -L prints the file when the words
+#    are ABSENT, so output here means nothing strips the band and the job is
+#    still to do. Written against the fix's own marker rather than against
+#    `confidence: z`, which survives the fix and would print either way — the
+#    defect item 5's note three entries up was written to record.
+grep -L 'strips the band' src/model/boundaries/session-reading.ts
+
+# 8. the phone thread's dedupe key holds four plaintext subject words
+#    (added 2026-09-08 — item 13). `signatureOf` returns the terms themselves and
+#    `thread_message_sent.key` stores them, in a table no project delete reaches.
+#    -L prints the file when the hashing is ABSENT, so output means still to do.
+grep -L 'hashSignature' src/server/thread.ts
 ```
 
 ~~As of 2026-08-26: (0) **returns `src/app/page.tsx` — done**; (1) returns
@@ -87,7 +105,8 @@ to `-L` so silence is still the finished answer.**
 **~~Seven left, not nine.~~ ~~One left, and it is item 7.~~ ~~Two left, 2026-08-27 — item 7 and item
 10.~~ ~~One left again, 2026-09-03 — item 7.~~ ~~Two left, 2026-09-03, later the same day — item 7 and
 item 11.~~ ~~One left, 2026-09-03, later still — item 11; item 7 was pinned.~~ None left, 2026-09-03,
-the same afternoon — item 11 went with the SDK refusal classified. Item 10 was built and
+the same afternoon — item 11 went with the SDK refusal classified. ~~**One left, 2026-09-08 —
+item 12.**~~ **Two, later the same day — items 12 and 13.** Item 10 was built and
 item 11 arrived in the same afternoon, from different work, and the count was right for about an
 hour, and then item 7 moved before the day was out.** Everything struck below
 is struck rather than deleted, because a checklist that silently loses its
@@ -325,6 +344,62 @@ the private half of the key, which is [`05`](./05-chrome-web-store.md)'s now.**
     at a budget under the constant, so a `PROPOSITUM_MODEL` in that family meets
     this message on a doubled budget the constant calls safe. Nothing reads that
     map; the docblock on `classifyThrow` says so.
+
+12. **A confidence band parses on a claim that is not the objective, and the
+    model puts one on nearly all of them.** *(Added 2026-09-08, doing
+    `session-reading@2`.)* `CONTEXT.md` has said since it was written that the
+    objective claim *"alone carries an ObjectiveConfidence"*, and that has only
+    ever been true at the write: `src/server/actions.ts` drops every other band
+    on the way into the ledger. Above that line the schema admits one on any
+    claim, with a `.describe()` saying *"The objective claim only"* — and that
+    file's own header is the authority on why a `.describe()` will not hold it:
+    *"`.min()`, `.max()`, `.regex()` are prose. Enforced client-side."*
+
+    **What it costs while it is open.** The band is a hedge, and a hedge is what
+    lets an inference be filed as a fact. The 2026-09-08 run has
+    `monitor-shortlist` reporting *"Effectively ruled out the Lumen Studio 27…
+    (medium)"* under **completed**, on a session whose "Ruled out" section is
+    empty — nothing was ruled out, and the `(medium)` is the reading knowing it.
+    `session-reading@2` now says the rule in the prompt instead, which is
+    discipline rather than a type, and this item is the type.
+
+    **Not fixed here, and the reason is the fix's shape rather than its size.**
+    A Zod refinement that *fails closed* buys one repair turn and then loses the
+    whole reading — costing a person everything the session inferred, to enforce a rule
+    nothing below the boundary reads. So the fix is a `.transform()` that strips
+    the band on a non-objective claim, which makes `SessionReadingOutput`
+    genuinely have nowhere to put one, and turns the conditional in
+    `src/server/actions.ts` from the thing holding the promise into a redundant
+    check. **It is half an hour and a type puzzle** — `exactOptionalPropertyTypes`
+    is on, so a conditionally-present key through a transform needs its inferred
+    type stated rather than left to Zod — and it is worth doing beside the next
+    change to that file rather than alone.
+
+13. **The phone thread's dedupe key holds four plaintext subject words, and a
+    project delete does not reach it.** *(Added 2026-09-08, found reviewing
+    [ADR-0038](../adr/0038-deleting-a-project.md).)* `signatureOf` in
+    `src/server/ambient-store.ts` is `terms.slice(0, 4).join('+')`, and
+    `src/domain/conversation/messages.ts` builds `key: offer:${signature}`, which
+    `claimSend` writes to `thread_message_sent.key`. That table belongs to no
+    Project, so deleting a job search can leave
+    `offer:visa+sponsorship+h1b+relocation` behind.
+
+    **The repository already refuses this exact shape one table over.**
+    `OfferReticence.signatureHash` is *"sha256(salt + ':' + signature), hex.
+    **Never the terms themselves**"* — so the argument is made and this row did
+    not get it.
+
+    **Why it is not a one-liner.** The salt is a row in `install_secret`, and the
+    key is built in `src/domain/`, which may not reach the database at all. So
+    either the hashing moves up to `src/server/thread.ts` where the salt is
+    reachable, or the domain emits a shape the server hashes before writing. The
+    second is the smaller change and keeps the domain pure. Either way the key
+    format changes, so an in-flight offer may send once more — one duplicate
+    message, at one user, which is the whole cost.
+
+    The other two survivors are **fine and recorded rather than fixed**: a
+    `ModelCallRecord` with no run, and `offer_tally`. Neither holds a subject.
+    ADR-0038's *What survives the delete* section lists all three.
 
 ---
 

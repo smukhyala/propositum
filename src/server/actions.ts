@@ -385,6 +385,198 @@ export async function renameProject(
   })
 }
 
+export interface ProjectDeleted {
+  readonly id: string
+  readonly name: string
+}
+
+/**
+ * The person removes a piece of work, and everything Propositum filed under it.
+ *
+ * [ADR-0038](../../docs/adr/0038-deleting-a-project.md). Until this existed the
+ * honest answer to *"remove this"* was *"delete the database file"*, which is
+ * not a privacy answer for anybody with a second project they want to keep. It
+ * is also the one act in this file that makes the product hold **less** rather
+ * than do more.
+ *
+ * ── Why the name has to be typed, and it is not ceremony ─────────────────
+ *
+ * Every other confirmation here is a button, because every other act is
+ * recoverable or is bounded by something the person already ratified. This one
+ * is neither: it is irreversible, there is no bin, and the thing it destroys is
+ * the only copy. Retyping the name is the cheapest available proof that the
+ * person is looking at the project they meant — and the failure this is against
+ * is not malice, it is a person with two similarly-named projects clicking the
+ * wrong row.
+ *
+ * ~~It could take a `ConfirmationRequest`.~~ It does not, deliberately: that
+ * shape exists for an effect that leaves Propositum and needs a verdict row
+ * naming what the person was shown. There is nowhere to keep such a row here.
+ * The delete takes the ledger it would be written in.
+ */
+export async function deleteProject(
+  projectId: string,
+  typedName: string,
+): Promise<ActionResult<ProjectDeleted>> {
+  return attempt(async () => {
+    const { repos } = await appContext()
+
+    const project = await repos.projects.byId(projectId)
+    if (!project) return no<ProjectDeleted>('not-found', "That project doesn't exist any more.")
+
+    // Compared after trimming and case-folded, because this is a check that the
+    // person is looking at the right thing, not a spelling test.
+    if (typedName.trim().toLowerCase() !== project.name.trim().toLowerCase()) {
+      return no<ProjectDeleted>(
+        'invalid-input',
+        `To delete this, type its name exactly: ${project.name}`,
+      )
+    }
+
+    // The repository's refusals name row counts and an id, which is the right
+    // register for a log and the wrong one for a person standing in front of a
+    // confirmation. `attempt` would surface them verbatim.
+    try {
+      await repos.projects.deleteWithEverything(projectId)
+    } catch {
+      return no<ProjectDeleted>(
+        'write-failed',
+        `Propositum could not delete ${project.name}, and nothing was removed. Work in another ` +
+          'project is filed against this one, so deleting it would change work you did not ask ' +
+          'about.',
+      )
+    }
+
+    refresh()
+    return ok({ id: projectId, name: project.name })
+  })
+}
+
+/*
+ * There is deliberately no `projectDeletionScope` server action.
+ *
+ * One was written and deleted before this landed. The project screen is a server
+ * component and reads `repos.projects.deletionScope` directly, so the action had
+ * no caller — and a `'use server'` export is not an unused helper, it is a POST
+ * endpoint Next compiles and publishes whose only argument is a project id.
+ * `tests/reachability.test.ts` exists for precisely this: something built,
+ * tested, and called by nothing.
+ */
+
+/**
+ * Say what you are waiting on, change it, or take it back. ADR-0035.
+ *
+ * ── Why this is a mutation on a row nothing else mutates ─────────────────
+ *
+ * `Intention` is human-ratified: created by a person on the accept screen and
+ * edited by nobody. This is the second thing a person may write on it, and it
+ * is a person writing it — no detector, no model boundary, no worker and no
+ * sweep reaches this function, which `tests/reachability.test.ts` pins by
+ * counting callers rather than by a type that could make a second impossible.
+ * That is Principle 12's own honest limit, inherited rather than improved on.
+ *
+ * ── Clearing is the half that had to ship ────────────────────────────────
+ *
+ * An empty field clears the wait, and that is not a convenience. ADR-0035's
+ * cost section calls a wait nobody can quiet the sharpest hole in the decision:
+ * a strand can leave the front door three ways — an origin snooze, a thread
+ * snooze, and reticence — and a wait had none, so a stale one would sit on a
+ * screen for ever saying something nobody could take back. Shipping the wait
+ * without this control would be shipping that.
+ *
+ * ── What it does NOT do ──────────────────────────────────────────────────
+ *
+ * It does not discharge a wait. Discharge is an `ExternalEvent` and is computed,
+ * never stored, because writing it here would make something other than a person
+ * the author of this row.
+ */
+export async function stateWait(
+  projectId: string,
+  statedWait: string,
+): Promise<ActionResult<ProjectCreated>> {
+  return attempt(async () => {
+    const clean = statedWait.trim()
+    if (clean.length > 200) {
+      return no<ProjectCreated>(
+        'invalid-input',
+        'Keep it under 200 characters — a sentence, not a note.',
+      )
+    }
+
+    const { repos } = await appContext()
+    const project = await repos.projects.byId(projectId)
+    if (!project) return no<ProjectCreated>('not-found', "That project doesn't exist any more.")
+
+    const intention = await repos.intentions.forProject(projectId)
+    if (!intention) {
+      // Nothing to hang it on. An Intention is born when a person accepts an
+      // offer, and a wait with no Intention has nothing it could be about.
+      return no<ProjectCreated>('not-found', 'There is nothing here to be waiting on yet.')
+    }
+
+    // Empty clears. `null` and `''` mean different things on the row — nobody
+    // said, versus somebody said nothing — and only the first is true here.
+    await repos.intentions.stateWait(intention.id, clean === '' ? null : clean)
+    refresh()
+
+    return ok({ id: projectId, name: project.name })
+  })
+}
+
+/**
+ * Say the thing you were waiting on has arrived. ADR-0034, ADR-0035.
+ *
+ * ── The `declared` source, and the only one the product has ──────────────
+ *
+ * `ExternalEventStatedBy` permits two members and neither is a sensor: a
+ * fixture replaying, and a person saying so. This is the second, and until
+ * something watches the world it is the only one a person can reach. That is
+ * the honest state of the loop and it is written into
+ * `docs/todo/12-between-sittings.md` rather than implied by a green suite.
+ *
+ * ── Why a person pressing a button is not "inference writes an Intention" ─
+ *
+ * It writes an `ExternalEvent`, never the `Intention`. The wait's words stay
+ * exactly where the person put them — discharge is computed from the two rows
+ * and stored nowhere, because clearing the field here would make something
+ * other than a person the author of that row, which Principle 12 forbids. So a
+ * discharged wait still shows what it was, and only a person takes it back.
+ *
+ * ── What it does not do ──────────────────────────────────────────────────
+ *
+ * It does not decide that anything arrived. Nothing in this system can tell;
+ * the person is the sensor, and the row records that they said so and when.
+ */
+export async function noteArrived(projectId: string): Promise<ActionResult<ProjectCreated>> {
+  return attempt(async () => {
+    const { repos, external } = await appContext()
+    const project = await repos.projects.byId(projectId)
+    if (!project) return no<ProjectCreated>('not-found', "That project doesn't exist any more.")
+
+    const intention = await repos.intentions.forProject(projectId)
+    if (!intention) {
+      return no<ProjectCreated>('not-found', 'There is nothing here to be waiting on.')
+    }
+    if (intention.statedWait === null) {
+      return no<ProjectCreated>('already-done', "You haven't said you were waiting on anything.")
+    }
+
+    const written = await external.append({
+      statedBy: 'declared',
+      kind: 'arrived',
+      occurredAt: new Date(),
+      elapsedMs: 0,
+      intentionId: intention.id,
+    })
+    if (!written.ok) {
+      return no<ProjectCreated>('invalid-input', 'That did not record. Nothing was changed.')
+    }
+
+    refresh()
+    return ok({ id: projectId, name: project.name })
+  })
+}
+
 /* ── which project this work belongs to ─────────────────────────────────── */
 
 /**

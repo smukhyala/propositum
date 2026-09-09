@@ -148,8 +148,9 @@ impl Runtime {
     /// line in the file can outrank them — `DATABASE_URL` pointing into the
     /// state dir, and Next's and Prisma's phone-homes switched off because a
     /// no-telemetry product does not ship a vendor's exception (Prisma's CLI
-    /// checks checkpoint.prisma.io on every `db push` otherwise, which the
-    /// preflight runs on every launch).
+    /// checks checkpoint.prisma.io on every invocation otherwise, and the
+    /// preflight runs `migrate deploy` — and sometimes `migrate resolve` —
+    /// on every launch).
     pub fn child_env(&self) -> Vec<(String, String)> {
         match self.mode {
             Mode::Checkout => Vec::new(),

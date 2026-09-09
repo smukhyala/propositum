@@ -67,7 +67,11 @@ run holds it with no live holder, possibly for hours. No lock, no hole.
 
 ### 5. Append-only is enforced by triggers, verified at startup
 
-**Three triggers per table**, not two. A no-`UPDATE` + no-`DELETE` pair looks sufficient and is not:
+~~**Three triggers per table**, not two.~~ **Two, corrected 2026-09-08 —
+[ADR-0038](0038-deleting-a-project.md) took the no-`DELETE` guard off every table so a person may
+delete a project. This sentence is the origin of a figure six other documents copied, which is why
+it is struck here rather than only where it was noticed.** The argument below is untouched and is
+about the guard that stayed: a no-`UPDATE` guard alone looks sufficient and is not:
 `INSERT OR REPLACE` deletes the conflicting row and inserts a new one, but `PRAGMA
 recursive_triggers` defaults **off**, so the delete trigger never fires and the row is silently
 overwritten. The third is a `BEFORE INSERT` guard on the conflict.

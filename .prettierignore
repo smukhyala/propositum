@@ -11,4 +11,5 @@ next-env.d.ts
 # hash of the file — reformatting an eval fixture breaks the lock on purpose.
 eval-scores.json
 references.lock.json
+streams.lock.json
 src/fixtures/afternoons/

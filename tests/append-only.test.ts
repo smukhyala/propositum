@@ -37,6 +37,7 @@ import {
   installAppendOnlyGuards,
   REQUIRED_GUARDS,
 } from '../src/persistence/append-only'
+import { GUARDED_TABLES } from '../src/persistence/errors'
 
 let dir: string
 let prisma: PrismaClient
@@ -81,6 +82,68 @@ async function insertEvent(id: string, seq: number) {
 describe('guard installation', () => {
   it('installs every required guard', async () => {
     expect(await findMissingGuards(prisma)).toEqual([])
+  })
+
+  /**
+   * The shape assertion, and the one that would have failed before 2026-09-08.
+   *
+   * [ADR-0038](../docs/adr/0038-deleting-a-project.md) removed every no-DELETE
+   * guard so a person can delete a Project and take everything filed under it.
+   * `findMissingGuards` cannot notice a guard that should be gone — it only
+   * compares `REQUIRED_GUARDS` against what is installed, so re-adding a delete
+   * trigger to BOTH halves would leave it green while silently making
+   * `deleteProject` abort.
+   *
+   * The counterpart assertion is two lines below and matters more: UPDATE and
+   * REPLACE are still required everywhere. A reader who sees only the first
+   * would read this as the guards being abandoned, which is the opposite of
+   * what happened.
+   */
+  it('requires no delete guard anywhere, and still requires the other two', () => {
+    const deleteGuards = REQUIRED_GUARDS.filter(([name]) => name.includes('no_delete'))
+    expect(deleteGuards).toEqual([])
+
+    const guarded = new Set(REQUIRED_GUARDS.map(([, table]) => table))
+    for (const table of guarded) {
+      const forTable = REQUIRED_GUARDS.filter(([, t]) => t === table).map(([name]) => name)
+
+      // `handoff_contract` is the one exception and always was: it is not
+      // append-only, so it carries a freeze-once-accepted UPDATE guard and no
+      // REPLACE guard. Everything else keeps both.
+      if (table === 'handoff_contract') {
+        expect(forTable).toEqual(['handoff_contract_frozen_once_accepted'])
+        continue
+      }
+
+      expect(forTable.some((n) => n.endsWith('_no_update'))).toBe(true)
+      expect(forTable.some((n) => n.endsWith('_no_replace'))).toBe(true)
+    }
+  })
+
+  /**
+   * Removed rather than merely absent — the half that is easy to skip.
+   *
+   * A database created before ADR-0038 still carries the old triggers, and
+   * `CREATE TRIGGER` semantics would leave them in place. Without a DROP for
+   * each, deleting a project would succeed on a fresh database and abort on an
+   * older one, which is the failure nobody can reproduce. `action_evidence` set
+   * this precedent and states the reason in `prisma/triggers.sql`.
+   */
+  it('still drops every delete trigger it no longer creates', () => {
+    const sql = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), '..', 'prisma', 'triggers.sql'),
+      'utf8',
+    )
+
+    const dropped = [...sql.matchAll(/DROP TRIGGER IF EXISTS (\w*_no_delete\w*);/g)].map(
+      (m) => m[1],
+    )
+    const created = [...sql.matchAll(/CREATE TRIGGER (\w*_no_delete\w*)/g)].map((m) => m[1])
+
+    expect(created).toEqual([])
+    // Every guarded table, plus `handoff_contract`'s conditional one and
+    // `action_evidence`'s, which went first and for a different reason.
+    expect(dropped.length).toBeGreaterThanOrEqual(new Set(REQUIRED_GUARDS.map(([, t]) => t)).size)
   })
 
   it('is idempotent — reinstalling leaves the guards intact', async () => {
@@ -171,8 +234,36 @@ describe('guard installation', () => {
       'confirmation_request',
       'confirmation_verdict',
       'action_evidence',
+      // Added 2026-09-07 with ADR-0034. `decision_verdict` was in
+      // REQUIRED_GUARDS and absent here since ADR-0022, which is the drift this
+      // list cannot catch on its own — see the test below.
+      'decision_verdict',
+      'external_event',
     ]) {
       expect(tables).toContain(table)
+    }
+  })
+
+  /**
+   * The list above is hand-written, so it cannot catch a table that is missing
+   * from BOTH it and `REQUIRED_GUARDS`. This one is derivable and does.
+   *
+   * `GUARDED_TABLES` in `src/persistence/errors.ts` is what turns a guard firing
+   * into a readable error instead of Prisma's P2003 "Foreign key constraint
+   * violated" lie. It named seven tables while fourteen were guarded, so on half
+   * of them the translation silently did not happen — for `decision_verdict`,
+   * since ADR-0022. Nothing noticed, because nothing compared the two lists.
+   */
+  it('translates a guard failure on every table that has one', () => {
+    const guarded = new Set(REQUIRED_GUARDS.map(([, table]) => table))
+    for (const table of guarded) {
+      expect(
+        GUARDED_TABLES as readonly string[],
+        `${table} is guarded but errors.ts will report its abort as a foreign-key problem`,
+      ).toContain(table)
+    }
+    for (const table of GUARDED_TABLES) {
+      expect(guarded, `${table} is named in errors.ts and has no guard`).toContain(table)
     }
   })
 
@@ -298,15 +389,7 @@ describe('work_offer is insert-only', () => {
     expect(after.title).toBe('Original title')
   })
 
-  it('rejects a DELETE', async () => {
-    // `sessionId` is unique, so the previous row has to go first — except it
-    // cannot, which is the assertion.
-    await expect(prisma.workOffer.delete({ where: { id: 'offer-update' } })).rejects.toThrow()
-
-    expect(await prisma.workOffer.findUnique({ where: { id: 'offer-update' } })).not.toBeNull()
-  })
-
-  it('rejects INSERT OR REPLACE — the case a two-trigger design misses', async () => {
+  it('rejects INSERT OR REPLACE — the case an UPDATE guard alone misses', async () => {
     await expect(
       prisma.$executeRawUnsafe(
         `INSERT OR REPLACE INTO work_offer
@@ -319,6 +402,24 @@ describe('work_offer is insert-only', () => {
 
     const after = await prisma.workOffer.findUniqueOrThrow({ where: { id: 'offer-update' } })
     expect(after.title).toBe('Original title')
+  })
+
+  /**
+   * LAST in this block on purpose, and the ordering is the interesting part.
+   *
+   * ~~`sessionId` is unique, so the previous row has to go first — except it
+   * cannot, which is the assertion.~~ **It can, since 2026-09-08
+   * ([ADR-0038](../docs/adr/0038-deleting-a-project.md)).** When the guard went,
+   * this test stopped leaving `offer-update` behind and the REPLACE test above
+   * — which relies on that row to have something to conflict with — passed
+   * against an empty table for the wrong reason. It is a hazard worth a comment
+   * rather than a reorder nobody can see: a test that removes another test's
+   * fixture goes after it.
+   */
+  it('permits a DELETE, because retention was never what append-only protected', async () => {
+    await prisma.workOffer.delete({ where: { id: 'offer-update' } })
+
+    expect(await prisma.workOffer.findUnique({ where: { id: 'offer-update' } })).toBeNull()
   })
 })
 
@@ -336,15 +437,26 @@ describe('observation_event is append-only', () => {
     ).rejects.toThrow(/append-only/i)
   })
 
-  it('rejects a DELETE', async () => {
+  /**
+   * ~~Rejects a DELETE.~~ **Permits one, 2026-09-08 —
+   * [ADR-0038](../docs/adr/0038-deleting-a-project.md).**
+   *
+   * The ledger is still a receipt: the UPDATE and REPLACE assertions either
+   * side of this one are unchanged and are what make it one. What a person can
+   * now do is throw the receipt away with the project it belongs to. There is
+   * no path in the product that deletes a single event — `deleteProject` takes
+   * the whole subtree or none of it — and that is the difference between
+   * retention and a ledger you can rewrite by subtraction.
+   */
+  it('permits a DELETE, because only the project owns the decision to keep it', async () => {
     await insertEvent('evt-delete', 3)
 
-    await expect(
-      prisma.observationEvent.delete({ where: { id: 'evt-delete' } }),
-    ).rejects.toThrow(/append-only/i)
+    await prisma.observationEvent.delete({ where: { id: 'evt-delete' } })
+
+    expect(await prisma.observationEvent.findUnique({ where: { id: 'evt-delete' } })).toBeNull()
   })
 
-  it('rejects INSERT OR REPLACE — the case a two-trigger design misses', async () => {
+  it('rejects INSERT OR REPLACE — the case an UPDATE guard alone misses', async () => {
     await insertEvent('evt-replace', 4)
 
     await expect(

@@ -145,6 +145,8 @@ export interface StoredIntention {
   readonly objective: string
   readonly definitionOfDone: string
   readonly completedAt: Date | null
+  /** What the person said they are waiting on, or null. ADR-0035. */
+  readonly statedWait: string | null
 }
 
 /**
@@ -180,6 +182,32 @@ export interface IntentionStateFacts {
   readonly projectId: string
   /** Set by a person, and only by a person. The whole of `done`. */
   readonly completedAt: Date | null
+  /**
+   * What the person said they are waiting on, or null. ADR-0035.
+   *
+   * The words themselves, not a boolean, because the screen renders them — a
+   * count would tell a reader that something is outstanding and not what.
+   */
+  readonly statedWait: string | null
+  /**
+   * Whether an `ExternalEvent{kind:'arrived'}` at or after `statedWaitAt`
+   * points at this Intention.
+   *
+   * Computed here rather than stored, and that is the load-bearing half:
+   * clearing `statedWait` on discharge would be something other than a person
+   * editing the row, which Principle 12 forbids. So the field outlives its own
+   * answer and this boolean is what the screen reads.
+   */
+  readonly waitDischarged: boolean
+  /**
+   * When the discharging arrival happened, or null.
+   *
+   * The most recent one, because *most recent first* is how discharged waits
+   * order among themselves and the newest arrival is the one a person is
+   * likeliest to still have in mind. Null whenever `waitDischarged` is false,
+   * so the two can never disagree.
+   */
+  readonly waitDischargedAt: Date | null
   /**
    * WorkSessions on this Intention that no human has ended, with their phase.
    *
@@ -392,6 +420,12 @@ export interface IntentionRepository {
     projectId: string | null
     objective: string
     definitionOfDone: string
+    /** What the person said they are waiting on. Optional, and empty means the
+     *  person said nothing rather than said "nothing". ADR-0035. */
+    statedWait?: string | undefined
+    /** When the wait was stated. Injected so a recorded stream replays; defaults
+     *  to now, which is what the product passes. */
+    statedWaitAt?: Date | undefined
   }): Promise<StoredIntention>
   /**
    * The Project's Intention, or null. Singular by ADR-0011: at most one per
@@ -478,6 +512,25 @@ export interface IntentionRepository {
    * sentence saying there is nothing.
    */
   workSoFarFacts(intentionId: string): Promise<WorkSoFarRows | null>
+  /**
+   * Write, change or clear what a person said they are waiting on. ADR-0035.
+   *
+   * **The only mutation this repository offers on an Intention, and it exists
+   * so a wait can be taken back.** ADR-0035's own cost section names a wait
+   * nobody can quiet as the sharpest hole in the decision: a strand can leave
+   * the front door three ways and a wait had none, so a stale one would hold a
+   * slot for ever. This is that control, and it is deliberately the same method
+   * in both directions — `null` clears.
+   *
+   * `statedWaitAt` moves with the words, never independently, because the
+   * discharge bound reads it: a wait re-stated after an arrival must not be
+   * discharged by the arrival that answered the previous one.
+   *
+   * **Human-only, and held by there being one caller rather than by a type** —
+   * the same weaker guarantee Principle 12's own honest limit names for the row
+   * as a whole. `tests/reachability.test.ts` pins the caller count.
+   */
+  stateWait(intentionId: string, statedWait: string | null, at?: Date): Promise<void>
 }
 
 function intentionRepository(prisma: PrismaClient): IntentionRepository {
@@ -487,16 +540,47 @@ function intentionRepository(prisma: PrismaClient): IntentionRepository {
     objective: true,
     definitionOfDone: true,
     completedAt: true,
+    statedWait: true,
   } as const
 
   return {
-    create: ({ projectId, objective, definitionOfDone }) =>
+    create: ({ projectId, objective, definitionOfDone, statedWait, statedWaitAt }) =>
       prisma.intention.create({
-        data: { projectId, objective, definitionOfDone },
+        data: {
+          projectId,
+          objective,
+          definitionOfDone,
+          // Written together, so a wait can never exist without the moment it
+          // was written — which is what the discharge bound reads.
+          ...(statedWait === undefined || statedWait === ''
+            ? {}
+            : { statedWait, statedWaitAt: statedWaitAt ?? new Date() }),
+        },
         select: SELECT,
       }),
     forProject: (projectId) =>
       prisma.intention.findUnique({ where: { projectId }, select: SELECT }),
+
+    /**
+     * `at` is injected rather than read, and it defaults to now.
+     *
+     * The default is what the product uses; the parameter is what makes a
+     * recorded stream replayable. A fixture whose events sit in the past cannot
+     * discharge a wait stamped with the wall clock — the bound would refuse
+     * every arrival, silently, and a replay would report restraint it had not
+     * earned. Same reason `ObservationEvent.elapsedMs` is source-supplied.
+     */
+    stateWait: async (intentionId, statedWait, at = new Date()) => {
+      await prisma.intention.update({
+        where: { id: intentionId },
+        // Both columns or neither. A wait with no moment behind it cannot be
+        // discharged, and a moment with no wait is a fact about nothing.
+        data:
+          statedWait === null
+            ? { statedWait: null, statedWaitAt: null }
+            : { statedWait, statedWaitAt: at },
+      })
+    },
 
     factsForEveryProject: () => factsWhere({ projectId: { not: null } }),
 
@@ -654,6 +738,26 @@ function intentionRepository(prisma: PrismaClient): IntentionRepository {
         id: true,
         projectId: true,
         completedAt: true,
+        statedWait: true,
+        statedWaitAt: true,
+        /**
+         * Discharging arrivals only, and the `gte` is the whole of it.
+         *
+         * A wait is discharged by an `ExternalEvent{kind:'arrived'}` at or after
+         * the moment the person wrote the wait currently in `statedWait`.
+         * Without the bound, re-stating a wait would be discharged instantly by
+         * the arrival that answered the previous one — which is the failure
+         * `statedWaitAt` exists to prevent, and it is invisible on a screen that
+         * simply stops saying *Waiting*.
+         *
+         * Empty when `statedWaitAt` is null, because `gte: null` matches nothing
+         * in Prisma. That is the right answer either way: no wait, nothing to
+         * discharge.
+         */
+        external: {
+          where: { kind: 'arrived' },
+          select: { occurredAt: true },
+        },
         sessions: { where: { endedAt: null }, select: { id: true, phase: true } },
         contracts: {
           where: { status: 'accepted', acceptedAt: { not: null } },
@@ -687,6 +791,21 @@ function intentionRepository(prisma: PrismaClient): IntentionRepository {
       // so it is narrowed rather than asserted — `acceptedForSession` makes
       // the same move for the same reason.
       if (row.projectId === null) continue
+
+      /**
+       * The newest arrival at or after the moment the wait was stated.
+       *
+       * Computed once here so `waitDischarged` and `waitDischargedAt` cannot
+       * disagree — two fields derived separately from one predicate is how a
+       * screen comes to order by a time it does not believe in.
+       */
+      const dischargedAt =
+        row.statedWaitAt === null
+          ? null
+          : (row.external
+              .filter((event) => event.occurredAt >= row.statedWaitAt!)
+              .sort((a, b) => b.occurredAt.getTime() - a.occurredAt.getTime())[0]?.occurredAt ??
+            null)
 
       let liveAcceptedContracts = 0
       let openDecisions = 0
@@ -728,6 +847,11 @@ function intentionRepository(prisma: PrismaClient): IntentionRepository {
         unansweredConfirmationsAskedAt,
         openDecisions,
         undecidedHeldOutcomes,
+        statedWait: row.statedWait,
+        // The arithmetic the domain must not do, because doing it there would
+        // mean `src/domain` learning that a second ledger exists.
+        waitDischarged: dischargedAt !== null,
+        waitDischargedAt: dischargedAt,
         waitingContractId: waitingContractId ?? row.contracts[0]?.id ?? null,
       })
     }
@@ -779,6 +903,96 @@ export interface ProjectRepository {
    * produce is the part worth fixing.
    */
   revokeSource(input: { projectId: string; originPattern: string }): Promise<number>
+  /**
+   * What deleting this project would take, for the sentence on the confirmation.
+   *
+   * [ADR-0038](../../../docs/adr/0038-deleting-a-project.md) property 2: *"the
+   * count is the only thing that makes the act reviewable"*. Three numbers
+   * rather than a row count, because *"1,483 rows"* tells a person nothing they
+   * can weigh and *"eleven sittings"* tells them whether this is the project
+   * they meant.
+   *
+   * **Not a preview of what the delete will do.** It is read outside the
+   * transaction, so a session that ends between this and the confirm is counted
+   * here and deleted there. That drift is acceptable at this scale — one person,
+   * one machine, one window — and pretending otherwise would mean holding a
+   * transaction open across a human decision, which is worse.
+   *
+   * Null when there is no such project.
+   */
+  deletionScope(
+    id: string,
+  ): Promise<{ sittings: number; documents: number; recordedActions: number } | null>
+  /**
+   * Delete a project and everything filed under it. All of it, or none.
+   *
+   * ── Why this is thirty-one statements and not one `onDelete: Cascade` ────
+   *
+   * The schema declares no cascade anywhere, so every required relation takes
+   * Prisma's default of `Restrict`. Adding `Cascade` to the schema would move
+   * this ordering into a place where it is invisible and where `prisma db push`
+   * rebuilds it — and the same rebuild is what silently drops the append-only
+   * triggers, which is the failure this repository is most careful about. An
+   * explicit order is longer and it is readable, testable, and cannot be
+   * rewritten by a migration nobody watched.
+   *
+   * **The order is leaves-in and it is load-bearing.** Every statement below
+   * deletes rows whose parents are still present. Reorder one and the delete
+   * aborts on a foreign key — which is safe, because of the next paragraph, but
+   * it is a bug rather than a design.
+   *
+   * ── One transaction, because a half-deleted project is worse ─────────────
+   *
+   * ADR-0038 property 3. A partial delete leaves an Intention with no Project,
+   * which is a state that already exists in the author's own database, renders
+   * on no screen, and cannot be removed. This path must not make more of them,
+   * so it is all-or-nothing and a failure leaves everything.
+   *
+   * ── The order is forced by Prisma nullifying, NOT by the foreign key ─────
+   *
+   * This was written believing a `Restrict` would abort a mis-ordered delete.
+   * **It does not, and the real behaviour is worse.** `PRAGMA foreign_keys` is
+   * on, but for an OPTIONAL relation Prisma's default is `SetNull` and Prisma
+   * performs the nullification itself: deleting a parent silently writes NULL
+   * into every child's foreign key. Measured, not assumed — deleting an
+   * `Intention` that a `WorkSession` still names left the session in place with
+   * `intentionId: null` and raised nothing.
+   *
+   * So a mis-ordered statement below does not fail loudly. It quietly edits a
+   * row it does not own, and there are eleven optional relations in this
+   * subtree for it to do that through. Two consequences:
+   *
+   *   - **On an append-only table the nullification is an UPDATE, and the
+   *     trigger aborts it.** `ObservationEvent.approvedSourceId` is the case:
+   *     delete an `ApprovedSource` while one event still cites it and the
+   *     no-UPDATE guard raises. That is the ordering constraint being enforced
+   *     by the one guard ADR-0038 did *not* remove, and it is why the events go
+   *     before the source below rather than by preference.
+   *   - **On a mutable table nothing catches it**, which is why the order is a
+   *     documented list rather than something to rearrange while tidying.
+   *
+   * ── What it deliberately does NOT reach ──────────────────────────────────
+   *
+   * A `ModelCallRecord` with no run. `runId` is optional and a record written
+   * outside a run belongs to no project, so the filter below scopes on the run
+   * and those rows stay. They hold no page text and no objective — a boundary
+   * name, a model, a token count, a duration.
+   *
+   * ── The one state it refuses rather than resolves ────────────────────────
+   *
+   * An Intention that a session in ANOTHER project names. `Intention.projectId`
+   * is `@unique`, so a project has at most one and whose it is is never
+   * ambiguous — but nothing stops a `WorkSession` in project A pointing at
+   * project B's Intention. Nothing produces that state today.
+   *
+   * If it ever exists, deleting B would detach A's session by nullification and
+   * say nothing, which is one project's delete silently editing another's work.
+   * So it is checked for first and throws before the transaction opens. A loud
+   * refusal on a state nothing creates is cheap; a silent cross-project write is
+   * the kind of thing found months later by somebody wondering where a sitting's
+   * Intention went.
+   */
+  deleteWithEverything(id: string): Promise<void>
 }
 
 function projectRepository(prisma: PrismaClient): ProjectRepository {
@@ -820,6 +1034,183 @@ function projectRepository(prisma: PrismaClient): ProjectRepository {
         data: { grantState: 'revoked' },
       })
       return count
+    },
+
+    deletionScope: async (id) => {
+      const project = await prisma.project.findUnique({ where: { id }, select: { id: true } })
+      if (project === null) return null
+
+      const [sittings, documents, recordedActions] = await Promise.all([
+        prisma.workSession.count({ where: { projectId: id } }),
+        prisma.document.count({ where: { projectId: id } }),
+        prisma.actionIntent.count({
+          where: { run: { contract: { session: { projectId: id } } } },
+        }),
+      ])
+
+      return { sittings, documents, recordedActions }
+    },
+
+    deleteWithEverything: async (id) => {
+      // Before anything opens: a sitting in another project naming this
+      // project's Intention. See the docblock — Prisma would resolve this by
+      // nullifying that sitting's `intentionId`, which is this delete editing
+      // work it does not own. Refused rather than resolved.
+      // Two tables carry `intentionId`, not one. The sitting nullifies silently
+      // (`SetNull`); the contract aborts at the last statement with Prisma's
+      // P2003 lie. Both are refused here so the person gets a sentence instead
+      // of either outcome.
+      const [sittingsElsewhere, contractsElsewhere] = await Promise.all([
+        prisma.workSession.count({
+          where: { intention: { projectId: id }, projectId: { not: id } },
+        }),
+        prisma.handoffContract.count({
+          where: { intention: { projectId: id }, session: { projectId: { not: id } } },
+        }),
+      ])
+      if (sittingsElsewhere + contractsElsewhere > 0) {
+        throw new Error(
+          `Refusing to delete project ${id}: work in another project names its Intention ` +
+            `(${sittingsElsewhere} sitting(s), ${contractsElsewhere} agreement(s)), and deleting ` +
+            'it would detach them.',
+        )
+      }
+
+      // Every filter below walks back to this one project. Written as relation
+      // filters rather than collected id lists so the scoping cannot drift from
+      // the schema — a renamed relation is a compile error here, where a stale
+      // `in: [...]` would be a silent under-delete.
+      const ofProject = { contract: { session: { projectId: id } } }
+      const ofRun = { run: ofProject }
+
+      await prisma.$transaction(async (tx) => {
+        /* ── the reading, and what hangs off it ───────────────────────── */
+        await tx.evidence.deleteMany({
+          where: { claim: { reading: { session: { projectId: id } } } },
+        })
+        await tx.sessionClaim.deleteMany({ where: { reading: { session: { projectId: id } } } })
+
+        /* ── verdicts, before the things they are verdicts on ─────────── */
+        await tx.changeVerdict.deleteMany({
+          where: { change: { changeset: ofProject } },
+        })
+        await tx.decisionVerdict.deleteMany({
+          where: { decision: { report: ofProject } },
+        })
+        await tx.confirmationVerdict.deleteMany({ where: { request: ofRun } })
+        await tx.outcomeVerdict.deleteMany({ where: { shiftOutcome: ofRun } })
+        await tx.actionOutcome.deleteMany({ where: { intent: ofRun } })
+
+        /* ── everything pointing at an ActionIntent, then the intent ──── */
+        await tx.actionDispatch.deleteMany({ where: ofRun })
+        await tx.reviewFinding.deleteMany({ where: ofRun })
+        await tx.proposedChange.deleteMany({ where: { changeset: ofProject } })
+        await tx.decisionNeeded.deleteMany({ where: { report: ofProject } })
+        // Before ActionEvidence: a ConfirmationRequest names the evidence row
+        // the person was looking at when they authorised an effect.
+        await tx.confirmationRequest.deleteMany({ where: ofRun })
+        await tx.actionEvidence.deleteMany({ where: ofRun })
+        await tx.actionIntent.deleteMany({ where: ofRun })
+        // After ActionIntent, which names the step it belongs to.
+        await tx.planStep.deleteMany({ where: ofRun })
+        await tx.modelCallRecord.deleteMany({ where: ofRun })
+
+        /* ── the run's own products, then the run ─────────────────────── */
+        // Before the changesets, which is the one place in this cascade where a
+        // silent nullification is harmless: `Changeset.shiftOutcome` is optional
+        // and `changeset` carries no UPDATE guard, so the SET NULL lands on rows
+        // the loop below is about to delete anyway.
+        await tx.shiftOutcome.deleteMany({ where: ofRun })
+        await tx.shiftReport.deleteMany({ where: ofProject })
+        await tx.agentRun.deleteMany({ where: ofProject })
+
+        /* ── the document cluster, which is a RING and not a chain ──────
+         *
+         * `HandoffContract`, `Changeset` and `DocumentVersion` reference each
+         * other in a cycle that no single ordering resolves:
+         *
+         *   - `Changeset.base -> DocumentVersion` is `Restrict`, so the
+         *     changeset must go first;
+         *   - `DocumentVersion.committedFrom -> Changeset` is `SetNull` — a
+         *     NAMED relation, `@relation("settled")`, which is how it stayed
+         *     invisible — so deleting the changeset UPDATEs the version, and
+         *     `document_version_no_update` aborts it. The version must go first;
+         *   - `HandoffContract.baseVersion -> DocumentVersion` is `SetNull` too,
+         *     and `handoff_contract_frozen_once_accepted` aborts that UPDATE on
+         *     an accepted contract, so the contract must go before the version;
+         *   - `Changeset.contract -> HandoffContract` is `Restrict`, so the
+         *     changeset must go before the contract.
+         *
+         * **This was shipped as a straight line and it was broken.** Any project
+         * whose document review ever FINISHED — `finishReview` is what writes
+         * `committedFromChangesetId` — aborted at the changeset statement and
+         * could never be deleted. It reached a green suite because the fixture
+         * built a changeset and a version and never settled one into the other.
+         *
+         * So: a fixpoint, deleting only what nothing points at, until nothing is
+         * left. Each pass strictly shrinks the cluster or the loop refuses to
+         * spin, and the ordinary case — one document, one settled review —
+         * finishes in two.
+         */
+        for (;;) {
+          const before =
+            (await tx.changeset.count({ where: ofProject })) +
+            (await tx.handoffContract.count({ where: { session: { projectId: id } } })) +
+            (await tx.documentVersion.count({ where: { document: { projectId: id } } }))
+          if (before === 0) break
+
+          // A changeset nothing settled from nullifies no version when it goes.
+          await tx.changeset.deleteMany({ where: { ...ofProject, settledAs: { is: null } } })
+          // A contract with no changeset left pointing at it.
+          await tx.handoffContract.deleteMany({
+            where: { session: { projectId: id }, changesets: { none: {} } },
+          })
+          // A version nothing bases on — neither a changeset nor a contract.
+          await tx.documentVersion.deleteMany({
+            where: {
+              document: { projectId: id },
+              changesets: { none: {} },
+              contracts: { none: {} },
+            },
+          })
+
+          const after =
+            (await tx.changeset.count({ where: ofProject })) +
+            (await tx.handoffContract.count({ where: { session: { projectId: id } } })) +
+            (await tx.documentVersion.count({ where: { document: { projectId: id } } }))
+
+          // Refuse to spin. A cluster that cannot shrink means a reference this
+          // loop does not know about, and looping forever inside a transaction
+          // is a worse way to find that out than a message naming the counts.
+          if (after >= before) {
+            throw new Error(
+              `Refusing to delete project ${id}: the document cluster stopped shrinking at ` +
+                `${after} row(s) across handoff_contract, changeset and document_version. ` +
+                'Something references one of them that this cascade does not account for.',
+            )
+          }
+        }
+
+        // After the contract, which names the reading it was drafted from.
+        await tx.sessionReading.deleteMany({ where: { session: { projectId: id } } })
+        await tx.workOffer.deleteMany({ where: { session: { projectId: id } } })
+        await tx.observationEvent.deleteMany({ where: { session: { projectId: id } } })
+        await tx.workSession.deleteMany({ where: { projectId: id } })
+        // After the events, which name the source they were observed on.
+        await tx.approvedSource.deleteMany({ where: { projectId: id } })
+
+        /* ── documents, after the loop above emptied their versions ────── */
+        await tx.document.deleteMany({ where: { projectId: id } })
+
+        /* ── the second ledger, then the Intention it hangs off ───────── */
+        // ADR-0034 could not answer this alone: an ExternalEvent belongs to no
+        // Project. `onDelete: Restrict` stops being a refusal here and becomes
+        // the reason this line comes before the next one.
+        await tx.externalEvent.deleteMany({ where: { intention: { projectId: id } } })
+        await tx.intention.deleteMany({ where: { projectId: id } })
+
+        await tx.project.delete({ where: { id } })
+      })
     },
   }
 }
@@ -1567,7 +1958,7 @@ function agentRunRepository(prisma: PrismaClient): AgentRunRepository {
  *
  * ── What was here before ─────────────────────────────────────────────────
  *
- * `model_call_record` has had a table and all three append-only triggers since
+ * `model_call_record` has had a table and ~~all three~~ **two** append-only triggers *(the delete guard went 2026-09-08, ADR-0038)* since
  * ADR-0003 and NO WRITER. `AnthropicModelClient` computed every field of it on
  * every attempt, handed them to an `onCall` hook nothing passed, and dropped
  * them. This interface is the other end of that hook; `src/model/provider.ts`

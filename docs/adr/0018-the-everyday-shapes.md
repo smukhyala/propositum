@@ -201,7 +201,13 @@ where that debt sits, and it is unchanged by this section.
   and it admits every other afternoon too. `grounds.ts` argues against it at length and that argument
   is untouched.
 - **Ranking the strands this admits.** More afternoons qualifying means more strands, and
-  `MAX_THREADS_SHOWN` still cuts them without ordering — `strandsSuppressed` keeps counting strands
+  ~~`MAX_THREADS_SHOWN` still cuts them without ordering~~ **— corrected 2026-09-07,
+  [ADR-0036](0036-ordering-candidates-without-a-score.md): that clause was wrong on the day it was
+  written.** `src/domain/detection/topics.ts` had sorted threads by `(searches, pages.length,
+  engagedMs)` since 2026-08-11, nine days before this ADR, and `front-door.ts` cuts that ordered list
+  after its filters. **The rest of this bullet stands and is what ADR-0036 pays:** the debt was never
+  the absence of an ordering, it was the absence of one that could see more than one kind of thing —
+  `strandsSuppressed` keeps counting strands
   found and discarded in silence, which ADR-0008 calls the failure the multi-strand change existed to
   remove. **This ADR makes that number bigger and does not fix it**, which is a real cost of slice 1
   and is recorded rather than deferred quietly.

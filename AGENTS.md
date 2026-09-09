@@ -72,7 +72,7 @@ npm run dev:web    # the app alone, same port
 npm test           # the whole suite; no credentials, no database, no network
 npm run typecheck  # also where the *.type-test.ts compile-time proofs run
 npm run build
-npx prisma db push
+npm run db:prepare # copy the database, then migrate it (ADR-0039). NOT `db push`
 ```
 
 ~~`npm run dev` and `npm run worker` are both required.~~ **One command, 2026-08-26** —
@@ -97,7 +97,14 @@ containing real browsing.
 ~~Two setup~~ **Setup** facts that cost an afternoon *(the count is struck 2026-09-03 rather than
 raised — the list is the thing that knows how long it is)*:
 
-- **`npx prisma db push` silently drops the append-only triggers** on any table it rebuilds. They are
+- **A schema change now needs a migration beside it** *(added 2026-09-08 —
+  [ADR-0039](docs/adr/0039-a-migration-history-and-a-copy-before-it.md))*. `prisma migrate dev
+  --name <what-changed>` writes one. A schema change committed without a migration leaves every
+  existing database with nothing to bring it forward, and **nothing enforces this yet** —
+  [`docs/todo/14`](docs/todo/14-migrations-and-a-copy.md) item 1 is the guard that would.
+- **`npx prisma db push` silently drops the append-only triggers** on any table it rebuilds *(and so
+  does `migrate deploy`, which replaced it in the app 2026-09-08 — the hazard is a table rebuild,
+  not the command)*. They are
   reinstalled and verified at the next app startup. Restart before trusting the database — a ledger
   without its triggers looks identical and is not append-only.
 - **The extension's host grant needs a user gesture**, so nothing can automate it. `extension/README.md`
@@ -128,7 +135,7 @@ In pipeline order, because the order is the design:
 | `src/model/`, `src/model/boundaries/` | Every model-calling place, behind one `ModelClient`. `provider.ts` is the only construction site — a `switch` on a provider name there is the first half of a Worker Router, which is on the do-not-build list. |
 | `src/policy/` | `gate.ts` and the tools behind it. Nothing in `tools.ts` accepts anything but an `AuthorizedAction`. |
 | `src/runtime/` | The worker loop and process, drained by `scripts/worker.ts` in its own OS process (ADR-0001, amended — `npm run dev` now spawns it as a sibling), plus the browser control channel and `thread-channel.ts`, **the one file that knows Telegram exists**. A second transport is a new file here ~~and a test enforces that~~ **— corrected 2026-09-03: `tests/reachability.test.ts` only pins `api.telegram.org` to `thread-channel.ts`, so a second transport holding no such string passes; discipline, not a test**. |
-| `src/persistence/` | Repositories, the single ledger writer, and `append-only.ts`. The only Prisma consumer. |
+| `src/persistence/` | Repositories, ~~the single ledger writer~~ **two ledger writers — one per ledger, neither reaching the other's table** *(corrected 2026-09-08, [ADR-0034](docs/adr/0034-somewhere-to-put-an-event-outside-a-sitting.md))* — and `append-only.ts`. The only Prisma consumer. |
 | `src/server/` | Route-facing orchestration and the server actions. |
 | `src/app/`, `src/ui/` | Next.js routes and client components. ~~`src/app/welcome/` is the setup screen, added 2026-08-26~~ **`src/app/first-run/` since 2026-08-30 (todo 09 built)** — an opening ask routing consent cards, each fact read rather than a cursor tracked, so there is no progress row to get out of step with the truth. Its derivation lives in `src/server/first-run.ts` because a `.tsx` server component is the one thing here nothing can assert against. |
 | `src/eval/`, `src/fixtures/` | The offline harness and its scenarios. |
@@ -214,7 +221,7 @@ rulebook, and they fail on the class of mistake prose cannot prevent.
 |---|---|
 | `tests/architecture.test.ts` | A capability that reaches the network without going through the gate; a tool for sending, purchasing, publishing or deleting *(**read the test's own comment before trusting that clause** — since [ADR-0010](docs/adr/0010-acting-in-the-browser.md) it is a statement about our function names and not about reachable effects, and since [ADR-0024](docs/adr/0024-purchases-within-a-ratified-authorisation.md) buying is a thing Propositum does)*; a `src/domain` file that reads a clock or imports a layer above it. |
 | `tests/reachability.test.ts` | Something built, tested, and called by nothing. |
-| `tests/append-only.test.ts` | A ledger table that can take an `UPDATE` or a `DELETE`. |
+| `tests/append-only.test.ts` | A ledger table that can take an `UPDATE` ~~or a `DELETE`~~ **or an `INSERT OR REPLACE`** — *and, since 2026-09-08 ([ADR-0038](docs/adr/0038-deleting-a-project.md)), the reverse of the struck clause: a ledger table that **cannot** take a `DELETE`, because a person deleting a project needs every one of them to succeed.* |
 | `tests/boundaries.test.ts` | A model boundary that could grant a permission, launder page text into an instruction, or widen a closed set of kinds. |
 | `tests/consumer-vocabulary.test.ts` *(added 2026-08-26)* | A word `CONTEXT.md` bans, in something a person reads — `take over`, `shift`, `claim`, `task`. It extracts prose rather than grepping source, so the same word stays legal as a type, an identifier, a route and a docblock. |
 | `tests/policy-gate.type-test.ts`, `tests/untrusted-budget.type-test.ts` | Compile-time proofs via `@ts-expect-error`. They hold no `it()` and vitest never sees them — **`npm run typecheck` is what runs them**, and passing means the wrong code did not compile. |

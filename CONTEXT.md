@@ -165,8 +165,64 @@ objective" — not `Task`, not `Goal`, not `ProjectGoal`, not `Draft`.
 persistent process · PersistentIntention · IntentionRecord · Objective (as a table).
 **Consumer:** what you're working toward.
 
+### StatedWait — *value object on Intention*
+What a person said they are waiting on, in their own words, so an Intention that is not moving can
+say why. ~~One nullable field on `Intention`, typed and edited on the working-agreement screen
+beside the desired outcome and the definition of done.~~ **Corrected 2026-09-08: TWO nullable columns
+(`statedWait` and `statedWaitAt`), typed and edited on the PROJECT screen — an Intention is born when
+a person accepts an offer, so the agreement screen has none to hang a wait on. The paragraphs below
+already said both; this opening line was written from the specification and never re-read after the
+build, and it is the one sentence a reader of an entry actually sees.** Decided 2026-09-07,
+[ADR-0035](docs/adr/0035-what-a-person-said-they-are-waiting-on.md).
+
+~~**A specification rather than a description.** `grep -rn 'statedWait' src/` returns nothing…~~
+**The fence came off 2026-09-07, the same day it went on.** `Intention.statedWait` and
+`Intention.statedWaitAt` are in `prisma/schema.prisma`, `repos.intentions.stateWait` is the only
+writer, and a person states, changes and clears one on the project screen.
+
+**Two columns, not one, and the second is the interesting half.** `statedWaitAt` holds when the
+person wrote the words currently in `statedWait`, and discharge is bounded at it — otherwise
+re-stating a wait would be discharged instantly by the arrival that answered the previous one, and
+the only symptom would be a screen quietly ceasing to say *Waiting*. `updatedAt` cannot do that job;
+it moves when the objective is edited too. ADR-0035 specified one field and the build needed two,
+which is recorded there rather than left to be noticed here.
+
+**Human-written, and by nothing else** — the rule `Intention` carries, inherited unchanged. No
+detector, no model boundary, no worker and no sweep may write one.
+
+**It takes `Intention`'s rule and not `StatedIntent`'s, and the prefix is the weakest part of the
+name.** The `Stated` in `StatedIntent` marks a level — the per-contract restatement of a durable
+thing — and there is no second `Wait` at another level for this one to be distinguished from, so the
+prefix disambiguates nothing. It is kept because *stated* is true of it and useful to a reader: this
+is a sentence somebody typed. What it must **not** be read as is `StatedIntent`'s property.
+`StatedIntent` is *"human-ratified but still prose"*, pre-filled by a model boundary and re-ratified
+each contract; a `StatedWait` is written from empty by a person and never drafted for them, which is
+the harder rule and the one this entry means. `CONTEXT.md` spends a paragraph on that distinction
+under `Intention` — *"Ratified is not the same as written, and the gap is real"* — and this term sits
+on the written side of it.
+
+**Discharged, not completed or resolved.** A wait is **discharged** when an
+`ExternalEvent{kind:'arrived'}` carrying this Intention's id is written — the one word for that
+transition, chosen because `settled` and `decisionResolved` are already retired by `DecisionVerdict`
+and because a wait is not a thing that succeeds or fails. Discharge is deterministic: a model never
+decides that two things are the same thing. A discharged wait makes `waiting` unreachable again; it
+does not clear the field, which only a person does.
+
+**It is not a commitment, a blocker or a dependency**, and the distinction is why two of those three
+words stay out of this glossary. A `StatedWait` says *nothing can move here until something arrives*.
+It asserts nothing about who owes what, it creates no obligation on anybody, and nothing schedules
+against it.
+*Checked against the banned words:* not `Task`. **Not `Blocker` either, and deliberately not on this
+line** — `DecisionNeeded` retires that word and `docs/MVP.md` rests its refusal on that ownership, so
+claiming it here would point one retired word at two different concepts.
+*Displaces:* Dependency · pending · waiting-on · follow-up · reminder · due · chase.
+**Consumer:** what you're waiting on.
+
 ### IntentionState — *computed view*
-`working | delegated | needs-you | sleeping | done`. Derived, never stored — `EnforcedPolicy`,
+~~`working | delegated | needs-you | sleeping | done`~~ **`working | delegated | needs-you | waiting |
+sleeping | done` — 2026-09-07, [ADR-0035](docs/adr/0035-what-a-person-said-they-are-waiting-on.md).**
+`INTENTION_STATES` in `src/domain/intention/state.ts` is what knows how many there are; this line is a
+reading of it and `tests/intention.test.ts` holds the two together. Derived, never stored — `EnforcedPolicy`,
 `Shift` and `ActionStatus` set the precedent and the argument is theirs: **two stores for one truth
 is exactly how a UI comes to display something the gate cannot enforce.** Every fact it reads is
 already a durable row.
@@ -176,15 +232,35 @@ already a durable row.
 | `working` | a live WorkSession on this Intention, phase `observing` |
 | `delegated` | an accepted HandoffContract on it whose Shift has not ended |
 | `needs-you` | an unanswered ConfirmationRequest, ~~a DecisionNeeded,~~ **a DecisionNeeded with no DecisionVerdict — un-struck 2026-08-26,** or a held ShiftOutcome with undecided proposals |
+| `waiting` | a `StatedWait` a person typed, with no `ExternalEvent{kind:'arrived'}` at or after the moment they typed it — added 2026-09-07 |
 | `sleeping` | none of the above, and `completedAt` is null |
 | `done` | `completedAt` is set — by a person, and only by a person |
 
-**Five members. There is no `waiting`, and it is not an omission to tidy up later.** `waiting` means
+~~**Five members. There is no `waiting`, and it is not an omission to tidy up later.**~~ **Struck
+2026-09-07 on its own trigger — see below. Kept because the rule it states did not change; only the
+fact did.** `waiting` means
 *progress depends on an external event or dependency*, and nothing in this system can produce an
 external event: `ObservationEvent.sessionId` is required with a single ledger writer, so **no event
-outside a sitting can be persisted at all**, and `ExternalEvent` is on the do-not-build list. A
+outside a sitting can be persisted at all**, and ~~`ExternalEvent` is on the do-not-build list~~ **Struck 2026-09-07, and it was never true rather than newly false** ([ADR-0034](docs/adr/0034-somewhere-to-put-an-event-outside-a-sitting.md)): §8's *Do not build yet* list has ten entries and `ExternalEvent` is not among them — the nearest is *automatic Gmail/Slack/Calendar/GitHub/Notion ingestion*, which is a sensor and which ADR-0034 does not build. `ExternalEvent` appears in that direction document twice, and both times it is being **asked for**. The clause beside this one is unaffected and is still true, which is why the union had five members when this was written. *(An earlier version of this correction, made the same day, said the entry had been on the list and was being struck off it. That was wrong in the same direction as the claim it corrected, and is replaced rather than tidied.)* A
 member nothing can reach is a promise the interface would render and the data could never keep. It
 arrives with event ingestion, and `docs/ARCHITECTURE.md` records it there rather than in the union.
+
+**Built 2026-09-07** ([ADR-0035](docs/adr/0035-what-a-person-said-they-are-waiting-on.md)). The
+struck paragraph named its own trigger — *it arrives with event ingestion* — and
+[ADR-0034](docs/adr/0034-somewhere-to-put-an-event-outside-a-sitting.md) is event ingestion, so
+`waiting` arrives on the condition the rule was written with rather than because the rule became
+inconvenient. **The rule itself is unchanged and still enforced:** a member is declared when
+something can reach it, and `tests/intention.test.ts` now proves every one of the six is reachable
+rather than counting them.
+
+`waiting` is reachable only from a `StatedWait` a person typed that no `ExternalEvent` has
+discharged, and it sits **below every activity word and above `sleeping`** — a person at their desk
+is `working` even with a wait outstanding, because the wait is not what they are doing. Its consumer
+label is **Waiting**.
+
+**The strike on `waiting (as a member)` in the *Displaces:* line below is lifted, and this is the
+commit that earned it.** It was a reversal rather than an addition, which is why it was argued in an
+ADR and not edited in quietly.
 
 **`sleeping` is the honest common case and will read like a bug.** With one sensor, no external
 events and one live session at a time, most Intentions compute to `sleeping` most of the time. That
@@ -242,8 +318,10 @@ see — a mutation that computed a state and discarded it kept the whole suite g
 *Checked against the banned words:* not `status` (displaced), not `SessionState` (that is
 `SessionReading`), not `phase` — `SessionPhase` is per sitting and is a different thing.
 *Displaces:* IntentionStatus · status · lifecycle state (as a column) · state machine · stalled ·
-blocked · waiting (as a member).
-**Consumer:** Working · Propositum is on it · Needs you · Sleeping · Done.
+blocked · ~~waiting (as a member)~~ **— lifted 2026-09-07 with the sixth member
+([ADR-0035](docs/adr/0035-what-a-person-said-they-are-waiting-on.md)); it is a member now, and the
+other six words on this line stand**.
+**Consumer:** Working · Propositum is on it · Needs you · **Waiting** · Sleeping · Done.
 
 ### FirstRun — *computed view, like IntentionState*
 The app's launch while setup is unfinished, and the surface that answers it: the page at
@@ -311,6 +389,18 @@ the human act of filing. The founding brief's exclusion of *automatic project re
 reversed outright here, for ADR-0008's reason one step on: a person who must first create a
 workspace has been asked to know in advance that what they are about to do is worth recording, and
 that is the bet that already lost.
+
+**A person may delete one, and it is the only act that removes anything here** *(added 2026-09-08 —
+[ADR-0038](docs/adr/0038-deleting-a-project.md))*. It takes everything filed under it: every
+ApprovedSource, Document, WorkSession and their descendants, the Intention whose `projectId` this is,
+and that Intention's ExternalEvents. **Whole projects only** — there is no per-row, per-sitting or
+per-event delete, because a ledger you can remove one line from is a ledger that can be rewritten by
+subtraction. So a person creates no project and may destroy one, which is the asymmetry the entry
+above earns: filing is a judgment Propositum makes on your behalf, and unfiling is not.
+
+The counterpart is that a Project is now the **unit of retention** as well as of filing. Nothing else
+in the schema is, and the fourteen tables that gave up `no_delete` gave it up for this and for
+nothing else.
 
 **Two corrections make that defensible, and are therefore part of the term rather than
 decoration:** the name is editable, and a sitting can be moved to another project or split out into
@@ -485,6 +575,130 @@ So `ObservationKind` gains no member here. Whether an exit type survives the fol
 when a person accepts an offer is a schema question, and the answer this entry binds is only that
 it cannot arrive as a kind.
 *Displaces:* eventType · signal type · semantic label · other · custom · misc.
+
+### ExternalEvent — *table, append-only*
+One timestamped, immutable record of something that happened **outside a sitting**, stated by a
+structured source and — like `ObservationEvent` — **never minted by a model**. Fields: `id`, `seq`
+(ledger-assigned and gapless, and global rather than per-session, because there is no session to be
+gapless within), `statedBy`, `occurredAt`, `elapsedMs`, `kind`, `intentionId` (nullable) and `attested`. **There is no
+`untrusted` column**, which is absence rather than a rule — see below. Decided 2026-09-07,
+[ADR-0034](docs/adr/0034-somewhere-to-put-an-event-outside-a-sitting.md).
+
+~~**A specification rather than a description.** `grep -n 'model ExternalEvent'
+prisma/schema.prisma` returns nothing…~~ **The fence came off 2026-09-07, the same day it went on:
+the table exists.** `prisma/schema.prisma` holds `model ExternalEvent`, `prisma/triggers.sql` holds
+its three append-only guards, and `src/persistence/external-writer.ts` holds `createExternalWriter`.
+
+~~**What has NOT moved, and it is the more useful half: nothing writes one.**
+`tests/reachability.test.ts` pins that writer at zero callers…~~ **Corrected 2026-09-08: it moved the
+same day.** `noteArrived` writes a `declared` row from the project screen, `npm run replay` writes
+`replay` rows, and `tests/reachability.test.ts` pins three callers as a **list** rather than an
+emptiness — so a fourth is an argument rather than a diff. Events outside a sitting are persisted
+now, and *no event outside a sitting can be persisted* is true only of the observation ledger, where
+`ObservationEvent.sessionId` is still required and `createLedgerWriter` is still its only caller.
+`IntentionState` has **six** members as of the same day — `StatedWait` landed with it, and `waiting`
+is reachable from a wait a person typed rather than from anything this table does on its own.
+
+**It is a second ledger, not a widening of the first.** `ObservationEvent.sessionId` stays required
+and `createLedgerWriter` stays its only writer; this table gets its own single writer and the two
+never read each other's. Two tables rather than a nullable column, because a nullable `sessionId`
+would hand every existing reader rows it was written before there were any.
+
+**`statedBy`, never `source`** — and this is a rename made before the field existed rather than
+after. `CaptureAdapter`'s entry records that `ObservationSource` was renamed *"because `event.source`
+already means an ApprovedSourceId"*, and `ApprovedSource` retires `Source (bare)`. A `source` column
+on a second event table would give that exact expression a second, incompatible meaning one table
+over, which is the collision that rename exists to prevent.
+
+**What fills `attested`, because the word does not carry unexamined.** On `ObservationEvent`,
+*attested* means the browser asserted it. Nothing attests anything here: both members of
+`ExternalEventStatedBy` are assertions, one by a person and one by a fixture. `attested` therefore
+holds only what **Propositum itself** recorded — which member stated the row, and when it was
+written.
+
+**And there is no `untrusted` column, which is the point rather than an omission.**
+`UntrustedContent` is *anything a page could have authored*, and the door that datamarks it is
+`createLedgerWriter` — pinned at one caller precisely so there is no second path by which raw text
+reaches SQLite. Neither permitted source can legitimately fill such a column: a person typed the
+words and a fixture supplied them. A source that genuinely carries page-authored text is a third
+`ExternalEventStatedBy` member, and it arrives with the door rather than before it.
+
+**What `elapsedMs` is relative to.** The first event of the stream that wrote it, not a session and
+not an install. It is meaningful for `replay`, where it is what lets a fixture spanning days run in
+seconds, and it is zero for `declared`, where there is no stream and the moment is `occurredAt`.
+
+**It cannot write an `Intention`.** `intentionId` points at one and nothing here creates or edits the
+row it points at, which is [ADR-0011](docs/adr/0011-intention-above-worksession.md) unchanged.
+*Checked against the banned words:* not `signal` (displaced by `ObservationEvent`), not `Task`, not
+`ProgressEvent` — the last of which this entry retires below, taking it off `Intention`'s refusal
+where it had been resting on a reason that stops being true here.
+*Displaces:* Event (as a table name) · ExternalSignal · IntegrationEvent · webhook · inbox item ·
+notification (as a record) · trigger (as a stored record) · **ProgressEvent**.
+**Consumer:** what came in.
+
+### ExternalEventStatedBy — *value object*
+Closed and code-owned: `declared · replay`. `declared` is a person saying so; `replay` is a fixture.
+**Neither is a sensor, and that is the whole guard** — there is no member for a thing that watches
+something and writes rows on its own schedule. Adding one is the decision
+[ADR-0034](docs/adr/0034-somewhere-to-put-an-event-outside-a-sitting.md)'s *Revisit when* names
+first, and it carries a permission argument this set does not. **No `other`.**
+*Checked against the banned words:* not `Source` (bare, retired by `ApprovedSource`), not `provider`
+(spoken for by `ThreadProvider`), not `origin` (which means a host everywhere else in this glossary),
+not `adapter` (retired by `CaptureAdapter`).
+*Displaces:* integration · connector · provider (in the ingestion sense) · adapter (as a stored
+value) · sourceKind.
+**Consumer:** internal — a `declared` row renders as *you told me*, a `replay` row never renders.
+
+### ExternalEventKind — *value object*
+Closed and code-owned, and it has **one member**: `arrived` — the thing a person said they were
+waiting on has happened. One member is the honest size of what two non-sensor sources can state, not
+a placeholder; `ThreadProvider` holds one provider on the same terms. Adding a member is a schema
+change, never configuration. **No `other`.**
+
+**A deadline passing is deliberately not a member.** It is a stated date and a clock, derivable at
+read time, and writing it would be Propositum recording its own arithmetic as an observation —
+the direction [ADR-0033](docs/adr/0033-a-late-tick-is-a-slept-machine.md) warned about in its closing
+paragraph.
+*Checked against the banned words:* not `eventType` (retired by `ObservationKind`), not `trigger`,
+not `other`.
+*Displaces:* arrivalType · externalKind · custom · misc.
+**Consumer:** internal — rendered as a sentence, never as a name: *"the thing you were waiting on
+arrived"*.
+
+### Candidate — *value object, not persisted*
+One thing Propositum could put in front of a person, before anything has been composed about it. A
+**closed, code-owned union with two members**: a detected strand of browsing, and an Intention whose
+`StatedWait` an `ExternalEvent` has discharged. Ordered by one comparator and cut by
+`MAX_THREADS_SHOWN`. Decided and built 2026-09-07,
+[ADR-0036](docs/adr/0036-ordering-candidates-without-a-score.md).
+
+~~**A specification rather than a description.** `ls src/domain/detection/order-candidates.ts`
+returns nothing…~~ **The fence came off the same day.** The module exists, with a total-order
+property test behind it, and `npm run replay` orders a recorded stream through it. ~~**Nothing calls
+it yet** — re-marked: the eval path calls it and the FRONT DOOR does not.~~ **Corrected again
+2026-09-08 — that re-mark went stale one commit after it was written.** The front door calls it too:
+one comparator, one `MAX_THREADS_SHOWN`, applied after the ordering, so a discharged wait reaches
+Home and can displace a weaker strand. `tests/reachability.test.ts` asserts both callers.
+
+**An OPEN wait is deliberately not a member**, and both ADRs that described one are amended.
+[Principle 13](docs/PRODUCT_PRINCIPLES.md) forbids a notification with no decision attached, and
+*you are still waiting* is not a decision; and an open wait has no way to leave the list, so it would
+hold a slot indefinitely. It is a word on the project screen, where the person who wrote it can take
+it back.
+
+**It is not a `WorkOffer` and precedes one.** A `WorkOffer` is what Propositum would *do* about a
+subject, composed by a model only once `OfferGrounds` are sufficient. A Candidate is what is
+competing for the person's attention before that — ordering happens first, composition second, and
+most candidates never become an offer. **Ordering is not qualifying:** a candidate that did not clear
+its own bar is not in the list, and no position in the list lowers one.
+*Checked against the banned words:* not `Task`, not `suggestion` (retired by
+Changeset/ProposedChange), not bare `action`, not `Opportunity` — which is the direction document's
+word for this and is deliberately not adopted, because `WorkOffer` and `OfferGrounds` already carry
+the two halves it names.
+*Displaces:* Opportunity · candidate action · suggestion (in the ranking sense) · item (on the front
+door) · card · row.
+**Consumer:** none — a Candidate is never named on screen; what a person reads is the strand's
+subject or the Intention's own words.
 
 ### CaptureGap — *value object (payload of a `captureGap` event)*
 An interval Propositum knows it was not watching:
@@ -827,9 +1041,37 @@ working memory.
 One atomic, evidence-bearing element of a reading:
 `{ id, sessionReadingId, kind, origin, ordinal, text, evidence[] }`.
 
-`kind: objective | completedWork | openThread | constraint | nextStep` — all five, because the
-evaluation requirements score exactly these. Exactly one `objective` claim per revision, and it
-alone carries an ObjectiveConfidence.
+~~`kind: objective | completedWork | openThread | constraint | nextStep` — all five, because the
+evaluation requirements score exactly these.~~ **Corrected 2026-09-08 — the code had outgrown this,
+and `src/ui/reading.tsx` had been saying so in a docblock while this line stood.** The set is
+`CLAIM_KINDS` in `src/model/boundaries/session-reading.ts`, which spells two of the above
+differently and adds `uncertainty`:
+`objective | completed | openThread | constraint | nextAction | uncertainty`. Since
+`session-reading@2` the prompt defines each of them to the model **by what it excludes**, so a
+claim filed under the wrong kind is a named failure rather than a matter of taste — `@1` named the
+kinds and defined none, and a stated constraint arriving as a next action was one of the four
+things that cost the 2026-08-27 scoring. The older spellings are still accepted where a stored
+claim is rendered, because a claim matching no heading would vanish from the screen and a claim
+that vanishes cannot be corrected. `src/eval/scenario.ts` holds **both** lists and they are not the
+same list: it imports `CLAIM_KINDS` for `referenceClaimSchema`, and separately declares
+`H1_COMPONENTS`, the rubric's dimensions — plural, and overlapping only partly (`completedWork` is
+the older spelling; `nextActions` and `uncertainties` are these names pluralised). A dimension is
+what a scorer fills in; a kind is what the model emits.
+
+*Checked against the banned words:* `nextAction` survives the ban on bare `action` the way
+`outcomeId` does — the compound says what it holds. It is a sentence about what a person could do
+next and is **not** an `ActionIntent` or an `ActionKind`, which are one lifecycle stage further on
+and go through the gate; two words a stage apart is the thing the banned table exists to stop, so
+the distinction is worth the clause. `completed` is a claim about a session's work and is **not**
+`IntentionState`'s `done`, which is an Intention a person marked finished.
+
+Exactly one `objective` claim per revision, and ~~it alone carries an ObjectiveConfidence~~
+**it alone carries one by the time it is stored, 2026-09-08**: the boundary schema admits a band on
+any claim, the model puts one on most of them, and `src/server/actions.ts` drops every band but the
+objective's on write. The prompt now says so in as many words. Closing the gap in the schema is
+`docs/todo/04-quick-fixes.md`, and it is deliberately not closed by refusing the reading — the field
+is decorative below the boundary, so refusing would cost a person their reading to enforce a rule
+nothing downstream reads.
 
 `origin: inferred | human | edited`, **per claim, never per reading.** Revision-level authorship
 would launder every unedited inferred claim into a human assertion the moment the human fixes one
@@ -2047,6 +2289,29 @@ in a `collection`, one paragraph of an `answer`, one `message-draft` held unsent
 label, body, one-sentence reason, and `citedActionIntentIds` validated against its run's own
 completed reads — the same provenance closure ProposedChange has.
 
+**A specification rather than a description** *(fenced 2026-09-07)*. There is no
+`model OutcomeProposal` in `prisma/schema.prisma` — `grep -c 'model OutcomeProposal'
+prisma/schema.prisma` returns `0` — and `OutcomeVerdict.outcomeId` is `@unique` against
+`ShiftOutcome`, so **a verdict addresses a whole outcome and never a unit of one**. Accepting a
+collection of eleven rates today accepts all eleven. `src/server/outcomes/collection.ts` has said so
+in its own voice since it was written — *"the grouping is right and the per-item verdict is owed"* —
+while this entry went on describing the finished shape in the present tense, which is the state
+[`AGENTS.md`](AGENTS.md) names as the worst one in this repository. The fence comes off in the commit
+that adds the table.
+
+**The name is already in `src/`, and that is not the drift.** `src/runtime/worker-loop.ts` exports an
+`OutcomeProposal` **type**: a five-member union — `section-prose`, `item`, `written-answer`,
+`composed-text`, `landed` — which is this same unit *before* it is durable. Its docblock states the
+sharing deliberately, so a reader who knows this glossary does not assume one of the two is a
+mistake: *"this is the unit before it is durable, that is the unit once it is."* What the fence
+covers is the row, not the word.
+
+**What the absence costs, measured rather than asserted.** H2's denominator is **coarser than this
+entry implies, not absent** — a collection counts once rather than per item.
+`npm run eval -- --report` on 2026-09-07 read ten decidable units with none of them decided, so the
+acceptance rate is computable and has nothing yet to say. What H2 waits on is a person recording
+verdicts — `docs/todo/03-document-loop.md` item 5 — not this table.
+
 **`ProposedChange` is not replaced.** It is the `document-changes` specialisation of this idea and
 keeps its own table, because it carries a BaseSpan and a `before` verifier that an OutcomeProposal
 has no field for. So an outcome holds ProposedChanges **or** OutcomeProposals, never both.
@@ -2064,7 +2329,7 @@ ProposedChange), not `Artifact`, not `finding`.
 **Consumer:** the same word the kind uses — "this rate", "this paragraph", "this message".
 
 ### OutcomeVerdict — *table, append-only*
-`accepted | rejected | edited` against one OutcomeProposal, with `editedText` iff edited. Never
+`accepted | rejected | edited` ~~against one OutcomeProposal~~ **against one held `ShiftOutcome` — re-marked 2026-09-07 with the entry above, which is where the reason lives**, with `editedText` iff edited. Never
 updated, never deleted; the current verdict is the most recent row; no row means undecided.
 **Only a human writes one.** ChangeVerdict's shape exactly, one level out, and `edited` is kept for
 the same reason — collapsing edit into accept makes H2 unmeasurable.
@@ -2073,7 +2338,10 @@ the same reason — collapsing edit into accept makes H2 unmeasurable.
 anything else. That refusal is not a UI concern that happens to be enforced twice; it is the one
 place where an interface bug could otherwise tell someone their sent message was rejected.
 *Checked against the banned words:* not `ReviewDecision`, not `approval`, not `outcome` as a column
-name — this is a table, and its foreign key is `outcomeProposalId`. Shares its noun with
+name — this is a table, and its foreign key is ~~`outcomeProposalId`~~ **`outcomeId`, against
+`ShiftOutcome`. Corrected 2026-09-08, and it was never right: `OutcomeProposal` has no table
+(`grep -c 'model OutcomeProposal' prisma/schema.prisma` returns 0), and this entry's opening line was
+re-marked to say exactly that on 2026-09-07 without the correction reaching three lines down.** Shares its noun with
 ChangeVerdict, ConfirmationVerdict and `ActionOutcome.scopeVerdict`; in every case the prefix names
 the level, which is the `ActionIntent`/`StatedIntent` pattern and not the `ReviewDecision` mistake.
 *Displaces:* ReviewDecision · approval · acceptance · keep/discard · vote.
@@ -2471,7 +2739,9 @@ Recorded so they are found deliberately rather than discovered.
   every other table does. `IntentionState` is a computed view over five other tables, so it names no
   field on any row and is the weaker of the two. It earns its place by **holding a refusal**: a
   lifecycle word the interface says out loud, with no entry here, is exactly how `waiting` gets
-  declared by someone who never learned it was refused. That is a thinner claim than the other 53
+  declared by someone who never learned it was refused. That is a thinner claim than ~~the other 53~~ **the others** *(numeral deleted 2026-09-08 rather
+than raised: `README.md` carries the count where `tests/counts.test.ts` can read it, and nothing ever
+checked this copy)*
   make, and it is stated as the thinner claim it is.
   **`AuthoredLabel`, added 2026-08-17, is held to that standard too, and it fails the first half of
   it.** It names one field on one row on a path that is not even persisted — precisely what the

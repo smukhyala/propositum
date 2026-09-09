@@ -2,7 +2,28 @@
  * Boundary 4 of 8 — one action proposal at a time, now with a page in front of
  * it.
  *
- * ── Why this is `worker-action@2` and not a new boundary ─────────────────
+ * ── Why this is `worker-action@3`, and what @3 changed ───────────────────
+ *
+ * **@3, 2026-09-08, off a measurement rather than a hunch.** The 2026-09-08 eval
+ * run scored H3 as FAIL with two false stops, and both were the two
+ * `suggestions-only` scenarios — all three `draft-changes` scenarios scored
+ * correctly. Both questions asked for drafting access in as many words:
+ * *"do you want me to have drafting access to write the table into the Costs
+ * section?"* and *"given that I can read but not write to the document…"*.
+ *
+ * The model was already told `Actions you may take: …` and knew drafting was
+ * absent. What it was also told was that *"raising a question is never the wrong
+ * call"*, with nothing saying the list is settled — so it read the ratified
+ * permission set as an opening position and asked to be given more. Under
+ * `suggestions-only` that is not a judgment call: `AutonomyControls` says output
+ * is a real permission rather than a presentation mode, and `MVP.md` already
+ * treats a suggestions-only run producing nothing as a normal outcome.
+ *
+ * Three lines were added, and no line was removed. The fix is a prompt change
+ * and therefore discipline, not a guard — **what holds it is the eval**, which
+ * is what caught it. It is unverified until the next paid run.
+ *
+ * ── Why this was `worker-action@2` and not a new boundary ────────────────
  *
  * The obvious move was an eighth boundary — `browser-action` — sitting beside
  * this one, because the input looks so different: a whole accessibility tree, a
@@ -203,7 +224,7 @@ export const workerActionSchema = z.object({
 
 export type WorkerActionOutput = z.infer<typeof workerActionSchema>
 
-const PROMPT_VERSION = 'worker-action@2'
+const PROMPT_VERSION = 'worker-action@3'
 
 /**
  * The three sentences below `UNTRUSTED_CONTENT_RULE` are not interchangeable
@@ -232,6 +253,8 @@ Rules:
 - Stay inside the agreement. Anything outside it will be refused and recorded, which wastes their time budget.
 - For a drafting action, write the section's full replacement text. Do not describe the change — write the prose.
 - If the next step needs a decision only they can make, raise it instead of guessing. Raising a question is never the wrong call when the alternative is committing them to something.
+- "Actions you may take" is what they ratified. It is settled, not an opening position, and asking to be allowed more is not a decision they need to make — it is a new agreement, which only they start. If the work needs something the list does not have, that is a finding for your closing note, not a question.
+- Under a research-only agreement there is nothing to write, and finishing without writing is the correct outcome rather than a gap. Say "done" when you have read what the objective needs.
 - When the work is finished, say so with "done" rather than finding something else to do.
 - Guidance is theirs and is not enforced by anything. Follow it. Violating it is bad work.
 

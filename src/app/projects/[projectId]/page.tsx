@@ -56,7 +56,10 @@ import {
   createDocument,
   endSession,
   refileSession,
+  noteArrived,
+  deleteProject,
   renameProject,
+  stateWait,
   saveDocument,
   splitIntoNewProject,
   startSession,
@@ -88,6 +91,9 @@ const CSS = `
 .pj-state[data-revoked="true"] { color: var(--attention); }
 .pj-revoked { margin: 0.35rem 0 0; font-size: 0.8125rem; color: var(--attention); }
 
+.pj-wait { margin-top: 2rem; padding-top: 1.5rem; border-top: 1px solid var(--rule); }
+.pj-wait-line { margin: 0; font-size: 0.9375rem; color: var(--ink); }
+.pj-wait .pj-form { margin-top: 1rem; padding-top: 1rem; }
 .pj-form { display: flex; gap: 0.75rem; flex-wrap: wrap; align-items: flex-end; margin-top: 1.75rem; padding-top: 1.5rem; border-top: 1px dashed var(--rule); }
 .pj-field { display: grid; gap: 0.35rem; flex: 1 1 15rem; }
 .pj-label { font-size: 0.6875rem; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
@@ -126,6 +132,39 @@ function clock(at: Date): string {
 
 function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : {}
+}
+
+/**
+ * What a delete takes, as a sentence rather than three numbers.
+ *
+ * ADR-0038 property 2: the count is the only thing that makes the act
+ * reviewable. So it names the things a person recognises — sittings, documents,
+ * what Propositum did — and **drops the zeroes**, because *"0 documents"* reads
+ * as a warning about documents and this list should only mention what exists.
+ *
+ * When everything is zero it says so plainly instead of listing nothing. That is
+ * a real state: a project created and never used, which is exactly the one
+ * somebody deletes without hesitating and should not be made to hesitate over.
+ */
+function namesWhatGoes(
+  scope: { sittings: number; documents: number; recordedActions: number } | null,
+): string {
+  if (scope === null) return 'everything recorded under it'
+
+  const parts = [
+    [scope.sittings, 'sitting', 'sittings'],
+    [scope.documents, 'document', 'documents'],
+    [scope.recordedActions, 'recorded step', 'recorded steps'],
+  ] as const
+
+  const named = parts
+    .filter(([n]) => n > 0)
+    .map(([n, one, many]) => `${n} ${n === 1 ? one : many}`)
+
+  if (named.length === 0) return 'nothing has been recorded under it yet'
+  if (named.length === 1) return named[0] as string
+
+  return `${named.slice(0, -1).join(', ')} and ${named[named.length - 1]}`
 }
 
 export default async function ProjectPage({
@@ -271,6 +310,43 @@ export default async function ProjectPage({
   }
 
   /**
+   * The one act on this page that cannot be undone.
+   *
+   * On success there is nowhere to go back to — the project this page is about
+   * does not exist — so it redirects to the front door rather than to `here`,
+   * which would render a 404 for a delete that worked.
+   */
+  async function remove(formData: FormData) {
+    'use server'
+
+    const result = await deleteProject(projectId, String(formData.get('confirmName') ?? ''))
+    if (!result.ok) {
+      redirect(`${here}?problem=${encodeURIComponent(result.problem.message)}`)
+    }
+    redirect('/')
+  }
+
+  async function itArrived() {
+    'use server'
+
+    const result = await noteArrived(projectId)
+    if (!result.ok) {
+      redirect(`${here}?problem=${encodeURIComponent(result.problem.message)}`)
+    }
+    redirect(here)
+  }
+
+  async function saveWait(formData: FormData) {
+    'use server'
+
+    const result = await stateWait(projectId, String(formData.get('statedWait') ?? ''))
+    if (!result.ok) {
+      redirect(`${here}?problem=${encodeURIComponent(result.problem.message)}`)
+    }
+    redirect(here)
+  }
+
+  /**
    * "No — this is new work."
    *
    * The undo for a filing decision Propositum made on its own. It lands on the
@@ -327,7 +403,7 @@ export default async function ProjectPage({
    * The same derivation Home uses, from the same function, because a second one
    * is how two screens come to disagree about a single Intention — the argument
    * `front-door.ts` opens with. Home filters its rows to `needs-you` and prints
-   * one word; this screen prints whichever of the five is true, which is why
+   * one word; this screen prints whichever of the ~~five~~ **six, since 2026-09-07** is true, which is why
    * `statusWordFor` had no caller between the bare-Home rewrite and now.
    *
    * `frontDoorRow` takes the live session id, and `phasesWeCanVouchFor` counts
@@ -339,8 +415,15 @@ export default async function ProjectPage({
    * `sleeping` will be the common answer, and CONTEXT.md says it will read like
    * a bug. It is not dressed up.
    */
+  const intentionFacts = await repos.intentions.factsForProject(projectId)
+
+  // What a delete would take. Read here rather than behind the disclosure,
+  // because a count that arrives after the person has already decided to open
+  // the section is a count they have to go back and read.
+  const deletionScope = await repos.projects.deletionScope(projectId)
+
   const lifecycle = frontDoorRow({
-    facts: await repos.intentions.factsForProject(projectId),
+    facts: intentionFacts,
     sittings: sessions,
     liveSessionId: liveCapture?.sessionId ?? null,
     nowEpochMs: Date.now(),
@@ -530,6 +613,60 @@ export default async function ProjectPage({
           anything" — folding it would be the quietness the ADR exists to
           refuse. Only the corrections fold.
         */}
+        {/*
+          What a person said they are waiting on. ADR-0035.
+
+          Rendered OUTSIDE the disclosure when it is set, and that is Principle
+          12 rather than a layout preference: it forbids "a carried-forward
+          outcome that is not on screen where the person can read and change
+          it", and this is carried forward. When there is no wait there is
+          nothing carried and the ask folds with the other corrections.
+
+          It says what arrived, too. A discharged wait still holds its words —
+          nothing but a person may clear them — so a screen that only said
+          *Waiting* would keep saying it after the thing had happened.
+        */}
+        {intentionFacts?.statedWait != null && (
+          <section className="pj-wait">
+            <p className="pj-wait-line">
+              {intentionFacts.waitDischarged ? 'You were waiting on' : 'Waiting on'}{' '}
+              <strong>{intentionFacts.statedWait}</strong>
+              {intentionFacts.waitDischarged ? ' — it arrived.' : '.'}
+            </p>
+            {/*
+              The `declared` source, and the only one a person can reach.
+              Pressing it writes an ExternalEvent and does NOT touch the
+              Intention — the words stay where the person put them, and only
+              they take them back. Absent once something has arrived, because a
+              second arrival answers nothing.
+            */}
+            {!intentionFacts.waitDischarged && (
+              <form action={itArrived}>
+                <button className="pj-submit" type="submit">
+                  It arrived
+                </button>
+              </form>
+            )}
+
+            <form className="pj-form" action={saveWait}>
+              <label className="pj-field">
+                <span className="pj-label">Change it, or empty the box to drop it</span>
+                <input
+                  className="pj-input"
+                  name="statedWait"
+                  type="text"
+                  maxLength={200}
+                  autoComplete="off"
+                  defaultValue={intentionFacts.statedWait}
+                />
+              </label>
+              <button className="pj-submit" type="submit">
+                Save
+              </button>
+            </form>
+          </section>
+        )}
+
         <Disclosure summary="Filed wrong? Rename it, or move this sitting">
           <form className="pj-form" action={rename}>
             <label className="pj-field">
@@ -548,6 +685,27 @@ export default async function ProjectPage({
               Save the name
             </button>
           </form>
+
+          {/* The ask, only when there is nothing to carry. Once a wait is set it
+              moves out of here and onto the page, above. */}
+          {intentionFacts !== null && intentionFacts.statedWait === null && (
+            <form className="pj-form" action={saveWait}>
+              <label className="pj-field">
+                <span className="pj-label">Waiting on something before this can move?</span>
+                <input
+                  className="pj-input"
+                  name="statedWait"
+                  type="text"
+                  maxLength={200}
+                  autoComplete="off"
+                  placeholder="a reply from the venue"
+                />
+              </label>
+              <button className="pj-submit" type="submit">
+                Save
+              </button>
+            </form>
+          )}
 
           {/* The way out of a filing decision nobody made deliberately. Shown
             only when there is something to leave: a project holding one sitting
@@ -598,6 +756,34 @@ export default async function ProjectPage({
               </button>
             </form>
           ) : null}
+        </Disclosure>
+
+        {/* Its own disclosure, not a row inside "Filed wrong?" — deleting is not
+            a filing correction, and putting it beside Rename would be putting an
+            irreversible act one line under a recoverable one. */}
+        <Disclosure summary="Delete this project">
+          <form className="pj-form" action={remove}>
+            <p className="pj-hint">
+              This removes <strong>{project.name}</strong> and everything Propositum recorded
+              under it — {namesWhatGoes(deletionScope)}. It cannot be undone and there is no bin.
+              Your other projects are untouched.
+            </p>
+            <label className="pj-field">
+              <span className="pj-label">Type its name to confirm</span>
+              <input
+                className="pj-input"
+                name="confirmName"
+                type="text"
+                required
+                maxLength={120}
+                autoComplete="off"
+                placeholder={project.name}
+              />
+            </label>
+            <button className="pj-submit" type="submit">
+              Delete it
+            </button>
+          </form>
         </Disclosure>
       </Section>
 
